@@ -1,5 +1,5 @@
 name: 'pleme-io · nix-flake-check'
-description: 'Run `nix flake check` with DeterminateSystems Nix + magic-nix-cache'
+description: 'Run `nix flake check` with DeterminateSystems Nix'
 branding:
   icon: 'check-circle'
   color: 'blue'
