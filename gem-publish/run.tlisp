@@ -1,0 +1,85 @@
+;; gem-publish/run.tlisp — sanity-check, build, push a Ruby gem.
+;;
+;; Inputs (env):
+;;   GEM_NAME      — kebab-case gem name (also <name>.gemspec basename)
+;;   TAG_VERSION   — version expected by the caller (derived from git tag)
+;;   GEM_HOST_API_KEY — rubygems push token, read by `gem push` directly
+;;
+;; Behaviour:
+;;   1. Read lib/<gem>/version.rb, extract VERSION constant.
+;;   2. Compare to TAG_VERSION; abort if they disagree (prevents publishing
+;;      a phantom version when caller hand-tagged ahead of a bump).
+;;   3. gem build <gem>.gemspec
+;;   4. gem push <gem>-<version>.gem
+;;        - tolerate "has already been pushed" (old cli message)
+;;        - tolerate "Repushing of gem versions is not allowed" (current)
+;;      so the workflow remains restartable on transient downstream failures.
+
+(define gem-name      (env-required "GEM_NAME"))
+(define tag-version   (env-required "TAG_VERSION"))
+
+;; ---------- version.rb parse ---------- ;;
+
+(define (extract-quoted-value line)
+  ;; Take the substring between the first matched pair of " or '.
+  (let* ((dq (string-split line "\""))
+         (sq (string-split line "'")))
+    (cond
+      ((>= (length dq) 2) (cadr dq))
+      ((>= (length sq) 2) (cadr sq))
+      (else ""))))
+
+(define (first-version-line ls)
+  (cond
+    ((null? ls) "")
+    ((and (string-contains? (car ls) "VERSION")
+          (string-contains? (car ls) "="))
+     (extract-quoted-value (car ls)))
+    (else (first-version-line (cdr ls)))))
+
+(define (read-gem-version)
+  (let ((path (string-append "lib/" gem-name "/version.rb")))
+    (if (not (path-exists? path)) ""
+      (first-version-line (string-split (read-file path) "\n")))))
+
+;; ---------- sanity check ---------- ;;
+
+(define spec-version (read-gem-version))
+
+(cond
+  ((equal? spec-version "")
+   (log-error (string-append "could not read version from lib/"
+                             gem-name "/version.rb"))
+   (exit 1))
+  ((not (equal? spec-version tag-version))
+   (log-error (string-append "version mismatch: gemspec=" spec-version
+                             " tag=" tag-version))
+   (exit 1))
+  (else
+   (log-info (string-append "version match: " spec-version))))
+
+;; ---------- build ---------- ;;
+
+(define build-status (exec-check "gem" "build" (string-append gem-name ".gemspec")))
+(when (not (= build-status 0))
+  (log-error (string-append "gem build failed (status "
+                            (string-format "{}" build-status) ")"))
+  (exit build-status))
+
+;; ---------- push ---------- ;;
+
+(define gem-file (string-append gem-name "-" tag-version ".gem"))
+(define push-result (exec-capture "gem" "push" gem-file))
+(define push-status (alist-get push-result :status))
+(define push-stderr (alist-get push-result :stderr))
+
+(cond
+  ((= push-status 0)
+   (log-info (string-append "published " gem-name " " tag-version)))
+  ((or (string-contains? push-stderr "has already been pushed")
+       (string-contains? push-stderr "Repushing of gem versions"))
+   (log-info (string-append "version " tag-version
+                            " already published; treating as success.")))
+  (else
+   (log-error push-stderr)
+   (exit push-status)))
