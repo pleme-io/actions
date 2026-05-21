@@ -1,0 +1,40 @@
+name: 'pleme-io · git-push-with-token'
+description: 'Rewrite origin URL with the given token, push branch + tags so downstream workflows can be triggered'
+branding:
+  icon: 'git-branch'
+  color: 'gray-dark'
+
+inputs:
+  token:
+    description: "Token used as x-access-token in the rewritten origin URL"
+    required: true
+  branch:
+    description: "Branch to push (default: main)"
+    required: false
+    default: main
+  push-tags:
+    description: "Whether to also push --tags (default: true)"
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Push branch + tags
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        GIT_PUSH_TOKEN: ${{ inputs.token }}
+        BRANCH:         ${{ inputs.branch }}
+        PUSH_TAGS:      ${{ inputs.push-tags }}

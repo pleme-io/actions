@@ -1,0 +1,67 @@
+;; git-push-with-token/run.tlisp — re-arm origin with a token, push.
+;;
+;; The default GITHUB_TOKEN cannot trigger another workflow on its own
+;; pushes (GH security restriction). When the caller has a PAT
+;; (e.g. BOT_PAT) and wants the resulting tag push to fire the
+;; release workflow, this action rewrites the origin URL to use that
+;; token as the basic-auth password, then pushes the branch + tags.
+;;
+;; Inputs (env):
+;;   GIT_PUSH_TOKEN  — the token (BOT_PAT or GITHUB_TOKEN)
+;;   BRANCH          — branch to push (default "main")
+;;   PUSH_TAGS       — "true" to also push --tags
+;;
+;; The URL rewrite handles both freshly-cloned remotes (no token in
+;; URL) and previously-rearmed remotes (some x-access-token already
+;; embedded) by first stripping any existing https://<x>@ prefix.
+
+(define token  (env-required "GIT_PUSH_TOKEN"))
+(define branch (env-get      "BRANCH"    "main"))
+(define ptags? (equal? (env-get "PUSH_TAGS" "true") "true"))
+
+;; ---------- get + clean origin URL ---------- ;;
+
+(define current-url
+  (let ((cap (exec-capture "git" "remote" "get-url" "origin")))
+    (string-trim (alist-get cap :stdout))))
+
+(define (strip-userinfo url)
+  ;; Turns "https://<anything>@github.com/..." into "https://github.com/...".
+  ;; Plain "https://github.com/..." passes through unchanged.
+  (cond
+    ((string-starts-with? url "https://")
+     ;; Split on "@" — if there's a userinfo segment, the part before
+     ;; the FIRST @ contains "://", so re-stitch using everything
+     ;; after the first @.
+     (let ((parts (string-split url "@")))
+       (if (= (length parts) 1)
+           url
+           (string-append "https://" (string-join "@" (cdr parts))))))
+    (else url)))
+
+(define clean-url (strip-userinfo current-url))
+
+;; ---------- rewrite + push ---------- ;;
+
+(define rearmed-url
+  (string-replace clean-url
+                  "https://"
+                  (string-append "https://x-access-token:" token "@")))
+
+(define set-url-status
+  (exec-check "git" "remote" "set-url" "origin" rearmed-url))
+(when (not (= set-url-status 0))
+  (log-error "git remote set-url failed") (exit set-url-status))
+
+(define push-branch-status (exec-check "git" "push" "origin" branch))
+(when (not (= push-branch-status 0))
+  (log-error (string-append "git push origin " branch " failed"))
+  (exit push-branch-status))
+
+(when ptags?
+  (define push-tags-status (exec-check "git" "push" "origin" "--tags"))
+  (when (not (= push-tags-status 0))
+    (log-error "git push origin --tags failed")
+    (exit push-tags-status)))
+
+(log-info (string-append "pushed " branch (if ptags? " + tags" "")))
