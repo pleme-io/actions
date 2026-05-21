@@ -1,0 +1,48 @@
+name: 'pleme-io · oci-image-push'
+description: 'Push an OCI image tarball (Nix dockerTools output) to a registry — forge if present, skopeo fallback'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  registry:
+    description: "Target OCI registry (e.g. ghcr.io)"
+    required: true
+  image:
+    description: "Image path (e.g. pleme-io/pangea-operator)"
+    required: true
+  tag:
+    description: "Image tag"
+    required: true
+  tarball:
+    description: "Path to the Docker/OCI image tarball produced by Nix"
+    required: false
+    default: "./result"
+  flake-ref:
+    description: "Flake ref to use when invoking .#forge (default '.')"
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Push image
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGISTRY:  ${{ inputs.registry }}
+        IMAGE:     ${{ inputs.image }}
+        TAG:       ${{ inputs.tag }}
+        TARBALL:   ${{ inputs.tarball }}
+        FLAKE_REF: ${{ inputs.flake-ref }}

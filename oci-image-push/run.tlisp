@@ -1,0 +1,54 @@
+;; oci-image-push/run.tlisp — push a Nix-produced OCI image tarball.
+;;
+;; Tries `nix run <flake-ref>#forge -- push` first; falls back to
+;; `nix shell nixpkgs#skopeo --command skopeo copy docker-archive:<tarball>
+;; docker://<target>` so consumers without forge in their flake still
+;; work end-to-end.
+;;
+;; Inputs (env):
+;;   REGISTRY    — e.g. "ghcr.io"
+;;   IMAGE       — e.g. "pleme-io/pangea-operator"
+;;   TAG         — image tag
+;;   TARBALL     — local path to the Docker tarball (default "./result")
+;;   FLAKE_REF   — flake ref used for `.#forge` discovery (default ".")
+;;
+;; Pre-conditions: docker/login-action has already authenticated to
+;; the target registry; nix-installer-action has set up Nix.
+
+(define registry  (env-required "REGISTRY"))
+(define image     (env-required "IMAGE"))
+(define tag       (env-required "TAG"))
+(define tarball   (env-get      "TARBALL"   "./result"))
+(define flake-ref (env-get      "FLAKE_REF" "."))
+
+(define target (string-append registry "/" image ":" tag))
+
+(define (forge-available?)
+  ;; Probe for forge by asking it for --help. Suppresses stdout/stderr.
+  (exec-ok? "nix" "run" (string-append flake-ref "#forge") "--" "--help"))
+
+(define (push-via-forge)
+  (exec-check "nix" "run" (string-append flake-ref "#forge") "--"
+              "push"
+              "--image-tarball" tarball
+              "--registry"      target))
+
+(define (push-via-skopeo)
+  (exec-check "nix" "shell" "nixpkgs#skopeo" "--command"
+              "skopeo" "--insecure-policy" "copy"
+              (string-append "docker-archive:" tarball)
+              (string-append "docker://"      target)))
+
+(log-info (string-append "pushing " tarball " -> " target))
+
+(define status
+  (if (forge-available?)
+    (begin (log-info "using forge push") (push-via-forge))
+    (begin (log-info "forge not in flake; using skopeo fallback") (push-via-skopeo))))
+
+(when (not (= status 0))
+  (log-error (string-append "image push failed (status "
+                            (string-format "{}" status) ")"))
+  (exit status))
+
+(log-info (string-append "pushed " target))
