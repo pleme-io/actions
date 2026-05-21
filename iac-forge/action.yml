@@ -36,8 +36,19 @@ runs:
       uses: DeterminateSystems/nix-installer-action@main
     - name: Enable magic Nix cache
       uses: DeterminateSystems/magic-nix-cache-action@main
-    - name: Run iac-forge (via tatara-script)
+    - name: Load run.tlisp
+      id: src
       shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - name: Run iac-forge
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
       env:
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_BACKEND: ${{ inputs.backend }}
@@ -46,4 +57,3 @@ runs:
         INPUT_PROVIDER: ${{ inputs.provider }}
         INPUT_DATA_SOURCES: ${{ inputs.data-sources }}
         INPUT_OUTPUT: ${{ inputs.output }}
-      run: nix run github:pleme-io/tatara-lisp#script -- ${{ github.action_path }}/run.tlisp

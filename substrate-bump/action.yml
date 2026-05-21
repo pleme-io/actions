@@ -29,10 +29,22 @@ runs:
       uses: DeterminateSystems/nix-installer-action@main
     - name: Enable magic Nix cache
       uses: DeterminateSystems/magic-nix-cache-action@main
-    - name: Run substrate bump app (via tatara-script)
-      id: bump
+    # Load run.tlisp into an output so the redistributable tatara-script
+    # action can execute it without us re-implementing the install path.
+    - name: Load run.tlisp
+      id: src
       shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - name: Run substrate bump app
+      id: bump
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
       env:
         BUMP_TYPE: ${{ inputs.bump-type }}
         RELEASE_PATHS: ${{ inputs.release-paths }}
-      run: nix run github:pleme-io/tatara-lisp#script -- ${{ github.action_path }}/run.tlisp

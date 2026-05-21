@@ -31,10 +31,20 @@ runs:
       uses: DeterminateSystems/nix-installer-action@main
     - name: Enable magic Nix cache
       uses: DeterminateSystems/magic-nix-cache-action@main
-    - name: Compare upstream sha (via tatara-script)
-      id: compare
+    - name: Load run.tlisp
+      id: src
       shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - name: Compare upstream sha
+      id: compare
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
       env:
         UPSTREAM_URL: ${{ inputs.upstream-url }}
         CACHE_FILE: ${{ inputs.cache-file }}
-      run: nix run github:pleme-io/tatara-lisp#script -- ${{ github.action_path }}/run.tlisp
