@@ -19,22 +19,7 @@ runs:
       uses: DeterminateSystems/nix-installer-action@main
     - name: Enable magic Nix cache
       uses: DeterminateSystems/magic-nix-cache-action@main
-    - name: Build collection
+    - name: Build collection (via tatara-script)
       id: build
       shell: bash
-      run: |
-        set -euo pipefail
-        # substrate's build app produces a .tar.gz in CWD
-        nix run .#build
-        # Find the tarball (collection name + version come from galaxy.yml)
-        version=""
-        if [ -f galaxy.yml ]; then
-          version=$(grep -E '^version:' galaxy.yml | head -1 | awk '{print $2}' | tr -d '"' || true)
-        fi
-        tarball=$(ls -1 ./*.tar.gz 2>/dev/null | head -1 || true)
-        if [ -z "$tarball" ]; then
-          echo "No tarball produced by 'nix run .#build'" >&2
-          exit 1
-        fi
-        echo "tarball-path=$tarball" >> "$GITHUB_OUTPUT"
-        echo "version=$version" >> "$GITHUB_OUTPUT"
+      run: nix run github:pleme-io/tatara-lisp#script -- ${{ github.action_path }}/run.tlisp

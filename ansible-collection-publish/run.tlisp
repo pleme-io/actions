@@ -1,0 +1,15 @@
+;; ansible-collection-publish/run.tlisp — invoke substrate's
+;; `nix run .#publish` app iff ANSIBLE_GALAXY_TOKEN is in the env;
+;; otherwise no-op (exit 0) so the workflow degrades gracefully when
+;; the secret isn't wired. Replaces the inlined bash block in action.yml.
+
+(define token (env-get "ANSIBLE_GALAXY_TOKEN" ""))
+
+(when (equal? token "")
+  (log-info "ANSIBLE_GALAXY_TOKEN not set — skipping publish (no-op)")
+  (exit 0))
+
+(define status (exec-check "nix" "run" ".#publish"))
+(unless (= status 0)
+  (log-error (string-append "nix run .#publish failed with status " (string-format "{}" status)))
+  (exit status))

@@ -1,0 +1,44 @@
+;; spec-watch/run.tlisp — detect changes in an upstream OpenAPI/JSON spec
+;; by sha256 against a cached value. Replaces the inlined bash block in
+;; action.yml. Inputs flow in via env vars:
+;;
+;;   UPSTREAM_URL  — URL of the upstream spec
+;;   CACHE_FILE    — path (relative to repo root) where the last-seen sha256 is stored
+;;   GITHUB_OUTPUT — provided by GitHub Actions
+;;
+;; Outputs (appended to $GITHUB_OUTPUT):
+;;   changed     true | false
+;;   new-sha     sha256 of the upstream spec
+;;   cached-sha  sha256 previously stored in the cache file (empty on first run)
+
+(define upstream-url (env-required "UPSTREAM_URL"))
+(define cache-file (env-required "CACHE_FILE"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+;; ── Fetch the upstream spec ────────────────────────────────────────
+;; http-get returns the body as a UTF-8 string. The original bash used
+;; curl + sha256sum; we hash the body directly via the tatara stdlib's
+;; (sha256 STR) primitive — no temp file needed.
+(define body (http-get upstream-url))
+(define new-sha (sha256 body))
+
+;; ── Read the cached sha256, trimming whitespace ────────────────────
+(define cached-sha
+  (if (path-exists? cache-file)
+    (string-trim (read-file cache-file))
+    ""))
+
+(append-output (string-append "new-sha=" new-sha))
+(append-output (string-append "cached-sha=" cached-sha))
+
+(cond
+  ((not (equal? new-sha cached-sha))
+   (append-output "changed=true")
+   (log-info (string-append "Upstream spec changed: " cached-sha " -> " new-sha)))
+  (else
+   (append-output "changed=false")
+   (log-info (string-append "Upstream spec unchanged (" new-sha ")"))))

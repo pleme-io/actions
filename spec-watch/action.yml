@@ -27,31 +27,14 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Compare upstream sha with cache
+    - name: Install Nix (DeterminateSystems)
+      uses: DeterminateSystems/nix-installer-action@main
+    - name: Enable magic Nix cache
+      uses: DeterminateSystems/magic-nix-cache-action@main
+    - name: Compare upstream sha (via tatara-script)
       id: compare
       shell: bash
       env:
         UPSTREAM_URL: ${{ inputs.upstream-url }}
         CACHE_FILE: ${{ inputs.cache-file }}
-      run: |
-        set -euo pipefail
-        tmp=$(mktemp)
-        curl -sSL -f "$UPSTREAM_URL" -o "$tmp"
-        new_sha=$(sha256sum "$tmp" | awk '{print $1}')
-        rm -f "$tmp"
-
-        cached_sha=""
-        if [ -f "$CACHE_FILE" ]; then
-          cached_sha=$(tr -d '[:space:]' < "$CACHE_FILE")
-        fi
-
-        echo "new-sha=$new_sha" >> "$GITHUB_OUTPUT"
-        echo "cached-sha=$cached_sha" >> "$GITHUB_OUTPUT"
-
-        if [ "$new_sha" != "$cached_sha" ]; then
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "Upstream spec changed: $cached_sha -> $new_sha"
-        else
-          echo "changed=false" >> "$GITHUB_OUTPUT"
-          echo "Upstream spec unchanged ($new_sha)"
-        fi
+      run: nix run github:pleme-io/tatara-lisp#script -- ${{ github.action_path }}/run.tlisp

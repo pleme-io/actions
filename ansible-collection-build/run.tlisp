@@ -1,0 +1,39 @@
+;; ansible-collection-build/run.tlisp — invoke substrate's `nix run .#build`
+;; app and then surface the produced tarball path + collection version to
+;; $GITHUB_OUTPUT. Replaces the inlined bash block in action.yml. Inputs:
+;;
+;;   GITHUB_OUTPUT — provided by GitHub Actions
+
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+;; ── Build ──────────────────────────────────────────────────────────
+(define status (exec-check "nix" "run" ".#build"))
+(unless (= status 0)
+  (log-error (string-append "nix run .#build failed with status " (string-format "{}" status)))
+  (exit status))
+
+;; ── Read galaxy.yml for the version ────────────────────────────────
+(define version
+  (if (path-exists? "galaxy.yml")
+    (let ((g (yaml-read "galaxy.yml")))
+      (or (alist-get g "version") ""))
+    ""))
+
+;; ── Locate the tarball produced into CWD ───────────────────────────
+;; substrate's build app drops a single .tar.gz next to galaxy.yml; pick
+;; the first match in lexicographic order (mirrors bash `ls -1 ./*.tar.gz | head -1`).
+(define tarball
+  (let ((matches (glob "./*.tar.gz")))
+    (if (null? matches)
+      (begin
+        (log-error "No tarball produced by 'nix run .#build'")
+        (exit 1))
+      (car matches))))
+
+(append-output (string-append "tarball-path=" tarball))
+(append-output (string-append "version=" version))
+(log-info (string-append "Built " tarball " (version=" version ")"))

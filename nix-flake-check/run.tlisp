@@ -1,0 +1,30 @@
+;; nix-flake-check/run.tlisp — wraps `nix flake check` with the standard
+;; pleme-io defaults (e.g. --no-warn-dirty by default). Replaces the
+;; inlined bash block in action.yml. Inputs flow in via env vars:
+;;
+;;   FLAKE_ARGS    — extra args appended verbatim (e.g. "--override-input …")
+;;   NO_WARN_DIRTY — "true" / "false" (default "true")
+;;
+;; The action.yml shim is one line: `nix run github:pleme-io/tatara-lisp#script -- run.tlisp`.
+
+(define flake-args (env-get "FLAKE_ARGS" ""))
+(define no-warn-dirty (env-get "NO_WARN_DIRTY" "true"))
+
+;; Build the arg list: ("flake" "check" ?--no-warn-dirty? ?…FLAKE_ARGS…)
+(define base (list "flake" "check"))
+(define with-warn
+  (if (equal? no-warn-dirty "true")
+    (append base (list "--no-warn-dirty"))
+    base))
+
+;; FLAKE_ARGS is space-separated. Filter empties so an empty env var
+;; doesn't introduce a literal "" arg that confuses nix's argv parser.
+(define extra
+  (filter (lambda (s) (not (equal? s "")))
+          (string-split flake-args " ")))
+
+(define full-args (append with-warn extra))
+
+(log-info (string-append "nix " (string-join " " full-args)))
+(define status (apply exec-check (cons "nix" full-args)))
+(exit status)

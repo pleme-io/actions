@@ -1,0 +1,53 @@
+;; substrate-bump/run.tlisp — drive substrate's `nix run .#bump -- <type>`
+;; app, then emit the before/after version to GITHUB_OUTPUT. Replaces
+;; the inlined bash block in action.yml. Inputs flow in via env vars:
+;;
+;;   BUMP_TYPE      — patch | minor | major (default "patch")
+;;   RELEASE_PATHS  — informational; substrate is source of truth
+;;   GITHUB_OUTPUT  — provided by GitHub Actions
+;;
+;; Outputs (appended as KEY=VALUE lines to $GITHUB_OUTPUT):
+;;   bumped       true | false
+;;   new-version  resulting version, or empty when bumped=false
+
+(define bump-type (env-get "BUMP_TYPE" "patch"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (version-from-galaxy)
+  ;; Returns the current `version:` field, or empty when galaxy.yml is
+  ;; missing / malformed. Mirrors the bash `grep -E '^version:'` shape.
+  (if (path-exists? "galaxy.yml")
+    (let ((g (yaml-read "galaxy.yml")))
+      (or (alist-get g "version") ""))
+    ""))
+
+(define (append-output line)
+  ;; GITHUB_OUTPUT is append-only; we read + write to keep the prior
+  ;; contents intact (consistent with bash `>>`).
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+(define before (version-from-galaxy))
+
+;; Drive the bump. `nix run .#bump -- <type>` writes the new version
+;; into galaxy.yml + commits + tags. On non-zero exit, surface bumped=false
+;; and propagate the failure.
+(define status (exec-check "nix" "run" ".#bump" "--" bump-type))
+
+(cond
+  ((= status 0)
+   (let ((after (version-from-galaxy)))
+     (cond
+       ((and (not (equal? after "")) (not (equal? after before)))
+        (append-output "bumped=true")
+        (append-output (string-append "new-version=" after))
+        (log-info (string-append "bumped " before " -> " after)))
+       (else
+        (append-output "bumped=false")
+        (append-output "new-version=")
+        (log-info "no version change detected")))))
+  (else
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (log-error (string-append "nix run .#bump failed with status " (string-format "{}" status)))
+   (exit status)))

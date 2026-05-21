@@ -15,12 +15,6 @@ runs:
       uses: DeterminateSystems/nix-installer-action@main
     - name: Enable magic Nix cache
       uses: DeterminateSystems/magic-nix-cache-action@main
-    - name: Publish collection
+    - name: Publish collection (via tatara-script)
       shell: bash
-      run: |
-        set -euo pipefail
-        if [ -z "${ANSIBLE_GALAXY_TOKEN:-}" ]; then
-          echo "ANSIBLE_GALAXY_TOKEN not set — skipping publish (no-op)"
-          exit 0
-        fi
-        nix run .#publish
+      run: nix run github:pleme-io/tatara-lisp#script -- ${{ github.action_path }}/run.tlisp

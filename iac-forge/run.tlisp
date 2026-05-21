@@ -1,0 +1,85 @@
+;; iac-forge/run.tlisp — Download the iac-forge-cli binary for the host
+;; platform, then invoke it with the supplied backend / spec / resources /
+;; provider / data-sources / output flags. Replaces two separate bash
+;; steps with one .tlisp body. Inputs flow in via env vars:
+;;
+;;   INPUT_VERSION       — version tag, or "latest" (default "latest")
+;;   INPUT_BACKEND       — ansible | terraform | pulumi | crossplane | …
+;;   INPUT_SPEC          — path to OpenAPI spec
+;;   INPUT_RESOURCES     — path to resource TOML directory
+;;   INPUT_PROVIDER      — path to provider.toml
+;;   INPUT_DATA_SOURCES  — optional path to data-source TOML directory
+;;   INPUT_OUTPUT        — output directory for generated artifacts
+;;   RUNNER_OS / RUNNER_ARCH — provided by GitHub Actions
+
+;; ── Platform suffix ────────────────────────────────────────────────
+(define runner-os (env-get "RUNNER_OS" ""))
+(define runner-arch (env-get "RUNNER_ARCH" ""))
+(define os-arch (string-append runner-os "-" runner-arch))
+(define suffix
+  (cond
+    ((equal? os-arch "Linux-X64")   "linux-x86_64")
+    ((equal? os-arch "Linux-ARM64") "linux-aarch64")
+    ((equal? os-arch "macOS-X64")   "macos-x86_64")
+    ((equal? os-arch "macOS-ARM64") "macos-aarch64")
+    (else
+      (log-error (string-append "Unsupported runner: " os-arch))
+      (exit 1))))
+
+;; ── Resolve version ────────────────────────────────────────────────
+(define version-input (env-get "INPUT_VERSION" "latest"))
+(define release-api "https://api.github.com/repos/pleme-io/iac-forge-cli/releases/latest")
+
+(define resolved-version
+  (if (equal? version-input "latest")
+    (let* ((body (http-get-json release-api))
+           (tag (alist-get body "tag_name")))
+      (when (or (null? tag) (equal? tag ""))
+        (log-error "Could not resolve latest tag from pleme-io/iac-forge-cli releases")
+        (exit 1))
+      tag)
+    version-input))
+
+(log-info (string-append "iac-forge version: " resolved-version))
+
+;; ── Download binary ────────────────────────────────────────────────
+;; http-get returns a UTF-8 string, which would corrupt a binary; shell
+;; out to curl for the actual byte stream. The tlisp script still owns
+;; the URL composition + flow.
+(define dl-url
+  (string-append "https://github.com/pleme-io/iac-forge-cli/releases/download/"
+                 resolved-version "/iac-forge-" suffix))
+(define binary-path "/tmp/iac-forge")
+(log-info (string-append "Downloading " dl-url))
+(define dl-status (exec-check "curl" "-sSL" "-f" dl-url "-o" binary-path))
+(unless (= dl-status 0)
+  (log-error (string-append "curl download failed with status " (string-format "{}" dl-status)))
+  (exit dl-status))
+(define chmod-status (exec-check "chmod" "+x" binary-path))
+(unless (= chmod-status 0) (exit chmod-status))
+
+;; ── Run generate ───────────────────────────────────────────────────
+(define backend (env-required "INPUT_BACKEND"))
+(define spec (env-required "INPUT_SPEC"))
+(define resources (env-required "INPUT_RESOURCES"))
+(define provider (env-required "INPUT_PROVIDER"))
+(define data-sources (env-get "INPUT_DATA_SOURCES" ""))
+(define output (env-required "INPUT_OUTPUT"))
+
+(define base-args
+  (list "generate"
+        "--backend" backend
+        "--spec" spec
+        "--resources" resources
+        "--provider" provider))
+
+(define with-ds
+  (if (equal? data-sources "")
+    base-args
+    (append base-args (list "--data-sources" data-sources))))
+
+(define full-args (append with-ds (list "--output" output)))
+
+(log-info (string-append binary-path " " (string-join " " full-args)))
+(define status (apply exec-check (cons binary-path full-args)))
+(exit status)
