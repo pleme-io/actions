@@ -62,17 +62,18 @@
       ((>= (length sq-parts) 2) (cadr sq-parts))
       (else ""))))
 
+(define (first-version-line ls)
+  (cond
+    ((null? ls) "")
+    ((and (string-contains? (car ls) "VERSION")
+          (string-contains? (car ls) "="))
+     (extract-quoted-value (car ls)))
+    (else (first-version-line (cdr ls)))))
+
 (define (read-gem-version gem-name)
   (let ((path (gem-version-file gem-name)))
     (if (not (path-exists? path)) ""
-      (let ((lines (string-split (read-file path) "\n")))
-        (let loop ((ls lines))
-          (cond
-            ((null? ls) "")
-            ((and (string-contains? (car ls) "VERSION")
-                  (string-contains? (car ls) "="))
-             (extract-quoted-value (car ls)))
-            (else (loop (cdr ls)))))))))
+      (first-version-line (string-split (read-file path) "\n")))))
 
 (define (gem-bump )
   (exec-check "nix" "run" ".#gem:bump" "--" bump-type))
