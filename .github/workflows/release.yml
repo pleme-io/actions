@@ -19,3 +19,8 @@ jobs:
     uses: pleme-io/substrate/.github/workflows/action-release.yml@main
     permissions:
       contents: write
+    with:
+      # All consumers pin `@v1` against this monorepo regardless of
+      # whether we're shipping a 0.x or 1.x line — keep the floating
+      # major stable at `v1` until we ever bump to 2.0.
+      major-ref: v1
