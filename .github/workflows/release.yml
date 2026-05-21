@@ -1,8 +1,10 @@
 name: release
 
-# When a vMAJOR.MINOR.PATCH tag is pushed, fast-forward the matching
-# major-version branch (e.g. `v1` for `v1.2.3`) to the tagged commit
-# so that consumers pinning `@v1` get the latest minor/patch.
+# When a vMAJOR.MINOR.PATCH tag is pushed, delegate end-to-end release
+# orchestration (validate action.yml manifests -> fast-forward major
+# branch -> cut GH Release) to substrate's reusable action-release
+# workflow. This file is intentionally a thin wrapper — all release
+# behavior lives in pleme-io/substrate/.github/workflows/action-release.yml.
 
 on:
   push:
@@ -13,28 +15,7 @@ permissions:
   contents: write
 
 jobs:
-  bump-major:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Extract major from tag
-        id: tag
-        run: |
-          set -euo pipefail
-          ref="${GITHUB_REF##refs/tags/}"
-          major="${ref%%.*}"   # v1.2.3 -> v1
-          echo "tag=$ref" >> "$GITHUB_OUTPUT"
-          echo "major=$major" >> "$GITHUB_OUTPUT"
-      - name: Fast-forward major branch
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-          MAJOR: ${{ steps.tag.outputs.major }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Recreate / fast-forward the major branch to the tag's commit
-          git push origin "+refs/tags/$TAG:refs/heads/$MAJOR"
-          echo "Pushed $MAJOR -> $TAG"
+  release:
+    uses: pleme-io/substrate/.github/workflows/action-release.yml@main
+    permissions:
+      contents: write
