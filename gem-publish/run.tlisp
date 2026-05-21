@@ -71,15 +71,24 @@
 (define gem-file (string-append gem-name "-" tag-version ".gem"))
 (define push-result (exec-capture "gem" "push" gem-file))
 (define push-status (alist-get push-result :status))
+(define push-stdout (alist-get push-result :stdout))
 (define push-stderr (alist-get push-result :stderr))
+;; rubygems CLI prints some failures to stdout (e.g. duplicate-push
+;; refusals), others to stderr — grep both so the tolerance check is
+;; resilient regardless of where rubygems lands the message.
+(define push-output (string-append push-stdout "\n" push-stderr))
 
 (cond
   ((= push-status 0)
    (log-info (string-append "published " gem-name " " tag-version)))
-  ((or (string-contains? push-stderr "has already been pushed")
-       (string-contains? push-stderr "Repushing of gem versions"))
+  ((or (string-contains? push-output "has already been pushed")
+       (string-contains? push-output "Repushing of gem versions"))
    (log-info (string-append "version " tag-version
                             " already published; treating as success.")))
   (else
-   (log-error push-stderr)
+   ;; Surface BOTH streams when failing so the underlying CLI message
+   ;; (which sometimes lands on stdout, sometimes stderr) shows up in
+   ;; the action log.
+   (log-error (string-append "gem push failed:\nSTDOUT:\n" push-stdout
+                             "\nSTDERR:\n" push-stderr))
    (exit push-status)))
