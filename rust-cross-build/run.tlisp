@@ -1,0 +1,72 @@
+;; rust-cross-build/run.tlisp — cargo build + stage artifact.
+;;
+;; cargo build --release --target $TARGET [--features $FEATURES]
+;;                                        [--no-default-features]
+;;
+;; Then copies target/<TARGET>/release/<BIN> -> dist/<BIN>-<SUFFIX>
+;; and emits a sha256 sidecar at dist/<BIN>-<SUFFIX>.sha256.
+;;
+;; Inputs (env):
+;;   BIN          — cargo binary name
+;;   TARGET       — rust target triple
+;;   SUFFIX       — artifact suffix (e.g. "linux-x86_64")
+;;   FEATURES     — optional space-separated cargo features
+;;   NO_DEFAULTS  — "true" to pass --no-default-features
+;;
+;; Pre-condition: rust toolchain + target already installed (caller
+;; does dtolnay/rust-toolchain@stable and any cross-linker setup).
+
+(define bin         (env-required "BIN"))
+(define target      (env-required "TARGET"))
+(define suffix      (env-required "SUFFIX"))
+(define features    (env-get      "FEATURES"    ""))
+(define no-defaults (equal? (env-get "NO_DEFAULTS" "false") "true"))
+
+;; ---------- build ---------- ;;
+
+(define base-args (list "cargo" "build" "--release" "--target" target))
+
+(define with-features
+  (if (equal? features "")
+    base-args
+    (append base-args (list "--features" features))))
+
+(define final-args
+  (if no-defaults
+    (append with-features (list "--no-default-features"))
+    with-features))
+
+(log-info (string-append "building " bin " for " target
+                         (if (equal? features "") ""
+                             (string-append " (features: " features ")"))
+                         (if no-defaults " --no-default-features" "")))
+
+(define build-status (apply exec-check final-args))
+(when (not (= build-status 0))
+  (log-error (string-append "cargo build failed (status "
+                            (string-format "{}" build-status) ")"))
+  (exit build-status))
+
+;; ---------- stage ---------- ;;
+
+(define src-path (string-append "target/" target "/release/" bin))
+(define dst-name (string-append bin "-" suffix))
+(define dst-path (string-append "dist/" dst-name))
+
+(exec-check "mkdir" "-p" "dist")
+
+(define cp-status (exec-check "cp" src-path dst-path))
+(when (not (= cp-status 0))
+  (log-error (string-append "could not copy " src-path " -> " dst-path))
+  (exit cp-status))
+
+;; sha256 sidecar — note we cd into dist so the file in the sum has
+;; the basename only (matches the bash `(cd dist && shasum ...)` shape).
+(define sha-status
+  (exec-check "sh" "-c"
+              (string-append "cd dist && shasum -a 256 \"" dst-name "\" > \"" dst-name ".sha256\"")))
+(when (not (= sha-status 0))
+  (log-error "shasum failed")
+  (exit sha-status))
+
+(log-info (string-append "staged " dst-path " + " dst-path ".sha256"))

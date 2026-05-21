@@ -1,0 +1,48 @@
+name: 'pleme-io · rust-cross-build'
+description: 'cargo build --release for a target, stage binary + sha256 into ./dist'
+branding:
+  icon: 'box'
+  color: 'orange'
+
+inputs:
+  binary-name:
+    description: "Cargo binary name (used for target/<triple>/release/<name> and the staged artifact basename)"
+    required: true
+  target:
+    description: "Rust target triple (e.g. x86_64-unknown-linux-gnu)"
+    required: true
+  suffix:
+    description: "Artifact suffix appended to <binary-name> (e.g. linux-x86_64)"
+    required: true
+  features:
+    description: "Space-separated cargo features; empty = no --features flag"
+    required: false
+    default: ""
+  no-default-features:
+    description: "When 'true', pass --no-default-features"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Build + stage
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BIN:         ${{ inputs.binary-name }}
+        TARGET:      ${{ inputs.target }}
+        SUFFIX:      ${{ inputs.suffix }}
+        FEATURES:    ${{ inputs.features }}
+        NO_DEFAULTS: ${{ inputs.no-default-features }}
