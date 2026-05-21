@@ -58,8 +58,8 @@
   (let* ((dq-parts (string-split line "\""))
          (sq-parts (string-split line "'")))
     (cond
-      ((>= (length dq-parts) 2) (cadr dq-parts))
-      ((>= (length sq-parts) 2) (cadr sq-parts))
+      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
+      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
       (else ""))))
 
 (define (first-version-line ls)

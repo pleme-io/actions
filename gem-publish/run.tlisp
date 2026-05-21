@@ -25,8 +25,8 @@
   (let* ((dq (string-split line "\""))
          (sq (string-split line "'")))
     (cond
-      ((>= (length dq) 2) (cadr dq))
-      ((>= (length sq) 2) (cadr sq))
+      ((>= (length dq) 2) (car (cdr dq)))
+      ((>= (length sq) 2) (car (cdr sq)))
       (else ""))))
 
 (define (first-version-line ls)
