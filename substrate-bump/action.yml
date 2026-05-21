@@ -27,8 +27,7 @@ runs:
   steps:
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@main
-    - name: Enable magic Nix cache
-      uses: DeterminateSystems/magic-nix-cache-action@main
+
     # Load run.tlisp into an output so the redistributable tatara-script
     # action can execute it without us re-implementing the install path.
     - name: Load run.tlisp
