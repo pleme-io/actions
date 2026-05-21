@@ -4,14 +4,21 @@
 ;; branch runs still emit a sensible value.
 ;;
 ;; Inputs (env):
-;;   REF_NAME       — typically ${{ github.ref_name }}
+;;   INPUT_REF_NAME — GHA Docker-action auto-mapping of input "ref-name"
+;;                    (composite-mode legacy fallback: REF_NAME)
 ;;   GITHUB_OUTPUT  — provided by GitHub Actions
 ;;
 ;; Outputs (appended to $GITHUB_OUTPUT):
-;;   version        REF_NAME with leading "v" stripped
+;;   version        ref-name with leading "v" stripped
 
-(define ref-name  (env-required "REF_NAME"))
+(define ref-name
+  (env-get "INPUT_REF_NAME"
+    (env-get "REF_NAME" "")))
 (define gh-output (env-required "GITHUB_OUTPUT"))
+
+(when (equal? ref-name "")
+  (log-error "no ref-name supplied (set INPUT_REF_NAME or REF_NAME)")
+  (exit 1))
 
 (define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
