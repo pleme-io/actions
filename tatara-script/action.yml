@@ -17,6 +17,24 @@ inputs:
     required: false
     default: ""
 
+# Composite-action outputs are explicit forwards, not wildcards.
+# Tatara-script declares the well-known output names that callers
+# may consume from a tlisp script's $GITHUB_OUTPUT writes. If a new
+# output key is needed, add it here so the forward exists.
+outputs:
+  version:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: version)"
+    value: ${{ steps.exec.outputs.version }}
+  bumped:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: bumped)"
+    value: ${{ steps.exec.outputs.bumped }}
+  new-version:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: new-version)"
+    value: ${{ steps.exec.outputs.new-version }}
+  result:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
+    value: ${{ steps.exec.outputs.result }}
+
 runs:
   using: composite
   steps:
@@ -79,7 +97,13 @@ runs:
     # Write the embedded script to a tmp file and exec tatara-script on
     # it. We do not pipe via stdin because tatara-script is file-based;
     # this matches the substrate ansible-collection app pattern.
+    #
+    # id: exec is load-bearing — composite outputs forward only via
+    # `steps.<id>.outputs.<key>`, so any GITHUB_OUTPUT writes the
+    # tlisp script makes here are exposed to the caller via the
+    # outputs: block below.
     - name: Run script
+      id: exec
       shell: bash
       env:
         TATARA_SCRIPT_SRC: ${{ inputs.script }}
