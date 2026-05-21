@@ -1,0 +1,88 @@
+;; helm-oci-publish/run.tlisp — lint + package + push a Helm chart.
+;;
+;; Tries `nix run .#forge -- helm release ...` first; falls back to
+;; `nix shell nixpkgs#kubernetes-helm` for lint/package/push if forge
+;; isn't exposed in the consumer's flake.
+;;
+;; Inputs (env):
+;;   CHART_PATH      — path to the chart directory (must contain Chart.yaml)
+;;   REGISTRY        — oci:// URL
+;;   VERSION         — optional override; empty means "use Chart.yaml's version"
+;;   LIB_CHART_DIR   — optional sibling library chart dir (for file:// deps)
+;;   LIB_CHART_NAME  — library chart name (default "pleme-lib")
+;;
+;; Pre-condition: helm registry login already done by the caller
+;; workflow (the docker/login-equivalent for OCI Helm). Nix already
+;; installed.
+
+(define chart-path     (env-required "CHART_PATH"))
+(define registry       (env-required "REGISTRY"))
+(define version        (env-get      "VERSION"        ""))
+(define lib-chart-dir  (env-get      "LIB_CHART_DIR"  ""))
+(define lib-chart-name (env-get      "LIB_CHART_NAME" "pleme-lib"))
+
+(define (forge-available?)
+  (exec-ok? "nix" "run" ".#forge" "--" "--help"))
+
+(define (push-via-forge)
+  ;; Build args list dynamically: --version and --lib-chart-dir are
+  ;; only included when their inputs are non-empty.
+  (define base (list "nix" "run" ".#forge" "--"
+                     "helm" "release"
+                     "--chart-dir" chart-path
+                     "--registry"  registry))
+  (define with-version
+    (if (equal? version "")
+      base
+      (append base (list "--version" version))))
+  (define final
+    (if (equal? lib-chart-dir "")
+      with-version
+      (append with-version
+              (list "--lib-chart-dir" lib-chart-dir
+                    "--lib-chart-name" lib-chart-name))))
+  (apply exec-check final))
+
+(define (helm-lint)
+  (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+              "helm" "lint" chart-path))
+
+(define (helm-package)
+  ;; Always package into ./dist so a subsequent helm-push knows where
+  ;; to look. If VERSION is empty, helm uses Chart.yaml's version.
+  (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+              "sh" "-c"
+              (string-append "mkdir -p dist && helm package " chart-path
+                             " --destination dist"
+                             (if (equal? version "") ""
+                                 (string-append " --version " version)))))
+
+(define (helm-push)
+  (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+              "sh" "-c"
+              (string-append "tgz=$(ls -1 dist/*.tgz | head -n1) && "
+                             "helm push \"$tgz\" " registry)))
+
+(define (push-via-helm-cli)
+  (define lint-status    (helm-lint))
+  (cond
+    ((not (= lint-status 0)) (exit lint-status))
+    (else
+     (define pkg-status (helm-package))
+     (cond
+       ((not (= pkg-status 0)) (exit pkg-status))
+       (else (helm-push))))))
+
+(log-info (string-append "publishing " chart-path " -> " registry))
+
+(define status
+  (if (forge-available?)
+    (begin (log-info "using forge helm release") (push-via-forge))
+    (begin (log-info "forge not in flake; using helm CLI") (push-via-helm-cli))))
+
+(when (not (= status 0))
+  (log-error (string-append "helm publish failed (status "
+                            (string-format "{}" status) ")"))
+  (exit status))
+
+(log-info "helm chart published")
