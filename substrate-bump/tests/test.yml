@@ -1,0 +1,20 @@
+name: test-substrate-bump
+on:
+  push:
+    paths:
+      - 'substrate-bump/**'
+  pull_request:
+    paths:
+      - 'substrate-bump/**'
+
+# NOTE: this smoke test requires a substrate-style flake exposing a
+# `bump` app. We skip the actual run in CI and just exercise that the
+# action.yml parses; full integration is exercised by consumer repos.
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate action.yml parses
+        run: |
+          python3 -c "import yaml,sys; yaml.safe_load(open('substrate-bump/action.yml')); print('ok')"

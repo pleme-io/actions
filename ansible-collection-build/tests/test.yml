@@ -1,0 +1,17 @@
+name: test-ansible-collection-build
+on:
+  push:
+    paths:
+      - 'ansible-collection-build/**'
+  pull_request:
+    paths:
+      - 'ansible-collection-build/**'
+
+# Parse-only smoke. Full exercise requires a substrate-flake-enabled
+# collection repo, which is covered downstream.
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -c "import yaml; yaml.safe_load(open('ansible-collection-build/action.yml')); print('ok')"

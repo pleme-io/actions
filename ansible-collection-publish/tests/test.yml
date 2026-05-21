@@ -1,0 +1,15 @@
+name: test-ansible-collection-publish
+on:
+  push:
+    paths:
+      - 'ansible-collection-publish/**'
+  pull_request:
+    paths:
+      - 'ansible-collection-publish/**'
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -c "import yaml; yaml.safe_load(open('ansible-collection-publish/action.yml')); print('ok')"

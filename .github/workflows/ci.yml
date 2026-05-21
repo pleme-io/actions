@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate-action-yml:
+    name: Validate every action.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check each action has an action.yml
+        run: |
+          set -euo pipefail
+          for a in iac-forge substrate-bump nix-flake-check ansible-collection-build ansible-collection-publish spec-watch; do
+            if [ -f "$a/action.yml" ]; then
+              echo "$a OK"
+            else
+              echo "$a MISSING action.yml"
+              exit 1
+            fi
+          done
+      - name: Parse each action.yml as YAML and check required keys
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml, pathlib
+          rc = 0
+          for p in sorted(pathlib.Path('.').glob('*/action.yml')):
+              try:
+                  doc = yaml.safe_load(p.read_text())
+              except Exception as e:
+                  print(f"FAIL {p}: {e}")
+                  rc = 1
+                  continue
+              required = {'name', 'description', 'runs'}
+              missing = required - set(doc or {})
+              if missing:
+                  print(f"FAIL {p}: missing keys {missing}")
+                  rc = 1
+                  continue
+              using = doc['runs'].get('using')
+              if using != 'composite':
+                  print(f"WARN {p}: not composite (using={using})")
+              print(f"OK   {p}")
+          sys.exit(rc)
+          PY
+
+  smoke-spec-watch:
+    name: Smoke — spec-watch (pure shell, no upstream dep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: First run (no cache) — changed=true
+        id: first
+        uses: ./spec-watch
+        with:
+          upstream-url: https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/README.md
+          cache-file: /tmp/spec-watch-cache
+      - name: Verify first run reports changed
+        env:
+          CHANGED: ${{ steps.first.outputs.changed }}
+          NEW_SHA: ${{ steps.first.outputs.new-sha }}
+        run: |
+          set -euo pipefail
+          [ "$CHANGED" = "true" ] || { echo "expected changed=true got $CHANGED"; exit 1; }
+          [ -n "$NEW_SHA" ] || { echo "expected non-empty new-sha"; exit 1; }
+          echo "$NEW_SHA" > /tmp/spec-watch-cache
+      - name: Second run (cache primed) — changed=false
+        id: second
+        uses: ./spec-watch
+        with:
+          upstream-url: https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/README.md
+          cache-file: /tmp/spec-watch-cache
+      - name: Verify second run reports unchanged
+        env:
+          CHANGED: ${{ steps.second.outputs.changed }}
+        run: |
+          [ "$CHANGED" = "false" ] || { echo "expected changed=false got $CHANGED"; exit 1; }

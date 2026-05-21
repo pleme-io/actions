@@ -1,0 +1,83 @@
+name: 'pleme-io · iac-forge'
+description: 'Run iac-forge codegen against a spec + provider TOML'
+branding:
+  icon: 'package'
+  color: 'purple'
+
+inputs:
+  backend:
+    description: "ansible | terraform | pulumi | crossplane | steampipe | helm"
+    required: true
+  spec:
+    description: "Path to OpenAPI spec (yaml/json)"
+    required: true
+  resources:
+    description: "Path to resource TOML directory"
+    required: true
+  provider:
+    description: "Path to provider.toml"
+    required: true
+  data-sources:
+    description: "Path to data-source TOML directory (optional)"
+    required: false
+    default: ""
+  output:
+    description: "Output directory for generated artifacts"
+    required: true
+  version:
+    description: "iac-forge-cli version to use (e.g. v0.2.0 or 'latest')"
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Download iac-forge binary
+      shell: bash
+      env:
+        VERSION_INPUT: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64)    S=linux-x86_64  ;;
+          Linux-ARM64)  S=linux-aarch64 ;;
+          macOS-X64)    S=macos-x86_64  ;;
+          macOS-ARM64)  S=macos-aarch64 ;;
+          *) echo "Unsupported runner: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+        esac
+        V="$VERSION_INPUT"
+        if [ "$V" = "latest" ]; then
+          V=$(curl -sSL https://api.github.com/repos/pleme-io/iac-forge-cli/releases/latest \
+              | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+          if [ -z "$V" ]; then
+            echo "Could not resolve latest tag from pleme-io/iac-forge-cli releases" >&2
+            exit 1
+          fi
+        fi
+        URL="https://github.com/pleme-io/iac-forge-cli/releases/download/${V}/iac-forge-${S}"
+        echo "Downloading $URL"
+        curl -sSL -f "$URL" -o /tmp/iac-forge
+        chmod +x /tmp/iac-forge
+
+    - name: Run iac-forge generate
+      shell: bash
+      env:
+        BACKEND: ${{ inputs.backend }}
+        SPEC: ${{ inputs.spec }}
+        RESOURCES: ${{ inputs.resources }}
+        PROVIDER: ${{ inputs.provider }}
+        DATA_SOURCES: ${{ inputs.data-sources }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        ds_flag=()
+        if [ -n "$DATA_SOURCES" ]; then
+          ds_flag=(--data-sources "$DATA_SOURCES")
+        fi
+        /tmp/iac-forge generate \
+          --backend "$BACKEND" \
+          --spec "$SPEC" \
+          --resources "$RESOURCES" \
+          --provider "$PROVIDER" \
+          "${ds_flag[@]}" \
+          --output "$OUTPUT"

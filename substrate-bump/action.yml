@@ -1,0 +1,64 @@
+name: 'pleme-io · substrate-bump'
+description: 'Bump version using substrate flake `bump` app (nix run .#bump -- <type>)'
+branding:
+  icon: 'arrow-up-circle'
+  color: 'green'
+
+inputs:
+  bump-type:
+    description: "patch | minor | major"
+    required: false
+    default: patch
+  release-paths:
+    description: "Space-separated paths the bump app should touch (default: plugins/ meta/ galaxy.yml)"
+    required: false
+    default: "plugins/ meta/ galaxy.yml"
+
+outputs:
+  bumped:
+    description: "true if a bump was performed, false if no-op"
+    value: ${{ steps.bump.outputs.bumped }}
+  new-version:
+    description: "New version after bump (empty if no-op)"
+    value: ${{ steps.bump.outputs.new-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix (DeterminateSystems)
+      uses: DeterminateSystems/nix-installer-action@main
+    - name: Enable magic Nix cache
+      uses: DeterminateSystems/magic-nix-cache-action@main
+    - name: Run substrate bump app
+      id: bump
+      shell: bash
+      env:
+        BUMP_TYPE: ${{ inputs.bump-type }}
+        RELEASE_PATHS: ${{ inputs.release-paths }}
+      run: |
+        set -euo pipefail
+        # Capture the pre-bump version (best-effort; falls back to empty)
+        before=""
+        if [ -f galaxy.yml ]; then
+          before=$(grep -E '^version:' galaxy.yml | head -1 | awk '{print $2}' | tr -d '"' || true)
+        fi
+        # Invoke substrate's bump app. We don't try to inject release-paths
+        # because the substrate flake is the source of truth for which paths
+        # it touches; this input is documented for forward-compat.
+        if nix run .#bump -- "$BUMP_TYPE"; then
+          after=""
+          if [ -f galaxy.yml ]; then
+            after=$(grep -E '^version:' galaxy.yml | head -1 | awk '{print $2}' | tr -d '"' || true)
+          fi
+          if [ -n "$after" ] && [ "$after" != "$before" ]; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "new-version=$after" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "new-version=" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "bumped=false" >> "$GITHUB_OUTPUT"
+          echo "new-version=" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

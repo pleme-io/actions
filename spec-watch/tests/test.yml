@@ -1,0 +1,44 @@
+name: test-spec-watch
+on:
+  push:
+    paths:
+      - 'spec-watch/**'
+  pull_request:
+    paths:
+      - 'spec-watch/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: First run (no cache) — should report changed=true
+        id: first
+        uses: ./spec-watch
+        with:
+          upstream-url: https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/README.md
+          cache-file: /tmp/spec-watch-cache
+
+      - name: Assert first run changed=true and new-sha non-empty
+        env:
+          CHANGED: ${{ steps.first.outputs.changed }}
+          NEW_SHA: ${{ steps.first.outputs.new-sha }}
+        run: |
+          set -euo pipefail
+          [ "$CHANGED" = "true" ] || { echo "expected changed=true got $CHANGED"; exit 1; }
+          [ -n "$NEW_SHA" ] || { echo "expected non-empty new-sha"; exit 1; }
+          echo "$NEW_SHA" > /tmp/spec-watch-cache
+
+      - name: Second run (cache primed) — should report changed=false
+        id: second
+        uses: ./spec-watch
+        with:
+          upstream-url: https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/README.md
+          cache-file: /tmp/spec-watch-cache
+
+      - name: Assert second run changed=false
+        env:
+          CHANGED: ${{ steps.second.outputs.changed }}
+        run: |
+          [ "$CHANGED" = "false" ] || { echo "expected changed=false got $CHANGED"; exit 1; }

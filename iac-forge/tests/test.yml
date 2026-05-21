@@ -1,0 +1,38 @@
+name: test-iac-forge
+on:
+  push:
+    paths:
+      - 'iac-forge/**'
+  pull_request:
+    paths:
+      - 'iac-forge/**'
+
+# NOTE: this test will fail until pleme-io/iac-forge-cli ships its first
+# binary release. Once a `v*` tag is pushed there, set `version:` below
+# to that tag (or leave it as `latest`).
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create minimal fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p fx/resources fx/output
+          cat > fx/openapi.yaml <<'YAML'
+          openapi: 3.0.0
+          info: { title: test, version: 0.0.0 }
+          paths: {}
+          YAML
+          cat > fx/provider.toml <<'TOML'
+          name = "test"
+          TOML
+      - uses: ./iac-forge
+        continue-on-error: true   # remove once first binary release exists
+        with:
+          backend: ansible
+          spec: fx/openapi.yaml
+          resources: fx/resources
+          provider: fx/provider.toml
+          output: fx/output
+          version: latest

@@ -1,0 +1,32 @@
+name: test-nix-flake-check
+on:
+  push:
+    paths:
+      - 'nix-flake-check/**'
+  pull_request:
+    paths:
+      - 'nix-flake-check/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create minimal flake fixture
+        run: |
+          set -euo pipefail
+          mkdir -p fx
+          cat > fx/flake.nix <<'NIX'
+          {
+            description = "fixture";
+            inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+            outputs = { self, nixpkgs }: {
+              checks.x86_64-linux.dummy =
+                nixpkgs.legacyPackages.x86_64-linux.runCommand "dummy" {} "touch $out";
+            };
+          }
+          NIX
+      - name: Run flake check against fixture
+        uses: ./nix-flake-check
+        with:
+          flake-args: "fx#"

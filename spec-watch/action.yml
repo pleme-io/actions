@@ -1,0 +1,57 @@
+name: 'pleme-io · spec-watch'
+description: 'Detect changes in an upstream OpenAPI/JSON spec by sha256 against a cached value'
+branding:
+  icon: 'eye'
+  color: 'yellow'
+
+inputs:
+  upstream-url:
+    description: "URL of the upstream spec (OpenAPI yaml/json or any text/binary file)"
+    required: true
+  cache-file:
+    description: "Path (relative to repo root) where the last-seen sha256 is stored"
+    required: false
+    default: .ci/openapi-sha
+
+outputs:
+  changed:
+    description: "true if the upstream sha differs from cached, false otherwise"
+    value: ${{ steps.compare.outputs.changed }}
+  new-sha:
+    description: "sha256 of the upstream spec fetched this run"
+    value: ${{ steps.compare.outputs.new-sha }}
+  cached-sha:
+    description: "sha256 previously stored in the cache file (empty if first run)"
+    value: ${{ steps.compare.outputs.cached-sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compare upstream sha with cache
+      id: compare
+      shell: bash
+      env:
+        UPSTREAM_URL: ${{ inputs.upstream-url }}
+        CACHE_FILE: ${{ inputs.cache-file }}
+      run: |
+        set -euo pipefail
+        tmp=$(mktemp)
+        curl -sSL -f "$UPSTREAM_URL" -o "$tmp"
+        new_sha=$(sha256sum "$tmp" | awk '{print $1}')
+        rm -f "$tmp"
+
+        cached_sha=""
+        if [ -f "$CACHE_FILE" ]; then
+          cached_sha=$(tr -d '[:space:]' < "$CACHE_FILE")
+        fi
+
+        echo "new-sha=$new_sha" >> "$GITHUB_OUTPUT"
+        echo "cached-sha=$cached_sha" >> "$GITHUB_OUTPUT"
+
+        if [ "$new_sha" != "$cached_sha" ]; then
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "Upstream spec changed: $cached_sha -> $new_sha"
+        else
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          echo "Upstream spec unchanged ($new_sha)"
+        fi

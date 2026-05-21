@@ -1,0 +1,36 @@
+name: 'pleme-io · nix-flake-check'
+description: 'Run `nix flake check` with DeterminateSystems Nix + magic-nix-cache'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  flake-args:
+    description: "Extra arguments appended to `nix flake check` (e.g. --override-input)"
+    required: false
+    default: ""
+  no-warn-dirty:
+    description: "Pass --no-warn-dirty (default true)"
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix (DeterminateSystems)
+      uses: DeterminateSystems/nix-installer-action@main
+    - name: Enable magic Nix cache
+      uses: DeterminateSystems/magic-nix-cache-action@main
+    - name: Run nix flake check
+      shell: bash
+      env:
+        FLAKE_ARGS: ${{ inputs.flake-args }}
+        NO_WARN_DIRTY: ${{ inputs.no-warn-dirty }}
+      run: |
+        set -euo pipefail
+        flags=()
+        if [ "$NO_WARN_DIRTY" = "true" ]; then
+          flags+=(--no-warn-dirty)
+        fi
+        # shellcheck disable=SC2086
+        nix flake check "${flags[@]}" $FLAKE_ARGS
