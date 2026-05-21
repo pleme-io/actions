@@ -28,22 +28,36 @@ runs:
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@main
 
-    # Load run.tlisp into an output so the redistributable tatara-script
-    # action can execute it without us re-implementing the install path.
-    - name: Load run.tlisp
-      id: src
+    # Install tatara-script inline so the bump step that writes
+    # GITHUB_OUTPUT carries our id and the composite outputs: block
+    # can forward it. (Going through pleme-io/actions/tatara-script
+    # would scope GITHUB_OUTPUT writes to that sub-composite where
+    # they're not accessible here.)
+    - name: Install tatara-script
       shell: bash
       run: |
-        {
-          echo 'script<<TLISP_EOF'
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        set -euo pipefail
+        OS=$(uname -s); ARCH=$(uname -m)
+        case "$OS-$ARCH" in
+          Linux-x86_64)   SUFFIX="linux-x86_64";;
+          Linux-aarch64)  SUFFIX="linux-aarch64";;
+          Darwin-x86_64)  SUFFIX="macos-x86_64";;
+          Darwin-arm64)   SUFFIX="macos-aarch64";;
+          *) echo "::error::Unsupported runner: $OS-$ARCH" >&2; exit 1;;
+        esac
+        TAG=$(curl -sSL https://api.github.com/repos/pleme-io/tatara-lisp/releases/latest \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))')
+        BIN_DIR="$RUNNER_TEMP/tatara-script-bin"
+        mkdir -p "$BIN_DIR"
+        URL="https://github.com/pleme-io/tatara-lisp/releases/download/$TAG/tatara-script-$SUFFIX"
+        curl -sSL -f -o "$BIN_DIR/tatara-script" "$URL"
+        chmod +x "$BIN_DIR/tatara-script"
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+
     - name: Run substrate bump app
       id: bump
-      uses: pleme-io/actions/tatara-script@v1
-      with:
-        script: ${{ steps.src.outputs.script }}
+      shell: bash
       env:
         BUMP_TYPE: ${{ inputs.bump-type }}
         RELEASE_PATHS: ${{ inputs.release-paths }}
+      run: tatara-script ${{ github.action_path }}/run.tlisp
