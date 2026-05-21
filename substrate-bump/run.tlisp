@@ -1,9 +1,16 @@
-;; substrate-bump/run.tlisp — drive substrate's `nix run .#bump -- <type>`
-;; app, then emit the before/after version to GITHUB_OUTPUT. Replaces
-;; the inlined bash block in action.yml. Inputs flow in via env vars:
+;; substrate-bump/run.tlisp — polymorphic bump driver.
 ;;
+;; Detects the repo type by file presence and routes to the matching
+;; per-repo flake app. The action's contract is uniform — `bumped` +
+;; `new-version` get emitted to GITHUB_OUTPUT regardless of repo
+;; type — so callers (substrate reusable workflows) compose the same
+;; way for every repo flavour.
+;;
+;;   Ansible collection: galaxy.yml present → `.#bump` (mutates galaxy.yml)
+;;   Ruby gem:           *.gemspec at root  → `.#gem:bump` (mutates lib/<name>/version.rb)
+;;
+;; Inputs (env):
 ;;   BUMP_TYPE      — patch | minor | major (default "patch")
-;;   RELEASE_PATHS  — informational; substrate is source of truth
 ;;   GITHUB_OUTPUT  — provided by GitHub Actions
 ;;
 ;; Outputs (appended as KEY=VALUE lines to $GITHUB_OUTPUT):
@@ -13,41 +20,120 @@
 (define bump-type (env-get "BUMP_TYPE" "patch"))
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define (version-from-galaxy)
-  ;; Returns the current `version:` field, or empty when galaxy.yml is
-  ;; missing / malformed. Mirrors the bash `grep -E '^version:'` shape.
-  (if (path-exists? "galaxy.yml")
-    (let ((g (yaml-read "galaxy.yml")))
-      (or (alist-get g "version") ""))
-    ""))
-
 (define (append-output line)
-  ;; GITHUB_OUTPUT is append-only; we read + write to keep the prior
-  ;; contents intact (consistent with bash `>>`).
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
-(define before (version-from-galaxy))
+;; ---------------------------------------------------------------- ;;
+;; Ansible collection — galaxy.yml as version source                ;;
+;; ---------------------------------------------------------------- ;;
 
-;; Drive the bump. `nix run .#bump -- <type>` writes the new version
-;; into galaxy.yml + commits + tags. On non-zero exit, surface bumped=false
-;; and propagate the failure.
-(define status (exec-check "nix" "run" ".#bump" "--" bump-type))
+(define (ansible? )
+  (path-exists? "galaxy.yml"))
+
+(define (ansible-version )
+  (let ((g (yaml-read "galaxy.yml")))
+    (or (alist-get g "version") "")))
+
+(define (ansible-bump )
+  (exec-check "nix" "run" ".#bump" "--" bump-type))
+
+;; ---------------------------------------------------------------- ;;
+;; Ruby gem — lib/<name>/version.rb as version source               ;;
+;; ---------------------------------------------------------------- ;;
+
+(define (find-gemspec)
+  ;; Return the gem name (stem of <name>.gemspec) or "" if none.
+  (let ((matches (glob "*.gemspec")))
+    (if (null? matches) ""
+      (string-replace (car matches) ".gemspec" ""))))
+
+(define (gem-version-file gem-name)
+  ;; Convention: lib/<gem-name>/version.rb. Kebab-case repo dir name.
+  (string-append "lib/" gem-name "/version.rb"))
+
+(define (extract-quoted-value line)
+  ;; Given a `VERSION = "0.1.0"` line (single or double quotes),
+  ;; return "0.1.0". Returns "" if no quoted value found.
+  (let* ((dq-parts (string-split line "\""))
+         (sq-parts (string-split line "'")))
+    (cond
+      ((>= (length dq-parts) 2) (cadr dq-parts))
+      ((>= (length sq-parts) 2) (cadr sq-parts))
+      (else ""))))
+
+(define (read-gem-version gem-name)
+  (let ((path (gem-version-file gem-name)))
+    (if (not (path-exists? path)) ""
+      (let ((lines (string-split (read-file path) "\n")))
+        (let loop ((ls lines))
+          (cond
+            ((null? ls) "")
+            ((and (string-contains? (car ls) "VERSION")
+                  (string-contains? (car ls) "="))
+             (extract-quoted-value (car ls)))
+            (else (loop (cdr ls)))))))))
+
+(define (gem-bump )
+  (exec-check "nix" "run" ".#gem:bump" "--" bump-type))
+
+;; ---------------------------------------------------------------- ;;
+;; Dispatch                                                         ;;
+;; ---------------------------------------------------------------- ;;
+
+(define gem-name (find-gemspec))
 
 (cond
-  ((= status 0)
-   (let ((after (version-from-galaxy)))
-     (cond
-       ((and (not (equal? after "")) (not (equal? after before)))
-        (append-output "bumped=true")
-        (append-output (string-append "new-version=" after))
-        (log-info (string-append "bumped " before " -> " after)))
-       (else
-        (append-output "bumped=false")
-        (append-output "new-version=")
-        (log-info "no version change detected")))))
+  ;; Ansible collection path
+  ((ansible?)
+   (define before (ansible-version))
+   (define status (ansible-bump))
+   (cond
+     ((= status 0)
+      (let ((after (ansible-version)))
+        (cond
+          ((and (not (equal? after "")) (not (equal? after before)))
+           (append-output "bumped=true")
+           (append-output (string-append "new-version=" after))
+           (log-info (string-append "ansible bump: " before " -> " after)))
+          (else
+           (append-output "bumped=false")
+           (append-output "new-version=")
+           (log-info "no version change detected (ansible)")))))
+     (else
+      (append-output "bumped=false")
+      (append-output "new-version=")
+      (log-error (string-append "nix run .#bump failed with status "
+                                (string-format "{}" status)))
+      (exit status))))
+
+  ;; Ruby gem path
+  ((not (equal? gem-name ""))
+   (define before (read-gem-version gem-name))
+   (define status (gem-bump))
+   (cond
+     ((= status 0)
+      (let ((after (read-gem-version gem-name)))
+        (cond
+          ((and (not (equal? after "")) (not (equal? after before)))
+           (append-output "bumped=true")
+           (append-output (string-append "new-version=" after))
+           (log-info (string-append "gem bump (" gem-name "): "
+                                    before " -> " after)))
+          (else
+           (append-output "bumped=false")
+           (append-output "new-version=")
+           (log-info (string-append "no version change detected (gem " gem-name ")"))))))
+     (else
+      (append-output "bumped=false")
+      (append-output "new-version=")
+      (log-error (string-append "nix run .#gem:bump failed with status "
+                                (string-format "{}" status)))
+      (exit status))))
+
+  ;; Unknown repo type — fail loudly so misconfiguration surfaces
   (else
    (append-output "bumped=false")
    (append-output "new-version=")
-   (log-error (string-append "nix run .#bump failed with status " (string-format "{}" status)))
-   (exit status)))
+   (log-error "substrate-bump: repo type not detected (no galaxy.yml, no *.gemspec)")
+   (exit 1)))
