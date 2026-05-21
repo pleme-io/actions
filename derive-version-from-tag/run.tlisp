@@ -1,0 +1,29 @@
+;; derive-version-from-tag/run.tlisp — strip a leading "v" from the ref
+;; name. Tag pushes like `v0.1.0` produce a version `0.1.0`; non-tag
+;; refs (`main`, `feature/x`) pass through unchanged so dispatch /
+;; branch runs still emit a sensible value.
+;;
+;; Inputs (env):
+;;   REF_NAME       — typically ${{ github.ref_name }}
+;;   GITHUB_OUTPUT  — provided by GitHub Actions
+;;
+;; Outputs (appended to $GITHUB_OUTPUT):
+;;   version        REF_NAME with leading "v" stripped
+
+(define ref-name  (env-required "REF_NAME"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+(define version
+  (if (string-starts-with? ref-name "v")
+    ;; Drop only the leading "v": split on "v", drop the empty first
+    ;; segment, rejoin the remainder on "v". Matches bash's `${X#v}`
+    ;; semantics even when the version itself contains a "v".
+    (string-join "v" (cdr (string-split ref-name "v")))
+    ref-name))
+
+(append-output (string-append "version=" version))
+(log-info (string-append "derived version: " version))

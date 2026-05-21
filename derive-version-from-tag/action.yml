@@ -1,0 +1,37 @@
+name: 'pleme-io · derive-version-from-tag'
+description: 'Strip leading "v" from github.ref_name to derive a SemVer version string'
+branding:
+  icon: 'tag'
+  color: 'gray-dark'
+
+inputs:
+  ref-name:
+    description: "Tag ref name (default: github.ref_name)"
+    required: false
+    default: ${{ github.ref_name }}
+
+outputs:
+  version:
+    description: "Derived version (ref-name with leading 'v' stripped)"
+    value: ${{ steps.derive.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Derive version
+      id: derive
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REF_NAME: ${{ inputs.ref-name }}
