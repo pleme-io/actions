@@ -1,0 +1,92 @@
+name: 'pleme-io · tatara-script'
+description: 'Execute an embedded .tlisp source string with tatara-script (binary-first, cargo-install fallback)'
+branding:
+  icon: 'play'
+  color: 'green'
+
+inputs:
+  script:
+    description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file)"
+    required: true
+  version:
+    description: "tatara-lisp release tag (e.g. v0.1.0) or 'latest'"
+    required: false
+    default: latest
+  args:
+    description: "Positional arguments passed to the script (forwarded as $@ after the script file)"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Install path: try the pre-built binary from the release page first
+    # (fast), fall back to `cargo install --git` if the asset 404s. This
+    # gives consumers a sensible behavior even before tatara-lisp v0.1.0
+    # is fully propagated to every arch, or if the consumer pins a
+    # version that predates the binary-release workflow.
+    - name: Install tatara-script
+      id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        OS=$(uname -s)
+        ARCH=$(uname -m)
+        case "$OS-$ARCH" in
+          Linux-x86_64)   SUFFIX="linux-x86_64";;
+          Linux-aarch64)  SUFFIX="linux-aarch64";;
+          Darwin-x86_64)  SUFFIX="macos-x86_64";;
+          Darwin-arm64)   SUFFIX="macos-aarch64";;
+          *) echo "::error::Unsupported runner: $OS-$ARCH" >&2; exit 1;;
+        esac
+
+        if [ "$INPUT_VERSION" = "latest" ]; then
+          TAG=$(curl -sSL https://api.github.com/repos/pleme-io/tatara-lisp/releases/latest \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))')
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve latest tag from pleme-io/tatara-lisp releases" >&2
+            exit 1
+          fi
+        else
+          TAG="$INPUT_VERSION"
+        fi
+        echo "Resolved tatara-lisp version: $TAG"
+
+        BIN_DIR="$RUNNER_TEMP/tatara-script-bin"
+        mkdir -p "$BIN_DIR"
+        URL="https://github.com/pleme-io/tatara-lisp/releases/download/$TAG/tatara-script-$SUFFIX"
+
+        if curl -sSL -f -o "$BIN_DIR/tatara-script" "$URL"; then
+          chmod +x "$BIN_DIR/tatara-script"
+          echo "Installed tatara-script from binary release"
+        else
+          echo "::warning::No pre-built binary at $URL — falling back to cargo install --git"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo not on PATH; cannot fall back" >&2
+            exit 1
+          fi
+          cargo install --git https://github.com/pleme-io/tatara-lisp \
+            --tag "$TAG" tatara-lisp-script --root "$BIN_DIR/.cargo"
+          ln -s "$BIN_DIR/.cargo/bin/tatara-script" "$BIN_DIR/tatara-script"
+          echo "Installed tatara-script via cargo install"
+        fi
+
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+        echo "bin-dir=$BIN_DIR" >> "$GITHUB_OUTPUT"
+
+    # Write the embedded script to a tmp file and exec tatara-script on
+    # it. We do not pipe via stdin because tatara-script is file-based;
+    # this matches the substrate ansible-collection app pattern.
+    - name: Run script
+      shell: bash
+      env:
+        TATARA_SCRIPT_SRC: ${{ inputs.script }}
+        TATARA_SCRIPT_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        TMP=$(mktemp -t tatara-action-XXXXXX.tlisp)
+        printf '%s\n' "$TATARA_SCRIPT_SRC" > "$TMP"
+        # shellcheck disable=SC2086 — splitting on whitespace is intentional
+        exec tatara-script "$TMP" $TATARA_SCRIPT_ARGS

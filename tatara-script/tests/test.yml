@@ -1,0 +1,21 @@
+name: test-tatara-script
+on:
+  push:
+    paths:
+      - 'tatara-script/**'
+  pull_request:
+    paths:
+      - 'tatara-script/**'
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./tatara-script
+        with:
+          script: |
+            (log-info "hello from tatara-script in CI")
+            (define n (string-length "tatara"))
+            (log-info (string-append "string length is " (string-format "{}" n)))
+            (exit 0)
