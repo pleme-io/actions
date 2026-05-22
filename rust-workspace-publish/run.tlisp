@@ -116,6 +116,15 @@
 
 (define (already-uploaded? log) (any-line-matches? (string-split log "\n") already-uploaded-on-line?))
 
+(define (dep-missing-on-line? line)
+  ;; cargo emits "no matching package named `X` found" when a workspace
+  ;; dep isn't yet on the registry. That means the dep wasn't published
+  ;; first; defer this crate + retry after a full pass.
+  (or (string-contains? line "no matching package named")
+      (string-contains? line "failed to select a version")))
+
+(define (dep-missing? log) (any-line-matches? (string-split log "\n") dep-missing-on-line?))
+
 ;; -------------------------------------------------------------- ;;
 ;; Rename on conflict                                              ;;
 ;; -------------------------------------------------------------- ;;
@@ -168,16 +177,18 @@
 
 (define version (workspace-version))
 
-;; Returns the final name actually used (in case of rename), or ""
-;; on permanent failure.
+;; Returns one of:
+;;   ("done" . <final-name>) — successfully published (or skipped)
+;;   ("defer" . <name>)      — dep not yet on registry, retry next pass
+;;   ("fail" . <name>)       — permanent failure
 (define (publish-one name attempt)
   (cond
     ((>= attempt max-retries)
      (log-error (string-append "exceeded retries for '" name "'"))
-     "")
+     (list "fail" name))
     ((already-published? name version)
      (log-info (string-append "skipping '" name "@" version "' — already on registry"))
-     name)
+     (list "done" name))
     (else
       (log-info (string-append "publishing '" name "@" version "' (attempt "
                                (string-format "{}" attempt) ")"))
@@ -187,10 +198,13 @@
         (cond
           ((= code 0)
            (log-info (string-append "published '" name "'"))
-           name)
+           (list "done" name))
           ((already-uploaded? log)
            (log-info (string-append "already published '" name "' — treating as success"))
-           name)
+           (list "done" name))
+          ((dep-missing? log)
+           (log-info (string-append "deferring '" name "' — dep not on registry yet"))
+           (list "defer" name))
           ((rate-limit? log)
            (log-info "crates.io rate limit hit — sleeping 600s")
            (exec-capture "sleep" "600")
@@ -203,11 +217,11 @@
               (publish-one (string-append rename-prefix name) (+ attempt 1)))
              (else
                (log-error (string-append "rename failed for '" name "'"))
-               "")))
+               (list "fail" name))))
           (else
             (log-error (string-append "publish of '" name "' failed with no recognizable signature"))
             (log-info log)
-            ""))))))
+            (list "fail" name)))))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Main                                                            ;;
@@ -218,28 +232,72 @@
 (define members (workspace-members))
 (log-info (string-append "workspace v" version " — " (string-format "{}" (length members)) " members"))
 
-(define (publish-all names shipped renamed)
+;; One pass over `names`; emits (shipped, renamed, deferred, failed).
+(define (publish-pass names shipped renamed deferred)
   (cond
     ((null? names)
-     (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
-     (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
-     (log-info (string-append "completed: shipped "
-                              (string-format "{}" (length shipped))
-                              " / " (string-format "{}" (length members))
-                              " members"))
-     (if (= (length shipped) (length members)) 0 1))
+     (list shipped renamed deferred))
     (else
       (let* ((name (car names))
-             (final (publish-one name 1)))
+             (result (publish-one name 1))
+             (kind (car result))
+             (final (car (cdr result))))
         (cond
-          ((equal? final "")
+          ((equal? kind "fail")
            (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
            (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
-           1)
+           (log-error (string-append "permanent failure on '" final "'"))
+           (exit 1))
+          ((equal? kind "defer")
+           (publish-pass (cdr names) shipped renamed
+                         (append deferred (list final))))
           ((equal? final name)
-           (publish-all (cdr names) (append shipped (list final)) renamed))
+           (publish-pass (cdr names) (append shipped (list final))
+                         renamed deferred))
           (else
-            (publish-all (cdr names) (append shipped (list final))
-                         (append renamed (list name)))))))))
+            (publish-pass (cdr names) (append shipped (list final))
+                          (append renamed (list name))
+                          deferred)))))))
 
-(exit (publish-all members (list) (list)))
+;; Multi-pass driver: each pass publishes what it can; deferred crates
+;; (those whose deps weren't on the registry at attempt time) retry in
+;; the next pass. Stop when (a) all members done OR (b) a pass makes
+;; no progress (deferred set unchanged) OR (c) too many passes.
+(define max-passes 8)
+
+(define (drive-passes pending shipped renamed pass-n)
+  (cond
+    ((null? pending)
+     (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
+     (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+     (log-info (string-append "all " (string-format "{}" (length shipped))
+                              " members shipped"))
+     0)
+    ((>= pass-n max-passes)
+     (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
+     (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+     (log-error (string-append "exceeded " (string-format "{}" max-passes)
+                               " passes; " (string-format "{}" (length pending))
+                               " members still deferred"))
+     1)
+    (else
+      (log-info (string-append "==> pass " (string-format "{}" pass-n)
+                               " — " (string-format "{}" (length pending))
+                               " members to attempt"))
+      (let* ((out (publish-pass pending (list) (list) (list)))
+             (newly-shipped (car out))
+             (newly-renamed (car (cdr out)))
+             (deferred (car (cdr (cdr out)))))
+        (cond
+          ((and (null? newly-shipped) (= (length deferred) (length pending)))
+           (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
+           (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+           (log-error "no progress this pass; aborting (likely circular dep or stuck registry index)")
+           1)
+          (else
+            (drive-passes deferred
+                          (append shipped newly-shipped)
+                          (append renamed newly-renamed)
+                          (+ pass-n 1))))))))
+
+(exit (drive-passes members (list) (list) 1))
