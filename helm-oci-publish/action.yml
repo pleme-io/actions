@@ -27,3 +27,9 @@ inputs:
 runs:
   using: docker
   image: Dockerfile
+  env:
+    CHART_PATH:     ${{ inputs.chart-path }}
+    REGISTRY:       ${{ inputs.registry }}
+    VERSION:        ${{ inputs.version }}
+    LIB_CHART_DIR:  ${{ inputs.lib-chart-dir }}
+    LIB_CHART_NAME: ${{ inputs.lib-chart-name }}

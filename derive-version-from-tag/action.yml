@@ -17,3 +17,5 @@ outputs:
 runs:
   using: docker
   image: Dockerfile
+  env:
+    REF_NAME: ${{ inputs.ref-name }}

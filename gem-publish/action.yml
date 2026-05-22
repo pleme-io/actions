@@ -15,3 +15,6 @@ inputs:
 runs:
   using: docker
   image: Dockerfile
+  env:
+    GEM_NAME: ${{ inputs.gem-name }}
+    TAG_VERSION: ${{ inputs.tag-version }}

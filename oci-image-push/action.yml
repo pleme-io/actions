@@ -26,3 +26,9 @@ inputs:
 runs:
   using: docker
   image: Dockerfile
+  env:
+    REGISTRY:  ${{ inputs.registry }}
+    IMAGE:     ${{ inputs.image }}
+    TAG:       ${{ inputs.tag }}
+    TARBALL:   ${{ inputs.tarball }}
+    FLAKE_REF: ${{ inputs.flake-ref }}

@@ -20,3 +20,7 @@ inputs:
 runs:
   using: docker
   image: Dockerfile
+  env:
+    GIT_PUSH_TOKEN: ${{ inputs.token }}
+    BRANCH:         ${{ inputs.branch }}
+    PUSH_TAGS:      ${{ inputs.push-tags }}
