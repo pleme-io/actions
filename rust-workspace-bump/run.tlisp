@@ -149,4 +149,4 @@
                 old-version)
               (exit 1))
              (else
-              (emit-success old-version new-version)))))))))))
+              (emit-success old-version new-version))))))))))
