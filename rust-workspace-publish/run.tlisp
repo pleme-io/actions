@@ -1,12 +1,10 @@
 ;; rust-workspace-publish/run.tlisp — ship workspace to the Rust
-;; registry; auto-rename name-conflicts to <prefix><original>.
+;; registry; auto-rename conflicts, auto-skip already-published,
+;; auto-back-off on 429 rate limits.
 
 (define dry-run (env-get "DRY_RUN" "false"))
 (define no-verify (env-get "NO_VERIFY" "true"))
 (define rename-prefix (env-get "RENAME_PREFIX" "pleme-io-"))
-;; max-retries is hardcoded (tatara-lisp lacks string->number); 20 fits
-;; engenho's 15-crate workspace with safety margin. Edit + PR if a
-;; consumer needs more.
 (define max-retries 20)
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
@@ -18,8 +16,65 @@
 (define (stdout-of result) (alist-get result "stdout" ""))
 (define (stderr-of result) (alist-get result "stderr" ""))
 
-(define (ship-args)
-  (let* ((base (list "publish" "--workspace"))
+;; -------------------------------------------------------------- ;;
+;; Workspace enumeration                                           ;;
+;; -------------------------------------------------------------- ;;
+;; cargo metadata exposes every workspace member's name. We list
+;; them, then publish per-crate so we can skip / rename / retry
+;; individually instead of all-or-nothing.
+
+(define (workspace-version)
+  ;; Pull the workspace.package.version from Cargo.toml via the same
+  ;; section walker rust-workspace-bump uses.
+  (define (extract-quoted line)
+    (let ((parts (string-split line "\"")))
+      (if (>= (length parts) 2) (car (cdr parts)) "")))
+  (define (walk lines in-section)
+    (cond
+      ((null? lines) "")
+      ((string-contains? (car lines) "[workspace.package]")
+       (walk (cdr lines) #t))
+      ((and in-section
+            (string-contains? (car lines) "[")
+            (not (string-contains? (car lines) "[workspace.package]")))
+       "")
+      ((and in-section
+            (string-contains? (car lines) "version")
+            (string-contains? (car lines) "="))
+       (extract-quoted (car lines)))
+      (else (walk (cdr lines) in-section))))
+  (walk (string-split (read-file "Cargo.toml") "\n") #f))
+
+(define (workspace-members)
+  ;; `cargo metadata --no-deps --format-version 1` returns JSON with
+  ;; workspace_members listed. We use jq via exec-capture for a
+  ;; line-per-name shape that's easy to parse in tlisp.
+  (let* ((r (exec-capture "sh" "-c"
+              "cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'"))
+         (out (stdout-of r)))
+    (string-split (string-trim out) "\n")))
+
+;; -------------------------------------------------------------- ;;
+;; crates.io existence check                                       ;;
+;; -------------------------------------------------------------- ;;
+;; curl --fail returns 22 on 4xx. We just check the http status
+;; code. If the (name, version) pair already exists, we skip the
+;; publish to keep the run idempotent.
+
+(define (already-published? name version)
+  (let* ((url (string-append "https://crates.io/api/v1/crates/"
+                             name "/" version))
+         (r (exec-capture "curl" "-s" "-o" "/dev/null"
+              "-w" "%{http_code}" url))
+         (code-str (stdout-of r)))
+    (equal? code-str "200")))
+
+;; -------------------------------------------------------------- ;;
+;; Per-crate publish                                               ;;
+;; -------------------------------------------------------------- ;;
+
+(define (publish-args name)
+  (let* ((base (list "publish" "-p" name))
          (with-dry (if (equal? dry-run "true")
                      (append base (list "--dry-run"))
                      base)))
@@ -27,15 +82,17 @@
       (append with-dry (list "--no-verify"))
       with-dry)))
 
-(define (extract-backticked line)
-  (let ((parts (string-split line "`")))
-    (if (>= (length parts) 2) (car (cdr parts)) "")))
+(define (do-publish name)
+  (apply exec-capture (cons "cargo" (publish-args name))))
+
+;; -------------------------------------------------------------- ;;
+;; Conflict + rate limit detection                                 ;;
+;; -------------------------------------------------------------- ;;
 
 (define (conflict-on-line? line)
   (or (string-contains? line "is already in use")
       (string-contains? line "is already taken")
       (string-contains? line "is already on the registry")
-      (string-contains? line "was already published")
       (string-contains? line "crate name is not allowed")))
 
 (define (rate-limit-on-line? line)
@@ -43,24 +100,25 @@
       (string-contains? line "published too many new crates")
       (string-contains? line "rate-limits")))
 
-(define (find-rate-limit lines)
+(define (any-line-matches? lines pred)
   (cond
     ((null? lines) #f)
-    ((rate-limit-on-line? (car lines)) #t)
-    (else (find-rate-limit (cdr lines)))))
+    ((pred (car lines)) #t)
+    (else (any-line-matches? (cdr lines) pred))))
 
-(define (rate-limit-in-log? log)
-  (find-rate-limit (string-split log "\n")))
+(define (rate-limit? log) (any-line-matches? (string-split log "\n") rate-limit-on-line?))
+(define (conflict? log) (any-line-matches? (string-split log "\n") conflict-on-line?))
 
-(define (find-conflict lines)
-  (cond
-    ((null? lines) "")
-    ((conflict-on-line? (car lines))
-     (extract-backticked (car lines)))
-    (else (find-conflict (cdr lines)))))
+(define (already-uploaded-on-line? line)
+  (or (string-contains? line "already exists on crates.io")
+      (string-contains? line "already uploaded")
+      (string-contains? line "was already published")))
 
-(define (conflict-name-from-log log)
-  (find-conflict (string-split log "\n")))
+(define (already-uploaded? log) (any-line-matches? (string-split log "\n") already-uploaded-on-line?))
+
+;; -------------------------------------------------------------- ;;
+;; Rename on conflict                                              ;;
+;; -------------------------------------------------------------- ;;
 
 (define (replace-once-in-file path needle replacement)
   (let ((contents (read-file path)))
@@ -77,12 +135,13 @@
         (replace-once-in-file crate-toml
           (string-append "name = \"" original "\"")
           (string-append "name = \"" new-name "\""))
-        (let* ((old-line (string-append original
+        (let* ((ver (workspace-version))
+               (old-line (string-append original
                           " = { path = \"" original
-                          "\", version = \"0.1.0\" }"))
+                          "\", version = \"" ver "\" }"))
                (new-line (string-append original
                           " = { path = \"" original
-                          "\", version = \"0.1.0\", package = \""
+                          "\", version = \"" ver "\", package = \""
                           new-name "\" }")))
           (replace-once-in-file "Cargo.toml" old-line new-line))
         (log-info (string-append "renamed '" original "' -> '" new-name "'"))
@@ -103,57 +162,84 @@
                                " (registry name conflict)"))
     (exec-capture "git" "push" "origin" "HEAD:main")))
 
-(define (do-ship-attempt)
-  (apply exec-capture (cons "cargo" (ship-args))))
+;; -------------------------------------------------------------- ;;
+;; Per-crate publish loop with retry                               ;;
+;; -------------------------------------------------------------- ;;
 
-(define (renamed-csv renamed)
-  ;; string-join takes (sep list); guard against empty list.
-  (if (null? renamed) "" (string-join "," renamed)))
+(define version (workspace-version))
 
-(define (emit-final shipped renamed)
-  (append-output (string-append "shipped-count=" shipped))
-  (append-output (string-append "renamed-crates=" (renamed-csv renamed))))
-
-(define (try-ship attempt renamed)
+;; Returns the final name actually used (in case of rename), or ""
+;; on permanent failure.
+(define (publish-one name attempt)
   (cond
     ((>= attempt max-retries)
-     (log-error "exceeded max rename retries")
-     (emit-final "0" renamed)
-     (exit 1))
+     (log-error (string-append "exceeded retries for '" name "'"))
+     "")
+    ((already-published? name version)
+     (log-info (string-append "skipping '" name "@" version "' — already on registry"))
+     name)
     (else
-      (log-info (string-append "ship attempt " (string-format "{}" attempt)))
-      (let* ((r (do-ship-attempt))
+      (log-info (string-append "publishing '" name "@" version "' (attempt "
+                               (string-format "{}" attempt) ")"))
+      (let* ((r (do-publish name))
              (code (status-of r))
              (log (string-append (stdout-of r) "\n" (stderr-of r))))
         (cond
           ((= code 0)
-           (log-info "workspace shipped successfully")
-           (emit-final "ok" renamed)
-           (exit 0))
+           (log-info (string-append "published '" name "'"))
+           name)
+          ((already-uploaded? log)
+           (log-info (string-append "already published '" name "' — treating as success"))
+           name)
+          ((rate-limit? log)
+           (log-info "crates.io rate limit hit — sleeping 600s")
+           (exec-capture "sleep" "600")
+           (publish-one name (+ attempt 1)))
+          ((conflict? log)
+           (log-info (string-append "name conflict on '" name "', renaming"))
+           (cond
+             ((rename-crate name)
+              (commit-and-push name)
+              (publish-one (string-append rename-prefix name) (+ attempt 1)))
+             (else
+               (log-error (string-append "rename failed for '" name "'"))
+               "")))
           (else
-            (cond
-              ((rate-limit-in-log? log)
-               (log-info "crates.io rate limit hit — sleeping 600s then retrying")
-               (exec-capture "sleep" "600")
-               (try-ship (+ attempt 1) renamed))
-              (else
-                (let ((conflict (conflict-name-from-log log)))
-                  (cond
-                    ((equal? conflict "")
-                     (log-error "ship failed with no recognizable name conflict")
-                     (log-info log)
-                     (emit-final "0" renamed)
-                     (exit code))
-                (else
-                  (log-info (string-append "conflict on '" conflict "'; renaming"))
-                  (cond
-                    ((rename-crate conflict)
-                     (commit-and-push conflict)
-                     (try-ship (+ attempt 1) (append renamed (list conflict))))
-                    (else
-                      (log-error "rename failed; bailing")
-                      (emit-final "0" renamed)
-                      (exit 1))))))))))))))
+            (log-error (string-append "publish of '" name "' failed with no recognizable signature"))
+            (log-info log)
+            ""))))))
+
+;; -------------------------------------------------------------- ;;
+;; Main                                                            ;;
+;; -------------------------------------------------------------- ;;
 
 (configure-git-bot)
-(try-ship 1 (list))
+
+(define members (workspace-members))
+(log-info (string-append "workspace v" version " — " (string-format "{}" (length members)) " members"))
+
+(define (publish-all names shipped renamed)
+  (cond
+    ((null? names)
+     (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
+     (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+     (log-info (string-append "completed: shipped "
+                              (string-format "{}" (length shipped))
+                              " / " (string-format "{}" (length members))
+                              " members"))
+     (if (= (length shipped) (length members)) 0 1))
+    (else
+      (let* ((name (car names))
+             (final (publish-one name 1)))
+        (cond
+          ((equal? final "")
+           (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
+           (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+           1)
+          ((equal? final name)
+           (publish-all (cdr names) (append shipped (list final)) renamed))
+          (else
+            (publish-all (cdr names) (append shipped (list final))
+                         (append renamed (list name)))))))))
+
+(exit (publish-all members (list) (list)))
