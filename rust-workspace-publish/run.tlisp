@@ -4,7 +4,10 @@
 (define dry-run (env-get "DRY_RUN" "false"))
 (define no-verify (env-get "NO_VERIFY" "true"))
 (define rename-prefix (env-get "RENAME_PREFIX" "pleme-io-"))
-(define max-retries-str (env-get "MAX_RENAME_RETRIES" "20"))
+;; max-retries is hardcoded (tatara-lisp lacks string->number); 20 fits
+;; engenho's 15-crate workspace with safety margin. Edit + PR if a
+;; consumer needs more.
+(define max-retries 20)
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
 (define (append-output line)
@@ -23,10 +26,6 @@
     (if (equal? no-verify "true")
       (append with-dry (list "--no-verify"))
       with-dry)))
-
-;; -------------------------------------------------------------- ;;
-;; Conflict detection                                              ;;
-;; -------------------------------------------------------------- ;;
 
 (define (extract-backticked line)
   (let ((parts (string-split line "`")))
@@ -49,10 +48,6 @@
 (define (conflict-name-from-log log)
   (find-conflict (string-split log "\n")))
 
-;; -------------------------------------------------------------- ;;
-;; Rename                                                          ;;
-;; -------------------------------------------------------------- ;;
-
 (define (replace-once-in-file path needle replacement)
   (let ((contents (read-file path)))
     (write-file path (string-replace contents needle replacement))))
@@ -65,14 +60,9 @@
        (log-error (string-append "no crate dir for '" original "'"))
        #f)
       (else
-        ;; Rewrite the crate's [package] name field.
         (replace-once-in-file crate-toml
           (string-append "name = \"" original "\"")
           (string-append "name = \"" new-name "\""))
-        ;; Update workspace.dependencies entry with the package=
-        ;; rename so other crates' Rust source keeps using the
-        ;; short name. We pattern-match the EXACT line the
-        ;; workspace-version pass wrote.
         (let* ((old-line (string-append original
                           " = { path = \"" original
                           "\", version = \"0.1.0\" }"))
@@ -84,14 +74,11 @@
         (log-info (string-append "renamed '" original "' -> '" new-name "'"))
         #t))))
 
-;; -------------------------------------------------------------- ;;
-;; Commit + push rename                                            ;;
-;; -------------------------------------------------------------- ;;
-
 (define (configure-git-bot)
   (exec-check "git" "config" "user.name" "github-actions[bot]")
   (exec-check "git" "config" "user.email"
-              "41898282+github-actions[bot]@users.noreply.github.com"))
+              "41898282+github-actions[bot]@users.noreply.github.com")
+  (exec-capture "git" "config" "--global" "--add" "safe.directory" "*"))
 
 (define (commit-and-push original)
   (let ((new-name (string-append rename-prefix original)))
@@ -102,34 +89,32 @@
                                " (registry name conflict)"))
     (exec-capture "git" "push" "origin" "HEAD:main")))
 
-;; -------------------------------------------------------------- ;;
-;; Ship loop                                                       ;;
-;; -------------------------------------------------------------- ;;
-
-(define max-retries (string->number max-retries-str))
-
 (define (do-ship-attempt)
   (apply exec-capture (cons "cargo" (ship-args))))
+
+(define (renamed-csv renamed)
+  ;; string-join takes (sep list); guard against empty list.
+  (if (null? renamed) "" (string-join "," renamed)))
+
+(define (emit-final shipped renamed)
+  (append-output (string-append "shipped-count=" shipped))
+  (append-output (string-append "renamed-crates=" (renamed-csv renamed))))
 
 (define (try-ship attempt renamed)
   (cond
     ((>= attempt max-retries)
      (log-error "exceeded max rename retries")
-     (append-output "shipped-count=0")
-     (append-output
-       (string-append "renamed-crates=" (string-join renamed ",")))
+     (emit-final "0" renamed)
      (exit 1))
     (else
-      (log-info (string-append "ship attempt " (number->string attempt)))
+      (log-info (string-append "ship attempt " (string-format "{}" attempt)))
       (let* ((r (do-ship-attempt))
              (code (status-of r))
              (log (string-append (stdout-of r) "\n" (stderr-of r))))
         (cond
           ((= code 0)
            (log-info "workspace shipped successfully")
-           (append-output "shipped-count=ok")
-           (append-output
-             (string-append "renamed-crates=" (string-join renamed ",")))
+           (emit-final "ok" renamed)
            (exit 0))
           (else
             (let ((conflict (conflict-name-from-log log)))
@@ -137,9 +122,7 @@
                 ((equal? conflict "")
                  (log-error "ship failed with no recognizable name conflict")
                  (log-info log)
-                 (append-output "shipped-count=0")
-                 (append-output
-                   (string-append "renamed-crates=" (string-join renamed ",")))
+                 (emit-final "0" renamed)
                  (exit code))
                 (else
                   (log-info (string-append "conflict on '" conflict "'; renaming"))
@@ -149,9 +132,7 @@
                      (try-ship (+ attempt 1) (append renamed (list conflict))))
                     (else
                       (log-error "rename failed; bailing")
-                      (append-output "shipped-count=0")
-                      (append-output
-                        (string-append "renamed-crates=" (string-join renamed ",")))
+                      (emit-final "0" renamed)
                       (exit 1))))))))))))
 
 (configure-git-bot)
