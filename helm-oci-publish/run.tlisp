@@ -15,11 +15,16 @@
 ;; workflow (the docker/login-equivalent for OCI Helm). Nix already
 ;; installed.
 
-(define chart-path     (env-required "CHART_PATH"))
-(define registry       (env-required "REGISTRY"))
-(define version        (env-get      "VERSION"        ""))
-(define lib-chart-dir  (env-get      "LIB_CHART_DIR"  ""))
-(define lib-chart-name (env-get      "LIB_CHART_NAME" "pleme-lib"))
+;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
+(define chart-path     (env-get "INPUT_CHART_PATH"     (env-get "CHART_PATH"     "")))
+(define registry       (env-get "INPUT_REGISTRY"       (env-get "REGISTRY"       "")))
+(define version        (env-get "INPUT_VERSION"        (env-get "VERSION"        "")))
+(define lib-chart-dir  (env-get "INPUT_LIB_CHART_DIR"  (env-get "LIB_CHART_DIR"  "")))
+(define lib-chart-name (env-get "INPUT_LIB_CHART_NAME" (env-get "LIB_CHART_NAME" "pleme-lib")))
+
+(when (or (equal? chart-path "") (equal? registry ""))
+  (log-error "helm-oci-publish: missing INPUT_CHART_PATH or INPUT_REGISTRY")
+  (exit 1))
 
 (define (forge-available?)
   (exec-ok? "nix" "run" ".#forge" "--" "--help"))

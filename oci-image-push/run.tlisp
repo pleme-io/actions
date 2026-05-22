@@ -15,11 +15,16 @@
 ;; Pre-conditions: docker/login-action has already authenticated to
 ;; the target registry; nix-installer-action has set up Nix.
 
-(define registry  (env-required "REGISTRY"))
-(define image     (env-required "IMAGE"))
-(define tag       (env-required "TAG"))
-(define tarball   (env-get      "TARBALL"   "./result"))
-(define flake-ref (env-get      "FLAKE_REF" "."))
+;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
+(define registry  (env-get "INPUT_REGISTRY"  (env-get "REGISTRY"  "")))
+(define image     (env-get "INPUT_IMAGE"     (env-get "IMAGE"     "")))
+(define tag       (env-get "INPUT_TAG"       (env-get "TAG"       "")))
+(define tarball   (env-get "INPUT_TARBALL"   (env-get "TARBALL"   "./result")))
+(define flake-ref (env-get "INPUT_FLAKE_REF" (env-get "FLAKE_REF" ".")))
+
+(when (or (equal? registry "") (equal? image "") (equal? tag ""))
+  (log-error "oci-image-push: missing INPUT_REGISTRY, INPUT_IMAGE, or INPUT_TAG")
+  (exit 1))
 
 (define target (string-append registry "/" image ":" tag))
 

@@ -18,23 +18,5 @@ inputs:
     default: "true"
 
 runs:
-  using: composite
-  steps:
-    - name: Load run.tlisp
-      id: src
-      shell: bash
-      run: |
-        {
-          echo 'script<<TLISP_EOF'
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Push branch + tags
-      uses: pleme-io/actions/tatara-script@v1
-      with:
-        script: ${{ steps.src.outputs.script }}
-      env:
-        GIT_PUSH_TOKEN: ${{ inputs.token }}
-        BRANCH:         ${{ inputs.branch }}
-        PUSH_TAGS:      ${{ inputs.push-tags }}
+  using: docker
+  image: Dockerfile

@@ -15,9 +15,14 @@
 ;; URL) and previously-rearmed remotes (some x-access-token already
 ;; embedded) by first stripping any existing https://<x>@ prefix.
 
-(define token  (env-required "GIT_PUSH_TOKEN"))
-(define branch (env-get      "BRANCH"    "main"))
-(define ptags? (equal? (env-get "PUSH_TAGS" "true") "true"))
+;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
+(define token  (env-get "INPUT_TOKEN"     (env-get "GIT_PUSH_TOKEN" "")))
+(define branch (env-get "INPUT_BRANCH"    (env-get "BRANCH"    "main")))
+(define ptags? (equal? (env-get "INPUT_PUSH_TAGS" (env-get "PUSH_TAGS" "true")) "true"))
+
+(when (equal? token "")
+  (log-error "git-push-with-token: missing INPUT_TOKEN")
+  (exit 1))
 
 ;; ---------- get + clean origin URL ---------- ;;
 

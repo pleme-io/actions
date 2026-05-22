@@ -15,8 +15,13 @@
 ;;        - tolerate "Repushing of gem versions is not allowed" (current)
 ;;      so the workflow remains restartable on transient downstream failures.
 
-(define gem-name      (env-required "GEM_NAME"))
-(define tag-version   (env-required "TAG_VERSION"))
+;; INPUT_* (Docker mode) preferred, bare names retained as composite fallback.
+(define gem-name    (env-get "INPUT_GEM_NAME"    (env-get "GEM_NAME"    "")))
+(define tag-version (env-get "INPUT_TAG_VERSION" (env-get "TAG_VERSION" "")))
+
+(when (or (equal? gem-name "") (equal? tag-version ""))
+  (log-error "gem-publish: missing INPUT_GEM_NAME or INPUT_TAG_VERSION")
+  (exit 1))
 
 ;; ---------- version.rb parse ---------- ;;
 

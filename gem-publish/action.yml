@@ -11,38 +11,7 @@ inputs:
   tag-version:
     description: "Version expected on rubygems (derived from tag)"
     required: true
-  ruby-version:
-    description: "Ruby toolchain version"
-    required: false
-    default: "3.3"
 
 runs:
-  using: composite
-  steps:
-    - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: ${{ inputs.ruby-version }}
-        bundler-cache: false
-
-    # Load run.tlisp into an output so the redistributable tatara-script
-    # action can execute it without us re-implementing the install path.
-    - name: Load run.tlisp
-      id: src
-      shell: bash
-      run: |
-        {
-          echo 'script<<TLISP_EOF'
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Run gem publish
-      uses: pleme-io/actions/tatara-script@v1
-      with:
-        script: ${{ steps.src.outputs.script }}
-      env:
-        GEM_NAME: ${{ inputs.gem-name }}
-        TAG_VERSION: ${{ inputs.tag-version }}
-        # GEM_HOST_API_KEY is read by the rubygems CLI directly.
-        # Consumers supply it as a secret on the caller workflow.
+  using: docker
+  image: Dockerfile

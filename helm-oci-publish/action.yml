@@ -1,5 +1,5 @@
 name: 'pleme-io · helm-oci-publish'
-description: 'Lint, package, and push a Helm chart to an OCI registry — forge if present, helm fallback'
+description: 'Lint, package, and push a Helm chart to an OCI registry'
 branding:
   icon: 'anchor'
   color: 'purple'
@@ -20,34 +20,10 @@ inputs:
     required: false
     default: ""
   lib-chart-name:
-    description: "Library chart name (passed to forge --lib-chart-name)"
+    description: "Library chart name"
     required: false
     default: "pleme-lib"
-  registry-token:
-    description: "OCI registry login token (already used by caller's login step; not used here, but accepted to keep the contract self-contained)"
-    required: false
-    default: ""
 
 runs:
-  using: composite
-  steps:
-    - name: Load run.tlisp
-      id: src
-      shell: bash
-      run: |
-        {
-          echo 'script<<TLISP_EOF'
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Lint, package & push chart
-      uses: pleme-io/actions/tatara-script@v1
-      with:
-        script: ${{ steps.src.outputs.script }}
-      env:
-        CHART_PATH:     ${{ inputs.chart-path }}
-        REGISTRY:       ${{ inputs.registry }}
-        VERSION:        ${{ inputs.version }}
-        LIB_CHART_DIR:  ${{ inputs.lib-chart-dir }}
-        LIB_CHART_NAME: ${{ inputs.lib-chart-name }}
+  using: docker
+  image: Dockerfile
