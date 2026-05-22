@@ -38,6 +38,20 @@
       (string-contains? line "was already published")
       (string-contains? line "crate name is not allowed")))
 
+(define (rate-limit-on-line? line)
+  (or (string-contains? line "status 429 Too Many Requests")
+      (string-contains? line "published too many new crates")
+      (string-contains? line "rate-limits")))
+
+(define (find-rate-limit lines)
+  (cond
+    ((null? lines) #f)
+    ((rate-limit-on-line? (car lines)) #t)
+    (else (find-rate-limit (cdr lines)))))
+
+(define (rate-limit-in-log? log)
+  (find-rate-limit (string-split log "\n")))
+
 (define (find-conflict lines)
   (cond
     ((null? lines) "")
@@ -117,13 +131,19 @@
            (emit-final "ok" renamed)
            (exit 0))
           (else
-            (let ((conflict (conflict-name-from-log log)))
-              (cond
-                ((equal? conflict "")
-                 (log-error "ship failed with no recognizable name conflict")
-                 (log-info log)
-                 (emit-final "0" renamed)
-                 (exit code))
+            (cond
+              ((rate-limit-in-log? log)
+               (log-info "crates.io rate limit hit — sleeping 600s then retrying")
+               (exec-capture "sleep" "600")
+               (try-ship (+ attempt 1) renamed))
+              (else
+                (let ((conflict (conflict-name-from-log log)))
+                  (cond
+                    ((equal? conflict "")
+                     (log-error "ship failed with no recognizable name conflict")
+                     (log-info log)
+                     (emit-final "0" renamed)
+                     (exit code))
                 (else
                   (log-info (string-append "conflict on '" conflict "'; renaming"))
                   (cond
@@ -133,7 +153,7 @@
                     (else
                       (log-error "rename failed; bailing")
                       (emit-final "0" renamed)
-                      (exit 1))))))))))))
+                      (exit 1))))))))))))))
 
 (configure-git-bot)
 (try-ship 1 (list))
