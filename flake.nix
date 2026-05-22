@@ -26,6 +26,10 @@
         name = "ghcr.io/pleme-io/action-${name}";
         tag = "latest";
         fromImage = baseImage;
+        # The tatara-script base already consumes ~100 layers
+        # (ruby+helm+skopeo+coreutils dependency tree); bump the cap
+        # so our COPY of run.tlisp has room to land as its own layer.
+        maxLayers = 125;
         contents = [ ];
         extraCommands = ''
           cp ${./. + "/${name}/run.tlisp"} run.tlisp
