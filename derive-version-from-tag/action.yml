@@ -16,6 +16,6 @@ outputs:
 
 runs:
   using: docker
-  image: Dockerfile
+  image: docker://ghcr.io/pleme-io/action-derive-version-from-tag:latest
   env:
     REF_NAME: ${{ inputs.ref-name }}

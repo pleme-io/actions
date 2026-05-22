@@ -19,7 +19,7 @@ inputs:
 
 runs:
   using: docker
-  image: Dockerfile
+  image: docker://ghcr.io/pleme-io/action-git-push-with-token:latest
   env:
     GIT_PUSH_TOKEN: ${{ inputs.token }}
     BRANCH:         ${{ inputs.branch }}

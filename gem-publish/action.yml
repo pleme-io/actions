@@ -14,7 +14,7 @@ inputs:
 
 runs:
   using: docker
-  image: Dockerfile
+  image: docker://ghcr.io/pleme-io/action-gem-publish:latest
   env:
     GEM_NAME: ${{ inputs.gem-name }}
     TAG_VERSION: ${{ inputs.tag-version }}

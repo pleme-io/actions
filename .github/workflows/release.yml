@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   release:
     uses: pleme-io/substrate/.github/workflows/action-release.yml@main
@@ -24,3 +28,52 @@ jobs:
       # whether we're shipping a 0.x or 1.x line — keep the floating
       # major stable at `v1` until we ever bump to 2.0.
       major-ref: v1
+
+  # Per-action Docker images — one image per tlisp action, built via
+  # nix dockerTools (flake `packages.<name>-image`), published to
+  # ghcr.io/pleme-io/action-<name>:<tag> + :latest. Each action.yml
+  # references its image via `image: docker://...:latest`.
+  derive-version-image:
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    permissions: { contents: read, packages: write, id-token: write }
+    with:
+      imageAttr: derive-version-from-tag-image
+      imageName: pleme-io/action-derive-version-from-tag
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  gem-publish-image:
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    permissions: { contents: read, packages: write, id-token: write }
+    with:
+      imageAttr: gem-publish-image
+      imageName: pleme-io/action-gem-publish
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  git-push-with-token-image:
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    permissions: { contents: read, packages: write, id-token: write }
+    with:
+      imageAttr: git-push-with-token-image
+      imageName: pleme-io/action-git-push-with-token
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  helm-oci-publish-image:
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    permissions: { contents: read, packages: write, id-token: write }
+    with:
+      imageAttr: helm-oci-publish-image
+      imageName: pleme-io/action-helm-oci-publish
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  oci-image-push-image:
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    permissions: { contents: read, packages: write, id-token: write }
+    with:
+      imageAttr: oci-image-push-image
+      imageName: pleme-io/action-oci-image-push
+      tag: ${{ github.ref_name }}
+    secrets: inherit
