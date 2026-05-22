@@ -1,26 +1,23 @@
 ;; oci-image-push/run.tlisp — push a Nix-produced OCI image tarball.
 ;;
-;; Tries `nix run <flake-ref>#forge -- push` first; falls back to
-;; `nix shell nixpkgs#skopeo --command skopeo copy docker-archive:<tarball>
-;; docker://<target>` so consumers without forge in their flake still
-;; work end-to-end.
+;; Uses skopeo (baked into the tatara-script base image) to copy
+;; the local docker-archive tarball to `<registry>/<image>:<tag>`.
 ;;
 ;; Inputs (env):
 ;;   REGISTRY    — e.g. "ghcr.io"
 ;;   IMAGE       — e.g. "pleme-io/pangea-operator"
 ;;   TAG         — image tag
 ;;   TARBALL     — local path to the Docker tarball (default "./result")
-;;   FLAKE_REF   — flake ref used for `.#forge` discovery (default ".")
+;;   FLAKE_REF   — (ignored in Docker mode; kept for input-compat)
 ;;
 ;; Pre-conditions: docker/login-action has already authenticated to
-;; the target registry; nix-installer-action has set up Nix.
+;; the target registry (skopeo reads ~/.docker/config.json).
 
 ;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
 (define registry  (env-get "INPUT_REGISTRY"  (env-get "REGISTRY"  "")))
 (define image     (env-get "INPUT_IMAGE"     (env-get "IMAGE"     "")))
 (define tag       (env-get "INPUT_TAG"       (env-get "TAG"       "")))
 (define tarball   (env-get "INPUT_TARBALL"   (env-get "TARBALL"   "./result")))
-(define flake-ref (env-get "INPUT_FLAKE_REF" (env-get "FLAKE_REF" ".")))
 
 (when (or (equal? registry "") (equal? image "") (equal? tag ""))
   (log-error "oci-image-push: missing INPUT_REGISTRY, INPUT_IMAGE, or INPUT_TAG")
@@ -28,31 +25,15 @@
 
 (define target (string-append registry "/" image ":" tag))
 
-(define (forge-available?)
-  ;; Probe for forge by asking it for --help. Suppresses stdout/stderr.
-  (exec-ok? "nix" "run" (string-append flake-ref "#forge") "--" "--help"))
-
-(define (push-via-forge)
-  (exec-check "nix" "run" (string-append flake-ref "#forge") "--"
-              "push"
-              "--image-tarball" tarball
-              "--registry"      target))
-
-(define (push-via-skopeo)
-  (exec-check "nix" "shell" "nixpkgs#skopeo" "--command"
-              "skopeo" "--insecure-policy" "copy"
-              (string-append "docker-archive:" tarball)
-              (string-append "docker://"      target)))
-
 (log-info (string-append "pushing " tarball " -> " target))
 
 (define status
-  (if (forge-available?)
-    (begin (log-info "using forge push") (push-via-forge))
-    (begin (log-info "forge not in flake; using skopeo fallback") (push-via-skopeo))))
+  (exec-check "skopeo" "--insecure-policy" "copy"
+              (string-append "docker-archive:" tarball)
+              (string-append "docker://"      target)))
 
 (when (not (= status 0))
-  (log-error (string-append "image push failed (status "
+  (log-error (string-append "skopeo copy failed (status "
                             (string-format "{}" status) ")"))
   (exit status))
 
