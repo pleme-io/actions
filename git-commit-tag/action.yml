@@ -1,0 +1,61 @@
+name: 'pleme-io · git-commit-tag'
+description: 'Configure github-actions bot identity, stage typed paths, commit with a typed message template, and create an annotated tag. Composes with git-push-with-token for the push half.'
+branding:
+  icon: 'git-commit'
+  color: 'gray-dark'
+
+inputs:
+  version:
+    description: "Version string used in the commit message + tag (e.g. '0.1.1')"
+    required: true
+  tag-prefix:
+    description: "Prefix prepended to the tag name (default 'v' → tag 'v<version>')"
+    required: false
+    default: "v"
+  commit-message-template:
+    description: "Commit message template; '{version}' is substituted with the version input"
+    required: false
+    default: "release: workspace v{version}"
+  add-paths:
+    description: "Space-separated git pathspecs to stage. Default fits a Rust workspace."
+    required: false
+    default: "Cargo.toml Cargo.lock Cargo.nix"
+  identity-name:
+    description: "git user.name to set for the commit"
+    required: false
+    default: "github-actions[bot]"
+  identity-email:
+    description: "git user.email to set for the commit"
+    required: false
+    default: "41898282+github-actions[bot]@users.noreply.github.com"
+
+outputs:
+  tag:
+    description: "The created tag name"
+    value: ${{ steps.commit.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Commit + tag
+      id: commit
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        VERSION: ${{ inputs.version }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        COMMIT_MESSAGE_TEMPLATE: ${{ inputs.commit-message-template }}
+        ADD_PATHS: ${{ inputs.add-paths }}
+        IDENTITY_NAME: ${{ inputs.identity-name }}
+        IDENTITY_EMAIL: ${{ inputs.identity-email }}

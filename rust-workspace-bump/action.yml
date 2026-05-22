@@ -1,0 +1,72 @@
+name: 'pleme-io · rust-workspace-bump'
+description: 'Bump a Rust workspace.package.version via `cargo set-version --workspace --bump <type>`, regen Cargo.nix, commit + tag locally. No shell — composes existing rust + tatara-script + git primitives.'
+branding:
+  icon: 'arrow-up-circle'
+  color: 'green'
+
+inputs:
+  bump-type:
+    description: "patch | minor | major"
+    required: false
+    default: patch
+  skip-when-no-source-changes:
+    description: "Skip the bump when no engenho-*/, root Cargo.toml, or root Cargo.lock changes happened since the previous tag. Set false to always bump."
+    required: false
+    default: "true"
+  source-paths:
+    description: "Space-separated globs the skip-detector inspects for changes. Default fits an engenho-shaped workspace; override for other layouts."
+    required: false
+    default: "engenho* Cargo.toml Cargo.lock"
+
+outputs:
+  bumped:
+    description: "true if a bump was performed, false if skipped/no-op"
+    value: ${{ steps.bump.outputs.bumped }}
+  new-version:
+    description: "New workspace.package.version after bump (empty if no-op)"
+    value: ${{ steps.bump.outputs.new-version }}
+  old-version:
+    description: "Previous workspace.package.version (always populated)"
+    value: ${{ steps.bump.outputs.old-version }}
+
+runs:
+  using: composite
+  steps:
+    # Tools are installed in dependency order; each is an existing
+    # action or a one-shot install of a published binary. Per the
+    # NO SHELL prime directive, all per-step logic that's more than
+    # trivial install glue lives in run.tlisp.
+
+    - name: Install Rust toolchain (cargo + rustc)
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-edit (provides `cargo set-version`)
+      shell: bash
+      run: cargo install --locked cargo-edit
+
+    - name: Install Nix (for crate2nix regenerate)
+      uses: DeterminateSystems/nix-installer-action@main
+
+    # The actual bump logic — single tatara-script invocation.
+    # Reads source paths, detects skip condition, runs the bump,
+    # regenerates Cargo.nix, refreshes Cargo.lock, and emits
+    # outputs. No shell beyond the install steps above.
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run rust-workspace-bump
+      id: bump
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BUMP_TYPE: ${{ inputs.bump-type }}
+        SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}
+        SOURCE_PATHS: ${{ inputs.source-paths }}

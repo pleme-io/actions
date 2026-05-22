@@ -1,0 +1,58 @@
+name: 'pleme-io · rust-workspace-publish'
+description: 'Ship every workspace member to the Rust registry in topological dependency order. Auto-renames any conflicting crate to pleme-io-<original> + commits the rename back to main + retries. Pure tlisp logic, no shell beyond install glue.'
+branding:
+  icon: 'upload'
+  color: 'blue'
+
+inputs:
+  dry-run:
+    description: "Run the registry ship as --dry-run only (no upload)"
+    required: false
+    default: "false"
+  no-verify:
+    description: "Skip the verification compile step. true keeps the ship loop fast + tolerant of edge cases the verify step trips on; false uses the registry's default verification."
+    required: false
+    default: "true"
+  rename-prefix:
+    description: "Prefix used when auto-renaming a conflicting crate. Default 'pleme-io-' lands names under the org's namespace."
+    required: false
+    default: "pleme-io-"
+  max-rename-retries:
+    description: "Maximum number of conflict-rename retry iterations. Default 20 covers a 15-crate workspace with safety margin."
+    required: false
+    default: "20"
+
+outputs:
+  shipped-count:
+    description: "Number of workspace members successfully shipped"
+    value: ${{ steps.ship.outputs.shipped-count }}
+  renamed-crates:
+    description: "Comma-separated list of crates that got auto-renamed"
+    value: ${{ steps.ship.outputs.renamed-crates }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Ship workspace
+      id: ship
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        DRY_RUN: ${{ inputs.dry-run }}
+        NO_VERIFY: ${{ inputs.no-verify }}
+        RENAME_PREFIX: ${{ inputs.rename-prefix }}
+        MAX_RENAME_RETRIES: ${{ inputs.max-rename-retries }}

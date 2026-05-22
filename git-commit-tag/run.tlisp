@@ -1,0 +1,37 @@
+;; git-commit-tag/run.tlisp — configure bot identity, stage paths,
+;; commit with template, create annotated tag. Does NOT push.
+
+(define version (env-required "VERSION"))
+(define tag-prefix (env-get "TAG_PREFIX" "v"))
+(define template (env-get "COMMIT_MESSAGE_TEMPLATE" "release: workspace v{version}"))
+(define add-paths-str (env-get "ADD_PATHS" "Cargo.toml Cargo.lock Cargo.nix"))
+(define identity-name (env-get "IDENTITY_NAME" "github-actions[bot]"))
+(define identity-email (env-get "IDENTITY_EMAIL"
+                        "41898282+github-actions[bot]@users.noreply.github.com"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+(define tag (string-append tag-prefix version))
+(define commit-message (string-replace template "{version}" version))
+(define add-paths (string-split add-paths-str " "))
+
+;; Configure bot identity for this repo.
+(exec-check "git" "config" "user.name" identity-name)
+(exec-check "git" "config" "user.email" identity-email)
+
+;; Stage paths. We pass each path as a separate arg so globs that
+;; expand to nothing don't fail the whole stage step.
+(apply exec-check (append (list "git" "add") add-paths))
+
+;; Commit. exec-check raises on non-zero exit so callers can see
+;; the failure mode via the runner log.
+(exec-check "git" "commit" "-m" commit-message)
+
+;; Annotated tag.
+(exec-check "git" "tag" "-a" tag "-m" commit-message)
+
+(append-output (string-append "tag=" tag))
+(log-info (string-append "committed + tagged " tag))

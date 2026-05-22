@@ -1,0 +1,184 @@
+;; rust-workspace-bump/run.tlisp — bump a Rust workspace's
+;; workspace.package.version + regen Cargo.nix.
+;;
+;; The bump logic itself runs through `cargo set-version --workspace
+;; --bump <type>` (cargo-edit). Cargo.nix regeneration runs through
+;; `nix run github:nix-community/crate2nix -- generate`. Cargo.lock
+;; refresh runs through `cargo update --workspace`. All three tools
+;; are installed by the composite action's install steps above; this
+;; tlisp orchestrates the typed flow.
+;;
+;; Inputs (env):
+;;   BUMP_TYPE                     patch | minor | major
+;;   SKIP_WHEN_NO_SOURCE_CHANGES   "true" | "false"
+;;   SOURCE_PATHS                  space-separated globs to inspect
+;;   GITHUB_OUTPUT                 provided by Actions runner
+;;
+;; Outputs (appended to $GITHUB_OUTPUT):
+;;   bumped       true | false
+;;   new-version  X.Y.Z (empty when bumped=false)
+;;   old-version  X.Y.Z (always populated when Cargo.toml exists)
+
+(define bump-type (env-get "BUMP_TYPE" "patch"))
+(define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
+(define source-paths (env-get "SOURCE_PATHS" "engenho* Cargo.toml Cargo.lock"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+;; -------------------------------------------------------------- ;;
+;; workspace.package.version reader                                ;;
+;; -------------------------------------------------------------- ;;
+;; tatara-lisp doesn't ship a TOML parser yet; scan Cargo.toml as
+;; text. The pattern is stable: a `[workspace.package]` section
+;; followed by lines containing `version = "X.Y.Z"`. Stop at the
+;; next `[...]` heading.
+
+(define (extract-quoted-value line)
+  ;; Pull "X" out of `key = "X"`. Returns "" if no quoted value.
+  (let* ((dq-parts (string-split line "\""))
+         (sq-parts (string-split line "'")))
+    (cond
+      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
+      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
+      (else ""))))
+
+(define (string-trim-left s)
+  (cond
+    ((equal? s "") "")
+    ((or (equal? (string-ref s 0) " ")
+         (equal? (string-ref s 0) "\t"))
+     (string-trim-left (substring s 1 (string-length s))))
+    (else s)))
+
+(define (line-is-section-header? line)
+  (let ((trimmed (string-trim-left line)))
+    (and (> (string-length trimmed) 0)
+         (equal? (string-ref trimmed 0) "["))))
+
+(define (read-workspace-version)
+  ;; Walk Cargo.toml looking for [workspace.package] then the first
+  ;; `version = ...` line inside it.
+  (define (walk lines in-section)
+    (cond
+      ((null? lines) "")
+      ((string-contains? (car lines) "[workspace.package]")
+       (walk (cdr lines) #t))
+      ((and in-section (line-is-section-header? (car lines)))
+       "")
+      ((and in-section
+            (string-contains? (car lines) "version")
+            (string-contains? (car lines) "="))
+       (extract-quoted-value (car lines)))
+      (else (walk (cdr lines) in-section))))
+  (if (path-exists? "Cargo.toml")
+    (walk (string-split (read-file "Cargo.toml") "\n") #f)
+    ""))
+
+;; -------------------------------------------------------------- ;;
+;; Change detection                                                ;;
+;; -------------------------------------------------------------- ;;
+
+(define (last-tag)
+  ;; `git describe --tags --abbrev=0` returns "" on no tags via the
+  ;; exec abstraction's non-zero exit. Capture stdout when ok.
+  (let ((result (exec-capture "git" "describe" "--tags" "--abbrev=0")))
+    (if (= (alist-get result "exit-code") 0)
+      (string-trim (alist-get result "stdout"))
+      "")))
+
+(define (has-changes? tag paths)
+  ;; `git diff --quiet <tag> HEAD -- <paths...>` — exit 0 if no
+  ;; changes, 1 if changes. We want true when changes exist.
+  (let* ((path-list (string-split paths " "))
+         (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
+         (result (apply exec-capture "git" args)))
+    (not (= (alist-get result "exit-code") 0))))
+
+(define (should-bump?)
+  (cond
+    ((not (equal? skip-flag "true")) #t)
+    (else
+     (let ((tag (last-tag)))
+       (cond
+         ((equal? tag "") #t)  ;; No prior tag — always bump
+         ((has-changes? tag source-paths) #t)
+         (else #f))))))
+
+;; -------------------------------------------------------------- ;;
+;; Bump pipeline                                                   ;;
+;; -------------------------------------------------------------- ;;
+
+(define (cargo-set-version)
+  (exec-check "cargo" "set-version" "--workspace" "--bump" bump-type))
+
+(define (regen-cargo-nix)
+  (exec-check "nix" "run" "github:nix-community/crate2nix" "--" "generate"))
+
+(define (refresh-cargo-lock)
+  ;; Best effort — non-zero exit is non-fatal (e.g. offline env).
+  (exec-capture "cargo" "update" "--workspace"))
+
+;; -------------------------------------------------------------- ;;
+;; Dispatch                                                        ;;
+;; -------------------------------------------------------------- ;;
+
+(define old-version (read-workspace-version))
+(append-output (string-append "old-version=" old-version))
+
+(cond
+  ((not (path-exists? "Cargo.toml"))
+   (log-error "rust-workspace-bump: no Cargo.toml at repo root")
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (exit 1))
+
+  ((equal? old-version "")
+   (log-error "rust-workspace-bump: workspace.package.version not found in Cargo.toml")
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (exit 1))
+
+  ((not (should-bump?))
+   (log-info (string-append "no source changes since last tag — skipping bump (workspace at "
+                            old-version ")"))
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (exit 0))
+
+  (else
+   (log-info (string-append "bumping " bump-type " from " old-version))
+   (let ((bump-status (cargo-set-version)))
+     (cond
+       ((not (= bump-status 0))
+        (log-error (string-append "cargo set-version --workspace --bump "
+                                  bump-type " failed (status "
+                                  (string-format "{}" bump-status) ")"))
+        (append-output "bumped=false")
+        (append-output "new-version=")
+        (exit bump-status))
+       (else
+        (log-info "regenerating Cargo.nix")
+        (let ((regen-status (regen-cargo-nix)))
+          (cond
+            ((not (= regen-status 0))
+             (log-error "crate2nix generate failed")
+             (append-output "bumped=false")
+             (append-output "new-version=")
+             (exit regen-status))
+            (else
+             (refresh-cargo-lock)
+             (let ((new-version (read-workspace-version)))
+               (cond
+                 ((equal? new-version old-version)
+                  (log-error (string-append "bump appeared to succeed but version unchanged: "
+                                            old-version))
+                  (append-output "bumped=false")
+                  (append-output "new-version=")
+                  (exit 1))
+                 (else
+                  (log-info (string-append "bumped: " old-version " -> " new-version))
+                  (append-output "bumped=true")
+                  (append-output (string-append "new-version=" new-version)))))))))))))))
