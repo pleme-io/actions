@@ -13,9 +13,6 @@ on:
 
 permissions:
   contents: write
-
-permissions:
-  contents: write
   packages: write
 
 jobs:
