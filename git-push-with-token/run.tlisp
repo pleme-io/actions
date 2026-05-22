@@ -24,6 +24,12 @@
   (log-error "git-push-with-token: missing INPUT_TOKEN")
   (exit 1))
 
+;; Docker-action mode: the container's runtime UID rarely matches
+;; the runner UID owning /github/workspace. Git refuses to operate
+;; on a repo it considers owned by an untrusted user; mark every
+;; directory safe before any git command runs.
+(exec-capture "git" "config" "--global" "--add" "safe.directory" "*")
+
 ;; ---------- get + clean origin URL ---------- ;;
 
 (define current-url
