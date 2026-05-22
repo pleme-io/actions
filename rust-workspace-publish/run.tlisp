@@ -1,147 +1,91 @@
-;; rust-workspace-publish/run.tlisp — ship every workspace member
-;; to the Rust registry in topological order, auto-renaming any
-;; name-conflicting crate to <prefix><original> and committing the
-;; rename back to the current branch.
-;;
-;; Inputs (env):
-;;   DRY_RUN              "true" | "false"
-;;   NO_VERIFY            "true" | "false"
-;;   RENAME_PREFIX        prefix applied on conflict (e.g. "pleme-io-")
-;;   MAX_RENAME_RETRIES   max conflict-rename iterations
-;;   CARGO_REGISTRY_TOKEN registry credential (forwarded by Actions
-;;                        as a secret; required unless DRY_RUN=true)
-;;   GITHUB_OUTPUT        provided by Actions runner
-;;
-;; Outputs (appended to $GITHUB_OUTPUT):
-;;   shipped-count    integer
-;;   renamed-crates   comma-separated list (empty if no renames)
-;;
-;; The conflict-rename rewires the crate's [package] name to
-;; <prefix><original> AND adds `package = "<prefix><original>"`
-;; to the workspace.dependencies entry so other crates' Rust source
-;; keeps using the short name (cargo's rename-via-package field).
+;; rust-workspace-publish/run.tlisp — ship workspace to the Rust
+;; registry; auto-rename name-conflicts to <prefix><original>.
 
 (define dry-run (env-get "DRY_RUN" "false"))
 (define no-verify (env-get "NO_VERIFY" "true"))
 (define rename-prefix (env-get "RENAME_PREFIX" "pleme-io-"))
-(define max-retries (env-get "MAX_RENAME_RETRIES" "20"))
+(define max-retries-str (env-get "MAX_RENAME_RETRIES" "20"))
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
 (define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
-;; -------------------------------------------------------------- ;;
-;; Build `cargo publish --workspace` argv                          ;;
-;; -------------------------------------------------------------- ;;
+(define (status-of result) (alist-get result "status" -1))
+(define (stdout-of result) (alist-get result "stdout" ""))
+(define (stderr-of result) (alist-get result "stderr" ""))
 
 (define (ship-args)
-  (define base (list "publish" "--workspace"))
-  (define with-dry
-    (if (equal? dry-run "true")
-      (append base (list "--dry-run"))
-      base))
-  (if (equal? no-verify "true")
-    (append with-dry (list "--no-verify"))
-    with-dry))
+  (let* ((base (list "publish" "--workspace"))
+         (with-dry (if (equal? dry-run "true")
+                     (append base (list "--dry-run"))
+                     base)))
+    (if (equal? no-verify "true")
+      (append with-dry (list "--no-verify"))
+      with-dry)))
 
 ;; -------------------------------------------------------------- ;;
 ;; Conflict detection                                              ;;
 ;; -------------------------------------------------------------- ;;
-;; The registry's failure messages on name conflict take several
-;; shapes depending on registry implementation + cargo version.
-;; The patterns below cover the common ones; if a new pattern
-;; appears, extend `conflict-name-from-log` rather than abandoning
-;; the trait.
-
-(define (conflict-name-from-log log)
-  ;; Returns the offending crate name, or "" if no conflict found.
-  ;; Walk lines looking for known signatures.
-  (define lines (string-split log "\n"))
-  (define (scan ls)
-    (cond
-      ((null? ls) "")
-      ;; "crate name `foo` is already in use" / "is already taken"
-      ((or (string-contains? (car ls) "is already in use")
-           (string-contains? (car ls) "is already taken")
-           (string-contains? (car ls) "is already on the registry"))
-       (extract-backticked (car ls)))
-      ;; "the crate `foo` was already published"
-      ((string-contains? (car ls) "was already published")
-       (extract-backticked (car ls)))
-      ;; "crate name is not allowed: foo"
-      ((string-contains? (car ls) "crate name is not allowed")
-       (extract-trailing-token (car ls) ":"))
-      (else (scan (cdr ls)))))
-  (scan lines))
 
 (define (extract-backticked line)
-  ;; Pull the first `xxx` substring from a line.
   (let ((parts (string-split line "`")))
     (if (>= (length parts) 2) (car (cdr parts)) "")))
 
-(define (extract-trailing-token line sep)
-  ;; Pull the token after the LAST occurrence of sep.
-  (let* ((parts (string-split line sep))
-         (n (length parts)))
-    (if (>= n 2)
-      (string-trim (list-ref parts (- n 1)))
-      "")))
+(define (conflict-on-line? line)
+  (or (string-contains? line "is already in use")
+      (string-contains? line "is already taken")
+      (string-contains? line "is already on the registry")
+      (string-contains? line "was already published")
+      (string-contains? line "crate name is not allowed")))
+
+(define (find-conflict lines)
+  (cond
+    ((null? lines) "")
+    ((conflict-on-line? (car lines))
+     (extract-backticked (car lines)))
+    (else (find-conflict (cdr lines)))))
+
+(define (conflict-name-from-log log)
+  (find-conflict (string-split log "\n")))
 
 ;; -------------------------------------------------------------- ;;
-;; Auto-rename a crate to <prefix><original>                       ;;
+;; Rename                                                          ;;
 ;; -------------------------------------------------------------- ;;
 
-(define (replace-in-file path needle replacement)
-  ;; Naive global replace — read file, swap every needle, write back.
+(define (replace-once-in-file path needle replacement)
   (let ((contents (read-file path)))
-    (write-file path (string-replace-all contents needle replacement))))
-
-(define (string-replace-all s needle replacement)
-  ;; tatara-lisp's string-replace replaces the first occurrence; we
-  ;; loop to swap every instance.
-  (let loop ((acc s))
-    (let ((next (string-replace acc needle replacement)))
-      (if (equal? next acc) acc (loop next)))))
+    (write-file path (string-replace contents needle replacement))))
 
 (define (rename-crate original)
-  (define new-name (string-append rename-prefix original))
-  (define crate-toml (string-append original "/Cargo.toml"))
-  (cond
-    ((not (path-exists? crate-toml))
-     (log-error (string-append "conflicting name '" original "' has no matching crate dir"))
-     #f)
-    (else
-     ;; 1. Crate's own [package] name field.
-     (replace-in-file crate-toml
-                      (string-append "name = \"" original "\"")
-                      (string-append "name = \"" new-name "\""))
-     ;; 2. Workspace.dependencies rename-via-package field. Only add
-     ;;    if the workspace declares this crate as a dep.
-     (let* ((root-toml (read-file "Cargo.toml"))
-            (lookup (string-append original " = { path = \"" original "\","))
-            (already-renamed (string-contains? root-toml
-                              (string-append "package = \"" new-name "\""))))
-       (cond
-         ((and (string-contains? root-toml lookup)
-               (not already-renamed))
-          ;; Insert `package = "<new>"` into the workspace.deps line.
-          (define old-pattern (string-append original
-                              " = { path = \"" original
-                              "\", version = \"0.1.0\" }"))
-          (define new-pattern (string-append original
-                              " = { path = \"" original
-                              "\", version = \"0.1.0\", package = \""
-                              new-name "\" }"))
-          (replace-in-file "Cargo.toml" old-pattern new-pattern))
-         (else
-          (log-info (string-append "no workspace dep entry for '" original
-                                   "', skipping rename-via-package wiring")))))
-     (log-info (string-append "renamed '" original "' -> '" new-name "'"))
-     #t)))
+  (let* ((new-name (string-append rename-prefix original))
+         (crate-toml (string-append original "/Cargo.toml")))
+    (cond
+      ((not (path-exists? crate-toml))
+       (log-error (string-append "no crate dir for '" original "'"))
+       #f)
+      (else
+        ;; Rewrite the crate's [package] name field.
+        (replace-once-in-file crate-toml
+          (string-append "name = \"" original "\"")
+          (string-append "name = \"" new-name "\""))
+        ;; Update workspace.dependencies entry with the package=
+        ;; rename so other crates' Rust source keeps using the
+        ;; short name. We pattern-match the EXACT line the
+        ;; workspace-version pass wrote.
+        (let* ((old-line (string-append original
+                          " = { path = \"" original
+                          "\", version = \"0.1.0\" }"))
+               (new-line (string-append original
+                          " = { path = \"" original
+                          "\", version = \"0.1.0\", package = \""
+                          new-name "\" }")))
+          (replace-once-in-file "Cargo.toml" old-line new-line))
+        (log-info (string-append "renamed '" original "' -> '" new-name "'"))
+        #t))))
 
 ;; -------------------------------------------------------------- ;;
-;; Commit rename + push                                            ;;
+;; Commit + push rename                                            ;;
 ;; -------------------------------------------------------------- ;;
 
 (define (configure-git-bot)
@@ -151,69 +95,64 @@
 
 (define (commit-and-push original)
   (let ((new-name (string-append rename-prefix original)))
-    (exec-check "git" "add" (string-append original "/Cargo.toml") "Cargo.toml")
+    (exec-check "git" "add"
+                (string-append original "/Cargo.toml") "Cargo.toml")
     (exec-check "git" "commit" "-m"
                 (string-append "rename: " original " -> " new-name
                                " (registry name conflict)"))
-    ;; Best-effort push; ignore failures so dry-run + local-debug
-    ;; modes proceed even without a remote.
     (exec-capture "git" "push" "origin" "HEAD:main")))
 
 ;; -------------------------------------------------------------- ;;
-;; Dispatch — conflict-rename retry loop                           ;;
+;; Ship loop                                                       ;;
 ;; -------------------------------------------------------------- ;;
 
-(define max-retries-n (string->number max-retries))
-(define renamed-list (list))
+(define max-retries (string->number max-retries-str))
 
-(configure-git-bot)
+(define (do-ship-attempt)
+  (apply exec-capture (cons "cargo" (ship-args))))
 
-(define (ship-attempt attempt-n)
+(define (try-ship attempt renamed)
   (cond
-    ((>= attempt-n max-retries-n)
-     (log-error (string-append "exceeded max rename retries ("
-                               (string-format "{}" max-retries-n) ")"))
+    ((>= attempt max-retries)
+     (log-error "exceeded max rename retries")
      (append-output "shipped-count=0")
-     (append-output (string-append "renamed-crates="
-                                   (string-join renamed-list ",")))
+     (append-output
+       (string-append "renamed-crates=" (string-join renamed ",")))
      (exit 1))
     (else
-     (log-info (string-append "ship attempt " (string-format "{}" attempt-n)))
-     (let* ((result (apply exec-capture (cons "cargo" (ship-args))))
-            (exit-code (alist-get result "exit-code"))
-            (stdout (alist-get result "stdout"))
-            (stderr (alist-get result "stderr"))
-            (log (string-append stdout "\n" stderr)))
-       (cond
-         ((= exit-code 0)
-          (log-info "workspace shipped successfully")
-          (append-output "shipped-count=ok")
-          (append-output (string-append "renamed-crates="
-                                        (string-join renamed-list ",")))
-          (exit 0))
-         (else
-          (let ((conflict (conflict-name-from-log log)))
-            (cond
-              ((equal? conflict "")
-               (log-error "ship failed with no recognizable name conflict")
-               (log-info log)
-               (append-output "shipped-count=0")
-               (append-output (string-append "renamed-crates="
-                                             (string-join renamed-list ",")))
-               (exit exit-code))
-              (else
-               (log-info (string-append "conflict detected on '" conflict
-                                        "', renaming"))
-               (cond
-                 ((rename-crate conflict)
-                  (commit-and-push conflict)
-                  (set! renamed-list (append renamed-list (list conflict)))
-                  (ship-attempt (+ attempt-n 1)))
-                 (else
-                  (log-error "rename failed; bailing")
-                  (append-output "shipped-count=0")
-                  (append-output (string-append "renamed-crates="
-                                                (string-join renamed-list ",")))
-                  (exit 1))))))))))))
+      (log-info (string-append "ship attempt " (number->string attempt)))
+      (let* ((r (do-ship-attempt))
+             (code (status-of r))
+             (log (string-append (stdout-of r) "\n" (stderr-of r))))
+        (cond
+          ((= code 0)
+           (log-info "workspace shipped successfully")
+           (append-output "shipped-count=ok")
+           (append-output
+             (string-append "renamed-crates=" (string-join renamed ",")))
+           (exit 0))
+          (else
+            (let ((conflict (conflict-name-from-log log)))
+              (cond
+                ((equal? conflict "")
+                 (log-error "ship failed with no recognizable name conflict")
+                 (log-info log)
+                 (append-output "shipped-count=0")
+                 (append-output
+                   (string-append "renamed-crates=" (string-join renamed ",")))
+                 (exit code))
+                (else
+                  (log-info (string-append "conflict on '" conflict "'; renaming"))
+                  (cond
+                    ((rename-crate conflict)
+                     (commit-and-push conflict)
+                     (try-ship (+ attempt 1) (append renamed (list conflict))))
+                    (else
+                      (log-error "rename failed; bailing")
+                      (append-output "shipped-count=0")
+                      (append-output
+                        (string-append "renamed-crates=" (string-join renamed ",")))
+                      (exit 1))))))))))))
 
-(ship-attempt 1)
+(configure-git-bot)
+(try-ship 1 (list))
