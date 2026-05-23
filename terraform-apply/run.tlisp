@@ -1,0 +1,21 @@
+;; terraform-apply/run.tlisp — apply a previously-generated tfplan.
+
+(define plan (env-get "PLAN_PATH" "tfplan"))
+(define workdir (env-get "WORKDIR" "."))
+
+(log-info (string-append "==> terraform apply " plan " (in " workdir ")"))
+
+(define r
+  (exec-capture "sh" "-c"
+    (string-append "cd " workdir " && terraform apply -auto-approve " plan)))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info "applied")
+   (append-output "applied=true")
+   (exit 0))
+  (else
+   (log-error "terraform apply failed")
+   (log-info (stderr-of r))
+   (append-output "applied=false")
+   (exit 1)))

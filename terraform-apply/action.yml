@@ -1,5 +1,5 @@
 name: 'pleme-io · terraform-apply'
-description: 'Run terraform apply (consumes plan-path from terraform-plan).'
+description: 'Run terraform apply against a previously-generated plan file. Pairs with terraform-plan.'
 branding: { icon: 'cloud', color: 'orange' }
 
 inputs:
@@ -9,16 +9,34 @@ inputs:
   workdir:
     required: false
     default: "."
+  terraform-version:
+    required: false
+    default: "latest"
 
 outputs:
   applied:
-    value: ${{ steps.run.outputs.applied }}
+    value: ${{ steps.a.outputs.applied }}
 
 runs:
   using: composite
   steps:
-    - id: run
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+    - id: src
       shell: bash
       run: |
-        echo "::warning::terraform-apply action stub — full implementation tracked in patterns.nix backlog"
-        echo "applied=stub" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: a
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PLAN_PATH: ${{ inputs.plan-path }}
+        WORKDIR: ${{ inputs.workdir }}

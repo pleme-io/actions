@@ -1,5 +1,5 @@
 name: 'pleme-io · datadog-event'
-description: 'Post a typed event to Datadog Events API.'
+description: 'Post a typed event to Datadog Events API. Universal for release markers, deploy events, alert correlations.'
 branding: { icon: 'message-square', color: 'orange' }
 
 inputs:
@@ -11,20 +11,41 @@ inputs:
     required: true
   tags:
     required: false
-    default: "custom"
+    default: "source:github_actions"
   alert-type:
+    description: "error | warning | info | success"
     required: false
     default: "info"
+  site:
+    description: "datadoghq.com | datadoghq.eu | us3.datadoghq.com"
+    required: false
+    default: "datadoghq.com"
 
 outputs:
   posted:
-    value: ${{ steps.run.outputs.posted }}
+    value: ${{ steps.dd.outputs.posted }}
 
 runs:
   using: composite
   steps:
-    - id: run
+    - id: dd
       shell: bash
       run: |
-        echo "::warning::datadog-event action stub — full implementation tracked in patterns.nix backlog"
-        echo "posted=stub" >> "$GITHUB_OUTPUT"
+        payload=$(jq -n \
+          --arg title "${{ inputs.title }}" \
+          --arg text "${{ inputs.text }}" \
+          --arg alert "${{ inputs.alert-type }}" \
+          --arg tags "${{ inputs.tags }}" \
+          '{ title: $title, text: $text, alert_type: $alert,
+             tags: ($tags | split(",")), source_type_name: "github" }')
+        code=$(curl -sS -o /dev/null -w '%{http_code}' \
+          -X POST -H "Content-Type: application/json" \
+          -H "DD-API-KEY: ${{ inputs.api-key }}" \
+          -d "$payload" "https://api.${{ inputs.site }}/api/v1/events")
+        if [[ "$code" == "202" || "$code" == "200" ]]; then
+          echo "posted=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "posted=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Datadog API returned $code"
+          exit 1
+        fi

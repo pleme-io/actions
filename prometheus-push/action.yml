@@ -1,24 +1,31 @@
 name: 'pleme-io · prometheus-push'
-description: 'Push metrics to a Prometheus pushgateway.'
+description: 'Push metrics to a Prometheus pushgateway. Useful for emitting deploy/release counters from CI.'
 branding: { icon: 'bar-chart', color: 'orange' }
 
 inputs:
   gateway-url:
     required: true
+    description: "Pushgateway base URL"
   job:
     required: true
   metrics:
     required: true
+    description: "Multi-line text in pushgateway exposition format"
 
 outputs:
   pushed:
-    value: ${{ steps.run.outputs.pushed }}
+    value: ${{ steps.pg.outputs.pushed }}
 
 runs:
   using: composite
   steps:
-    - id: run
+    - id: pg
       shell: bash
       run: |
-        echo "::warning::prometheus-push action stub — full implementation tracked in patterns.nix backlog"
-        echo "pushed=stub" >> "$GITHUB_OUTPUT"
+        if echo -e "${{ inputs.metrics }}" \
+            | curl -sS --data-binary @- "${{ inputs.gateway-url }}/metrics/job/${{ inputs.job }}"; then
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

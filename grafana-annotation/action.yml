@@ -1,9 +1,10 @@
 name: 'pleme-io · grafana-annotation'
-description: 'Create a Grafana annotation (release marker, deploy, incident).'
+description: 'Create a Grafana annotation (release marker, deploy event, incident note). Visible on every dashboard that overlaps the time range.'
 branding: { icon: 'tag', color: 'orange' }
 
 inputs:
   url:
+    description: "Grafana base URL (no trailing slash)"
     required: true
   api-token:
     required: true
@@ -13,18 +14,32 @@ inputs:
     required: false
     default: "release"
   dashboard-id:
+    description: "Scope annotation to a single dashboard (empty = global)"
     required: false
     default: ""
 
 outputs:
   annotation-id:
-    value: ${{ steps.run.outputs.annotation-id }}
+    value: ${{ steps.g.outputs.annotation-id }}
 
 runs:
   using: composite
   steps:
-    - id: run
+    - id: g
       shell: bash
       run: |
-        echo "::warning::grafana-annotation action stub — full implementation tracked in patterns.nix backlog"
-        echo "annotation-id=stub" >> "$GITHUB_OUTPUT"
+        ts=$(date +%s%3N)
+        scope_arg=""
+        [ -n "${{ inputs.dashboard-id }}" ] && scope_arg=", dashboardId: ${{ inputs.dashboard-id }}"
+        payload=$(jq -n \
+          --arg text "${{ inputs.text }}" \
+          --arg tags "${{ inputs.tags }}" \
+          --argjson time "$ts" \
+          "{ text: \$text, tags: (\$tags | split(\",\")), time: \$time$scope_arg }")
+        resp=$(curl -sS -X POST \
+          -H "Authorization: Bearer ${{ inputs.api-token }}" \
+          -H "Content-Type: application/json" \
+          -d "$payload" "${{ inputs.url }}/api/annotations")
+        id=$(echo "$resp" | jq -r '.id')
+        echo "annotation-id=$id" >> "$GITHUB_OUTPUT"
+        echo "created annotation id=$id"

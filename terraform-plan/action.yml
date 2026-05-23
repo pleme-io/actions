@@ -1,5 +1,5 @@
 name: 'pleme-io · terraform-plan'
-description: 'Run terraform plan + emit JSON diff. Pairs with terraform-apply.'
+description: 'Run terraform init + plan + emit plan file. Pairs with terraform-apply for the GitOps split-flow.'
 branding: { icon: 'cloud', color: 'orange' }
 
 inputs:
@@ -7,18 +7,42 @@ inputs:
     required: false
     default: "."
   backend-config:
+    description: "Path to a -backend-config file (optional)"
     required: false
     default: ""
+  var-file:
+    required: false
+    default: ""
+  terraform-version:
+    required: false
+    default: "latest"
 
 outputs:
   plan-path:
-    value: ${{ steps.run.outputs.plan-path }}
+    value: ${{ steps.p.outputs.plan-path }}
+  has-changes:
+    value: ${{ steps.p.outputs.has-changes }}
 
 runs:
   using: composite
   steps:
-    - id: run
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+    - id: p
       shell: bash
+      working-directory: ${{ inputs.workdir }}
       run: |
-        echo "::warning::terraform-plan action stub — full implementation tracked in patterns.nix backlog"
-        echo "plan-path=stub" >> "$GITHUB_OUTPUT"
+        init_args=()
+        [ -n "${{ inputs.backend-config }}" ] && init_args+=( "-backend-config=${{ inputs.backend-config }}" )
+        terraform init "${init_args[@]}"
+        plan_args=( "-out=tfplan" "-detailed-exitcode" )
+        [ -n "${{ inputs.var-file }}" ] && plan_args+=( "-var-file=${{ inputs.var-file }}" )
+        set +e
+        terraform plan "${plan_args[@]}"
+        code=$?
+        set -e
+        if [ "$code" = "1" ]; then exit 1; fi
+        echo "plan-path=${{ inputs.workdir }}/tfplan" >> "$GITHUB_OUTPUT"
+        [ "$code" = "2" ] && echo "has-changes=true" >> "$GITHUB_OUTPUT" \
+                          || echo "has-changes=false" >> "$GITHUB_OUTPUT"
