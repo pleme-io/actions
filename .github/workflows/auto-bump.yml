@@ -1,0 +1,92 @@
+name: auto-bump
+
+# Self-bump for the pleme-io/actions monorepo. On every push to
+# main with action-source changes, increment the patch component
+# of the v0.MAJOR.MINOR.PATCH tag, push the new tag → triggers
+# release.yml (which fast-forwards the v1 ref + cuts Docker
+# images for the actions that ship as containers).
+#
+# Dogfooding the ★★ AUTO-RELEASE prime directive: the actions
+# monorepo doesn't have a Cargo.toml/package.json at root, so it
+# doesn't fit the polymorphic auto-release.yml dispatcher. This
+# bespoke workflow is the actions-monorepo equivalent — same
+# semantics (push → auto-bump → tag → publish), per-repo shape.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump-type:
+        description: "patch | minor | major"
+        required: false
+        default: patch
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # Skip when the bot itself pushed (avoids re-fire loops).
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Skip if no action-source changes since last tag
+        id: changes
+        shell: bash
+        run: |
+          last=$(git tag -l 'v0.*' --sort=-v:refname | head -1 || true)
+          if [ -z "$last" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "no prior tag — bump"
+            exit 0
+          fi
+          if git diff --quiet "$last" HEAD -- '*/action.yml' '*/run.tlisp' '_tlisp-stdlib/' '.github/workflows/'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "no action-source changes since $last — skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "action source changed since $last — bumping"
+          fi
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+
+      - name: Compute next tag
+        if: steps.changes.outputs.skip == 'false'
+        id: next
+        shell: bash
+        run: |
+          last="${{ steps.changes.outputs.last }}"
+          if [ -z "$last" ]; then
+            echo "tag=v0.13.0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bump="${{ inputs.bump-type || 'patch' }}"
+          IFS='.' read -r maj min pat <<<"${last#v}"
+          case "$bump" in
+            major) maj=$((maj+1)); min=0; pat=0 ;;
+            minor) min=$((min+1)); pat=0 ;;
+            patch|*) pat=$((pat+1)) ;;
+          esac
+          echo "tag=v${maj}.${min}.${pat}" >> "$GITHUB_OUTPUT"
+          echo "new tag: v${maj}.${min}.${pat}"
+
+      - name: Configure git bot
+        if: steps.changes.outputs.skip == 'false'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create + push tag
+        if: steps.changes.outputs.skip == 'false'
+        shell: bash
+        run: |
+          tag="${{ steps.next.outputs.tag }}"
+          git tag -a "$tag" -m "release: pleme-io/actions $tag"
+          git push origin "$tag"
+          echo "tagged + pushed $tag → release.yml fires"
