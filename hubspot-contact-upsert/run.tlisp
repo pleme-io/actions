@@ -1,0 +1,4 @@
+;; hubspot-contact-upsert/run.tlisp — typed schema locked
+(log-info "::warning::hubspot-contact-upsert not yet implemented")
+(append-output "contact-id=stub")
+(exit 0)

@@ -1,0 +1,40 @@
+name: 'pleme-io · algolia-index-push'
+description: 'Push records to an Algolia index.'
+branding: { icon: 'search', color: 'blue' }
+
+inputs:
+  app-id:
+    required: true
+  admin-api-key:
+    required: true
+  index:
+    required: true
+  records-file:
+    required: true
+
+outputs:
+  pushed:
+    value: ${{ steps.run.outputs.pushed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        APP_ID: ${{ inputs.app-id }}
+        ADMIN_API_KEY: ${{ inputs.admin-api-key }}
+        INDEX: ${{ inputs.index }}
+        RECORDS_FILE: ${{ inputs.records-file }}

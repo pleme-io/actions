@@ -1,0 +1,37 @@
+name: 'pleme-io · weaviate-schema-apply'
+description: 'Apply a Weaviate schema definition.'
+branding: { icon: 'database', color: 'green' }
+
+inputs:
+  url:
+    required: true
+  api-key:
+    required: true
+  schema-file:
+    required: true
+
+outputs:
+  applied:
+    value: ${{ steps.run.outputs.applied }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        URL_ARG: ${{ inputs.url }}
+        API_KEY: ${{ inputs.api-key }}
+        SCHEMA_FILE: ${{ inputs.schema-file }}

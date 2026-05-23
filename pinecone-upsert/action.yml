@@ -1,0 +1,37 @@
+name: 'pleme-io · pinecone-upsert'
+description: 'Upsert vectors to Pinecone.'
+branding: { icon: 'database', color: 'blue' }
+
+inputs:
+  api-key:
+    required: true
+  index:
+    required: true
+  vectors-file:
+    required: true
+
+outputs:
+  upserted:
+    value: ${{ steps.run.outputs.upserted }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        INDEX: ${{ inputs.index }}
+        VECTORS_FILE: ${{ inputs.vectors-file }}

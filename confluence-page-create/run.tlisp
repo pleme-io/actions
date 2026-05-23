@@ -1,0 +1,4 @@
+;; confluence-page-create/run.tlisp — typed schema locked
+(log-info "::warning::confluence-page-create not yet implemented")
+(append-output "page-id=stub")
+(exit 0)

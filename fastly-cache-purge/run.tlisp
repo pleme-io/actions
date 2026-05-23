@@ -1,0 +1,4 @@
+;; fastly-cache-purge/run.tlisp — typed schema locked
+(log-info "::warning::fastly-cache-purge not yet implemented")
+(append-output "purged=stub")
+(exit 0)

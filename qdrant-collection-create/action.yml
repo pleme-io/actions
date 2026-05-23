@@ -1,0 +1,41 @@
+name: 'pleme-io · qdrant-collection-create'
+description: 'Create a Qdrant collection.'
+branding: { icon: 'database', color: 'red' }
+
+inputs:
+  url:
+    required: true
+  api-key:
+    required: true
+  collection:
+    required: true
+  vector-size:
+    required: false
+    default: "1536"
+
+outputs:
+  created:
+    value: ${{ steps.run.outputs.created }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        URL_ARG: ${{ inputs.url }}
+        API_KEY: ${{ inputs.api-key }}
+        COLLECTION: ${{ inputs.collection }}
+        VECTOR_SIZE: ${{ inputs.vector-size }}

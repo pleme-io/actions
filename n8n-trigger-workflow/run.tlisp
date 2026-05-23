@@ -1,0 +1,4 @@
+;; n8n-trigger-workflow/run.tlisp — typed schema locked
+(log-info "::warning::n8n-trigger-workflow not yet implemented")
+(append-output "triggered=stub")
+(exit 0)

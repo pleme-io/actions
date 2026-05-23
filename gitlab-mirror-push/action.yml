@@ -1,0 +1,37 @@
+name: 'pleme-io · gitlab-mirror-push'
+description: 'Mirror push the repo to a GitLab remote.'
+branding: { icon: 'upload', color: 'orange' }
+
+inputs:
+  gitlab-url:
+    required: true
+  project-path:
+    required: true
+  token:
+    required: true
+
+outputs:
+  pushed:
+    value: ${{ steps.run.outputs.pushed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        GITLAB_URL: ${{ inputs.gitlab-url }}
+        PROJECT_PATH: ${{ inputs.project-path }}
+        TOKEN: ${{ inputs.token }}

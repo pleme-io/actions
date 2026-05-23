@@ -1,0 +1,4 @@
+;; algolia-index-push/run.tlisp — typed schema locked
+(log-info "::warning::algolia-index-push not yet implemented")
+(append-output "pushed=stub")
+(exit 0)

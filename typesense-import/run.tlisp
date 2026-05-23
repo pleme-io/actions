@@ -1,0 +1,4 @@
+;; typesense-import/run.tlisp — typed schema locked
+(log-info "::warning::typesense-import not yet implemented")
+(append-output "imported=stub")
+(exit 0)

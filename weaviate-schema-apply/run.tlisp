@@ -1,0 +1,4 @@
+;; weaviate-schema-apply/run.tlisp — typed schema locked
+(log-info "::warning::weaviate-schema-apply not yet implemented")
+(append-output "applied=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; gitlab-mirror-push/run.tlisp — typed schema locked
+(log-info "::warning::gitlab-mirror-push not yet implemented")
+(append-output "pushed=stub")
+(exit 0)

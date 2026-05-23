@@ -1,0 +1,4 @@
+;; crates-mirror-pull/run.tlisp — typed schema locked
+(log-info "::warning::crates-mirror-pull not yet implemented")
+(append-output "fetched=stub")
+(exit 0)

@@ -1,0 +1,39 @@
+name: 'pleme-io · npm-mirror-pull'
+description: 'Pull an npm tarball for offline mirroring.'
+branding: { icon: 'download', color: 'red' }
+
+inputs:
+  package:
+    required: true
+  version:
+    required: false
+    default: "latest"
+  output-dir:
+    required: false
+    default: "mirror/"
+
+outputs:
+  fetched:
+    value: ${{ steps.run.outputs.fetched }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        VERSION_ARG: ${{ inputs.version }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}

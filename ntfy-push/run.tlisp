@@ -1,0 +1,4 @@
+;; ntfy-push/run.tlisp — typed schema locked
+(log-info "::warning::ntfy-push not yet implemented")
+(append-output "sent=stub")
+(exit 0)

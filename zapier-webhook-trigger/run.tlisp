@@ -1,0 +1,4 @@
+;; zapier-webhook-trigger/run.tlisp — typed schema locked
+(log-info "::warning::zapier-webhook-trigger not yet implemented")
+(append-output "triggered=stub")
+(exit 0)

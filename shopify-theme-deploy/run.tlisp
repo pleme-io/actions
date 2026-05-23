@@ -1,0 +1,4 @@
+;; shopify-theme-deploy/run.tlisp — typed schema locked
+(log-info "::warning::shopify-theme-deploy not yet implemented")
+(append-output "deployed=stub")
+(exit 0)

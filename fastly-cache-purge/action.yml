@@ -1,0 +1,38 @@
+name: 'pleme-io · fastly-cache-purge'
+description: 'Purge Fastly cache.'
+branding: { icon: 'trash', color: 'red' }
+
+inputs:
+  service-id:
+    required: true
+  api-key:
+    required: true
+  surrogate-key:
+    required: false
+    default: ""
+
+outputs:
+  purged:
+    value: ${{ steps.run.outputs.purged }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SERVICE_ID: ${{ inputs.service-id }}
+        API_KEY: ${{ inputs.api-key }}
+        SURROGATE_KEY: ${{ inputs.surrogate-key }}

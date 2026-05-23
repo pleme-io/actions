@@ -1,0 +1,4 @@
+;; qdrant-collection-create/run.tlisp — typed schema locked
+(log-info "::warning::qdrant-collection-create not yet implemented")
+(append-output "created=stub")
+(exit 0)

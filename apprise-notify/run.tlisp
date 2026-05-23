@@ -1,0 +1,4 @@
+;; apprise-notify/run.tlisp — typed schema locked
+(log-info "::warning::apprise-notify not yet implemented")
+(append-output "sent=stub")
+(exit 0)

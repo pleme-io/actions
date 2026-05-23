@@ -1,0 +1,4 @@
+;; meilisearch-index/run.tlisp — typed schema locked
+(log-info "::warning::meilisearch-index not yet implemented")
+(append-output "task-id=stub")
+(exit 0)

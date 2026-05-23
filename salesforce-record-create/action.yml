@@ -1,0 +1,40 @@
+name: 'pleme-io · salesforce-record-create'
+description: 'Create a Salesforce record via REST API.'
+branding: { icon: 'users', color: 'blue' }
+
+inputs:
+  instance-url:
+    required: true
+  token:
+    required: true
+  object-type:
+    required: true
+  fields-json:
+    required: true
+
+outputs:
+  record-id:
+    value: ${{ steps.run.outputs.record-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        INSTANCE_URL: ${{ inputs.instance-url }}
+        TOKEN: ${{ inputs.token }}
+        OBJECT_TYPE: ${{ inputs.object-type }}
+        FIELDS_JSON: ${{ inputs.fields-json }}
