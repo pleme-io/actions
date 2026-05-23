@@ -1,0 +1,4 @@
+;; opentelemetry-trace-emit/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::opentelemetry-trace-emit not yet implemented")
+(append-output "trace-id=stub")
+(exit 0)

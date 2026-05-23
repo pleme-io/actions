@@ -1,0 +1,4 @@
+;; posthog-event/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::posthog-event not yet implemented")
+(append-output "sent=stub")
+(exit 0)

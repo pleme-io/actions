@@ -1,0 +1,4 @@
+;; bun-publish/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::bun-publish not yet implemented")
+(append-output "published=stub")
+(exit 0)

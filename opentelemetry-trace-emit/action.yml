@@ -1,0 +1,37 @@
+name: 'pleme-io · opentelemetry-trace-emit'
+description: 'Emit an OTLP trace span for this workflow run.'
+branding: { icon: 'activity', color: 'blue' }
+
+inputs:
+  endpoint:
+    required: true
+  service-name:
+    required: true
+  span-name:
+    required: true
+
+outputs:
+  trace-id:
+    value: ${{ steps.run.outputs.trace-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        SERVICE_NAME: ${{ inputs.service-name }}
+        SPAN_NAME: ${{ inputs.span-name }}

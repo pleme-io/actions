@@ -1,0 +1,4 @@
+;; trivy-fs-scan/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::trivy-fs-scan not yet implemented")
+(append-output "findings=stub")
+(exit 0)

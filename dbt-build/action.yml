@@ -1,0 +1,36 @@
+name: 'pleme-io · dbt-build'
+description: 'Run dbt build for a data warehouse model project.'
+branding: { icon: 'database', color: 'orange' }
+
+inputs:
+  profile:
+    required: false
+    default: "default"
+  workdir:
+    required: false
+    default: "."
+
+outputs:
+  passed:
+    value: ${{ steps.run.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PROFILE: ${{ inputs.profile }}
+        WORKDIR: ${{ inputs.workdir }}

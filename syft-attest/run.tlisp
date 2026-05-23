@@ -1,0 +1,4 @@
+;; syft-attest/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::syft-attest not yet implemented")
+(append-output "attestation-path=stub")
+(exit 0)

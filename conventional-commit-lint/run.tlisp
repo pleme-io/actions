@@ -1,0 +1,4 @@
+;; conventional-commit-lint/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::conventional-commit-lint not yet implemented")
+(append-output "violations=stub")
+(exit 0)

@@ -1,0 +1,41 @@
+name: 'pleme-io · hf-hub-upload'
+description: 'Upload a model/dataset to Hugging Face Hub.'
+branding: { icon: 'upload', color: 'blue' }
+
+inputs:
+  repo-id:
+    required: true
+  token:
+    required: true
+  local-path:
+    required: true
+  repo-type:
+    required: false
+    default: "model"
+
+outputs:
+  uploaded:
+    value: ${{ steps.run.outputs.uploaded }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REPO_ID: ${{ inputs.repo-id }}
+        TOKEN: ${{ inputs.token }}
+        LOCAL_PATH: ${{ inputs.local-path }}
+        REPO_TYPE: ${{ inputs.repo-type }}

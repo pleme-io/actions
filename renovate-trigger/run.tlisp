@@ -1,0 +1,4 @@
+;; renovate-trigger/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::renovate-trigger not yet implemented")
+(append-output "triggered=stub")
+(exit 0)

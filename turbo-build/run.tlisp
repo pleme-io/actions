@@ -1,0 +1,4 @@
+;; turbo-build/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::turbo-build not yet implemented")
+(append-output "built=stub")
+(exit 0)

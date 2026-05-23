@@ -1,0 +1,4 @@
+;; hf-hub-upload/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::hf-hub-upload not yet implemented")
+(append-output "uploaded=stub")
+(exit 0)

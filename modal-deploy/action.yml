@@ -1,0 +1,38 @@
+name: 'pleme-io · modal-deploy'
+description: 'Deploy a Modal function/app.'
+branding: { icon: 'cloud', color: 'blue' }
+
+inputs:
+  token-id:
+    required: true
+  token-secret:
+    required: true
+  entry:
+    required: false
+    default: "main.py"
+
+outputs:
+  deployed:
+    value: ${{ steps.run.outputs.deployed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TOKEN_ID: ${{ inputs.token-id }}
+        TOKEN_SECRET: ${{ inputs.token-secret }}
+        ENTRY: ${{ inputs.entry }}

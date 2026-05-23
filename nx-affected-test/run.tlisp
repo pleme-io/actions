@@ -1,0 +1,4 @@
+;; nx-affected-test/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::nx-affected-test not yet implemented")
+(append-output "passed=stub")
+(exit 0)

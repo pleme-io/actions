@@ -1,0 +1,4 @@
+;; commitlint/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::commitlint not yet implemented")
+(append-output "violations=stub")
+(exit 0)

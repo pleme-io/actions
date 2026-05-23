@@ -1,0 +1,36 @@
+name: 'pleme-io · conventional-commit-lint'
+description: 'Enforce conventional-commit format on the latest commits.'
+branding: { icon: 'check-circle', color: 'green' }
+
+inputs:
+  from-ref:
+    required: false
+    default: "main"
+  scopes:
+    required: false
+    default: ""
+
+outputs:
+  violations:
+    value: ${{ steps.run.outputs.violations }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        FROM_REF: ${{ inputs.from-ref }}
+        SCOPES: ${{ inputs.scopes }}

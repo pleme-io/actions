@@ -1,0 +1,4 @@
+;; crossplane-apply/run.tlisp — typed schema locked, body lands on consumer demand
+(log-info "::warning::crossplane-apply not yet implemented")
+(append-output "applied=stub")
+(exit 0)
