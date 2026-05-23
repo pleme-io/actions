@@ -1,0 +1,56 @@
+name: 'pleme-io · adoption-audit'
+description: 'Scan a GH org for AUTO-RELEASE directive adoption — counts repos with/without the canonical 3-workflow surface. Emits a markdown report + sets typed outputs. Runs cheap on free public CI.'
+branding: { icon: 'check-circle', color: 'green' }
+
+inputs:
+  org:
+    description: "GH organization to audit (default: pleme-io)"
+    required: false
+    default: "pleme-io"
+  exclude-archived:
+    required: false
+    default: "true"
+  visibility:
+    description: "public | private | both"
+    required: false
+    default: "public"
+  open-issue:
+    description: "Open a tracking issue listing gap repos"
+    required: false
+    default: "false"
+
+outputs:
+  total-repos:
+    value: ${{ steps.run.outputs.total-repos }}
+  adopted-count:
+    value: ${{ steps.run.outputs.adopted-count }}
+  gap-count:
+    value: ${{ steps.run.outputs.gap-count }}
+  adoption-pct:
+    value: ${{ steps.run.outputs.adoption-pct }}
+  report-path:
+    value: ${{ steps.run.outputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ORG: ${{ inputs.org }}
+        EXCLUDE_ARCHIVED: ${{ inputs.exclude-archived }}
+        VISIBILITY: ${{ inputs.visibility }}
+        OPEN_ISSUE: ${{ inputs.open-issue }}
+        GH_TOKEN: ${{ github.token }}

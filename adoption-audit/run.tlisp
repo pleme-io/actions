@@ -1,0 +1,100 @@
+;; adoption-audit/run.tlisp — fleet adoption survey for the
+;; ★★ AUTO-RELEASE directive.
+
+(define org (env-required "ORG"))
+(define excl-arch (env-get "EXCLUDE_ARCHIVED" "true"))
+(define vis (env-get "VISIBILITY" "public"))
+(define open-issue (env-get "OPEN_ISSUE" "false"))
+
+;; List repos via gh api with pagination.
+(define list-cmd
+  (string-append "gh repo list " org " --limit 1000"
+                 " --visibility " vis
+                 " --json name,isArchived"
+                 " --jq '.[] | select("
+                 (if (equal? excl-arch "true") ".isArchived == false" "true")
+                 ") | .name'"))
+
+(log-info (string-append "==> listing repos: " list-cmd))
+
+(define list-r (exec-capture "sh" "-c" list-cmd))
+(cond
+  ((not (= (status-of list-r) 0))
+   (log-error "gh repo list failed")
+   (exit 1)))
+
+(define repos (string-split (string-trim (stdout-of list-r)) "\n"))
+(log-info (string-append "scanning " (string-format "{}" (length repos)) " repos"))
+
+;; For each repo: check if .github/workflows/auto-release.yml exists.
+(define (check-repo r)
+  (let ((cmd (string-append "gh api repos/" org "/" r
+                            "/contents/.github/workflows/auto-release.yml"
+                            " --silent 2>/dev/null")))
+    (= (status-of (exec-capture "sh" "-c" cmd)) 0)))
+
+(define adopted 0)
+(define gap-list (list))
+
+(let loop ((rs repos))
+  (cond
+    ((null? rs) #t)
+    ((equal? (car rs) "") (loop (cdr rs)))
+    (else
+      (cond
+        ((check-repo (car rs))
+         (set! adopted (+ adopted 1)))
+        (else
+         (set! gap-list (cons (car rs) gap-list))))
+      (loop (cdr rs)))))
+
+(define total (length repos))
+(define gaps (length gap-list))
+(define pct (cond
+              ((= total 0) "0")
+              (else
+                (let ((p-r (exec-capture "sh" "-c"
+                             (string-append "echo " (string-format "{}" adopted)
+                                            " " (string-format "{}" total)
+                                            " | awk '{printf \"%.1f\", $1*100/$2}'"))))
+                  (string-trim (stdout-of p-r))))))
+
+(append-output (string-append "total-repos=" (string-format "{}" total)))
+(append-output (string-append "adopted-count=" (string-format "{}" adopted)))
+(append-output (string-append "gap-count=" (string-format "{}" gaps)))
+(append-output (string-append "adoption-pct=" pct))
+
+;; Emit markdown report.
+(define report (string-append
+  "# pleme-io ★★ AUTO-RELEASE adoption audit\n\n"
+  "**Org**: " org "\n"
+  "**Scanned**: " (string-format "{}" total) " " vis " repos"
+  (if (equal? excl-arch "true") " (excl. archived)" "") "\n"
+  "**Adopted**: " (string-format "{}" adopted)
+  " (" pct "%)\n"
+  "**Gap**: " (string-format "{}" gaps) "\n\n"
+  "## Gap repos (no .github/workflows/auto-release.yml)\n\n"))
+
+(let r-loop ((gs gap-list) (acc ""))
+  (cond
+    ((null? gs)
+     (write-file "/tmp/adoption-audit.md" (string-append report acc))
+     (append-output "report-path=/tmp/adoption-audit.md"))
+    (else
+     (r-loop (cdr gs)
+             (string-append acc "- " (car gs) "\n")))))
+
+(log-info (string-append "adoption: " (string-format "{}" adopted) "/"
+                         (string-format "{}" total) " (" pct "%)"))
+
+(cond
+  ((equal? open-issue "true")
+   (log-info "==> opening tracking issue")
+   (exec-capture "gh" "issue" "create"
+     "--repo" (string-append org "/actions")
+     "--title" (string-append "Adoption audit: " (string-format "{}" gaps)
+                              " repos missing auto-release.yml")
+     "--body-file" "/tmp/adoption-audit.md"
+     "--label" "adoption-audit")))
+
+(exit 0)
