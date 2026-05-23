@@ -1,0 +1,60 @@
+name: 'pleme-io · caixa-render-pr'
+description: 'Render every .caixa.lisp at the repo root via pleme-doc-gen + open a PR if the rendered artifacts drift from on-disk files. The META-PRIMITIVE that closes the typed-source → mechanical-render → PR loop without operator intervention.'
+branding: { icon: 'refresh-cw', color: 'green' }
+
+inputs:
+  source-glob:
+    description: "Glob of .caixa.lisp sources to render"
+    required: false
+    default: "*.caixa.lisp"
+  open-pr:
+    description: "Commit + open a PR when render drift detected"
+    required: false
+    default: "true"
+  pr-branch:
+    required: false
+    default: "chore/caixa-render-sync"
+  force:
+    description: "Re-render even when destination files exist"
+    required: false
+    default: "true"
+
+outputs:
+  drift-detected:
+    value: ${{ steps.run.outputs.drift-detected }}
+  files-rendered:
+    value: ${{ steps.run.outputs.files-rendered }}
+  pr-url:
+    value: ${{ steps.run.outputs.pr-url }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.BOT_PAT || github.token }}
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Install pleme-doc-gen
+      shell: bash
+      run: cargo install --locked pleme-doc-gen
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SOURCE_GLOB: ${{ inputs.source-glob }}
+        OPEN_PR: ${{ inputs.open-pr }}
+        PR_BRANCH: ${{ inputs.pr-branch }}
+        FORCE: ${{ inputs.force }}
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
