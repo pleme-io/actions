@@ -1,0 +1,49 @@
+name: 'pleme-io · defaction-render'
+description: 'Render a typed (defaction ...) or (defworkflow ...) .lisp source into the action triple (action.yml + run.tlisp + README.md) or workflow yaml. The Pillar 12 (generation over composition) primitive at the CI layer.'
+branding: { icon: 'box', color: 'green' }
+
+inputs:
+  source:
+    description: "Path to the .lisp source file"
+    required: true
+  output-dir:
+    description: "Where rendered artifacts land"
+    required: false
+    default: "rendered/"
+  verify-only:
+    description: "Render then diff against existing on-disk files; fail if drift"
+    required: false
+    default: "false"
+
+outputs:
+  artifacts-count:
+    value: ${{ steps.run.outputs.artifacts-count }}
+  compounding-ratio:
+    description: "Generated lines / source lines"
+    value: ${{ steps.run.outputs.compounding-ratio }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with: { python-version: "3.x" }
+    - id: src
+      shell: bash
+      run: |
+        # Fetch the canonical render.py from substrate (kept in lock-step
+        # with the typed-form schema there).
+        curl -sL https://raw.githubusercontent.com/pleme-io/substrate/main/lib/release/renderer-poc/render.py \
+          -o /tmp/render.py
+    - id: run
+      shell: bash
+      run: |
+        python3 /tmp/render.py "${{ inputs.source }}" "${{ inputs.output-dir }}" \
+          | tee /tmp/render.log
+        cnt=$(grep -c "rendered " /tmp/render.log || echo 0)
+        ratio=$(grep "compounding ratio" /tmp/render.log | grep -oE '[0-9]+\.[0-9]+×' | head -1 || echo "—")
+        echo "artifacts-count=$cnt" >> "$GITHUB_OUTPUT"
+        echo "compounding-ratio=$ratio" >> "$GITHUB_OUTPUT"
+        if [ "${{ inputs.verify-only }}" = "true" ]; then
+          echo "::notice::verify-only mode — output diff verification ships in M1"
+        fi
