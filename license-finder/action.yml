@@ -1,0 +1,24 @@
+name: 'pleme-io · license-finder'
+description: 'Scan dependencies for license compatibility via license_finder.'
+branding: { icon: 'file-text', color: 'green' }
+
+inputs:
+  permitted-licenses:
+    required: false
+    default: "MIT,Apache-2.0,BSD-3-Clause"
+  fail-on-violation:
+    required: false
+    default: "true"
+
+outputs:
+  violations:
+    value: ${{ steps.run.outputs.violations }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::license-finder action stub — full implementation tracked in patterns.nix backlog"
+        echo "violations=stub" >> "$GITHUB_OUTPUT"

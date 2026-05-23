@@ -1,0 +1,30 @@
+name: 'pleme-io · grafana-annotation'
+description: 'Create a Grafana annotation (release marker, deploy, incident).'
+branding: { icon: 'tag', color: 'orange' }
+
+inputs:
+  url:
+    required: true
+  api-token:
+    required: true
+  text:
+    required: true
+  tags:
+    required: false
+    default: "release"
+  dashboard-id:
+    required: false
+    default: ""
+
+outputs:
+  annotation-id:
+    value: ${{ steps.run.outputs.annotation-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::grafana-annotation action stub — full implementation tracked in patterns.nix backlog"
+        echo "annotation-id=stub" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,20 @@
+name: 'pleme-io · wireguard-up'
+description: 'Bring up a WireGuard tunnel for ephemeral runner access.'
+branding: { icon: 'wifi', color: 'green' }
+
+inputs:
+  config:
+    required: true
+
+outputs:
+  interface:
+    value: ${{ steps.run.outputs.interface }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::wireguard-up action stub — full implementation tracked in patterns.nix backlog"
+        echo "interface=stub" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,23 @@
+name: 'pleme-io · lighthouse-ci'
+description: 'Run Lighthouse CI on a URL list + assert score thresholds.'
+branding: { icon: 'activity', color: 'green' }
+
+inputs:
+  urls:
+    required: true
+  score-threshold:
+    required: false
+    default: "90"
+
+outputs:
+  passed:
+    value: ${{ steps.run.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::lighthouse-ci action stub — full implementation tracked in patterns.nix backlog"
+        echo "passed=stub" >> "$GITHUB_OUTPUT"

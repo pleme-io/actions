@@ -1,0 +1,23 @@
+name: 'pleme-io · pulumi-up'
+description: 'Run pulumi up on a stack.'
+branding: { icon: 'cloud', color: 'orange' }
+
+inputs:
+  stack:
+    required: true
+  workdir:
+    required: false
+    default: "."
+
+outputs:
+  updated:
+    value: ${{ steps.run.outputs.updated }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::pulumi-up action stub — full implementation tracked in patterns.nix backlog"
+        echo "updated=stub" >> "$GITHUB_OUTPUT"

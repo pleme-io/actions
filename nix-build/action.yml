@@ -1,0 +1,24 @@
+name: 'pleme-io · nix-build'
+description: 'Build a flake output (universal). Optionally pushes to cachix/attic afterward.'
+branding: { icon: 'package', color: 'blue' }
+
+inputs:
+  flake-ref:
+    required: false
+    default: ".#default"
+  system:
+    required: false
+    default: ""
+
+outputs:
+  out-path:
+    value: ${{ steps.run.outputs.out-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::nix-build action stub — full implementation tracked in patterns.nix backlog"
+        echo "out-path=stub" >> "$GITHUB_OUTPUT"

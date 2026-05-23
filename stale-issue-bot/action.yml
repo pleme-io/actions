@@ -1,0 +1,27 @@
+name: 'pleme-io · stale-issue-bot'
+description: 'Mark stale issues + close after threshold.'
+branding: { icon: 'clock', color: 'gray-dark' }
+
+inputs:
+  days-stale:
+    required: false
+    default: "60"
+  days-close:
+    required: false
+    default: "14"
+  exempt-labels:
+    required: false
+    default: "pinned"
+
+outputs:
+  closed-count:
+    value: ${{ steps.run.outputs.closed-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::stale-issue-bot action stub — full implementation tracked in patterns.nix backlog"
+        echo "closed-count=stub" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,30 @@
+name: 'pleme-io · honeycomb-marker'
+description: 'Add a Honeycomb marker (release/deploy correlation).'
+branding: { icon: 'tag', color: 'purple' }
+
+inputs:
+  api-key:
+    required: true
+  dataset:
+    required: true
+  message:
+    required: true
+  type:
+    required: false
+    default: "release"
+  url:
+    required: false
+    default: ""
+
+outputs:
+  marker-id:
+    value: ${{ steps.run.outputs.marker-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::honeycomb-marker action stub — full implementation tracked in patterns.nix backlog"
+        echo "marker-id=stub" >> "$GITHUB_OUTPUT"

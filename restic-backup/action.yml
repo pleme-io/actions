@@ -1,0 +1,24 @@
+name: 'pleme-io · restic-backup'
+description: 'Run a restic backup to any supported repo (s3/b2/sftp/etc).'
+branding: { icon: 'archive', color: 'blue' }
+
+inputs:
+  repository:
+    required: true
+  password:
+    required: true
+  paths:
+    required: true
+
+outputs:
+  snapshot-id:
+    value: ${{ steps.run.outputs.snapshot-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::restic-backup action stub — full implementation tracked in patterns.nix backlog"
+        echo "snapshot-id=stub" >> "$GITHUB_OUTPUT"

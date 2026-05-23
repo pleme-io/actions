@@ -1,0 +1,22 @@
+name: 'pleme-io · nix-cachix-push'
+description: 'Push a built nix path to a Cachix binary cache.'
+branding: { icon: 'upload', color: 'blue' }
+
+inputs:
+  cache-name:
+    required: true
+  path:
+    required: true
+
+outputs:
+  pushed:
+    value: ${{ steps.run.outputs.pushed }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::nix-cachix-push action stub — full implementation tracked in patterns.nix backlog"
+        echo "pushed=stub" >> "$GITHUB_OUTPUT"

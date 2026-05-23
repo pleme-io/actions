@@ -1,0 +1,24 @@
+name: 'pleme-io · kafka-publish'
+description: 'Publish a message to a Kafka topic via kcat.'
+branding: { icon: 'message-circle', color: 'gray-dark' }
+
+inputs:
+  brokers:
+    required: true
+  topic:
+    required: true
+  message:
+    required: true
+
+outputs:
+  published:
+    value: ${{ steps.run.outputs.published }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::kafka-publish action stub — full implementation tracked in patterns.nix backlog"
+        echo "published=stub" >> "$GITHUB_OUTPUT"

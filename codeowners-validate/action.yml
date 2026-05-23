@@ -1,0 +1,21 @@
+name: 'pleme-io · codeowners-validate'
+description: 'Validate .github/CODEOWNERS against repo file tree (catch unowned paths).'
+branding: { icon: 'users', color: 'green' }
+
+inputs:
+  fail-on-unowned:
+    required: false
+    default: "false"
+
+outputs:
+  unowned-count:
+    value: ${{ steps.run.outputs.unowned-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::codeowners-validate action stub — full implementation tracked in patterns.nix backlog"
+        echo "unowned-count=stub" >> "$GITHUB_OUTPUT"

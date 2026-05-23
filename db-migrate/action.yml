@@ -1,0 +1,24 @@
+name: 'pleme-io · db-migrate'
+description: 'Polymorphic DB migration — sqlx-migrate / alembic / knex / etc by detect.'
+branding: { icon: 'database', color: 'blue' }
+
+inputs:
+  workdir:
+    required: false
+    default: "."
+  direction:
+    required: false
+    default: "up"
+
+outputs:
+  applied-count:
+    value: ${{ steps.run.outputs.applied-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::db-migrate action stub — full implementation tracked in patterns.nix backlog"
+        echo "applied-count=stub" >> "$GITHUB_OUTPUT"

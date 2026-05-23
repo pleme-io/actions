@@ -1,0 +1,24 @@
+name: 'pleme-io · prometheus-push'
+description: 'Push metrics to a Prometheus pushgateway.'
+branding: { icon: 'bar-chart', color: 'orange' }
+
+inputs:
+  gateway-url:
+    required: true
+  job:
+    required: true
+  metrics:
+    required: true
+
+outputs:
+  pushed:
+    value: ${{ steps.run.outputs.pushed }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::prometheus-push action stub — full implementation tracked in patterns.nix backlog"
+        echo "pushed=stub" >> "$GITHUB_OUTPUT"

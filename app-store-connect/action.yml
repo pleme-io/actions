@@ -1,0 +1,24 @@
+name: 'pleme-io · app-store-connect'
+description: 'Upload an iOS build to App Store Connect via altool.'
+branding: { icon: 'smartphone', color: 'red' }
+
+inputs:
+  ipa-path:
+    required: true
+  api-key-id:
+    required: true
+  issuer-id:
+    required: true
+
+outputs:
+  uploaded:
+    value: ${{ steps.run.outputs.uploaded }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::app-store-connect action stub — full implementation tracked in patterns.nix backlog"
+        echo "uploaded=stub" >> "$GITHUB_OUTPUT"

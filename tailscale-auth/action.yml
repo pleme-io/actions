@@ -1,0 +1,23 @@
+name: 'pleme-io · tailscale-auth'
+description: 'Authenticate runner with Tailscale via OAuth or auth-key.'
+branding: { icon: 'wifi', color: 'green' }
+
+inputs:
+  auth-key:
+    required: true
+  tags:
+    required: false
+    default: "tag:ci"
+
+outputs:
+  hostname:
+    value: ${{ steps.run.outputs.hostname }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::tailscale-auth action stub — full implementation tracked in patterns.nix backlog"
+        echo "hostname=stub" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,27 @@
+name: 'pleme-io · nats-publish'
+description: 'Publish a message to a NATS subject via natscli.'
+branding: { icon: 'message-circle', color: 'green' }
+
+inputs:
+  server:
+    required: true
+  subject:
+    required: true
+  message:
+    required: true
+  creds-file:
+    required: false
+    default: ""
+
+outputs:
+  published:
+    value: ${{ steps.run.outputs.published }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::nats-publish action stub — full implementation tracked in patterns.nix backlog"
+        echo "published=stub" >> "$GITHUB_OUTPUT"

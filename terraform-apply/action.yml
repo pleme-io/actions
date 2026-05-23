@@ -1,0 +1,24 @@
+name: 'pleme-io · terraform-apply'
+description: 'Run terraform apply (consumes plan-path from terraform-plan).'
+branding: { icon: 'cloud', color: 'orange' }
+
+inputs:
+  plan-path:
+    required: false
+    default: "tfplan"
+  workdir:
+    required: false
+    default: "."
+
+outputs:
+  applied:
+    value: ${{ steps.run.outputs.applied }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::terraform-apply action stub — full implementation tracked in patterns.nix backlog"
+        echo "applied=stub" >> "$GITHUB_OUTPUT"

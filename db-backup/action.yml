@@ -1,0 +1,23 @@
+name: 'pleme-io · db-backup'
+description: 'Dump a database to a backup artifact. PostgreSQL via pg_dump, MySQL via mysqldump.'
+branding: { icon: 'archive', color: 'blue' }
+
+inputs:
+  connection-url:
+    required: true
+  output-path:
+    required: false
+    default: "backup.sql"
+
+outputs:
+  backup-path:
+    value: ${{ steps.run.outputs.backup-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::db-backup action stub — full implementation tracked in patterns.nix backlog"
+        echo "backup-path=stub" >> "$GITHUB_OUTPUT"

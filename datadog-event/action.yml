@@ -1,0 +1,30 @@
+name: 'pleme-io · datadog-event'
+description: 'Post a typed event to Datadog Events API.'
+branding: { icon: 'message-square', color: 'orange' }
+
+inputs:
+  api-key:
+    required: true
+  title:
+    required: true
+  text:
+    required: true
+  tags:
+    required: false
+    default: "custom"
+  alert-type:
+    required: false
+    default: "info"
+
+outputs:
+  posted:
+    value: ${{ steps.run.outputs.posted }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::datadog-event action stub — full implementation tracked in patterns.nix backlog"
+        echo "posted=stub" >> "$GITHUB_OUTPUT"

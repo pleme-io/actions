@@ -1,0 +1,25 @@
+name: 'pleme-io · artifact-fetch'
+description: 'Fetch an artifact from a previous workflow run (cross-workflow handoff).'
+branding: { icon: 'download', color: 'blue' }
+
+inputs:
+  workflow:
+    required: true
+  artifact-name:
+    required: true
+  target-dir:
+    required: false
+    default: "./artifacts"
+
+outputs:
+  fetched-path:
+    value: ${{ steps.run.outputs.fetched-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::artifact-fetch action stub — full implementation tracked in patterns.nix backlog"
+        echo "fetched-path=stub" >> "$GITHUB_OUTPUT"

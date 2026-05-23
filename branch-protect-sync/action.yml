@@ -1,0 +1,24 @@
+name: 'pleme-io · branch-protect-sync'
+description: 'Apply branch-protection rules from a JSON spec.'
+branding: { icon: 'lock', color: 'red' }
+
+inputs:
+  spec-file:
+    required: false
+    default: ".github/branch-protection.json"
+  branch:
+    required: false
+    default: "main"
+
+outputs:
+  applied:
+    value: ${{ steps.run.outputs.applied }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::branch-protect-sync action stub — full implementation tracked in patterns.nix backlog"
+        echo "applied=stub" >> "$GITHUB_OUTPUT"

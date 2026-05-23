@@ -1,0 +1,24 @@
+name: 'pleme-io · terraform-plan'
+description: 'Run terraform plan + emit JSON diff. Pairs with terraform-apply.'
+branding: { icon: 'cloud', color: 'orange' }
+
+inputs:
+  workdir:
+    required: false
+    default: "."
+  backend-config:
+    required: false
+    default: ""
+
+outputs:
+  plan-path:
+    value: ${{ steps.run.outputs.plan-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      run: |
+        echo "::warning::terraform-plan action stub — full implementation tracked in patterns.nix backlog"
+        echo "plan-path=stub" >> "$GITHUB_OUTPUT"
