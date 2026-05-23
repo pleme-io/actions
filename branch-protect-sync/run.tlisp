@@ -1,0 +1,23 @@
+;; branch-protect-sync/run.tlisp — tlisp+stdlib migration
+
+(define spec (env-get "SPEC_FILE" ".github/branch-protection.json"))
+(define branch (env-get "BRANCH" "main"))
+(define repo (env-required "GITHUB_REPOSITORY"))
+
+(cond
+  ((not (path-exists? spec))
+   (log-error (string-append "spec file not found: " spec))
+   (append-output "applied=false") (exit 1)))
+
+(define endpoint
+  (string-append "repos/" repo "/branches/" branch "/protection"))
+
+(define r (exec-capture "gh" "api" "--method" "PUT" endpoint "--input" spec))
+
+(cond
+  ((= (status-of r) 0)
+   (append-output "applied=true") (exit 0))
+  (else
+   (log-error "gh api PUT branch protection failed")
+   (log-info (stderr-of r))
+   (append-output "applied=false") (exit 1)))

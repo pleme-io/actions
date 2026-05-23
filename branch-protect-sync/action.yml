@@ -17,8 +17,24 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: run
+    - uses: actions/checkout@v4
+    - id: src
       shell: bash
       run: |
-        echo "::warning::branch-protect-sync action stub — full implementation tracked in patterns.nix backlog"
-        echo "applied=stub" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SPEC_FILE: ${{ inputs.spec-file }}
+        BRANCH: ${{ inputs.branch }}
+        REPO: ${{ inputs. }}
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}

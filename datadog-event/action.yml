@@ -23,29 +23,29 @@ inputs:
 
 outputs:
   posted:
-    value: ${{ steps.dd.outputs.posted }}
+    value: ${{ steps.run.outputs.posted }}
 
 runs:
   using: composite
   steps:
-    - id: dd
+    - id: src
       shell: bash
       run: |
-        payload=$(jq -n \
-          --arg title "${{ inputs.title }}" \
-          --arg text "${{ inputs.text }}" \
-          --arg alert "${{ inputs.alert-type }}" \
-          --arg tags "${{ inputs.tags }}" \
-          '{ title: $title, text: $text, alert_type: $alert,
-             tags: ($tags | split(",")), source_type_name: "github" }')
-        code=$(curl -sS -o /dev/null -w '%{http_code}' \
-          -X POST -H "Content-Type: application/json" \
-          -H "DD-API-KEY: ${{ inputs.api-key }}" \
-          -d "$payload" "https://api.${{ inputs.site }}/api/v1/events")
-        if [[ "$code" == "202" || "$code" == "200" ]]; then
-          echo "posted=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "posted=false" >> "$GITHUB_OUTPUT"
-          echo "::error::Datadog API returned $code"
-          exit 1
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        TITLE: ${{ inputs.title }}
+        TEXT: ${{ inputs.text }}
+        TAGS: ${{ inputs.tags }}
+        ALERT_TYPE: ${{ inputs.alert-type }}
+        SITE: ${{ inputs.site }}

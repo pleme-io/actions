@@ -1,0 +1,41 @@
+;; grafana-annotation/run.tlisp — tlisp+stdlib migration
+
+(define url (env-required "URL"))
+(define token (env-required "API_TOKEN"))
+(define text (env-required "TEXT"))
+(define tags (env-get "TAGS" "release"))
+(define dash (env-get "DASHBOARD_ID" ""))
+
+(define ts-r (exec-capture "sh" "-c" "date +%s%3N"))
+(define ts (string-trim (stdout-of ts-r)))
+
+(define scope (if (equal? dash "") "" (string-append ", dashboardId: " dash)))
+
+(define payload-jq
+  (string-append
+    "jq -n --arg text '" text "' --arg tags '" tags
+    "' --argjson time " ts
+    " '{ text: $text, tags: ($tags | split(",")), time: $time" scope " }'"))
+
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond ((= (status-of r) 0) (stdout-of r))
+          (else (log-error "payload assembly failed") (exit 1)))))
+
+(define curl-cmd
+  (string-append "curl -sS -X POST "
+                 "-H 'Authorization: Bearer " token "' "
+                 "-H 'Content-Type: application/json' "
+                 "-d '" (string-replace payload "'" "'"'"'")
+                 "' '" url "/api/annotations'"))
+
+(define r (exec-capture "sh" "-c" curl-cmd))
+(cond
+  ((= (status-of r) 0)
+   (let* ((jq-r (exec-capture "sh" "-c"
+                  (string-append "echo '" (string-replace (stdout-of r) "'" "'"'"'")
+                                 "' | jq -r '.id'")))
+          (id (string-trim (stdout-of jq-r))))
+     (append-output (string-append "annotation-id=" id))
+     (exit 0)))
+  (else (append-output "annotation-id=") (exit 1)))

@@ -20,26 +20,28 @@ inputs:
 
 outputs:
   annotation-id:
-    value: ${{ steps.g.outputs.annotation-id }}
+    value: ${{ steps.run.outputs.annotation-id }}
 
 runs:
   using: composite
   steps:
-    - id: g
+    - id: src
       shell: bash
       run: |
-        ts=$(date +%s%3N)
-        scope_arg=""
-        [ -n "${{ inputs.dashboard-id }}" ] && scope_arg=", dashboardId: ${{ inputs.dashboard-id }}"
-        payload=$(jq -n \
-          --arg text "${{ inputs.text }}" \
-          --arg tags "${{ inputs.tags }}" \
-          --argjson time "$ts" \
-          "{ text: \$text, tags: (\$tags | split(\",\")), time: \$time$scope_arg }")
-        resp=$(curl -sS -X POST \
-          -H "Authorization: Bearer ${{ inputs.api-token }}" \
-          -H "Content-Type: application/json" \
-          -d "$payload" "${{ inputs.url }}/api/annotations")
-        id=$(echo "$resp" | jq -r '.id')
-        echo "annotation-id=$id" >> "$GITHUB_OUTPUT"
-        echo "created annotation id=$id"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        URL: ${{ inputs.url }}
+        API_TOKEN: ${{ inputs.api-token }}
+        TEXT: ${{ inputs.text }}
+        TAGS: ${{ inputs.tags }}
+        DASHBOARD_ID: ${{ inputs.dashboard-id }}

@@ -1,0 +1,14 @@
+;; prometheus-push/run.tlisp — tlisp+stdlib migration
+
+(define url (env-required "GATEWAY_URL"))
+(define job (env-required "JOB"))
+(define metrics (env-required "METRICS"))
+
+(define push-cmd
+  (string-append "printf '%s' '" (string-replace metrics "'" "'"'"'")
+                 "' | curl -sS --data-binary @- '" url "/metrics/job/" job "'"))
+
+(define r (exec-capture "sh" "-c" push-cmd))
+(cond
+  ((= (status-of r) 0) (append-output "pushed=true") (exit 0))
+  (else (append-output "pushed=false") (exit 1)))

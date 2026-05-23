@@ -1,0 +1,36 @@
+;; datadog-event/run.tlisp — tlisp+stdlib migration
+
+(define key (env-required "API_KEY"))
+(define title (env-required "TITLE"))
+(define text (env-required "TEXT"))
+(define tags (env-get "TAGS" "source:github_actions"))
+(define alert (env-get "ALERT_TYPE" "info"))
+(define site (env-get "SITE" "datadoghq.com"))
+
+(define payload-jq
+  (string-append "jq -n --arg title '" title "' --arg text '" text
+                 "' --arg alert '" alert "' --arg tags '" tags
+                 "' '{ title: $title, text: $text, alert_type: $alert,"
+                 "    tags: ($tags | split(",")), source_type_name: "github" }'"))
+
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond ((= (status-of r) 0) (stdout-of r))
+          (else (log-error "payload assembly failed") (exit 1)))))
+
+(define url (string-append "https://api." site "/api/v1/events"))
+(define curl-cmd
+  (string-append "curl -sS -o /dev/null -w '%{http_code}' "
+                 "-X POST -H 'Content-Type: application/json' "
+                 "-H 'DD-API-KEY: " key "' "
+                 "-d '" (string-replace payload "'" "'"'"'") "' '" url "'"))
+
+(define r (exec-capture "sh" "-c" curl-cmd))
+(define code (string-trim (stdout-of r)))
+
+(cond
+  ((or (equal? code "200") (equal? code "202"))
+   (append-output "posted=true") (exit 0))
+  (else
+   (log-error (string-append "Datadog API returned " code))
+   (append-output "posted=false") (exit 1)))

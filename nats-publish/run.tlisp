@@ -1,0 +1,22 @@
+;; nats-publish/run.tlisp — tlisp+stdlib migration
+
+(define server (env-required "SERVER"))
+(define subject (env-required "SUBJECT"))
+(define message (env-required "MESSAGE"))
+(define creds (env-get "CREDS_FILE" ""))
+
+(exec-check "sh" "-c"
+  "curl -sSL https://github.com/nats-io/natscli/releases/latest/download/nats-0.1.6-linux-amd64.zip -o /tmp/nats.zip && unzip -q /tmp/nats.zip -d /tmp/nats && sudo mv /tmp/nats/nats-0.1.6-linux-amd64/nats /usr/local/bin/")
+
+(define base (list "-s" server))
+(define with-creds (if (equal? creds "") base (append base (list "--creds" creds))))
+(define args (append with-creds (list "pub" subject message)))
+
+(define r (apply exec-capture (cons "nats" args)))
+(cond
+  ((= (status-of r) 0)
+   (append-output "published=true") (exit 0))
+  (else
+   (log-error "nats pub failed")
+   (log-info (stderr-of r))
+   (append-output "published=false") (exit 1)))
