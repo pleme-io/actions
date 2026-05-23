@@ -1,0 +1,4 @@
+;; linear-issue-create/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::linear-issue-create not yet implemented")
+(append-output "issue-id=stub")
+(exit 0)

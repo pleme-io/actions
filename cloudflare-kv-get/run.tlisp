@@ -1,0 +1,4 @@
+;; cloudflare-kv-get/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::cloudflare-kv-get not yet implemented")
+(append-output "value=stub")
+(exit 0)

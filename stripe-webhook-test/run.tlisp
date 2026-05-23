@@ -1,0 +1,4 @@
+;; stripe-webhook-test/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::stripe-webhook-test not yet implemented")
+(append-output "sent=stub")
+(exit 0)

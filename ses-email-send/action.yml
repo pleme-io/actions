@@ -1,0 +1,44 @@
+name: 'pleme-io · ses-email-send'
+description: 'Send transactional email via AWS SES.'
+branding: { icon: 'mail', color: 'orange' }
+
+inputs:
+  region:
+    required: false
+    default: "us-east-1"
+  from:
+    required: true
+  to:
+    required: true
+  subject:
+    required: true
+  body:
+    required: true
+
+outputs:
+  message-id:
+    value: ${{ steps.run.outputs.message-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGION: ${{ inputs.region }}
+        FROM_ARG: ${{ inputs.from }}
+        TO_ARG: ${{ inputs.to }}
+        SUBJECT: ${{ inputs.subject }}
+        BODY: ${{ inputs.body }}

@@ -1,0 +1,4 @@
+;; clickup-task-create/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::clickup-task-create not yet implemented")
+(append-output "task-id=stub")
+(exit 0)

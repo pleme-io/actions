@@ -1,0 +1,4 @@
+;; cloudflare-queue-publish/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::cloudflare-queue-publish not yet implemented")
+(append-output "published=stub")
+(exit 0)

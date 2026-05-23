@@ -1,0 +1,38 @@
+name: 'pleme-io · linear-issue-update'
+description: 'Update a Linear issue's state/labels/etc.'
+branding: { icon: 'edit', color: 'purple' }
+
+inputs:
+  api-key:
+    required: true
+  issue-id:
+    required: true
+  state:
+    required: false
+    default: ""
+
+outputs:
+  updated:
+    value: ${{ steps.run.outputs.updated }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        ISSUE_ID: ${{ inputs.issue-id }}
+        STATE_ARG: ${{ inputs.state }}

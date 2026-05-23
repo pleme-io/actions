@@ -1,0 +1,4 @@
+;; twilio-voice-call/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::twilio-voice-call not yet implemented")
+(append-output "sid=stub")
+(exit 0)

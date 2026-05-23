@@ -1,0 +1,4 @@
+;; airtable-record-create/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::airtable-record-create not yet implemented")
+(append-output "record-id=stub")
+(exit 0)

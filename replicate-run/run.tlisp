@@ -1,0 +1,4 @@
+;; replicate-run/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::replicate-run not yet implemented")
+(append-output "prediction-id=stub")
+(exit 0)

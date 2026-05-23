@@ -1,0 +1,43 @@
+name: 'pleme-io · google-calendar-event-create'
+description: 'Create a Google Calendar event via service account.'
+branding: { icon: 'calendar', color: 'blue' }
+
+inputs:
+  credentials-json:
+    required: true
+  calendar-id:
+    required: true
+  summary:
+    required: true
+  start:
+    required: true
+  end:
+    required: true
+
+outputs:
+  event-id:
+    value: ${{ steps.run.outputs.event-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CREDENTIALS_JSON: ${{ inputs.credentials-json }}
+        CALENDAR_ID: ${{ inputs.calendar-id }}
+        SUMMARY: ${{ inputs.summary }}
+        START_ARG: ${{ inputs.start }}
+        END_ARG: ${{ inputs.end }}

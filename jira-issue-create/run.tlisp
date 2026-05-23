@@ -1,0 +1,4 @@
+;; jira-issue-create/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::jira-issue-create not yet implemented")
+(append-output "key=stub")
+(exit 0)

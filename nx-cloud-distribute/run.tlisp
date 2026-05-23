@@ -1,0 +1,4 @@
+;; nx-cloud-distribute/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::nx-cloud-distribute not yet implemented")
+(append-output "distributed=stub")
+(exit 0)

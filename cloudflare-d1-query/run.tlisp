@@ -1,0 +1,4 @@
+;; cloudflare-d1-query/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::cloudflare-d1-query not yet implemented")
+(append-output "rows-affected=stub")
+(exit 0)

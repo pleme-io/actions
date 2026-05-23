@@ -1,0 +1,4 @@
+;; cloudflare-kv-put/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::cloudflare-kv-put not yet implemented")
+(append-output "put=stub")
+(exit 0)

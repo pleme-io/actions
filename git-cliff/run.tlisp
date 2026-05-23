@@ -1,0 +1,4 @@
+;; git-cliff/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::git-cliff not yet implemented")
+(append-output "generated=stub")
+(exit 0)

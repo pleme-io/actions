@@ -1,0 +1,38 @@
+name: 'pleme-io · anthropic-message'
+description: 'POST a single message to the Anthropic Claude API.'
+branding: { icon: 'message-square', color: 'orange' }
+
+inputs:
+  api-key:
+    required: true
+  model:
+    required: false
+    default: "claude-haiku-4-5"
+  prompt:
+    required: true
+
+outputs:
+  response:
+    value: ${{ steps.run.outputs.response }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        MODEL: ${{ inputs.model }}
+        PROMPT: ${{ inputs.prompt }}

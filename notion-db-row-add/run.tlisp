@@ -1,0 +1,4 @@
+;; notion-db-row-add/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::notion-db-row-add not yet implemented")
+(append-output "page-id=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; ses-email-send/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::ses-email-send not yet implemented")
+(append-output "message-id=stub")
+(exit 0)

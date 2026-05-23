@@ -1,0 +1,4 @@
+;; stripe-product-sync/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::stripe-product-sync not yet implemented")
+(append-output "synced-count=stub")
+(exit 0)

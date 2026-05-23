@@ -1,0 +1,4 @@
+;; linear-issue-update/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::linear-issue-update not yet implemented")
+(append-output "updated=stub")
+(exit 0)

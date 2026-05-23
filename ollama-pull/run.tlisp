@@ -1,0 +1,4 @@
+;; ollama-pull/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::ollama-pull not yet implemented")
+(append-output "pulled=stub")
+(exit 0)

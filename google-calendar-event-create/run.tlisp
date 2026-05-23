@@ -1,0 +1,4 @@
+;; google-calendar-event-create/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::google-calendar-event-create not yet implemented")
+(append-output "event-id=stub")
+(exit 0)

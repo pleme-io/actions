@@ -1,0 +1,34 @@
+name: 'pleme-io · cloudflare-kv-get'
+description: 'Get a value from Workers KV.'
+branding: { icon: 'download', color: 'orange' }
+
+inputs:
+  namespace-id:
+    required: true
+  key:
+    required: true
+
+outputs:
+  value:
+    value: ${{ steps.run.outputs.value }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        NAMESPACE_ID: ${{ inputs.namespace-id }}
+        KEY_ARG: ${{ inputs.key }}

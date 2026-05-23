@@ -1,0 +1,4 @@
+;; anthropic-message/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::anthropic-message not yet implemented")
+(append-output "response=stub")
+(exit 0)

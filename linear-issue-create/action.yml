@@ -1,0 +1,41 @@
+name: 'pleme-io · linear-issue-create'
+description: 'Create a Linear issue via GraphQL API.'
+branding: { icon: 'alert-circle', color: 'purple' }
+
+inputs:
+  api-key:
+    required: true
+  team-id:
+    required: true
+  title:
+    required: true
+  description:
+    required: false
+    default: ""
+
+outputs:
+  issue-id:
+    value: ${{ steps.run.outputs.issue-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        TEAM_ID: ${{ inputs.team-id }}
+        TITLE: ${{ inputs.title }}
+        DESCRIPTION: ${{ inputs.description }}

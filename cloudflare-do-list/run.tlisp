@@ -1,0 +1,4 @@
+;; cloudflare-do-list/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::cloudflare-do-list not yet implemented")
+(append-output "count=stub")
+(exit 0)

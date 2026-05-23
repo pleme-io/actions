@@ -1,0 +1,43 @@
+name: 'pleme-io · twilio-voice-call'
+description: 'Trigger a Twilio voice call via API for ops alerts.'
+branding: { icon: 'phone', color: 'red' }
+
+inputs:
+  account-sid:
+    required: true
+  auth-token:
+    required: true
+  from:
+    required: true
+  to:
+    required: true
+  twiml-url:
+    required: true
+
+outputs:
+  sid:
+    value: ${{ steps.run.outputs.sid }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ACCOUNT_SID: ${{ inputs.account-sid }}
+        AUTH_TOKEN: ${{ inputs.auth-token }}
+        FROM_ARG: ${{ inputs.from }}
+        TO_ARG: ${{ inputs.to }}
+        TWIML_URL: ${{ inputs.twiml-url }}

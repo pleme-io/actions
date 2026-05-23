@@ -1,0 +1,37 @@
+name: 'pleme-io · asana-task-create'
+description: 'Create an Asana task via the API.'
+branding: { icon: 'check-circle', color: 'red' }
+
+inputs:
+  token:
+    required: true
+  project-id:
+    required: true
+  name:
+    required: true
+
+outputs:
+  task-id:
+    value: ${{ steps.run.outputs.task-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TOKEN: ${{ inputs.token }}
+        PROJECT_ID: ${{ inputs.project-id }}
+        NAME: ${{ inputs.name }}

@@ -1,0 +1,4 @@
+;; changelog-fragments-merge/run.tlisp — typed schema locked, body on demand
+(log-info "::warning::changelog-fragments-merge not yet implemented")
+(append-output "merged-count=stub")
+(exit 0)
