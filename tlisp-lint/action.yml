@@ -35,6 +35,8 @@ runs:
       run: |
         {
           echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
           cat ${{ github.action_path }}/run.tlisp
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
