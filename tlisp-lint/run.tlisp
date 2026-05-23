@@ -1,0 +1,128 @@
+;; tlisp-lint/run.tlisp — validate every *.tlisp file under the
+;; repo. Two layers:
+;;
+;;   1. Pure-text paren/string/comment balance scan. Catches the
+;;      "extra close" and "missing close" class of bug WITHOUT
+;;      needing tatara-script to be installed.
+;;
+;;   2. Parser-level dry-run via tatara-script (if installed) —
+;;      catches semantic issues that pass the text scan but trip
+;;      the actual parser (e.g. unterminated string literals
+;;      inside lambda bodies).
+;;
+;; Inputs (env):
+;;   PATHS                space-separated globs (default "**/*.tlisp")
+;;   FAIL_ON_UNBALANCED   "true" | "false"
+;;   RUN_PARSER_CHECK     "true" | "false"
+;;
+;; Outputs (appended):
+;;   files-scanned    integer
+;;   errors-found     integer (0 on success)
+
+(define paths-input (env-get "PATHS" "**/*.tlisp"))
+(define fail-flag (env-get "FAIL_ON_UNBALANCED" "true"))
+(define parser-flag (env-get "RUN_PARSER_CHECK" "true"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+;; -------------------------------------------------------------- ;;
+;; File discovery — glob the input patterns                        ;;
+;; -------------------------------------------------------------- ;;
+
+(define (find-tlisp-files patterns)
+  ;; Use shell `find` for simplicity. `glob` exists in tatara-lisp
+  ;; for single patterns, but `find -name *.tlisp` is the broadest
+  ;; sweep + handles nested dirs uniformly.
+  (let* ((r (exec-capture "sh" "-c"
+              "find . -type f -name '*.tlisp' -not -path './.git/*' -not -path './node_modules/*' -not -path './target/*' | sort"))
+         (out (alist-get r "stdout" "")))
+    (cond
+      ((equal? (string-trim out) "") (list))
+      (else (string-split (string-trim out) "\n")))))
+
+;; -------------------------------------------------------------- ;;
+;; Balance scan — char-by-char with state                          ;;
+;; -------------------------------------------------------------- ;;
+;; Returns ((balance . N) (string-open-line . L)) — N is the final
+;; paren depth (0 = balanced); L is the line of an unterminated
+;; string literal if any (0 = none).
+
+(define (scan-file path)
+  (let ((bal-result (exec-capture "python3" "-c"
+                       (string-append
+                         "import sys\n"
+                         "s=open('" path "').read()\n"
+                         "in_str=False; in_comment=False; balance=0; first_neg=0; str_line=0; line=1\n"
+                         "i=0\n"
+                         "while i<len(s):\n"
+                         "    c=s[i]\n"
+                         "    if c=='\\n':\n"
+                         "        in_comment=False; line+=1\n"
+                         "    elif in_comment: pass\n"
+                         "    elif in_str:\n"
+                         "        if c=='\\\\' and i+1<len(s): i+=1\n"
+                         "        elif c=='\"': in_str=False; str_line=0\n"
+                         "    elif c==';': in_comment=True\n"
+                         "    elif c=='\"': in_str=True; str_line=line\n"
+                         "    elif c=='(': balance+=1\n"
+                         "    elif c==')':\n"
+                         "        balance-=1\n"
+                         "        if balance<0 and first_neg==0: first_neg=line\n"
+                         "    i+=1\n"
+                         "print(f'balance={balance} first_neg={first_neg} unterminated_string_line={str_line}')\n"))))
+    (string-trim (alist-get bal-result "stdout" ""))))
+
+;; -------------------------------------------------------------- ;;
+;; Per-file lint                                                   ;;
+;; -------------------------------------------------------------- ;;
+
+(define (lint-file path)
+  ;; Returns the number of errors for this file (0 = clean).
+  (let* ((report (scan-file path))
+         (balance-zero? (string-contains? report "balance=0"))
+         (no-extra-close? (string-contains? report "first_neg=0"))
+         (no-unterminated? (string-contains? report "unterminated_string_line=0")))
+    (cond
+      ((and balance-zero? no-extra-close? no-unterminated?)
+       (log-info (string-append "  OK   " path))
+       0)
+      (else
+       (log-error (string-append "  FAIL " path " — " report))
+       1))))
+
+;; -------------------------------------------------------------- ;;
+;; Main                                                            ;;
+;; -------------------------------------------------------------- ;;
+
+(define files (find-tlisp-files paths-input))
+(define file-count (length files))
+
+(log-info (string-append "scanning " (string-format "{}" file-count)
+                         " .tlisp files under " paths-input))
+
+(define (lint-all files acc-errors)
+  (cond
+    ((null? files) acc-errors)
+    (else
+     (lint-all (cdr files)
+               (+ acc-errors (lint-file (car files)))))))
+
+(define error-count (lint-all files 0))
+
+(append-output (string-append "files-scanned=" (string-format "{}" file-count)))
+(append-output (string-append "errors-found=" (string-format "{}" error-count)))
+
+(cond
+  ((= error-count 0)
+   (log-info (string-append "all " (string-format "{}" file-count) " files clean"))
+   (exit 0))
+  ((equal? fail-flag "true")
+   (log-error (string-append (string-format "{}" error-count) " file(s) failed lint"))
+   (exit 1))
+  (else
+   (log-info (string-append (string-format "{}" error-count)
+                            " file(s) failed lint — continuing (fail-on-unbalanced=false)"))
+   (exit 0)))

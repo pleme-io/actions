@@ -48,6 +48,16 @@ jobs:
           sys.exit(rc)
           PY
 
+  lint-tlisp:
+    name: Lint every *.tlisp file (paren / string / comment balance)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Self-host the lint action from the same repo's path so PRs
+      # can be tested against their own changes without first
+      # tagging a release.
+      - uses: ./tlisp-lint
+
   smoke-spec-watch:
     name: Smoke — spec-watch (pure shell, no upstream dep)
     runs-on: ubuntu-latest

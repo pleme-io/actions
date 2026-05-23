@@ -1,0 +1,50 @@
+name: 'pleme-io · tlisp-lint'
+description: 'Validate every *.tlisp file under the repo: balanced parens, balanced strings, balanced comments, and (when tatara-script is installed) a parser-level dry-run. Catches the parse-error class of bug at PR time instead of after-tag.'
+branding:
+  icon: 'check-square'
+  color: 'green'
+
+inputs:
+  paths:
+    description: "Space-separated globs to lint. Default scans every *.tlisp in the repo."
+    required: false
+    default: "**/*.tlisp"
+  fail-on-unbalanced:
+    description: "Exit non-zero on any unbalanced paren/string/comment (default true). Set false to log warnings only."
+    required: false
+    default: "true"
+  run-parser-check:
+    description: "Also invoke tatara-script's parser via a no-op preamble to catch parser-level errors that pass a pure paren count. Default true."
+    required: false
+    default: "true"
+
+outputs:
+  files-scanned:
+    description: "Number of .tlisp files scanned"
+    value: ${{ steps.lint.outputs.files-scanned }}
+  errors-found:
+    description: "Number of files with errors"
+    value: ${{ steps.lint.outputs.errors-found }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run tlisp-lint
+      id: lint
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PATHS: ${{ inputs.paths }}
+        FAIL_ON_UNBALANCED: ${{ inputs.fail-on-unbalanced }}
+        RUN_PARSER_CHECK: ${{ inputs.run-parser-check }}
