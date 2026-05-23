@@ -1,0 +1,84 @@
+;; gh-release-create/run.tlisp — create or update a GitHub Release
+;; for a tag, with optional auto-generated notes + asset uploads.
+
+(define tag-in (env-get "TAG" ""))
+(define title-in (env-get "TITLE" ""))
+(define notes-in (env-get "NOTES" ""))
+(define draft (env-get "DRAFT" "false"))
+(define prerelease (env-get "PRERELEASE" "false"))
+(define assets (env-get "ASSETS" ""))
+(define if-exists (env-get "IF_EXISTS" "skip"))
+(define repo (env-required "REPO"))
+
+;; Resolve tag — fall back to GITHUB_REF_NAME when input empty.
+(define tag
+  (cond
+    ((not (equal? tag-in "")) tag-in)
+    (else (env-get "GITHUB_REF_NAME" ""))))
+
+(define title (if (equal? title-in "") tag title-in))
+
+(cond
+  ((equal? tag "")
+   (log-error "gh-release-create: no tag provided + GITHUB_REF_NAME empty")
+   (append-output "created=false")
+   (exit 1)))
+
+;; Check existence — `gh release view <tag>` returns non-zero when missing.
+(define (release-exists?)
+  (= (status-of (exec-capture "gh" "release" "view" tag "--repo" repo))
+     0))
+
+(define (build-args)
+  (let* ((base (list "release" "create" tag "--repo" repo "--title" title))
+         (with-notes (cond
+                       ((not (equal? notes-in "")) (append base (list "--notes" notes-in)))
+                       (else (append base (list "--generate-notes")))))
+         (with-draft (if (equal? draft "true") (append with-notes (list "--draft")) with-notes))
+         (with-pre (if (equal? prerelease "true") (append with-draft (list "--prerelease")) with-draft))
+         (asset-list (if (equal? assets "") (list) (string-split assets " "))))
+    (append with-pre asset-list)))
+
+(cond
+  ((release-exists?)
+   (cond
+     ((equal? if-exists "skip")
+      (log-info (string-append "release " tag " already exists — skipping"))
+      (append-output "created=false")
+      (append-output (string-append "release-url=https://github.com/" repo "/releases/tag/" tag))
+      (exit 0))
+     ((equal? if-exists "update")
+      (log-info (string-append "updating release " tag))
+      ;; gh release edit doesn't support --generate-notes; if updating, notes must be provided.
+      (let* ((args (cons "release" (cons "edit" (cons tag (cons "--repo" (cons repo
+              (cond
+                ((not (equal? notes-in "")) (list "--notes" notes-in))
+                (else (list))))))))))
+        (let ((r (apply exec-capture (cons "gh" args))))
+          (cond
+            ((= (status-of r) 0)
+             (append-output "created=false")
+             (append-output (string-append "release-url=https://github.com/" repo "/releases/tag/" tag))
+             (exit 0))
+            (else
+              (log-error "gh release edit failed")
+              (append-output "created=false")
+              (exit 1))))))
+     (else
+       (log-error (string-append "release " tag " already exists + if-exists=fail"))
+       (append-output "created=false")
+       (exit 1))))
+  (else
+    (log-info (string-append "creating release " tag))
+    (let ((r (apply exec-capture (cons "gh" (build-args)))))
+      (cond
+        ((= (status-of r) 0)
+         (log-info "release created")
+         (append-output "created=true")
+         (append-output (string-append "release-url=https://github.com/" repo "/releases/tag/" tag))
+         (exit 0))
+        (else
+          (log-error "gh release create failed")
+          (log-info (stderr-of r))
+          (append-output "created=false")
+          (exit 1))))))

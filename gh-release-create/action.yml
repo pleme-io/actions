@@ -1,0 +1,74 @@
+name: 'pleme-io · gh-release-create'
+description: 'Create a GitHub Release for a tag with optional auto-generated notes + asset uploads. Universal primitive — any language, any package shape.'
+branding:
+  icon: 'tag'
+  color: 'purple'
+
+inputs:
+  tag:
+    description: "Tag name to release (e.g. v0.1.4). Defaults to the current ref."
+    required: false
+    default: ""
+  title:
+    description: "Release title. Defaults to the tag name."
+    required: false
+    default: ""
+  notes:
+    description: "Release notes body (markdown). When empty, gh's --generate-notes is used."
+    required: false
+    default: ""
+  draft:
+    description: "Create as draft"
+    required: false
+    default: "false"
+  prerelease:
+    description: "Mark as prerelease"
+    required: false
+    default: "false"
+  assets:
+    description: "Space-separated paths to upload as release assets"
+    required: false
+    default: ""
+  if-exists:
+    description: "skip | update | fail when the release already exists"
+    required: false
+    default: "skip"
+
+outputs:
+  release-url:
+    description: "URL of the created (or existing) release"
+    value: ${{ steps.create.outputs.release-url }}
+  created:
+    description: "'true' if a new release was created, 'false' if skipped/updated"
+    value: ${{ steps.create.outputs.created }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: create
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TAG: ${{ inputs.tag }}
+        TITLE: ${{ inputs.title }}
+        NOTES: ${{ inputs.notes }}
+        DRAFT: ${{ inputs.draft }}
+        PRERELEASE: ${{ inputs.prerelease }}
+        ASSETS: ${{ inputs.assets }}
+        IF_EXISTS: ${{ inputs.if-exists }}
+        REPO: ${{ github.repository }}
+        # GH_TOKEN read by gh CLI
+        GH_TOKEN: ${{ github.token }}

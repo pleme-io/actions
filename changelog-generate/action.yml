@@ -1,0 +1,56 @@
+name: 'pleme-io · changelog-generate'
+description: 'Generate a CHANGELOG.md (or fragment) from git log since a base ref. Universal primitive — language-agnostic, used by every release flow that wants typed changelogs.'
+branding:
+  icon: 'book'
+  color: 'gray-dark'
+
+inputs:
+  base-ref:
+    description: "Base ref to diff from (e.g. previous tag). Empty means: use git describe --tags --abbrev=0 to auto-detect."
+    required: false
+    default: ""
+  format:
+    description: "markdown | keepachangelog | conventional"
+    required: false
+    default: "markdown"
+  output-file:
+    description: "Path to write the generated changelog. Empty means: only emit to outputs (no file write)."
+    required: false
+    default: ""
+  fragment:
+    description: "If true, emit only the new section (don't prepend to an existing file)"
+    required: false
+    default: "false"
+
+outputs:
+  changelog:
+    description: "Generated changelog content (as a multi-line string)"
+    value: ${{ steps.gen.outputs.changelog }}
+  commit-count:
+    description: "Number of commits between base-ref and HEAD"
+    value: ${{ steps.gen.outputs.commit-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: gen
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+        FORMAT: ${{ inputs.format }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+        FRAGMENT: ${{ inputs.fragment }}

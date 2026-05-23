@@ -1,0 +1,123 @@
+;; changelog-generate/run.tlisp — generate a CHANGELOG.md (or
+;; fragment) from git log since a base ref.
+
+(define base-ref-in (env-get "BASE_REF" ""))
+(define format-name (env-get "FORMAT" "markdown"))
+(define output-file (env-get "OUTPUT_FILE" ""))
+(define fragment (env-get "FRAGMENT" "false"))
+
+(define base-ref
+  (cond
+    ((not (equal? base-ref-in "")) base-ref-in)
+    (else (last-tag))))
+
+(define head-ref
+  (cond
+    ((equal? base-ref "") "HEAD")
+    (else (string-append base-ref "..HEAD"))))
+
+;; Pull commits as `<sha>|<subject>` lines for parsing flexibility.
+(define (commit-lines)
+  (let ((r (exec-capture "git" "log" head-ref "--no-merges"
+              "--pretty=format:%h|%s")))
+    (cond
+      ((= (status-of r) 0)
+       (let ((out (string-trim (stdout-of r))))
+         (if (equal? out "") (list) (string-split out "\n"))))
+      (else (list)))))
+
+(define commits (commit-lines))
+(define commit-count (length commits))
+
+;; ── Format renderers ──────────────────────────────────────────── ;;
+
+(define (render-markdown commits)
+  (define (bullet line)
+    (string-append "- " line))
+  (define (commit-bullets ls)
+    (cond
+      ((null? ls) (list))
+      (else (cons (bullet (car ls)) (commit-bullets (cdr ls))))))
+  (string-join "\n" (commit-bullets commits)))
+
+;; Keep-a-changelog buckets by conventional-commit prefix.
+(define (commit-bucket line)
+  (cond
+    ((string-contains? line "|feat") "Added")
+    ((string-contains? line "|fix") "Fixed")
+    ((string-contains? line "|refactor") "Changed")
+    ((string-contains? line "|perf") "Changed")
+    ((string-contains? line "|docs") "Documentation")
+    ((string-contains? line "|test") "Tests")
+    ((string-contains? line "|chore") "Maintenance")
+    ((string-contains? line "|ci") "CI")
+    ((string-contains? line "|build") "Build")
+    ((string-contains? line "|breaking") "Removed")
+    (else "Other")))
+
+(define (group-by-bucket lines)
+  ;; Naive: pass through; we group in the rendering step below.
+  lines)
+
+(define (lines-in-bucket lines bucket)
+  (cond
+    ((null? lines) (list))
+    ((equal? (commit-bucket (car lines)) bucket)
+     (cons (car lines) (lines-in-bucket (cdr lines) bucket)))
+    (else (lines-in-bucket (cdr lines) bucket))))
+
+(define (render-bucket lines bucket)
+  (let ((b-lines (lines-in-bucket lines bucket)))
+    (cond
+      ((null? b-lines) "")
+      (else
+        (string-append "### " bucket "\n"
+                       (render-markdown b-lines) "\n\n")))))
+
+(define (render-keepachangelog lines)
+  (string-append
+    (render-bucket lines "Added")
+    (render-bucket lines "Changed")
+    (render-bucket lines "Fixed")
+    (render-bucket lines "Removed")
+    (render-bucket lines "Documentation")
+    (render-bucket lines "Tests")
+    (render-bucket lines "CI")
+    (render-bucket lines "Build")
+    (render-bucket lines "Maintenance")
+    (render-bucket lines "Other")))
+
+(define (render-conventional commits)
+  ;; Just emit raw conventional-commit-formatted lines.
+  (render-markdown commits))
+
+(define rendered
+  (cond
+    ((equal? format-name "markdown") (render-markdown commits))
+    ((equal? format-name "keepachangelog") (render-keepachangelog commits))
+    ((equal? format-name "conventional") (render-conventional commits))
+    (else
+     (log-error (string-append "unknown format: " format-name))
+     "")))
+
+;; Write to file if requested.
+(cond
+  ((not (equal? output-file ""))
+   (cond
+     ((equal? fragment "true")
+      (write-file output-file rendered))
+     (else
+       ;; Prepend new content to existing file.
+       (let ((existing (if (path-exists? output-file) (read-file output-file) "")))
+         (write-file output-file (string-append rendered "\n\n" existing)))))))
+
+;; Emit outputs. Multi-line strings use the heredoc form supported
+;; by GITHUB_OUTPUT.
+(let ((eof-marker "TLISP_OUTPUT_EOF"))
+  (append-output (string-append "changelog<<" eof-marker))
+  (append-output rendered)
+  (append-output eof-marker))
+(append-output (string-append "commit-count=" (string-format "{}" commit-count)))
+
+(log-info (string-append "generated " (string-format "{}" commit-count)
+                         " commit lines (format=" format-name ")"))
