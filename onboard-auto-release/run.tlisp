@@ -1,0 +1,132 @@
+;; onboard-auto-release/run.tlisp — scaffold the canonical 3-workflow
+;; pleme-io auto-release surface into the current repo.
+
+(define include-pre-merge (env-get "INCLUDE_PRE_MERGE" "true"))
+(define include-security (env-get "INCLUDE_SECURITY" "true"))
+(define include-auto-release (env-get "INCLUDE_AUTO_RELEASE" "true"))
+(define force (env-get "FORCE" "false"))
+(define open-pr (env-get "OPEN_PR" "false"))
+(define pr-branch (env-get "PR_BRANCH" "chore/onboard-auto-release"))
+(define default-bump-type (env-get "DEFAULT_BUMP_TYPE" "patch"))
+(define repo (env-get "REPO" ""))
+
+;; ── Workflow file templates ─────────────────────────────────────
+
+(define pre-merge-gate-yaml
+  (string-append
+    "name: pre-merge-gate\n"
+    "\n"
+    "on:\n"
+    "  pull_request:\n"
+    "    branches: [main]\n"
+    "\n"
+    "jobs:\n"
+    "  gate:\n"
+    "    uses: pleme-io/substrate/.github/workflows/pre-merge-gate.yml@main\n"
+    "    secrets: inherit\n"))
+
+(define security-gate-yaml
+  (string-append
+    "name: security-gate\n"
+    "\n"
+    "on:\n"
+    "  pull_request:\n"
+    "    branches: [main]\n"
+    "  schedule:\n"
+    "    - cron: '0 6 * * 1'   # weekly Mon 06:00 UTC\n"
+    "\n"
+    "jobs:\n"
+    "  gate:\n"
+    "    uses: pleme-io/substrate/.github/workflows/security-gate.yml@main\n"
+    "    secrets: inherit\n"))
+
+(define auto-release-yaml
+  (string-append
+    "name: auto-release\n"
+    "\n"
+    "on:\n"
+    "  push:\n"
+    "    branches: [main]\n"
+    "  workflow_dispatch:\n"
+    "    inputs:\n"
+    "      bump-type:\n"
+    "        description: \"patch | minor | major\"\n"
+    "        required: false\n"
+    "        default: " default-bump-type "\n"
+    "\n"
+    "jobs:\n"
+    "  release:\n"
+    "    uses: pleme-io/substrate/.github/workflows/auto-release.yml@main\n"
+    "    with:\n"
+    "      bump-type: ${{ inputs.bump-type || '" default-bump-type "' }}\n"
+    "    secrets: inherit\n"))
+
+;; ── Per-file write helper ──────────────────────────────────────
+
+(define written (list))
+(define skipped (list))
+
+(define (ensure-dir)
+  (cond
+    ((not (path-exists? ".github/workflows"))
+     (exec-check "mkdir" "-p" ".github/workflows"))))
+
+(define (write-workflow filename content)
+  (ensure-dir)
+  (let ((path (string-append ".github/workflows/" filename)))
+    (cond
+      ((and (path-exists? path) (not (equal? force "true")))
+       (log-info (string-append "  SKIP " path " (already exists)"))
+       (set! skipped (append skipped (list filename))))
+      (else
+        (write-file path content)
+        (log-info (string-append "  WROTE " path))
+        (set! written (append written (list filename)))))))
+
+;; ── Scaffold each workflow per input flags ─────────────────────
+
+(cond
+  ((equal? include-pre-merge "true")
+   (write-workflow "pre-merge-gate.yml" pre-merge-gate-yaml)))
+
+(cond
+  ((equal? include-security "true")
+   (write-workflow "security-gate.yml" security-gate-yaml)))
+
+(cond
+  ((equal? include-auto-release "true")
+   (write-workflow "auto-release.yml" auto-release-yaml)))
+
+;; ── Optional: commit + open PR ─────────────────────────────────
+
+(define pr-url "")
+
+(cond
+  ((and (equal? open-pr "true") (not (null? written)))
+   (log-info "==> opening PR")
+   (exec-check "git" "config" "user.name" "github-actions[bot]")
+   (exec-check "git" "config" "user.email"
+               "41898282+github-actions[bot]@users.noreply.github.com")
+   (exec-capture "git" "checkout" "-b" pr-branch)
+   (exec-check "git" "add" ".github/workflows/")
+   (exec-check "git" "commit" "-m"
+               "chore(ci): onboard to pleme-io auto-release directive\n\nAdds the canonical 3-workflow surface per the ★★ AUTO-RELEASE\nprime directive. See:\n  https://github.com/pleme-io/blackmatter-pleme/blob/main/docs/pleme-io-CLAUDE.md\n  https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md")
+   (exec-capture "git" "push" "origin" pr-branch "--force-with-lease")
+   (let ((r (exec-capture "gh" "pr" "create"
+              "--title" "chore(ci): onboard to pleme-io auto-release"
+              "--body" "Per ★★ AUTO-RELEASE directive. Workflows scaffolded via pleme-io/actions/onboard-auto-release."
+              "--repo" repo)))
+     (set! pr-url (string-trim (stdout-of r))))))
+
+;; ── Emit outputs ───────────────────────────────────────────────
+
+(define (join-list ls)
+  (if (null? ls) "" (string-join " " ls)))
+
+(append-output (string-append "files-written=" (join-list written)))
+(append-output (string-append "files-skipped=" (join-list skipped)))
+(append-output (string-append "pr-url=" pr-url))
+
+(log-info (string-append "onboarding complete: "
+                         (string-format "{}" (length written)) " written, "
+                         (string-format "{}" (length skipped)) " skipped"))

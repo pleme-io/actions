@@ -1,0 +1,76 @@
+name: 'pleme-io · onboard-auto-release'
+description: 'Scaffold the canonical 3-workflow pleme-io auto-release surface into a repo (auto-release.yml + pre-merge-gate.yml + security-gate.yml). Idempotent — skips files that already exist unless --force is set.'
+branding:
+  icon: 'package'
+  color: 'green'
+
+inputs:
+  include-pre-merge-gate:
+    description: "Scaffold pre-merge-gate.yml (PR-time quality gate)"
+    required: false
+    default: "true"
+  include-security-gate:
+    description: "Scaffold security-gate.yml (vuln/SBOM/SPDX)"
+    required: false
+    default: "true"
+  include-auto-release:
+    description: "Scaffold auto-release.yml (merge-time publish)"
+    required: false
+    default: "true"
+  force:
+    description: "Overwrite existing workflow files"
+    required: false
+    default: "false"
+  open-pr:
+    description: "Commit + open a PR with the new workflows"
+    required: false
+    default: "false"
+  pr-branch:
+    description: "Branch name for the onboarding PR"
+    required: false
+    default: "chore/onboard-auto-release"
+  default-bump-type:
+    description: "Default bump-type input in the auto-release.yml shim"
+    required: false
+    default: "patch"
+
+outputs:
+  files-written:
+    description: "Space-separated list of workflow files created"
+    value: ${{ steps.onboard.outputs.files-written }}
+  files-skipped:
+    description: "Space-separated list of files already present (skipped)"
+    value: ${{ steps.onboard.outputs.files-skipped }}
+  pr-url:
+    description: "URL of the opened PR (empty when open-pr=false)"
+    value: ${{ steps.onboard.outputs.pr-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: onboard
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        INCLUDE_PRE_MERGE: ${{ inputs.include-pre-merge-gate }}
+        INCLUDE_SECURITY: ${{ inputs.include-security-gate }}
+        INCLUDE_AUTO_RELEASE: ${{ inputs.include-auto-release }}
+        FORCE: ${{ inputs.force }}
+        OPEN_PR: ${{ inputs.open-pr }}
+        PR_BRANCH: ${{ inputs.pr-branch }}
+        DEFAULT_BUMP_TYPE: ${{ inputs.default-bump-type }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
