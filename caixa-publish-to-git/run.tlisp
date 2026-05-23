@@ -1,0 +1,70 @@
+;; caixa-publish-to-git/run.tlisp — tag commit with caixa.lisp :version.
+;; Makes the repo a git-as-package-repo for downstream :depends-on.
+
+(define caixa-in (env-get "CAIXA_PATH" ""))
+(define prefix (env-get "TAG_PREFIX" "v"))
+(define push-flag (env-get "PUSH_TAG" "true"))
+
+(define (find-caixa)
+  (cond
+    ((not (equal? caixa-in "")) caixa-in)
+    (else
+     (let ((r (exec-capture "sh" "-c"
+                "for p in caixa.lisp *.caixa.lisp .caixa/main.lisp; do [ -f \"$p\" ] && echo \"$p\" && break; done")))
+       (string-trim (stdout-of r))))))
+
+(define caixa (find-caixa))
+
+(cond
+  ((equal? caixa "")
+   (log-error "no caixa source found")
+   (append-output "tag=") (append-output "published=false")
+   (exit 1)))
+
+;; Extract :version "x.y.z" from caixa source
+(define ver-r
+  (exec-capture "sh" "-c"
+    (string-append "grep -oE ':version \"[^\"]+\"' " caixa
+                   " | head -1 | sed 's/:version \"//;s/\"$//'")))
+(define version (string-trim (stdout-of ver-r)))
+
+(cond
+  ((equal? version "")
+   (log-error "no :version field in caixa")
+   (append-output "tag=") (append-output "published=false")
+   (exit 1)))
+
+(define tag (string-append prefix version))
+
+;; Check if tag already exists
+(define exists-r (exec-capture "git" "rev-parse" tag))
+(cond
+  ((= (status-of exists-r) 0)
+   (log-info (string-append "tag " tag " already exists — skipping"))
+   (append-output (string-append "tag=" tag))
+   (append-output "published=false")
+   (exit 0)))
+
+(configure-git-bot)
+(exec-check "git" "tag" "-a" tag "-m"
+            (string-append "caixa-publish-to-git: " tag))
+
+(cond
+  ((equal? push-flag "true")
+   (let ((r (exec-capture "git" "push" "origin" tag)))
+     (cond
+       ((= (status-of r) 0)
+        (log-info (string-append "published " tag " to origin"))
+        (append-output (string-append "tag=" tag))
+        (append-output "published=true")
+        (exit 0))
+       (else
+        (log-error "git push tag failed")
+        (append-output (string-append "tag=" tag))
+        (append-output "published=false")
+        (exit 1)))))
+  (else
+   (log-info (string-append "tagged " tag " (not pushed)"))
+   (append-output (string-append "tag=" tag))
+   (append-output "published=true")
+   (exit 0)))

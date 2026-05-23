@@ -1,0 +1,72 @@
+;; caixa-deps-resolve/run.tlisp — resolve :depends-on entries in
+;; a caixa.lisp to actual git checkouts at the requested ref.
+;;
+;; Format per :depends-on entry: "<org>/<repo>@<git-ref>"
+;;   e.g. "pleme-io/shikumi@v0.1.0" or "pleme-io/garasu@main"
+;;
+;; Each resolved dep lands in .caixa-deps/<repo>/ at the requested ref.
+
+(define caixa-in (env-get "CAIXA_PATH" ""))
+(define deps-dir (env-get "DEPS_DIR" ".caixa-deps"))
+
+(define (find-caixa)
+  (cond
+    ((not (equal? caixa-in "")) caixa-in)
+    (else
+     (let ((r (exec-capture "sh" "-c"
+                "for p in caixa.lisp *.caixa.lisp .caixa/main.lisp; do [ -f \"$p\" ] && echo \"$p\" && break; done")))
+       (string-trim (stdout-of r))))))
+
+(define caixa (find-caixa))
+(cond
+  ((equal? caixa "")
+   (log-info "no caixa source — nothing to resolve")
+   (append-output "resolved-count=0") (exit 0)))
+
+;; Extract :depends-on vector from caixa source. Naive grep-based
+;; until pleme-doc-gen exposes a parser as a library.
+(define deps-r
+  (exec-capture "sh" "-c"
+    (string-append
+      "grep -A20 ':depends-on' " caixa
+      " | grep -oE '\"[^\"]+@[^\"]+\"' | sed 's/^\"//;s/\"$//'")))
+
+(define deps-raw (string-trim (stdout-of deps-r)))
+(define deps
+  (cond
+    ((equal? deps-raw "") (list))
+    (else (string-split deps-raw "\n"))))
+
+(log-info (string-append "found "
+                         (string-format "{}" (length deps))
+                         " :depends-on entries"))
+
+(exec-check "mkdir" "-p" deps-dir)
+
+(define resolved 0)
+(let dep-loop ((ds deps))
+  (cond
+    ((null? ds) #t)
+    ((equal? (car ds) "") (dep-loop (cdr ds)))
+    (else
+      (let* ((parts (string-split (car ds) "@"))
+             (repo (car parts))
+             (ref (if (>= (length parts) 2) (car (cdr parts)) "main"))
+             (repo-name (car (cdr (string-split repo "/"))))
+             (target (string-append deps-dir "/" repo-name))
+             (url (string-append "https://github.com/" repo ".git")))
+        (log-info (string-append "resolving " repo "@" ref " → " target))
+        (let ((r (exec-capture "sh" "-c"
+                   (string-append "rm -rf " target
+                                  " && git clone --depth 1 --branch " ref
+                                  " '" url "' " target))))
+          (cond
+            ((= (status-of r) 0)
+             (set! resolved (+ resolved 1)))
+            (else
+             (log-error (string-append "failed to resolve " (car ds))))))
+        (dep-loop (cdr ds))))))
+
+(append-output (string-append "resolved-count=" (string-format "{}" resolved)))
+(log-info (string-append "resolved " (string-format "{}" resolved) " dep(s)"))
+(exit 0)
