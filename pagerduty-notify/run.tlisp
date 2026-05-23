@@ -1,0 +1,50 @@
+;; pagerduty-notify/run.tlisp — Events API v2 trigger/resolve.
+
+(define key (env-required "INTEGRATION_KEY"))
+(define action (env-get "ACTION" "trigger"))
+(define dedup-in (env-get "DEDUP_KEY" ""))
+(define summary (env-required "SUMMARY"))
+(define severity (env-get "SEVERITY" "error"))
+(define repo (env-required "REPO"))
+
+(define dedup
+  (cond
+    ((not (equal? dedup-in "")) dedup-in)
+    (else (string-append "gh-actions:" repo ":" summary))))
+
+(define payload-jq
+  (string-append
+    "jq -n "
+    "--arg routing '" key "' "
+    "--arg action '" action "' "
+    "--arg dedup '" dedup "' "
+    "--arg summary \"$SUMMARY\" "
+    "--arg severity '" severity "' "
+    "--arg source '" repo "' "
+    "'{ routing_key: $routing, event_action: $action, dedup_key: $dedup, "
+    "   payload: { summary: $summary, severity: $severity, source: $source } }'"))
+
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else (log-error "payload assembly failed") (exit 1)))))
+
+(define r
+  (exec-capture "curl" "-sS" "-w" "\n%{http_code}"
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
+    "https://events.pagerduty.com/v2/enqueue"))
+
+(let ((out (stdout-of r)))
+  (cond
+    ((log-contains? out "202")
+     (log-info (string-append action " dispatched (dedup=" dedup ")"))
+     (append-output (string-append "dedup-key=" dedup))
+     (exit 0))
+    (else
+      (log-error "PagerDuty enqueue failed")
+      (log-info out)
+      (append-output (string-append "dedup-key=" dedup))
+      (exit 1))))

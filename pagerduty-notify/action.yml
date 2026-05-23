@@ -1,0 +1,51 @@
+name: 'pleme-io · pagerduty-notify'
+description: 'Trigger / resolve a PagerDuty incident via the Events API v2. Useful for CI-driven on-call paging.'
+branding: { icon: 'alert-octagon', color: 'red' }
+
+inputs:
+  integration-key:
+    required: true
+    description: "PagerDuty Events API v2 integration key"
+  action:
+    description: "trigger | resolve | acknowledge"
+    required: false
+    default: "trigger"
+  dedup-key:
+    description: "Stable identifier for the incident (so re-triggers update, not duplicate)"
+    required: false
+    default: ""
+  summary:
+    required: true
+  severity:
+    description: "critical | error | warning | info"
+    required: false
+    default: "error"
+
+outputs:
+  dedup-key:
+    value: ${{ steps.pd.outputs.dedup-key }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: pd
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        INTEGRATION_KEY: ${{ inputs.integration-key }}
+        ACTION: ${{ inputs.action }}
+        DEDUP_KEY: ${{ inputs.dedup-key }}
+        SUMMARY: ${{ inputs.summary }}
+        SEVERITY: ${{ inputs.severity }}
+        REPO: ${{ github.repository }}

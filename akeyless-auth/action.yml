@@ -1,0 +1,50 @@
+name: 'pleme-io · akeyless-auth'
+description: 'Akeyless login via access-id + (access-key | SAML | JWT). Exports AKEYLESS_TOKEN to subsequent steps so siblings (secret-fetch / rotate / etc) can reuse.'
+branding: { icon: 'lock', color: 'orange' }
+
+inputs:
+  access-id:
+    description: "Akeyless auth method access-id"
+    required: true
+  access-key:
+    description: "Static access-key (mutex with use-gh-jwt)"
+    required: false
+    default: ""
+  use-gh-jwt:
+    description: "Auth via GitHub OIDC JWT (recommended; no shared secret)"
+    required: false
+    default: "true"
+  api-url:
+    description: "Akeyless API URL"
+    required: false
+    default: "https://api.akeyless.io"
+
+outputs:
+  token:
+    description: "Akeyless session token (also exported as AKEYLESS_TOKEN env)"
+    value: ${{ steps.auth.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: auth
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ACCESS_ID: ${{ inputs.access-id }}
+        ACCESS_KEY: ${{ inputs.access-key }}
+        USE_GH_JWT: ${{ inputs.use-gh-jwt }}
+        API_URL: ${{ inputs.api-url }}
+        ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}

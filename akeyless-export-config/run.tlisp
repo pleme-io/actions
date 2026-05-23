@@ -1,0 +1,47 @@
+;; akeyless-export-config/run.tlisp — snapshot gateway items + roles.
+
+(define out-path (env-get "OUTPUT_PATH" "akeyless-config.json"))
+(define api-url (env-get "API_URL" "https://api.akeyless.io"))
+(define token (env-required "AKEYLESS_TOKEN"))
+
+(define (call endpoint payload)
+  (let ((r (exec-capture "curl" "-sS"
+             "-X" "POST"
+             "-H" "Content-Type: application/json"
+             "-d" payload
+             (string-append api-url "/" endpoint))))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else
+        (log-error (string-append endpoint " failed"))
+        ""))))
+
+(log-info "==> exporting items + roles + auth-methods")
+
+(define items (call "list-items"
+  (string-append "{\"token\":\"" token "\"}")))
+(define roles (call "list-roles"
+  (string-append "{\"token\":\"" token "\"}")))
+(define auth-methods (call "list-auth-methods"
+  (string-append "{\"token\":\"" token "\"}")))
+
+;; Compose a single JSON snapshot via jq.
+(define merge-cmd
+  (string-append
+    "jq -n "
+    "--argjson items '" items "' "
+    "--argjson roles '" roles "' "
+    "--argjson auth_methods '" auth-methods "' "
+    "'{ exported_at: now | todate, items: $items, roles: $roles, auth_methods: $auth_methods }' "
+    "> " out-path))
+
+(let ((r (exec-capture "sh" "-c" merge-cmd)))
+  (cond
+    ((= (status-of r) 0)
+     (log-info (string-append "wrote " out-path))
+     (append-output (string-append "config-path=" out-path))
+     (exit 0))
+    (else
+      (log-error "snapshot assembly failed")
+      (append-output "config-path=")
+      (exit 1))))

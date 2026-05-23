@@ -1,0 +1,30 @@
+;; akeyless-rotate/run.tlisp — force rotation on a rotated-secret.
+
+(define secret (env-required "SECRET_NAME"))
+(define api-url (env-get "API_URL" "https://api.akeyless.io"))
+(define token (env-required "AKEYLESS_TOKEN"))
+
+(log-info (string-append "==> akeyless gateway-rotate-secret " secret))
+
+(define payload
+  (string-append "{\"token\":\"" token "\",\"name\":\"" secret "\"}"))
+
+(define r
+  (exec-capture "curl" "-sS" "-w" "\n%{http_code}"
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
+    (string-append api-url "/gateway-rotate-secret")))
+
+(define out (stdout-of r))
+
+(cond
+  ((or (log-contains? out "200") (log-contains? out "204"))
+   (log-info "rotated")
+   (append-output "rotated=true")
+   (exit 0))
+  (else
+    (log-error "rotation failed")
+    (log-info out)
+    (append-output "rotated=false")
+    (exit 1)))

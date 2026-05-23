@@ -1,0 +1,33 @@
+name: 'pleme-io · k8s-rollout-wait'
+description: 'Wait for a single k8s rollout to converge. Sibling of kubectl-apply (which applies + waits on detected resources); this targets a single named resource for finer-grained gating.'
+branding: { icon: 'clock', color: 'blue' }
+
+inputs:
+  resource:
+    description: "kind/name (e.g. deployment/myapp)"
+    required: true
+  namespace:
+    required: false
+    default: "default"
+  timeout:
+    required: false
+    default: "300s"
+
+outputs:
+  rolled-out:
+    value: ${{ steps.w.outputs.rolled-out }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-kubectl@v4
+    - id: w
+      shell: bash
+      run: |
+        if kubectl rollout status -n "${{ inputs.namespace }}" \
+           "${{ inputs.resource }}" --timeout="${{ inputs.timeout }}"; then
+          echo "rolled-out=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "rolled-out=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

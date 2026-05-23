@@ -1,0 +1,38 @@
+name: 'pleme-io · akeyless-injector-validate'
+description: 'Validate Akeyless sidecar injector annotations on a set of k8s manifests. Sanity-check that secret references point at valid Akeyless paths before applying.'
+branding: { icon: 'check-circle', color: 'orange' }
+
+inputs:
+  manifests:
+    required: true
+    description: "Path or glob to manifest file(s)"
+  api-url:
+    required: false
+    default: "https://api.akeyless.io"
+
+outputs:
+  valid-count:
+    value: ${{ steps.val.outputs.valid-count }}
+  invalid-count:
+    value: ${{ steps.val.outputs.invalid-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: val
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        MANIFESTS: ${{ inputs.manifests }}
+        API_URL: ${{ inputs.api-url }}

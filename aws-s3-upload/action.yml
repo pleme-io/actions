@@ -1,0 +1,34 @@
+name: 'pleme-io · aws-s3-upload'
+description: 'Upload a file or directory to S3. Pairs with aws-assume-role for IAM. Useful for build-artifact ship, backup, SBOM archive, etc.'
+branding: { icon: 'upload', color: 'orange' }
+
+inputs:
+  source:
+    required: true
+    description: "Local file or directory"
+  bucket:
+    required: true
+  key:
+    description: "Destination key prefix (e.g. releases/v0.1.0/)"
+    required: true
+  recursive:
+    required: false
+    default: "false"
+  acl:
+    required: false
+    default: "private"
+
+outputs:
+  s3-uri:
+    value: ${{ steps.up.outputs.s3-uri }}
+
+runs:
+  using: composite
+  steps:
+    - id: up
+      shell: bash
+      run: |
+        args=( "s3" "cp" "${{ inputs.source }}" "s3://${{ inputs.bucket }}/${{ inputs.key }}" "--acl" "${{ inputs.acl }}" )
+        [ "${{ inputs.recursive }}" = "true" ] && args+=( "--recursive" )
+        aws "${args[@]}"
+        echo "s3-uri=s3://${{ inputs.bucket }}/${{ inputs.key }}" >> "$GITHUB_OUTPUT"

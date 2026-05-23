@@ -1,0 +1,70 @@
+;; akeyless-auth/run.tlisp — login + export token.
+
+(define access-id (env-required "ACCESS_ID"))
+(define access-key (env-get "ACCESS_KEY" ""))
+(define use-jwt (env-get "USE_GH_JWT" "true"))
+(define api-url (env-get "API_URL" "https://api.akeyless.io"))
+
+(define (build-payload)
+  (cond
+    ((equal? use-jwt "true")
+     ;; Pull GH OIDC JWT first.
+     (let* ((id-url (env-required "ACTIONS_ID_TOKEN_REQUEST_URL"))
+            (id-tok (env-required "ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+            (curl-cmd (string-append
+                        "curl -sH 'Authorization: Bearer " id-tok "' '"
+                        id-url "&audience=akeyless.io' | jq -r '.value'"))
+            (r (exec-capture "sh" "-c" curl-cmd)))
+       (cond
+         ((not (= (status-of r) 0))
+          (log-error "failed to retrieve GH OIDC token")
+          (exit 1)))
+       (let ((jwt (string-trim (stdout-of r))))
+         (string-append
+           "{\"access-type\":\"jwt\",\"access-id\":\""
+           access-id "\",\"jwt\":\"" jwt "\"}"))))
+    (else
+      (cond
+        ((equal? access-key "")
+         (log-error "neither GH JWT nor access-key provided")
+         (exit 1)))
+      (string-append
+        "{\"access-type\":\"access_key\",\"access-id\":\""
+        access-id "\",\"access-key\":\"" access-key "\"}"))))
+
+(define payload (build-payload))
+
+(log-info "==> akeyless auth")
+
+(define r
+  (exec-capture "curl" "-sS"
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
+    (string-append api-url "/auth")))
+
+(cond
+  ((not (= (status-of r) 0))
+   (log-error "akeyless /auth POST failed")
+   (log-info (stderr-of r))
+   (exit 1)))
+
+(let* ((jq-r (exec-capture "sh" "-c"
+              (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
+                             "' | jq -r '.token'")))
+       (token (string-trim (stdout-of jq-r))))
+  (cond
+    ((or (equal? token "") (equal? token "null"))
+     (log-error "no token in response")
+     (log-info (stdout-of r))
+     (exit 1))
+    (else
+      (log-info "authenticated")
+      (append-output (string-append "token=" token))
+      ;; Also export to subsequent steps via GITHUB_ENV.
+      (let ((env-file (env-get "GITHUB_ENV" "")))
+        (cond
+          ((not (equal? env-file ""))
+           (exec-check "sh" "-c"
+             (string-append "echo 'AKEYLESS_TOKEN=" token "' >> " env-file)))))
+      (exit 0))))

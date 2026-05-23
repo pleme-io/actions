@@ -1,0 +1,35 @@
+name: 'pleme-io · akeyless-rotate'
+description: 'Rotate a rotated-secret in Akeyless. Reads $AKEYLESS_TOKEN.'
+branding: { icon: 'refresh-cw', color: 'orange' }
+
+inputs:
+  secret-name:
+    required: true
+  api-url:
+    required: false
+    default: "https://api.akeyless.io"
+
+outputs:
+  rotated:
+    value: ${{ steps.rot.outputs.rotated }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: rot
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SECRET_NAME: ${{ inputs.secret-name }}
+        API_URL: ${{ inputs.api-url }}

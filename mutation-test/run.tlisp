@@ -1,0 +1,51 @@
+;; mutation-test/run.tlisp — polymorphic mutation testing.
+
+(define fail-on-survived (env-get "FAIL_ON_SURVIVED" "false"))
+(define timeout (env-get "TIMEOUT" "30m"))
+
+(define (detect)
+  (cond
+    ((path-exists? "Cargo.toml") "rust")
+    ((path-exists? "package.json") "npm")
+    ((path-exists? "pyproject.toml") "python")
+    (else "unknown")))
+
+(define (run-rust)
+  (log-info "==> cargo mutants --timeout 30")
+  (let ((r (exec-capture "cargo" "mutants" "--timeout" "30")))
+    (cons (stdout-of r) (= (status-of r) 0))))
+
+(define eco (detect))
+
+(cond
+  ((not (equal? eco "rust"))
+   (log-info (string-append "ecosystem '" eco "' not yet supported by mutation-test — skipping"))
+   (append-output "mutants-killed=0")
+   (append-output "mutants-survived=0")
+   (exit 0)))
+
+(define result (run-rust))
+(define out (car result))
+(define ok? (cdr result))
+
+;; Parse "N caught" and "N missed" from cargo-mutants summary.
+(define killed
+  (string-trim (stdout-of (exec-capture "sh" "-c"
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
+                   "' | grep -oE '[0-9]+ caught' | grep -oE '[0-9]+' | head -1 || echo 0")))))
+
+(define survived
+  (string-trim (stdout-of (exec-capture "sh" "-c"
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
+                   "' | grep -oE '[0-9]+ missed' | grep -oE '[0-9]+' | head -1 || echo 0")))))
+
+(append-output (string-append "mutants-killed=" killed))
+(append-output (string-append "mutants-survived=" survived))
+
+(log-info (string-append "killed=" killed " survived=" survived))
+
+(cond
+  ((and (equal? fail-on-survived "true") (not (equal? survived "0")))
+   (log-error "mutants survived + fail-on-survived=true")
+   (exit 1))
+  (else (exit 0)))

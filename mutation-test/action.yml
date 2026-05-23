@@ -1,0 +1,46 @@
+name: 'pleme-io · mutation-test'
+description: 'Polymorphic mutation testing — cargo-mutants for Rust, stryker for npm/python. Surface real test gaps the regular test-gate doesn''t catch.'
+branding: { icon: 'zap', color: 'red' }
+
+inputs:
+  fail-on-survived:
+    description: "Fail when any mutant survives"
+    required: false
+    default: "false"
+  timeout:
+    required: false
+    default: "30m"
+
+outputs:
+  mutants-killed:
+    value: ${{ steps.mut.outputs.mutants-killed }}
+  mutants-survived:
+    value: ${{ steps.mut.outputs.mutants-survived }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust (if Cargo.toml)
+      if: hashFiles('Cargo.toml') != ''
+      uses: dtolnay/rust-toolchain@stable
+    - name: Install cargo-mutants
+      if: hashFiles('Cargo.toml') != ''
+      shell: bash
+      run: cargo install --locked cargo-mutants || true
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: mut
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        FAIL_ON_SURVIVED: ${{ inputs.fail-on-survived }}
+        TIMEOUT: ${{ inputs.timeout }}

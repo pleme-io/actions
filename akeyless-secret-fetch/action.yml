@@ -1,0 +1,43 @@
+name: 'pleme-io · akeyless-secret-fetch'
+description: 'Fetch a static / dynamic / rotated secret from Akeyless. Reads $AKEYLESS_TOKEN (set by akeyless-auth) — operator typically invokes akeyless-auth in a prior step.'
+branding: { icon: 'key', color: 'orange' }
+
+inputs:
+  secret-name:
+    description: "Akeyless secret path (e.g. /prod/db/password)"
+    required: true
+  output-env:
+    description: "Env var name to export the value under (in subsequent steps via GITHUB_ENV). Empty = output only."
+    required: false
+    default: ""
+  api-url:
+    description: "Akeyless API URL"
+    required: false
+    default: "https://api.akeyless.io"
+
+outputs:
+  value:
+    description: "Secret value (also exported as env if output-env set)"
+    value: ${{ steps.fetch.outputs.value }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: fetch
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SECRET_NAME: ${{ inputs.secret-name }}
+        OUTPUT_ENV: ${{ inputs.output-env }}
+        API_URL: ${{ inputs.api-url }}

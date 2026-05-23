@@ -1,0 +1,46 @@
+;; akeyless-secret-fetch/run.tlisp — pull a secret value.
+
+(define secret (env-required "SECRET_NAME"))
+(define output-env (env-get "OUTPUT_ENV" ""))
+(define api-url (env-get "API_URL" "https://api.akeyless.io"))
+(define token (env-required "AKEYLESS_TOKEN"))
+
+(log-info (string-append "==> akeyless get-secret-value " secret))
+
+;; Single secret static-secret-value flow.
+(define payload
+  (string-append "{\"token\":\"" token "\",\"names\":[\"" secret "\"]}"))
+
+(define r
+  (exec-capture "curl" "-sS"
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
+    (string-append api-url "/get-secret-value")))
+
+(cond
+  ((not (= (status-of r) 0))
+   (log-error "get-secret-value POST failed")
+   (exit 1)))
+
+(let* ((jq-r (exec-capture "sh" "-c"
+              (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
+                             "' | jq -r '.[\"" secret "\"]'")))
+       (value (string-trim (stdout-of jq-r))))
+  (cond
+    ((or (equal? value "") (equal? value "null"))
+     (log-error (string-append "no value for '" secret "' in response"))
+     (exit 1))
+    (else
+      (log-info "fetched")
+      (append-output (string-append "value=" value))
+      ;; Add ::add-mask:: so the secret doesn't leak in logs.
+      (log-info (string-append "::add-mask::" value))
+      (cond
+        ((not (equal? output-env ""))
+         (let ((env-file (env-get "GITHUB_ENV" "")))
+           (cond
+             ((not (equal? env-file ""))
+              (exec-check "sh" "-c"
+                (string-append "echo '" output-env "=" value "' >> " env-file)))))))
+      (exit 0))))

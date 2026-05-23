@@ -1,0 +1,60 @@
+;; akeyless-injector-validate/run.tlisp — verify all akeyless/
+;; secret refs in a manifest set resolve to real items.
+
+(define manifests (env-required "MANIFESTS"))
+(define api-url (env-get "API_URL" "https://api.akeyless.io"))
+(define token (env-required "AKEYLESS_TOKEN"))
+
+(log-info (string-append "==> scanning " manifests " for akeyless secret refs"))
+
+;; Extract all akeyless.com/inject-secrets annotation values.
+(define grep-cmd
+  (string-append
+    "grep -hoE 'akeyless.com/inject-secrets[^\"]*' " manifests
+    " 2>/dev/null | sed 's/.*: *//' | tr ',' '\\n' | sed 's/[\"' ]//g' | sort -u | grep -v '^$' || true"))
+
+(define refs
+  (let* ((r (exec-capture "sh" "-c" grep-cmd))
+         (out (string-trim (stdout-of r))))
+    (cond
+      ((equal? out "") (list))
+      (else (string-split out "\n")))))
+
+(log-info (string-append "found " (string-format "{}" (length refs)) " secret reference(s)"))
+
+(define (validate-one secret-path)
+  (let* ((payload (string-append "{\"token\":\"" token "\",\"name\":\"" secret-path "\"}"))
+         (r (exec-capture "curl" "-sS"
+              "-X" "POST"
+              "-H" "Content-Type: application/json"
+              "-d" payload
+              (string-append api-url "/describe-item")))
+         (out (stdout-of r)))
+    (cond
+      ((log-contains? out "\"item_name\"")
+       (log-info (string-append "  ✓ " secret-path))
+       #t)
+      (else
+       (log-error (string-append "  ✗ " secret-path " — not found"))
+       #f))))
+
+(define (validate-all xs valid invalid)
+  (cond
+    ((null? xs) (cons valid invalid))
+    ((validate-one (car xs))
+     (validate-all (cdr xs) (+ valid 1) invalid))
+    (else
+     (validate-all (cdr xs) valid (+ invalid 1)))))
+
+(let* ((result (validate-all refs 0 0))
+       (valid (car result))
+       (invalid (cdr result)))
+  (append-output (string-append "valid-count=" (string-format "{}" valid)))
+  (append-output (string-append "invalid-count=" (string-format "{}" invalid)))
+  (cond
+    ((= invalid 0)
+     (log-info (string-append "all " (string-format "{}" valid) " refs valid"))
+     (exit 0))
+    (else
+      (log-error (string-append (string-format "{}" invalid) " ref(s) invalid"))
+      (exit 1))))

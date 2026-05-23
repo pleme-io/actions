@@ -1,0 +1,27 @@
+name: 'pleme-io · gcp-auth'
+description: 'GCP Workload Identity Federation login (no service-account JSON key). Exports GOOGLE_APPLICATION_CREDENTIALS to subsequent steps.'
+branding: { icon: 'cloud', color: 'blue' }
+
+inputs:
+  workload-identity-provider:
+    required: true
+    description: "Full WIF provider resource name"
+  service-account:
+    required: true
+  project-id:
+    required: false
+    default: ""
+
+outputs:
+  project-id:
+    value: ${{ steps.gcp.outputs.project_id }}
+
+runs:
+  using: composite
+  steps:
+    - id: gcp
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        service_account: ${{ inputs.service-account }}
+        project_id: ${{ inputs.project-id }}
