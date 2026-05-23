@@ -1,0 +1,99 @@
+;; helm-publish/run.tlisp — package + push a Helm chart to an OCI registry.
+
+(define registry (env-required "REGISTRY"))
+(define dry-run (env-get "DRY_RUN" "false"))
+(define max-retries 20)
+
+(define (read-name)
+  (let ((r (exec-capture "sh" "-c" "yq '.name' Chart.yaml 2>/dev/null")))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+(define (read-version)
+  (let ((r (exec-capture "sh" "-c" "yq '.version' Chart.yaml 2>/dev/null")))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+;; OCI manifest existence probe — for ghcr.io we use the
+;; registry v2 manifest endpoint. Returns 200 if the (name, version)
+;; tag exists, 404 otherwise.
+(define (helm-published? name version)
+  (let* ((url (string-append "https://" (string-replace registry "ghcr.io" "ghcr.io/v2") "/"
+                             name "/manifests/" version)))
+    (http-200? url)))
+
+(define (do-package)
+  (status-of (exec-capture "helm" "package" ".")))
+
+(define (do-push name version)
+  ;; The packaged chart lands at ./<name>-<version>.tgz.
+  (let* ((pkg (string-append name "-" version ".tgz"))
+         (target (string-append "oci://" registry))
+         (r (exec-capture "helm" "push" pkg target)))
+    r))
+
+(define (rate-limit? log)
+  (or (log-contains? log "429")
+      (log-contains? log "Too Many Requests")))
+
+(define (already-uploaded? log)
+  (or (log-contains? log "already exists")
+      (log-contains? log "BLOB_UPLOAD_INVALID")))
+
+(define (try-push name version attempt)
+  (cond
+    ((>= attempt max-retries)
+     (log-error "exceeded max retries")
+     (append-output "shipped=false")
+     (exit 1))
+    (else
+      (log-info (string-append "push attempt " (string-format "{}" attempt)))
+      (let* ((r (do-push name version))
+             (code (status-of r))
+             (log (string-append (stdout-of r) "\n" (stderr-of r))))
+        (cond
+          ((= code 0)
+           (log-info "pushed successfully")
+           (append-output "shipped=true")
+           (exit 0))
+          ((already-uploaded? log)
+           (log-info "already pushed — treating as success")
+           (append-output "shipped=true")
+           (exit 0))
+          ((rate-limit? log)
+           (log-info "registry rate limit — sleeping 600s")
+           (exec-capture "sleep" "600")
+           (try-push name version (+ attempt 1)))
+          (else
+            (log-error "push failed with no recognizable retry signature")
+            (log-info log)
+            (append-output "shipped=false")
+            (exit code)))))))
+
+(define name (read-name))
+(define version (read-version))
+
+(cond
+  ((equal? name "")
+   (log-error "helm-publish: .name not found in Chart.yaml")
+   (append-output "shipped=false")
+   (exit 1))
+  ((equal? version "")
+   (log-error "helm-publish: .version not found in Chart.yaml")
+   (append-output "shipped=false")
+   (exit 1))
+  ((helm-published? name version)
+   (log-info (string-append "skipping '" name ":" version "' — already on registry"))
+   (append-output "shipped=true")
+   (exit 0))
+  (else
+    (let ((pkg-status (do-package)))
+      (cond
+        ((not (= pkg-status 0))
+         (log-error "helm package failed")
+         (append-output "shipped=false")
+         (exit pkg-status))
+        ((equal? dry-run "true")
+         (log-info "dry-run — packaged but not pushed")
+         (append-output "shipped=true")
+         (exit 0))
+        (else
+          (try-push name version 1))))))

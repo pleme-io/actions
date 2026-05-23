@@ -1,0 +1,46 @@
+name: 'pleme-io · python-publish'
+description: 'Publish a Python package to pypi.org via uv publish; skip if (name, version) already exists; sleep + retry on rate limit.'
+branding:
+  icon: 'upload'
+  color: 'blue'
+
+inputs:
+  dry-run:
+    description: "Build dist/ but don't upload"
+    required: false
+    default: "false"
+
+outputs:
+  shipped:
+    value: ${{ steps.ship.outputs.shipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Build sdist + wheel
+      shell: bash
+      run: uv build
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: ship
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        DRY_RUN: ${{ inputs.dry-run }}
+        # UV_PUBLISH_TOKEN read by uv publish. Substrate workflow
+        # bridges org-level PYPI_API_TOKEN to UV_PUBLISH_TOKEN.

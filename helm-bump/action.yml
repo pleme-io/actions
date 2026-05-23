@@ -1,0 +1,57 @@
+name: 'pleme-io · helm-bump'
+description: 'Bump a Helm Chart.yaml version field via in-place yaml-edit. Sibling of cargo-bump for the Helm ecosystem.'
+branding:
+  icon: 'arrow-up-circle'
+  color: 'green'
+
+inputs:
+  bump-type:
+    description: "patch | minor | major"
+    required: false
+    default: patch
+  skip-when-no-source-changes:
+    description: "Skip the bump when no source path changed since the previous tag"
+    required: false
+    default: "true"
+  source-paths:
+    description: "Space-separated globs the skip-detector inspects"
+    required: false
+    default: "templates values.yaml Chart.yaml"
+
+outputs:
+  bumped:
+    value: ${{ steps.bump.outputs.bumped }}
+  new-version:
+    value: ${{ steps.bump.outputs.new-version }}
+  old-version:
+    value: ${{ steps.bump.outputs.old-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install yq
+      shell: bash
+      run: |
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: bump
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BUMP_TYPE: ${{ inputs.bump-type }}
+        SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}
+        SOURCE_PATHS: ${{ inputs.source-paths }}

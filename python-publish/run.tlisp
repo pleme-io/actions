@@ -1,0 +1,84 @@
+;; python-publish/run.tlisp — publish a single Python package to
+;; pypi.org. Uses _tlisp-stdlib helpers.
+
+(define dry-run (env-get "DRY_RUN" "false"))
+(define max-retries 20)
+
+(define (read-name)
+  (toml-read-field "pyproject.toml" "[project]" "name"))
+
+(define (read-version)
+  (toml-read-field "pyproject.toml" "[project]" "version"))
+
+;; pypi's JSON endpoint returns 200 with versions list when the
+;; package exists. The (name, version) pair we check by fetching
+;; the version-specific endpoint.
+(define (pypi-published? name version)
+  (http-200? (string-append "https://pypi.org/pypi/" name "/" version "/json")))
+
+(define (do-publish)
+  (cond
+    ((equal? dry-run "true")
+     ;; uv build already happened in the composite; "dry-run" just
+     ;; verifies dist/ exists.
+     (exec-capture "ls" "-la" "dist"))
+    (else
+      (exec-capture "uv" "publish"))))
+
+(define (rate-limit? log)
+  (or (log-contains? log "429")
+      (log-contains? log "Too Many Requests")))
+
+(define (already-uploaded? log)
+  (or (log-contains? log "File already exists")
+      (log-contains? log "already exists")
+      (log-contains? log "previously published")))
+
+(define (try-publish attempt)
+  (cond
+    ((>= attempt max-retries)
+     (log-error "exceeded max retries")
+     (append-output "shipped=false")
+     (exit 1))
+    (else
+      (log-info (string-append "publish attempt " (string-format "{}" attempt)))
+      (let* ((r (do-publish))
+             (code (status-of r))
+             (log (string-append (stdout-of r) "\n" (stderr-of r))))
+        (cond
+          ((= code 0)
+           (log-info "published successfully")
+           (append-output "shipped=true")
+           (exit 0))
+          ((already-uploaded? log)
+           (log-info "already published — treating as success")
+           (append-output "shipped=true")
+           (exit 0))
+          ((rate-limit? log)
+           (log-info "pypi rate limit — sleeping 600s")
+           (exec-capture "sleep" "600")
+           (try-publish (+ attempt 1)))
+          (else
+            (log-error "publish failed with no recognizable retry signature")
+            (log-info log)
+            (append-output "shipped=false")
+            (exit code)))))))
+
+(define name (read-name))
+(define version (read-version))
+
+(cond
+  ((equal? name "")
+   (log-error "python-publish: [project].name not found in pyproject.toml")
+   (append-output "shipped=false")
+   (exit 1))
+  ((equal? version "")
+   (log-error "python-publish: [project].version not found in pyproject.toml")
+   (append-output "shipped=false")
+   (exit 1))
+  ((pypi-published? name version)
+   (log-info (string-append "skipping '" name "==" version "' — already on pypi"))
+   (append-output "shipped=true")
+   (exit 0))
+  (else
+    (try-publish 1)))

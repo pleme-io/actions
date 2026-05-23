@@ -1,0 +1,75 @@
+;; npm-bump/run.tlisp — bump a package.json's version field.
+;; Uses _tlisp-stdlib helpers prepended by action.yml.
+
+(define bump-type (env-get "BUMP_TYPE" "patch"))
+(define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
+(define source-paths (env-get "SOURCE_PATHS" "src package.json package-lock.json"))
+
+;; package.json's version field — strict JSON, so we use jq for
+;; reliability rather than parsing in tlisp.
+(define (read-npm-version)
+  (let ((r (exec-capture "sh" "-c" "jq -r '.version' package.json 2>/dev/null")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
+
+(define (should-bump?)
+  (cond
+    ((not (equal? skip-flag "true")) #t)
+    (else (has-changes-since? (last-tag) source-paths))))
+
+(define (do-bump)
+  ;; --no-git-tag-version: we own commit + tag via git-commit-tag.
+  ;; npm version writes back the bumped value to package.json + lockfile.
+  (status-of
+    (exec-capture "npm" "version" "--no-git-tag-version" bump-type)))
+
+(define (emit-skip msg old-v)
+  (log-info msg)
+  (append-output (string-append "old-version=" old-v))
+  (append-output "bumped=false")
+  (append-output "new-version="))
+
+(define (emit-success old-v new-v)
+  (log-info (string-append "bumped: " old-v " -> " new-v))
+  (append-output (string-append "old-version=" old-v))
+  (append-output "bumped=true")
+  (append-output (string-append "new-version=" new-v)))
+
+(define (emit-failure msg old-v)
+  (log-error msg)
+  (append-output (string-append "old-version=" old-v))
+  (append-output "bumped=false")
+  (append-output "new-version="))
+
+(define old-version (read-npm-version))
+
+(cond
+  ((not (path-exists? "package.json"))
+   (emit-failure "npm-bump: no package.json at repo root" "")
+   (exit 1))
+  ((equal? old-version "")
+   (emit-failure "npm-bump: .version not found in package.json" "")
+   (exit 1))
+  ((not (should-bump?))
+   (emit-skip
+     (string-append "no changes since last tag — skipping (at " old-version ")")
+     old-version)
+   (exit 0))
+  (else
+    (let ((bump-status (do-bump)))
+      (cond
+        ((not (= bump-status 0))
+         (emit-failure "npm version failed" old-version)
+         (exit bump-status))
+        (else
+          (let ((new-v (read-npm-version)))
+            (cond
+              ((equal? new-v old-version)
+               (emit-failure
+                 (string-append "version unchanged after bump: " old-version)
+                 old-version)
+               (exit 1))
+              (else
+                (emit-success old-version new-v)
+                (exit 0)))))))))

@@ -1,0 +1,67 @@
+name: 'pleme-io · helm-publish'
+description: 'Publish a Helm chart to an OCI registry (default ghcr.io/pleme-io/helm); skip if (name, version) already exists.'
+branding:
+  icon: 'upload'
+  color: 'blue'
+
+inputs:
+  registry:
+    description: "OCI registry to push to"
+    required: false
+    default: "ghcr.io/pleme-io/helm"
+  registry-username:
+    description: "Registry login username (default github.actor)"
+    required: false
+    default: ""
+  dry-run:
+    description: "Package the chart but don't push"
+    required: false
+    default: "false"
+
+outputs:
+  shipped:
+    value: ${{ steps.ship.outputs.shipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: latest
+
+    - name: Install yq
+      shell: bash
+      run: |
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+
+    - name: Registry login
+      shell: bash
+      run: |
+        user="${{ inputs.registry-username }}"
+        [ -z "$user" ] && user="${{ github.actor }}"
+        echo "$REGISTRY_PASSWORD" | helm registry login \
+          ghcr.io --username "$user" --password-stdin
+      env:
+        REGISTRY_PASSWORD: ${{ env.GHCR_TOKEN }}
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: ship
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        DRY_RUN: ${{ inputs.dry-run }}

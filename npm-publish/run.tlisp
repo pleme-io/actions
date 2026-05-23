@@ -1,0 +1,87 @@
+;; npm-publish/run.tlisp — publish a single npm package.
+;; Uses _tlisp-stdlib helpers prepended by action.yml.
+
+(define dry-run (env-get "DRY_RUN" "false"))
+(define access (env-get "ACCESS" "public"))
+(define max-retries 20)
+
+(define (read-name)
+  (let ((r (exec-capture "sh" "-c" "jq -r '.name' package.json 2>/dev/null")))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+(define (read-version)
+  (let ((r (exec-capture "sh" "-c" "jq -r '.version' package.json 2>/dev/null")))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+;; npm's existence-check endpoint returns 200 when (name, version) is
+;; available, 404 otherwise. Scoped packages need URL-encoding (@ -> %40).
+(define (npm-published? name version)
+  (let* ((url-name (string-replace name "@" "%40"))
+         (url-name (string-replace url-name "/" "%2F"))
+         (url (string-append "https://registry.npmjs.org/" url-name "/" version)))
+    (http-200? url)))
+
+(define (publish-args)
+  (let* ((base (list "publish" "--access" access))
+         (with-dry (if (equal? dry-run "true") (append base (list "--dry-run")) base)))
+    with-dry))
+
+(define (do-publish)
+  (apply exec-capture (cons "npm" (publish-args))))
+
+(define (rate-limit? log)
+  (log-contains? log "429"))
+
+(define (already-uploaded? log)
+  (or (log-contains? log "cannot publish over the previously published versions")
+      (log-contains? log "You cannot publish over the previously published versions")
+      (log-contains? log "EPUBLISHCONFLICT")))
+
+(define (try-publish attempt)
+  (cond
+    ((>= attempt max-retries)
+     (log-error "exceeded max retries")
+     (append-output "shipped=false")
+     (exit 1))
+    (else
+      (log-info (string-append "publish attempt " (string-format "{}" attempt)))
+      (let* ((r (do-publish))
+             (code (status-of r))
+             (log (string-append (stdout-of r) "\n" (stderr-of r))))
+        (cond
+          ((= code 0)
+           (log-info "published successfully")
+           (append-output "shipped=true")
+           (exit 0))
+          ((already-uploaded? log)
+           (log-info "already published — treating as success")
+           (append-output "shipped=true")
+           (exit 0))
+          ((rate-limit? log)
+           (log-info "npm rate limit — sleeping 600s")
+           (exec-capture "sleep" "600")
+           (try-publish (+ attempt 1)))
+          (else
+            (log-error "publish failed with no recognizable retry signature")
+            (log-info log)
+            (append-output "shipped=false")
+            (exit code)))))))
+
+(define name (read-name))
+(define version (read-version))
+
+(cond
+  ((equal? name "")
+   (log-error "npm-publish: .name not found in package.json")
+   (append-output "shipped=false")
+   (exit 1))
+  ((equal? version "")
+   (log-error "npm-publish: .version not found in package.json")
+   (append-output "shipped=false")
+   (exit 1))
+  ((npm-published? name version)
+   (log-info (string-append "skipping '" name "@" version "' — already on npmjs"))
+   (append-output "shipped=true")
+   (exit 0))
+  (else
+    (try-publish 1)))

@@ -1,0 +1,70 @@
+;; python-bump/run.tlisp — bump a pyproject.toml version field
+;; via uv version --bump. Uses _tlisp-stdlib helpers.
+
+(define bump-type (env-get "BUMP_TYPE" "patch"))
+(define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
+(define source-paths (env-get "SOURCE_PATHS" "src pyproject.toml uv.lock"))
+
+(define (read-python-version)
+  ;; PEP 621: [project].version in pyproject.toml.
+  (toml-read-field "pyproject.toml" "[project]" "version"))
+
+(define (should-bump?)
+  (cond
+    ((not (equal? skip-flag "true")) #t)
+    (else (has-changes-since? (last-tag) source-paths))))
+
+(define (do-bump)
+  ;; uv 0.5+ ships `uv version --bump <patch|minor|major>` which
+  ;; edits pyproject.toml + refreshes uv.lock in one shot.
+  (status-of (exec-capture "uv" "version" "--bump" bump-type)))
+
+(define (emit-skip msg old-v)
+  (log-info msg)
+  (append-output (string-append "old-version=" old-v))
+  (append-output "bumped=false")
+  (append-output "new-version="))
+
+(define (emit-success old-v new-v)
+  (log-info (string-append "bumped: " old-v " -> " new-v))
+  (append-output (string-append "old-version=" old-v))
+  (append-output "bumped=true")
+  (append-output (string-append "new-version=" new-v)))
+
+(define (emit-failure msg old-v)
+  (log-error msg)
+  (append-output (string-append "old-version=" old-v))
+  (append-output "bumped=false")
+  (append-output "new-version="))
+
+(define old-version (read-python-version))
+
+(cond
+  ((not (path-exists? "pyproject.toml"))
+   (emit-failure "python-bump: no pyproject.toml at repo root" "")
+   (exit 1))
+  ((equal? old-version "")
+   (emit-failure "python-bump: [project].version not found in pyproject.toml" "")
+   (exit 1))
+  ((not (should-bump?))
+   (emit-skip
+     (string-append "no changes since last tag — skipping (at " old-version ")")
+     old-version)
+   (exit 0))
+  (else
+    (let ((bump-status (do-bump)))
+      (cond
+        ((not (= bump-status 0))
+         (emit-failure "uv version failed" old-version)
+         (exit bump-status))
+        (else
+          (let ((new-v (read-python-version)))
+            (cond
+              ((equal? new-v old-version)
+               (emit-failure
+                 (string-append "version unchanged after bump: " old-version)
+                 old-version)
+               (exit 1))
+              (else
+                (emit-success old-version new-v)
+                (exit 0)))))))))

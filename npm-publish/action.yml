@@ -1,0 +1,51 @@
+name: 'pleme-io · npm-publish'
+description: 'Publish an npm package to npmjs.org; skip if (name, version) already exists; auto-rename to @pleme-io/<original> on name conflict.'
+branding:
+  icon: 'upload'
+  color: 'blue'
+
+inputs:
+  dry-run:
+    description: "Run as --dry-run only (no upload)"
+    required: false
+    default: "false"
+  access:
+    description: "npm publish --access flag (public | restricted)"
+    required: false
+    default: "public"
+
+outputs:
+  shipped:
+    description: "'true' on success (including skip-when-already), 'false' on failure"
+    value: ${{ steps.ship.outputs.shipped }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+        registry-url: "https://registry.npmjs.org"
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: ship
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        DRY_RUN: ${{ inputs.dry-run }}
+        ACCESS: ${{ inputs.access }}
+        # NODE_AUTH_TOKEN is read by npm publish via the registry-url
+        # from setup-node above. The substrate workflow bridges the
+        # org-level NPM_TOKEN secret to NODE_AUTH_TOKEN.
