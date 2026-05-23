@@ -1,0 +1,38 @@
+;; honeycomb-marker/run.tlisp — tlisp+stdlib body
+
+(define key (env-required "API_KEY"))
+(define ds (env-required "DATASET"))
+(define msg (env-required "MESSAGE"))
+(define ty (env-get "TYPE_ARG" "release"))
+(define url-in (env-get "URL_ARG" ""))
+
+(define ts-r (exec-capture "sh" "-c" "date +%s"))
+(define ts (string-trim (stdout-of ts-r)))
+
+(define url-frag (if (equal? url-in "") "" (string-append ", url: "" url-in """)))
+(define payload-jq
+  (string-append "jq -n --arg msg '" msg "' --arg ty '" ty
+                 "' --argjson ts " ts
+                 " '{ message: $msg, type: $ty, start_time: $ts" url-frag " }'"))
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond ((= (status-of r) 0) (stdout-of r))
+          (else (log-error "payload assembly failed") (exit 1)))))
+
+(define endpoint (string-append "https://api.honeycomb.io/1/markers/" ds))
+(define r
+  (exec-capture "sh" "-c"
+    (string-append "curl -sS -X POST -H 'X-Honeycomb-Team: " key
+                   "' -H 'Content-Type: application/json' "
+                   "-d '" (string-replace payload "'" "'"'"'")
+                   "' '" endpoint "'")))
+
+(cond
+  ((= (status-of r) 0)
+   (let* ((jq-r (exec-capture "sh" "-c"
+                  (string-append "echo '" (string-replace (stdout-of r) "'" "'"'"'")
+                                 "' | jq -r '.id'")))
+          (id (string-trim (stdout-of jq-r))))
+     (append-output (string-append "marker-id=" id))
+     (exit 0)))
+  (else (append-output "marker-id=") (exit 1)))

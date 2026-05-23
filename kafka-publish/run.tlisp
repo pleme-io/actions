@@ -1,0 +1,15 @@
+;; kafka-publish/run.tlisp — tlisp+stdlib body
+
+(define brokers (env-required "BROKERS"))
+(define topic (env-required "TOPIC"))
+(define message (env-required "MESSAGE"))
+
+(exec-check "sudo" "apt-get" "install" "-y" "-qq" "kcat")
+
+(define cmd
+  (string-append "echo '" (string-replace message "'" "'"'"'")
+                 "' | kcat -P -b '" brokers "' -t '" topic "'"))
+(define r (exec-capture "sh" "-c" cmd))
+(cond
+  ((= (status-of r) 0) (append-output "published=true") (exit 0))
+  (else (append-output "published=false") (exit 1)))

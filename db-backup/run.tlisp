@@ -1,0 +1,23 @@
+;; db-backup/run.tlisp — tlisp+stdlib body
+
+(define url (env-required "CONNECTION_URL"))
+(define out (env-get "OUTPUT_PATH" "backup.sql"))
+
+(cond
+  ((log-contains? url "postgres") (log-info "==> pg_dump"))
+  ((log-contains? url "mysql") (log-info "==> mysqldump"))
+  (else (log-error "unrecognized DB URL") (exit 1)))
+
+(define cmd
+  (cond
+    ((log-contains? url "postgres")
+     (string-append "pg_dump '" url "' > '" out "'"))
+    ((log-contains? url "mysql")
+     (string-append "mysqldump --result-file='" out "' '" url "'"))
+    (else (exit 1))))
+
+(define r (exec-capture "sh" "-c" cmd))
+(cond
+  ((= (status-of r) 0)
+   (append-output (string-append "backup-path=" out)) (exit 0))
+  (else (append-output "backup-path=") (exit 1)))

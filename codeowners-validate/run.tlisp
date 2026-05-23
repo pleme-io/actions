@@ -1,0 +1,29 @@
+;; codeowners-validate/run.tlisp — tlisp+stdlib body
+
+(define fail-on (env-get "FAIL_ON_UNOWNED" "false"))
+
+(cond
+  ((not (or (path-exists? ".github/CODEOWNERS")
+            (path-exists? "CODEOWNERS")
+            (path-exists? "docs/CODEOWNERS")))
+   (log-error "no CODEOWNERS file found")
+   (append-output "unowned-count=0")
+   (exit 1)))
+
+(exec-check "sh" "-c"
+  "go install github.com/mszostok/codeowners-validator/v2/cmd/codeowners-validator@latest 2>/dev/null || true")
+
+(define r (exec-capture "codeowners-validator" "--repository" "."))
+(define out (stdout-of r))
+
+(define unowned-r
+  (exec-capture "sh" "-c"
+    (string-append "echo '" (string-replace out "'" "'"'"'")
+                   "' | grep -c 'unowned' || echo 0")))
+(define unowned (string-trim (stdout-of unowned-r)))
+
+(append-output (string-append "unowned-count=" unowned))
+
+(cond
+  ((and (equal? fail-on "true") (not (equal? unowned "0"))) (exit 1))
+  (else (exit 0)))

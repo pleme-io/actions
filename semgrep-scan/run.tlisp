@@ -1,0 +1,24 @@
+;; semgrep-scan/run.tlisp — tlisp+stdlib body
+
+(define cfg (env-get "CONFIG" "auto"))
+(define fail-on (env-get "FAIL_ON_FINDING" "true"))
+
+(exec-check "pip" "install" "-q" "semgrep")
+
+(define r (exec-capture "semgrep" "--config" cfg "--json" "--quiet" "."))
+(define out (stdout-of r))
+
+(define count-r
+  (exec-capture "sh" "-c"
+    (string-append "echo '" (string-replace out "'" "'"'"'")
+                   "' | jq '.results | length'")))
+(define count (string-trim (stdout-of count-r)))
+(define cnum (cond ((equal? count "") "0") (else count)))
+
+(append-output (string-append "findings-count=" cnum))
+
+(cond
+  ((equal? cnum "0") (exit 0))
+  ((equal? fail-on "true")
+   (log-error (string-append cnum " semgrep finding(s)")) (exit 1))
+  (else (exit 0)))

@@ -1,0 +1,9 @@
+;; pulumi-up/run.tlisp — tlisp+stdlib body
+
+(define stack (env-required "STACK"))
+(define wd (env-get "WORKDIR" "."))
+(define cmd (string-append "cd " wd " && pulumi up --stack " stack " --yes --non-interactive"))
+(define r (exec-capture "sh" "-c" cmd))
+(cond
+  ((= (status-of r) 0) (append-output "updated=true") (exit 0))
+  (else (append-output "updated=false") (exit 1)))

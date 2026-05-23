@@ -17,8 +17,22 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: run
+    - uses: actions/setup-python@v5
+      with: { python-version: "3.x" }
+    - id: src
       shell: bash
       run: |
-        echo "::warning::semgrep-scan action stub — full implementation tracked in patterns.nix backlog"
-        echo "findings-count=stub" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        FAIL_ON_FINDING: ${{ inputs.fail-on-finding }}

@@ -19,30 +19,31 @@ inputs:
 
 outputs:
   plan-path:
-    value: ${{ steps.p.outputs.plan-path }}
+    value: ${{ steps.run.outputs.plan-path }}
   has-changes:
-    value: ${{ steps.p.outputs.has-changes }}
+    value: ${{ steps.run.outputs.has-changes }}
 
 runs:
   using: composite
   steps:
     - uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ inputs.terraform-version }}
-    - id: p
+        terraform_version: latest
+    - id: src
       shell: bash
-      working-directory: ${{ inputs.workdir }}
       run: |
-        init_args=()
-        [ -n "${{ inputs.backend-config }}" ] && init_args+=( "-backend-config=${{ inputs.backend-config }}" )
-        terraform init "${init_args[@]}"
-        plan_args=( "-out=tfplan" "-detailed-exitcode" )
-        [ -n "${{ inputs.var-file }}" ] && plan_args+=( "-var-file=${{ inputs.var-file }}" )
-        set +e
-        terraform plan "${plan_args[@]}"
-        code=$?
-        set -e
-        if [ "$code" = "1" ]; then exit 1; fi
-        echo "plan-path=${{ inputs.workdir }}/tfplan" >> "$GITHUB_OUTPUT"
-        [ "$code" = "2" ] && echo "has-changes=true" >> "$GITHUB_OUTPUT" \
-                          || echo "has-changes=false" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        WORKDIR: ${{ inputs.workdir }}
+        BACKEND_CONFIG: ${{ inputs.backend-config }}
+        VAR_FILE: ${{ inputs.var-file }}

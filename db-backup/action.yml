@@ -16,8 +16,20 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: run
+    - id: src
       shell: bash
       run: |
-        echo "::warning::db-backup action stub — full implementation tracked in patterns.nix backlog"
-        echo "backup-path=stub" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CONNECTION_URL: ${{ inputs.connection-url }}
+        OUTPUT_PATH: ${{ inputs.output-path }}

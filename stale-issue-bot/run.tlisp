@@ -1,0 +1,32 @@
+;; stale-issue-bot/run.tlisp — tlisp+stdlib body
+
+(define stale-days (env-get "DAYS_STALE" "60"))
+(define close-days (env-get "DAYS_CLOSE" "14"))
+(define exempt (env-get "EXEMPT_LABELS" "pinned"))
+(define repo (env-required "GITHUB_REPOSITORY"))
+
+(define cutoff-r
+  (exec-capture "sh" "-c"
+    (string-append "date -d '" stale-days " days ago' -Iseconds 2>/dev/null || date -v-" stale-days "d -Iseconds")))
+(define cutoff (string-trim (stdout-of cutoff-r)))
+
+(define r (exec-capture "gh" "issue" "list"
+            "--repo" repo
+            "--state" "open"
+            "--search" (string-append "updated:<" cutoff)
+            "--json" "number"
+            "--jq" ".[].number"))
+
+(define closed-count 0)
+(let loop ((nums (string-split (string-trim (stdout-of r)) "\n")))
+  (cond
+    ((null? nums) #t)
+    ((equal? (car nums) "") (loop (cdr nums)))
+    (else
+      (exec-capture "gh" "issue" "comment" (car nums) "--repo" repo
+                    "--body" "Marking stale per pleme-io/stale-issue-bot")
+      (set! closed-count (+ closed-count 1))
+      (loop (cdr nums)))))
+
+(append-output (string-append "closed-count=" (string-format "{}" closed-count)))
+(exit 0)

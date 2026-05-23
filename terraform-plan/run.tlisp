@@ -1,0 +1,25 @@
+;; terraform-plan/run.tlisp — tlisp+stdlib body
+
+(define wd (env-get "WORKDIR" "."))
+(define backend (env-get "BACKEND_CONFIG" ""))
+(define var-file (env-get "VAR_FILE" ""))
+
+(define init-cmd
+  (string-append "cd " wd " && terraform init"
+                 (if (equal? backend "") "" (string-append " -backend-config=" backend))))
+(define r1 (exec-capture "sh" "-c" init-cmd))
+(cond ((not (= (status-of r1) 0))
+       (log-error "terraform init failed") (exit 1)))
+
+(define plan-cmd
+  (string-append "cd " wd " && terraform plan -out=tfplan -detailed-exitcode"
+                 (if (equal? var-file "") "" (string-append " -var-file=" var-file))))
+(define r2 (exec-capture "sh" "-c" plan-cmd))
+(define code (status-of r2))
+
+(cond
+  ((= code 1) (log-error "terraform plan failed") (exit 1)))
+
+(append-output (string-append "plan-path=" wd "/tfplan"))
+(append-output (string-append "has-changes=" (if (= code 2) "true" "false")))
+(exit 0)
