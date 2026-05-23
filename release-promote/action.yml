@@ -1,0 +1,39 @@
+name: 'pleme-io · release-promote'
+description: 'Promote a built artifact between environments (dev → staging → prod). Re-tags an existing image/version rather than rebuilding — ensures bit-identical artifact at each stage.'
+branding: { icon: 'arrow-right-circle', color: 'green' }
+
+inputs:
+  source-tag:
+    description: "Source tag (e.g. dev, staging, v0.1.4)"
+    required: true
+  target-tag:
+    description: "Target tag (e.g. staging, prod)"
+    required: true
+  image:
+    description: "OCI image ref (e.g. ghcr.io/pleme-io/myapp)"
+    required: true
+
+outputs:
+  promoted:
+    value: ${{ steps.p.outputs.promoted }}
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    - id: p
+      shell: bash
+      run: |
+        source="${{ inputs.image }}:${{ inputs.source-tag }}"
+        target="${{ inputs.image }}:${{ inputs.target-tag }}"
+        if docker buildx imagetools create -t "$target" "$source"; then
+          echo "promoted=true" >> "$GITHUB_OUTPUT"
+          echo "promoted $source → $target"
+        else
+          echo "promoted=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

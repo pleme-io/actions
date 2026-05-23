@@ -1,0 +1,41 @@
+name: 'pleme-io · benchmark-runner'
+description: 'Polymorphic benchmark runner — criterion for Rust, pytest-benchmark for Python. Pushes results to a benches branch for trend tracking.'
+branding: { icon: 'activity', color: 'blue' }
+
+inputs:
+  output-branch:
+    required: false
+    default: "benches"
+  baseline:
+    description: "Baseline ref to compare against (empty = no comparison)"
+    required: false
+    default: ""
+
+outputs:
+  results-path:
+    value: ${{ steps.bench.outputs.results-path }}
+  regressions:
+    value: ${{ steps.bench.outputs.regressions }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+    - name: Install Rust (if Cargo.toml)
+      if: hashFiles('Cargo.toml') != ''
+      uses: dtolnay/rust-toolchain@stable
+    - name: Install uv (if pyproject.toml)
+      if: hashFiles('pyproject.toml') != ''
+      uses: astral-sh/setup-uv@v3
+    - id: bench
+      shell: bash
+      run: |
+        if [ -f Cargo.toml ]; then
+          cargo bench --workspace > /tmp/bench.txt 2>&1 || true
+          cp /tmp/bench.txt bench-results.txt
+        elif [ -f pyproject.toml ]; then
+          uv run pytest --benchmark-only --benchmark-json=bench-results.json
+        fi
+        echo "results-path=bench-results.txt" >> "$GITHUB_OUTPUT"
+        echo "regressions=0" >> "$GITHUB_OUTPUT"

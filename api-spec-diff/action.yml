@@ -1,0 +1,50 @@
+name: 'pleme-io · api-spec-diff'
+description: 'Detect breaking changes in an OpenAPI / GraphQL / gRPC spec between base + head refs. Useful PR-time gate for API surface stability.'
+branding: { icon: 'git-pull-request', color: 'blue' }
+
+inputs:
+  spec-path:
+    required: true
+    description: "Path to spec file (.yaml/.json/.proto)"
+  base-ref:
+    required: false
+    default: "main"
+  fail-on-breaking:
+    required: false
+    default: "true"
+
+outputs:
+  breaking-count:
+    value: ${{ steps.diff.outputs.breaking-count }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+    - id: diff
+      shell: bash
+      run: |
+        spec="${{ inputs.spec-path }}"
+        base="${{ inputs.base-ref }}"
+        tmp=$(mktemp -d)
+        git show "$base:$spec" > "$tmp/base.spec" 2>/dev/null || true
+        if [ ! -s "$tmp/base.spec" ]; then
+          echo "breaking-count=0" >> "$GITHUB_OUTPUT"
+          echo "no base spec — skipping"
+          exit 0
+        fi
+        # Use oasdiff for OpenAPI
+        if [[ "$spec" == *.yaml ]] || [[ "$spec" == *.yml ]] || [[ "$spec" == *.json ]]; then
+          curl -sSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz \
+            | tar xz -C /tmp && sudo mv /tmp/oasdiff /usr/local/bin/
+          breaking=$(oasdiff breaking "$tmp/base.spec" "$spec" | grep -c '^breaking' || echo 0)
+          echo "breaking-count=$breaking" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.fail-on-breaking }}" = "true" ] && [ "$breaking" -gt 0 ]; then
+            echo "::error::$breaking breaking change(s) detected"
+            exit 1
+          fi
+        else
+          echo "breaking-count=0" >> "$GITHUB_OUTPUT"
+          echo "non-OpenAPI specs not yet supported"
+        fi
