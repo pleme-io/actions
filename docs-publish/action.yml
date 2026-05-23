@@ -1,0 +1,66 @@
+name: 'pleme-io · docs-publish'
+description: 'Polymorphic doc generation + deploy to GitHub Pages. Detects repo type + routes to cargo doc / mkdocs / typedoc. The third compounding leg of the publish-side primitives (release + sbom + docs).'
+branding:
+  icon: 'book-open'
+  color: 'blue'
+
+inputs:
+  target-branch:
+    description: "Branch to deploy to (gh-pages by default)"
+    required: false
+    default: "gh-pages"
+  force-tool:
+    description: "Override auto-detect: cargo-doc | mkdocs | typedoc | none"
+    required: false
+    default: ""
+
+outputs:
+  deployed:
+    description: "'true' when docs landed on the target branch, 'false' otherwise"
+    value: ${{ steps.publish.outputs.deployed }}
+  tool:
+    description: "Which doc tool ran (cargo-doc / mkdocs / typedoc / none)"
+    value: ${{ steps.publish.outputs.tool }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install Rust (if needed)
+      if: hashFiles('Cargo.toml') != '' && inputs.force-tool != 'mkdocs' && inputs.force-tool != 'typedoc'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install uv (if Python/mkdocs)
+      if: hashFiles('mkdocs.yml') != '' || inputs.force-tool == 'mkdocs'
+      uses: astral-sh/setup-uv@v3
+
+    - name: Install Node (if npm/typedoc)
+      if: hashFiles('package.json') != '' || inputs.force-tool == 'typedoc'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: publish
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TARGET_BRANCH: ${{ inputs.target-branch }}
+        FORCE_TOOL: ${{ inputs.force-tool }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}

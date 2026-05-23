@@ -1,0 +1,49 @@
+;; slack-notify/run.tlisp — post a release event to a Slack webhook.
+
+(define webhook (env-required "WEBHOOK_URL"))
+(define title (env-required "TITLE"))
+(define body (env-get "BODY" ""))
+(define color (env-get "COLOR" "good"))
+(define fields (env-get "FIELDS" "[]"))
+
+;; Build the Slack payload JSON. We use jq for safe escaping +
+;; nesting; the action's `with:` block already prevents shell
+;; injection on inputs.
+(define payload-jq
+  (string-append
+    "jq -n "
+    "--arg title \"$TITLE\" "
+    "--arg body \"$BODY\" "
+    "--arg color \"$COLOR\" "
+    "--argjson fields \"$FIELDS\" "
+    "'{ attachments: [ { color: $color, title: $title, text: $body, fields: $fields, mrkdwn_in: [\"text\", \"fields\"] } ] }'"))
+
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else
+       (log-error "failed to build Slack payload via jq")
+       (log-info (stderr-of r))
+       (exit 1)))))
+
+;; POST to the webhook + check status code.
+(define curl-cmd
+  (string-append
+    "curl -sS -o /dev/null -w '%{http_code}' "
+    "-X POST -H 'Content-Type: application/json' "
+    "-d '" (string-replace payload "'" "'\"'\"'") "' "
+    "'" webhook "'"))
+
+(define r (exec-capture "sh" "-c" curl-cmd))
+(define code (string-trim (stdout-of r)))
+
+(cond
+  ((or (equal? code "200") (equal? code "201") (equal? code "204"))
+   (log-info "delivered to Slack")
+   (append-output "delivered=true")
+   (exit 0))
+  (else
+   (log-error (string-append "Slack POST returned HTTP " code))
+   (append-output "delivered=false")
+   (exit 1)))

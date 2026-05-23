@@ -1,0 +1,102 @@
+;; docs-publish/run.tlisp — generate + push docs to gh-pages.
+;; Polymorphic dispatch by manifest presence (or force-tool override).
+
+(define target-branch (env-get "TARGET_BRANCH" "gh-pages"))
+(define force-tool (env-get "FORCE_TOOL" ""))
+(define repo (env-required "REPO"))
+
+(define (detect-tool)
+  (cond
+    ((not (equal? force-tool "")) force-tool)
+    ((path-exists? "mkdocs.yml") "mkdocs")
+    ((and (path-exists? "package.json")
+          (log-contains? (read-file "package.json") "\"typedoc\""))
+     "typedoc")
+    ((path-exists? "Cargo.toml") "cargo-doc")
+    (else "none")))
+
+(define (run-cargo-doc)
+  (log-info "==> cargo doc --no-deps --workspace")
+  (let ((r (exec-capture "cargo" "doc" "--no-deps" "--workspace")))
+    (cond
+      ((= (status-of r) 0)
+       (cons "target/doc" #t))
+      (else
+        (log-error "cargo doc failed")
+        (cons "" #f)))))
+
+(define (run-mkdocs)
+  (log-info "==> uv tool run mkdocs build")
+  (let ((r (exec-capture "sh" "-c" "uv tool run --from mkdocs mkdocs build")))
+    (cond
+      ((= (status-of r) 0)
+       (cons "site" #t))
+      (else
+        (log-error "mkdocs build failed")
+        (cons "" #f)))))
+
+(define (run-typedoc)
+  (log-info "==> npx typedoc")
+  (let ((r (exec-capture "sh" "-c" "npm ci && npx typedoc")))
+    (cond
+      ((= (status-of r) 0)
+       (cons "docs" #t))
+      (else
+        (log-error "typedoc failed")
+        (cons "" #f)))))
+
+(define (deploy-to-branch out-dir)
+  ;; Use the ghp-import equivalent in pure git: orphan branch +
+  ;; rsync out-dir + commit + force push.
+  (log-info (string-append "deploying " out-dir " to " target-branch))
+  (exec-check "git" "config" "user.name" "github-actions[bot]")
+  (exec-check "git" "config" "user.email"
+              "41898282+github-actions[bot]@users.noreply.github.com")
+  (let* ((script (string-append
+                   "set -e\n"
+                   "tmp=$(mktemp -d)\n"
+                   "cp -r " out-dir "/. $tmp/\n"
+                   "git fetch origin " target-branch ":" target-branch " 2>/dev/null || true\n"
+                   "git checkout " target-branch " 2>/dev/null || git checkout --orphan " target-branch "\n"
+                   "git rm -rf . 2>/dev/null || true\n"
+                   "cp -r $tmp/. .\n"
+                   "touch .nojekyll\n"
+                   "git add -A\n"
+                   "git commit -m 'docs: deploy from ${GITHUB_SHA:0:7}' || echo 'nothing to commit'\n"
+                   "git push -f origin " target-branch))
+         (r (exec-capture "bash" "-c" script)))
+    (= (status-of r) 0)))
+
+(define tool (detect-tool))
+
+(cond
+  ((equal? tool "none")
+   (log-info "no doc tool detected — skipping")
+   (append-output "tool=none")
+   (append-output "deployed=false")
+   (exit 0)))
+
+(define result
+  (cond
+    ((equal? tool "cargo-doc") (run-cargo-doc))
+    ((equal? tool "mkdocs") (run-mkdocs))
+    ((equal? tool "typedoc") (run-typedoc))
+    (else (cons "" #f))))
+
+(define out-dir (car result))
+(define built (cdr result))
+
+(append-output (string-append "tool=" tool))
+
+(cond
+  ((not built)
+   (append-output "deployed=false")
+   (exit 1))
+  ((deploy-to-branch out-dir)
+   (log-info "deployed")
+   (append-output "deployed=true")
+   (exit 0))
+  (else
+   (log-error "deploy step failed")
+   (append-output "deployed=false")
+   (exit 1)))

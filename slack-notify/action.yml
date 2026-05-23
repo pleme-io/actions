@@ -1,0 +1,56 @@
+name: 'pleme-io · slack-notify'
+description: 'Post a typed release event to a Slack webhook. Universal — works for any release flow that wants typed notifications.'
+branding:
+  icon: 'message-square'
+  color: 'purple'
+
+inputs:
+  webhook-url:
+    description: "Slack incoming-webhook URL (read from secrets, NOT hardcoded)"
+    required: true
+  title:
+    description: "Headline of the notification"
+    required: true
+  body:
+    description: "Markdown body (Slack mrkdwn flavor)"
+    required: false
+    default: ""
+  color:
+    description: "Sidebar color (good / warning / danger / hex)"
+    required: false
+    default: "good"
+  fields:
+    description: "JSON array of {title, value, short} field objects"
+    required: false
+    default: "[]"
+
+outputs:
+  delivered:
+    description: "'true' on 2xx response, 'false' on error"
+    value: ${{ steps.notify.outputs.delivered }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: notify
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        WEBHOOK_URL: ${{ inputs.webhook-url }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        COLOR: ${{ inputs.color }}
+        FIELDS: ${{ inputs.fields }}
