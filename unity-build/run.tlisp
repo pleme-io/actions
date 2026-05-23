@@ -1,0 +1,4 @@
+;; unity-build/run.tlisp — typed schema locked
+(log-info "::warning::unity-build not yet implemented")
+(append-output "artifact-path=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; influxdb-write/run.tlisp — typed schema locked
+(log-info "::warning::influxdb-write not yet implemented")
+(append-output "written=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; aws-cost-report/run.tlisp — typed schema locked
+(log-info "::warning::aws-cost-report not yet implemented")
+(append-output "total-usd=stub")
+(exit 0)

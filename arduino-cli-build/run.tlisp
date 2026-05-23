@@ -1,0 +1,4 @@
+;; arduino-cli-build/run.tlisp — typed schema locked
+(log-info "::warning::arduino-cli-build not yet implemented")
+(append-output "binary-path=stub")
+(exit 0)

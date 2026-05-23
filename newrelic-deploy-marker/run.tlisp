@@ -1,0 +1,4 @@
+;; newrelic-deploy-marker/run.tlisp — typed schema locked
+(log-info "::warning::newrelic-deploy-marker not yet implemented")
+(append-output "marker-id=stub")
+(exit 0)

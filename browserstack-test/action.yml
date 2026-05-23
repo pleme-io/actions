@@ -1,0 +1,37 @@
+name: 'pleme-io · browserstack-test'
+description: 'Run BrowserStack cross-browser tests.'
+branding: { icon: 'check-circle', color: 'orange' }
+
+inputs:
+  username:
+    required: true
+  access-key:
+    required: true
+  config-file:
+    required: true
+
+outputs:
+  passed:
+    value: ${{ steps.run.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        USERNAME_ARG: ${{ inputs.username }}
+        ACCESS_KEY: ${{ inputs.access-key }}
+        CONFIG_FILE: ${{ inputs.config-file }}

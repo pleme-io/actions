@@ -1,0 +1,4 @@
+;; platformio-build/run.tlisp — typed schema locked
+(log-info "::warning::platformio-build not yet implemented")
+(append-output "built=stub")
+(exit 0)

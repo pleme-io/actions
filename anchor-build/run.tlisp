@@ -1,0 +1,4 @@
+;; anchor-build/run.tlisp — typed schema locked
+(log-info "::warning::anchor-build not yet implemented")
+(append-output "program-id=stub")
+(exit 0)

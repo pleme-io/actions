@@ -1,0 +1,4 @@
+;; linkerd-inject/run.tlisp — typed schema locked
+(log-info "::warning::linkerd-inject not yet implemented")
+(append-output "injected=stub")
+(exit 0)

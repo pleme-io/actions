@@ -1,0 +1,34 @@
+name: 'pleme-io · selenium-grid-test'
+description: 'Run Selenium tests against a Grid endpoint.'
+branding: { icon: 'check-circle', color: 'green' }
+
+inputs:
+  hub-url:
+    required: true
+  test-command:
+    required: true
+
+outputs:
+  passed:
+    value: ${{ steps.run.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        HUB_URL: ${{ inputs.hub-url }}
+        TEST_COMMAND: ${{ inputs.test-command }}

@@ -1,0 +1,4 @@
+;; selenium-grid-test/run.tlisp — typed schema locked
+(log-info "::warning::selenium-grid-test not yet implemented")
+(append-output "passed=stub")
+(exit 0)

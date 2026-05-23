@@ -1,0 +1,4 @@
+;; okta-app-sync/run.tlisp — typed schema locked
+(log-info "::warning::okta-app-sync not yet implemented")
+(append-output "synced-count=stub")
+(exit 0)

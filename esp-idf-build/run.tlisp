@@ -1,0 +1,4 @@
+;; esp-idf-build/run.tlisp — typed schema locked
+(log-info "::warning::esp-idf-build not yet implemented")
+(append-output "binary-path=stub")
+(exit 0)

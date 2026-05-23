@@ -1,0 +1,37 @@
+name: 'pleme-io · okta-app-sync'
+description: 'Sync Okta apps from a YAML catalog.'
+branding: { icon: 'refresh-cw', color: 'blue' }
+
+inputs:
+  org:
+    required: true
+  token:
+    required: true
+  catalog-file:
+    required: true
+
+outputs:
+  synced-count:
+    value: ${{ steps.run.outputs.synced-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ORG_ARG: ${{ inputs.org }}
+        TOKEN: ${{ inputs.token }}
+        CATALOG_FILE: ${{ inputs.catalog-file }}

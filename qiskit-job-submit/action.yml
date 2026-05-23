@@ -1,0 +1,38 @@
+name: 'pleme-io · qiskit-job-submit'
+description: 'Submit a Qiskit circuit job to IBM Quantum.'
+branding: { icon: 'play', color: 'purple' }
+
+inputs:
+  token:
+    required: true
+  backend:
+    required: false
+    default: "ibmq_qasm_simulator"
+  circuit-file:
+    required: true
+
+outputs:
+  job-id:
+    value: ${{ steps.run.outputs.job-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TOKEN: ${{ inputs.token }}
+        BACKEND: ${{ inputs.backend }}
+        CIRCUIT_FILE: ${{ inputs.circuit-file }}

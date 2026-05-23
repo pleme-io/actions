@@ -1,0 +1,4 @@
+;; foundry-test/run.tlisp — typed schema locked
+(log-info "::warning::foundry-test not yet implemented")
+(append-output "passed=stub")
+(exit 0)

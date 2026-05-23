@@ -1,0 +1,4 @@
+;; godot-export/run.tlisp — typed schema locked
+(log-info "::warning::godot-export not yet implemented")
+(append-output "artifact-path=stub")
+(exit 0)

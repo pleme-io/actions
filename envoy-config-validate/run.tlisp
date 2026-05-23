@@ -1,0 +1,4 @@
+;; envoy-config-validate/run.tlisp — typed schema locked
+(log-info "::warning::envoy-config-validate not yet implemented")
+(append-output "valid=stub")
+(exit 0)

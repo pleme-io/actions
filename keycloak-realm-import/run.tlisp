@@ -1,0 +1,4 @@
+;; keycloak-realm-import/run.tlisp — typed schema locked
+(log-info "::warning::keycloak-realm-import not yet implemented")
+(append-output "imported=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; hardhat-deploy/run.tlisp — typed schema locked
+(log-info "::warning::hardhat-deploy not yet implemented")
+(append-output "deployed-address=stub")
+(exit 0)

@@ -1,0 +1,43 @@
+name: 'pleme-io · influxdb-write'
+description: 'Write line-protocol points to InfluxDB.'
+branding: { icon: 'database', color: 'purple' }
+
+inputs:
+  url:
+    required: true
+  token:
+    required: true
+  org:
+    required: true
+  bucket:
+    required: true
+  lines:
+    required: true
+
+outputs:
+  written:
+    value: ${{ steps.run.outputs.written }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        URL_ARG: ${{ inputs.url }}
+        TOKEN: ${{ inputs.token }}
+        ORG_ARG: ${{ inputs.org }}
+        BUCKET: ${{ inputs.bucket }}
+        LINES: ${{ inputs.lines }}

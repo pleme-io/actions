@@ -1,0 +1,4 @@
+;; jupyter-notebook-render/run.tlisp — typed schema locked
+(log-info "::warning::jupyter-notebook-render not yet implemented")
+(append-output "output-path=stub")
+(exit 0)

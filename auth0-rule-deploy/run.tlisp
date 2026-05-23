@@ -1,0 +1,4 @@
+;; auth0-rule-deploy/run.tlisp — typed schema locked
+(log-info "::warning::auth0-rule-deploy not yet implemented")
+(append-output "deployed=stub")
+(exit 0)

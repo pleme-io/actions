@@ -1,0 +1,4 @@
+;; infracost-comment/run.tlisp — typed schema locked
+(log-info "::warning::infracost-comment not yet implemented")
+(append-output "monthly-diff=stub")
+(exit 0)
