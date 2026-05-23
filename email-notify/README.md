@@ -2,8 +2,8 @@
 
 > Send a plain-text email via SMTP. Sibling of slack-notify / discord-notify for ops contexts where webhooks aren''t available.
 
-**Category**: `comms` — 💬 Notifications across 9 channels
-**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Category**: `comms` — 💬 Notifications across N channels
+**Backend**: shell
 **Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
 ## 30-second quickstart
@@ -13,23 +13,23 @@ steps:
   - uses: actions/checkout@v4
   - uses: pleme-io/actions/email-notify@v1
     with:
+      body: <required>
+      from: <required>
       smtp-host: <required>
-      smtp-port: "587"
-      smtp-username: <required>
 ```
 
 ## Inputs
 
 | Name | Required | Default | Description |
 |---|---|---|---|
+| `body` | yes | — |  |
+| `from` | yes | — |  |
 | `smtp-host` | yes | — |  |
+| `smtp-password` | yes | — |  |
 | `smtp-port` | no | `587` |  |
 | `smtp-username` | yes | — |  |
-| `smtp-password` | yes | — |  |
-| `from` | yes | — |  |
-| `to` | yes | — | Comma-separated recipients |
 | `subject` | yes | — |  |
-| `body` | yes | — |  |
+| `to` | yes | — | Comma-separated recipients |
 
 ## Outputs
 
@@ -48,8 +48,7 @@ See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib
 
 Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
 [`action.yml`](./action.yml) orchestrates install steps + one
-`tatara-script` invocation. Shared helpers from
-[`_tlisp-stdlib`](../_tlisp-stdlib/).
+`tatara-script` invocation.
 
 Per the ★★ NO-SHELL prime directive
 ([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
@@ -60,46 +59,18 @@ this action's primary logic is typed Lisp, not bash. The substrate's
 
 [`discord-notify`](../discord-notify/) · [`matrix-notify`](../matrix-notify/) · [`mattermost-notify`](../mattermost-notify/) · [`pagerduty-notify`](../pagerduty-notify/) · [`slack-notify`](../slack-notify/) · [`teams-notify`](../teams-notify/) · [`telegram-notify`](../telegram-notify/) · [`twilio-sms`](../twilio-sms/)
 
-
-## Sources
-
-- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
-- **Catalog entry**: `substrate.lib.release.patterns.comms.email-notify` —
-  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
-- **Future typed source**: `(defaction email-notify ...)` per
-  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
-
-## Operator-facing CLI
-
-Same logic locally via `cargo install pleme-io-releaser`:
-
-```bash
-pleme-release plan      # preview what an auto-release would do
-pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
-pleme-release detect    # emit detected repo type
-```
-
 ## Auto-published on free public CI
 
 Every push to `main` on `pleme-io/actions`:
 1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
 2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
-3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+3. Consumers using `@v1` see the new revision automatically
 
 **$0/month cost** — GitHub-hosted runners + public-repo free tier.
-
-## Discovery
-
-Browse the [full catalog](../README.md) or query via Nix:
-
-```bash
-nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.comms.email-notify
-```
 
 ## License
 
 MIT.
 
 ---
-*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
-Do not hand-edit; modify the source files or regenerate.*
+*Auto-generated from `action.yml` by [`pleme-doc-gen`](https://github.com/pleme-io/pleme-doc-gen). Do not hand-edit.*

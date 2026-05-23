@@ -69,19 +69,23 @@ jobs:
           fail-on-violation: "true"
 
   regenerate-catalog:
-    name: Regenerate substrate patterns-full.nix from action.yml files
+    name: Regenerate catalog + per-action docs via pleme-doc-gen (Rust)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.x" }
-      - run: |
-          python3 _gen-patterns.py > /tmp/patterns-generated.nix
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pleme-doc-gen
+        run: cargo install --locked --git https://github.com/pleme-io/pleme-doc-gen pleme-doc-gen
+      - name: Regenerate
+        run: |
+          pleme-doc-gen all --patterns-out /tmp/patterns-generated.nix
           lines=$(wc -l < /tmp/patterns-generated.nix)
           actions=$(grep -c 'uses = "pleme-io' /tmp/patterns-generated.nix)
-          echo "## patterns-full.nix preview" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Generated $lines lines covering $actions actions" >> "$GITHUB_STEP_SUMMARY"
-          echo "- To sync: copy /tmp/patterns-generated.nix → substrate/lib/release/patterns-full.nix" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Catalog + docs preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "- patterns-full.nix: $lines lines covering $actions actions" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 192 per-action README.md regenerated in-place" >> "$GITHUB_STEP_SUMMARY"
+          echo "- root README.md catalog index regenerated" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Sync substrate: \`cp /tmp/patterns-generated.nix substrate/lib/release/patterns-full.nix\`" >> "$GITHUB_STEP_SUMMARY"
 
   smoke-spec-watch:
     name: Smoke — spec-watch (pure shell, no upstream dep)
