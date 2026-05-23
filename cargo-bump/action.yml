@@ -1,5 +1,5 @@
 name: 'pleme-io · cargo-bump'
-description: 'Bump a single-crate Rust repo via cargo set-version --bump <type>, regenerate Cargo.nix, refresh Cargo.lock. Sibling of rust-workspace-bump for non-workspace Rust repos (the typical "one crate per repo" library shape).'
+description: 'Bump a single-crate Rust repo via cargo set-version --bump <type>, regenerate Cargo.nix, refresh Cargo.lock. Sibling of rust-workspace-bump for non-workspace Rust repos.'
 branding:
   icon: 'arrow-up-circle'
   color: 'green'
@@ -42,12 +42,17 @@ runs:
     - name: Install Nix (for crate2nix regenerate)
       uses: DeterminateSystems/nix-installer-action@main
 
-    - name: Load run.tlisp
+    # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
+    # action's run.tlisp so the action's body can use every
+    # primitive defined in stdlib.tlisp without restating them.
+    - name: Load stdlib + run.tlisp
       id: src
       shell: bash
       run: |
         {
           echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
           cat ${{ github.action_path }}/run.tlisp
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"

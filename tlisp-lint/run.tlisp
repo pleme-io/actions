@@ -36,8 +36,16 @@
   ;; Use shell `find` for simplicity. `glob` exists in tatara-lisp
   ;; for single patterns, but `find -name *.tlisp` is the broadest
   ;; sweep + handles nested dirs uniformly.
+  ;;
+  ;; Excludes:
+  ;;   .git/         — VCS
+  ;;   node_modules/ — npm vendoring
+  ;;   target/       — Rust build dir
+  ;;   _*/           — leading-underscore dirs (e.g. _tlisp-stdlib);
+  ;;                   these hold fragment libraries that aren't
+  ;;                   self-contained programs.
   (let* ((r (exec-capture "sh" "-c"
-              "find . -type f -name '*.tlisp' -not -path './.git/*' -not -path './node_modules/*' -not -path './target/*' | sort"))
+              "find . -type f -name '*.tlisp' -not -path './.git/*' -not -path './node_modules/*' -not -path './target/*' -not -path './_*/*' | sort"))
          (out (alist-get r "stdout" "")))
     (cond
       ((equal? (string-trim out) "") (list))

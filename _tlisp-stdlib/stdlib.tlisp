@@ -1,0 +1,170 @@
+;; pleme-io · _tlisp-stdlib/stdlib.tlisp
+;;
+;; Shared helper library prepended to each action's run.tlisp by
+;; the action.yml's "Load run.tlisp" step. Holds every primitive
+;; that appeared in ≥2 actions as of the v0.13.x release line.
+;;
+;; ────────────────────────────────────────────────────────────────
+;; Adoption pattern for an action's action.yml:
+;; ────────────────────────────────────────────────────────────────
+;;
+;;    - name: Load stdlib + run.tlisp
+;;      id: src
+;;      shell: bash
+;;      run: |
+;;        {
+;;          echo 'script<<TLISP_EOF'
+;;          # Resolve stdlib via the calling repo's checked-out
+;;          # copy of pleme-io/actions, or curl from the v1 ref:
+;;          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+;;          echo
+;;          cat ${{ github.action_path }}/run.tlisp
+;;          echo 'TLISP_EOF'
+;;        } >> "$GITHUB_OUTPUT"
+;;
+;;    - uses: pleme-io/actions/tatara-script@v1
+;;      with: { script: ${{ steps.src.outputs.script }} }
+;;
+;; ────────────────────────────────────────────────────────────────
+;; Conventions
+;; ────────────────────────────────────────────────────────────────
+;; - Every helper is pure (no side effects) except those whose
+;;   names contain `!` (mutators) or those clearly named for
+;;   side effects (`append-output`, `configure-git-bot`).
+;; - Every helper that wraps exec-capture extracts its result via
+;;   the `status-of` / `stdout-of` / `stderr-of` accessors so
+;;   callers never reach into the alist shape directly.
+;; - TOML-walker helpers are line-based (no full TOML parser yet);
+;;   stop at the next `[section]` heading.
+
+;; ────────────────────────────────────────────────────────────────
+;; Output sink — GITHUB_OUTPUT appender
+;; ────────────────────────────────────────────────────────────────
+
+(define stdlib:gh-output (env-get "GITHUB_OUTPUT" ""))
+
+(define (append-output line)
+  (cond
+    ((equal? stdlib:gh-output "") #t)  ;; no-op outside Actions
+    (else
+      (let ((prior (if (path-exists? stdlib:gh-output)
+                     (read-file stdlib:gh-output)
+                     "")))
+        (write-file stdlib:gh-output (string-append prior line "\n"))))))
+
+;; ────────────────────────────────────────────────────────────────
+;; exec-capture result accessors
+;; ────────────────────────────────────────────────────────────────
+
+(define (status-of result) (alist-get result "status" -1))
+(define (stdout-of result) (alist-get result "stdout" ""))
+(define (stderr-of result) (alist-get result "stderr" ""))
+
+;; ────────────────────────────────────────────────────────────────
+;; TOML line walker — extract a field's quoted value from a
+;; specific section. No full TOML parser yet; stop at the next
+;; section heading.
+;; ────────────────────────────────────────────────────────────────
+
+(define (extract-quoted-value line)
+  (let* ((dq-parts (string-split line "\""))
+         (sq-parts (string-split line "'")))
+    (cond
+      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
+      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
+      (else ""))))
+
+(define (line-is-section-header? line)
+  (and (> (string-length line) 0)
+       (string-contains? line "[")))
+
+;; Walk lines looking for the named section header, then return
+;; the first `field = "value"` inside it. Returns "" on miss.
+(define (toml-walk-field-in-section section field lines in-section)
+  (cond
+    ((null? lines) "")
+    ((string-contains? (car lines) section)
+     (toml-walk-field-in-section section field (cdr lines) #t))
+    ((and in-section (line-is-section-header? (car lines)))
+     "")
+    ((and in-section
+          (string-contains? (car lines) field)
+          (string-contains? (car lines) "="))
+     (extract-quoted-value (car lines)))
+    (else (toml-walk-field-in-section section field (cdr lines) in-section))))
+
+(define (toml-read-field path section field)
+  (if (path-exists? path)
+    (toml-walk-field-in-section section field
+                                (string-split (read-file path) "\n")
+                                #f)
+    ""))
+
+;; Cargo-specific shorthands.
+(define (cargo-workspace-version)
+  (toml-read-field "Cargo.toml" "[workspace.package]" "version"))
+
+(define (cargo-package-version)
+  (toml-read-field "Cargo.toml" "[package]" "version"))
+
+(define (cargo-package-name)
+  (toml-read-field "Cargo.toml" "[package]" "name"))
+
+;; ────────────────────────────────────────────────────────────────
+;; git introspection
+;; ────────────────────────────────────────────────────────────────
+
+(define (last-tag)
+  (let ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
+
+(define (has-changes-since? tag paths)
+  ;; tag may be "" (no prior tag); treat as "always has changes"
+  ;; so first-release flows always bump.
+  (cond
+    ((equal? tag "") #t)
+    (else
+      (let* ((path-list (string-split paths " "))
+             (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
+             (r (apply exec-capture (cons "git" args))))
+        (not (= (status-of r) 0))))))
+
+(define (configure-git-bot)
+  (exec-check "git" "config" "user.name" "github-actions[bot]")
+  (exec-check "git" "config" "user.email"
+              "41898282+github-actions[bot]@users.noreply.github.com")
+  ;; Docker action mode safety — runner UID rarely matches the
+  ;; workspace owner; without safe.directory, git refuses every
+  ;; mutation with "fatal: detected dubious ownership".
+  (exec-capture "git" "config" "--global" "--add" "safe.directory" "*"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Log scanning — match any line by predicate
+;; ────────────────────────────────────────────────────────────────
+
+(define (any-line-matches? lines pred)
+  (cond
+    ((null? lines) #f)
+    ((pred (car lines)) #t)
+    (else (any-line-matches? (cdr lines) pred))))
+
+(define (log-contains? log substr)
+  (any-line-matches? (string-split log "\n")
+                     (lambda (line) (string-contains? line substr))))
+
+;; ────────────────────────────────────────────────────────────────
+;; HTTP existence probe (uses curl since tatara-lisp's http-get
+;; raises on 404; we want a (200|404) → bool answer instead).
+;; ────────────────────────────────────────────────────────────────
+
+(define (http-200? url)
+  (let* ((r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url))
+         (code (stdout-of r)))
+    (equal? code "200")))
+
+;; Crates.io specific.
+(define (cargo-published? name version)
+  (http-200? (string-append "https://crates.io/api/v1/crates/"
+                            name "/" version)))

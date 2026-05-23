@@ -1,69 +1,19 @@
 ;; cargo-bump/run.tlisp — bump a single-crate Rust repo's
 ;; package.version field.
+;;
+;; Uses pleme-io/actions/_tlisp-stdlib helpers (prepended by
+;; action.yml's loader step):
+;;   append-output, status-of, cargo-package-version,
+;;   last-tag, has-changes-since?
 
 (define bump-type (env-get "BUMP_TYPE" "patch"))
 (define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
 (define source-paths (env-get "SOURCE_PATHS" "src Cargo.toml Cargo.lock"))
-(define gh-output (env-required "GITHUB_OUTPUT"))
-
-(define (append-output line)
-  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
-  (write-file gh-output (string-append prior line "\n")))
-
-(define (extract-quoted-value line)
-  (let* ((dq-parts (string-split line "\""))
-         (sq-parts (string-split line "'")))
-    (cond
-      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
-      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
-      (else ""))))
-
-(define (line-is-section-header? line)
-  (and (> (string-length line) 0)
-       (string-contains? line "[")))
-
-(define (walk-for-version lines in-section)
-  (cond
-    ((null? lines) "")
-    ((string-contains? (car lines) "[package]")
-     (walk-for-version (cdr lines) #t))
-    ((and in-section (line-is-section-header? (car lines)))
-     "")
-    ((and in-section
-          (string-contains? (car lines) "version")
-          (string-contains? (car lines) "="))
-     (extract-quoted-value (car lines)))
-    (else (walk-for-version (cdr lines) in-section))))
-
-(define (read-package-version)
-  (if (path-exists? "Cargo.toml")
-    (walk-for-version (string-split (read-file "Cargo.toml") "\n") #f)
-    ""))
-
-(define (status-of result) (alist-get result "status" -1))
-(define (stdout-of result) (alist-get result "stdout" ""))
-
-(define (last-tag)
-  (let ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
-    (if (= (status-of r) 0)
-      (string-trim (stdout-of r))
-      "")))
-
-(define (has-changes? tag paths)
-  (let* ((path-list (string-split paths " "))
-         (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
-         (r (apply exec-capture (cons "git" args))))
-    (not (= (status-of r) 0))))
 
 (define (should-bump?)
   (cond
     ((not (equal? skip-flag "true")) #t)
-    (else
-      (let ((tag (last-tag)))
-        (cond
-          ((equal? tag "") #t)
-          ((has-changes? tag source-paths) #t)
-          (else #f))))))
+    (else (has-changes-since? (last-tag) source-paths))))
 
 (define (do-bump)
   (status-of (exec-capture "cargo" "set-version" "--bump" bump-type)))
@@ -71,9 +21,6 @@
 (define (do-regen)
   (status-of
     (exec-capture "nix" "run" "github:nix-community/crate2nix" "--" "generate")))
-
-(define (refresh-lock)
-  (exec-capture "cargo" "update"))
 
 (define (emit-skip msg old-v)
   (log-info msg)
@@ -108,8 +55,8 @@
              (emit-failure "crate2nix generate failed" old-v)
              regen-status)
             (else
-              (refresh-lock)
-              (let ((new-v (read-package-version)))
+              (exec-capture "cargo" "update")
+              (let ((new-v (cargo-package-version)))
                 (cond
                   ((equal? new-v old-v)
                    (emit-failure
@@ -120,7 +67,7 @@
                     (emit-success old-v new-v)
                     0))))))))))
 
-(define old-version (read-package-version))
+(define old-version (cargo-package-version))
 
 (cond
   ((not (path-exists? "Cargo.toml"))
@@ -128,7 +75,7 @@
    (exit 1))
   ((equal? old-version "")
    (emit-failure
-     "cargo-bump: package.version not found (is this a workspace? use rust-workspace-bump instead)"
+     "cargo-bump: package.version not found (workspace? use rust-workspace-bump)"
      "")
    (exit 1))
   ((not (should-bump?))
