@@ -1,0 +1,53 @@
+name: 'pleme-io · provenance-attest'
+description: 'Sign artifacts with sigstore/cosign keyless OIDC. Universal — works on any file (binary, tarball, SBOM, container image digest). Produces a .sig + .cert pair downstream consumers can verify with cosign verify-blob.'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  artifact-path:
+    description: "Path to the artifact to sign (file, OCI digest, or directory glob)"
+    required: true
+  signature-output:
+    description: "Where to write the .sig file (defaults to <artifact>.sig)"
+    required: false
+    default: ""
+  certificate-output:
+    description: "Where to write the .cert file (defaults to <artifact>.cert)"
+    required: false
+    default: ""
+
+outputs:
+  signature-path:
+    value: ${{ steps.attest.outputs.signature-path }}
+  certificate-path:
+    value: ${{ steps.attest.outputs.certificate-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: attest
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ARTIFACT_PATH: ${{ inputs.artifact-path }}
+        SIGNATURE_OUTPUT: ${{ inputs.signature-output }}
+        CERTIFICATE_OUTPUT: ${{ inputs.certificate-output }}
+        # cosign reads these for keyless OIDC
+        COSIGN_EXPERIMENTAL: "1"

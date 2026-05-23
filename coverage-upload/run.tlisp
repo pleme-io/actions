@@ -1,0 +1,76 @@
+;; coverage-upload/run.tlisp — polymorphic test-coverage + Codecov upload.
+
+(define token (env-get "CODECOV_TOKEN" ""))
+(define fail-without (env-get "FAIL_WITHOUT_TOKEN" "false"))
+
+(define (detect)
+  (cond
+    ((path-exists? "Cargo.toml") "rust")
+    ((path-exists? "package.json") "npm")
+    ((path-exists? "pyproject.toml") "python")
+    (else "unknown")))
+
+(define (run-rust)
+  (log-info "==> cargo tarpaulin --workspace --out Xml")
+  (let ((r (exec-capture "cargo" "tarpaulin" "--workspace" "--out" "Xml")))
+    (cond
+      ((= (status-of r) 0) (cons "cobertura.xml" #t))
+      (else (log-error "tarpaulin failed") (cons "" #f)))))
+
+(define (run-npm)
+  (log-info "==> npm test -- --coverage")
+  (let ((r (exec-capture "sh" "-c" "npm ci && npm test -- --coverage")))
+    (cond
+      ((= (status-of r) 0) (cons "coverage/lcov.info" #t))
+      (else (log-error "npm coverage failed") (cons "" #f)))))
+
+(define (run-python)
+  (log-info "==> uv run pytest --cov --cov-report=xml")
+  (let ((r (exec-capture "sh" "-c"
+              "uv sync --dev && uv run pytest --cov --cov-report=xml")))
+    (cond
+      ((= (status-of r) 0) (cons "coverage.xml" #t))
+      (else (log-error "pytest --cov failed") (cons "" #f)))))
+
+(define (upload coverage-file)
+  (log-info (string-append "==> codecov upload " coverage-file))
+  ;; Tokenless upload works for public repos; tokened for private.
+  (let ((cmd (string-append
+               "curl -Os https://uploader.codecov.io/latest/linux/codecov && "
+               "chmod +x codecov && "
+               "./codecov -f " coverage-file
+               (if (equal? token "") "" (string-append " -t " token)))))
+    (= (status-of (exec-capture "bash" "-c" cmd)) 0)))
+
+(define eco (detect))
+(log-info (string-append "ecosystem: " eco))
+
+(define result
+  (cond
+    ((equal? eco "rust") (run-rust))
+    ((equal? eco "npm") (run-npm))
+    ((equal? eco "python") (run-python))
+    (else
+      (log-info "no recognized manifest — coverage-upload skipped")
+      (cons "" #f))))
+
+(define coverage-file (car result))
+(define generated (cdr result))
+
+(cond
+  ((not generated)
+   (append-output "uploaded=false")
+   (append-output "coverage-pct=")
+   (cond
+     ((equal? eco "unknown") (exit 0))
+     (else (exit 1))))
+  ((upload coverage-file)
+   (log-info "uploaded to Codecov")
+   (append-output "uploaded=true")
+   (append-output "coverage-pct=")  ;; Codecov sets pct via PR comment, not output
+   (exit 0))
+  (else
+   (log-error "codecov upload failed")
+   (append-output "uploaded=false")
+   (append-output "coverage-pct=")
+   (exit 1)))

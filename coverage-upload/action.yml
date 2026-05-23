@@ -1,0 +1,63 @@
+name: 'pleme-io · coverage-upload'
+description: 'Generate test coverage + upload to Codecov. Polymorphic — detects ecosystem (rust uses cargo-tarpaulin, npm uses jest --coverage, python uses pytest --cov).'
+branding:
+  icon: 'bar-chart'
+  color: 'green'
+
+inputs:
+  codecov-token:
+    description: "Codecov upload token (for private repos; public repos do tokenless upload)"
+    required: false
+    default: ""
+  fail-without-token:
+    description: "Fail when no token is provided AND the repo is private"
+    required: false
+    default: "false"
+
+outputs:
+  uploaded:
+    value: ${{ steps.upload.outputs.uploaded }}
+  coverage-pct:
+    value: ${{ steps.upload.outputs.coverage-pct }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust (if Cargo.toml)
+      if: hashFiles('Cargo.toml') != ''
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install tarpaulin (if Cargo.toml)
+      if: hashFiles('Cargo.toml') != ''
+      shell: bash
+      run: cargo install --locked cargo-tarpaulin || true
+
+    - name: Install Node (if package.json)
+      if: hashFiles('package.json') != ''
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install uv (if pyproject.toml)
+      if: hashFiles('pyproject.toml') != ''
+      uses: astral-sh/setup-uv@v3
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: upload
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CODECOV_TOKEN: ${{ inputs.codecov-token }}
+        FAIL_WITHOUT_TOKEN: ${{ inputs.fail-without-token }}

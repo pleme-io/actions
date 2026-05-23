@@ -1,0 +1,64 @@
+;; image-scan/run.tlisp — Trivy container-image scan.
+
+(define image (env-required "IMAGE_REF"))
+(define fail-on (env-get "FAIL_ON_SEVERITY" "HIGH"))
+(define ignore-unfixed (env-get "IGNORE_UNFIXED" "false"))
+
+(define (severity-rank s)
+  (cond
+    ((equal? s "CRITICAL") 4)
+    ((equal? s "HIGH") 3)
+    ((equal? s "MEDIUM") 2)
+    ((equal? s "LOW") 1)
+    (else 0)))
+
+(define fail-rank (severity-rank fail-on))
+
+(log-info (string-append "==> trivy image " image))
+
+(define args
+  (let* ((base (list "image" "--format" "json" "--quiet" image))
+         (with-unfixed
+           (if (equal? ignore-unfixed "true")
+             (append (list "image" "--ignore-unfixed" "--format" "json" "--quiet" image) (list))
+             base)))
+    with-unfixed))
+
+(define r (apply exec-capture (cons "trivy" args)))
+(define out (stdout-of r))
+
+;; Pull highest severity from the json — trivy emits a Results
+;; array with per-target Vulnerabilities each having Severity.
+(define severity
+  (cond
+    ((log-contains? out "\"Severity\":\"CRITICAL\"") "CRITICAL")
+    ((log-contains? out "\"Severity\":\"HIGH\"") "HIGH")
+    ((log-contains? out "\"Severity\":\"MEDIUM\"") "MEDIUM")
+    ((log-contains? out "\"Severity\":\"LOW\"") "LOW")
+    (else "none")))
+
+;; Count occurrences of "Severity" — coarse but useful.
+(define count-r
+  (exec-capture "sh" "-c"
+    (string-append "grep -o '\"Severity\":' <(echo '"
+                   (string-replace out "'" "'\"'\"'")
+                   "') | wc -l")))
+(define vuln-count
+  (let ((v (string-trim (stdout-of count-r))))
+    (if (equal? v "") "0" v)))
+
+(append-output (string-append "severity=" severity))
+(append-output (string-append "vuln-count=" vuln-count))
+
+(log-info (string-append "result: severity=" severity " count=" vuln-count))
+
+(cond
+  ((equal? fail-on "none")
+   (log-info "fail-on=none — passing regardless")
+   (exit 0))
+  ((>= (severity-rank severity) fail-rank)
+   (log-error (string-append "severity " severity " >= threshold " fail-on))
+   (exit 1))
+  (else
+   (log-info "below threshold — passing")
+   (exit 0)))

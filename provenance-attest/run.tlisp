@@ -1,0 +1,33 @@
+;; provenance-attest/run.tlisp — sigstore-cosign keyless signing.
+
+(define artifact (env-required "ARTIFACT_PATH"))
+(define sig-out (env-get "SIGNATURE_OUTPUT" ""))
+(define cert-out (env-get "CERTIFICATE_OUTPUT" ""))
+
+(define sig (if (equal? sig-out "") (string-append artifact ".sig") sig-out))
+(define cert (if (equal? cert-out "") (string-append artifact ".cert") cert-out))
+
+(log-info (string-append "==> cosign sign-blob " artifact))
+
+;; cosign sign-blob with keyless OIDC. The Y prompt is bypassed
+;; by --yes flag; tlog uploads to Rekor automatically.
+(define r
+  (exec-capture "cosign" "sign-blob"
+                "--yes"
+                "--output-signature" sig
+                "--output-certificate" cert
+                artifact))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info (string-append "signed → " sig " + " cert))
+   (append-output (string-append "signature-path=" sig))
+   (append-output (string-append "certificate-path=" cert))
+   (exit 0))
+  (else
+   (log-error "cosign sign-blob failed")
+   (log-info (stdout-of r))
+   (log-info (stderr-of r))
+   (append-output "signature-path=")
+   (append-output "certificate-path=")
+   (exit 1)))

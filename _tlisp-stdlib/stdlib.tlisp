@@ -228,3 +228,53 @@
 
 (define (pyproject-version)
   (toml-read-field "pyproject.toml" "[project]" "version"))
+
+;; ────────────────────────────────────────────────────────────────
+;; .pleme-io-release.toml — per-repo defaults consumed by every
+;; pleme-io action. Operators drop one config file at the repo
+;; root; every action's defaults pull from the matching section.
+;; Action env vars (set by the workflow) still win — config gives
+;; the FALLBACK behind action.yml's `default:` field, never an
+;; override.
+;;
+;; Section convention: [<action-name>] OR [<category>].
+;; Field convention: kebab-case mirroring action.yml input names.
+;;
+;; Example .pleme-io-release.toml:
+;;
+;;   [bump]
+;;   default-type = "patch"
+;;   skip-when-no-source-changes = true
+;;
+;;   [publish]
+;;   no-verify = true
+;;   rename-prefix = "pleme-io-"
+;;
+;;   [security]
+;;   fail-on-severity = "high"
+;;   check-license-headers = true
+;;
+;;   [delivery]
+;;   slack-webhook-secret = "SLACK_WEBHOOK_URL"
+;; ────────────────────────────────────────────────────────────────
+
+;; Read a field from .pleme-io-release.toml, fall back to default.
+;; Uses the existing toml-read-field walker.
+(define (release-config-field section field default-value)
+  (cond
+    ((not (path-exists? ".pleme-io-release.toml")) default-value)
+    (else
+      (let ((v (toml-read-field ".pleme-io-release.toml"
+                                (string-append "[" section "]")
+                                field)))
+        (if (equal? v "") default-value v)))))
+
+;; Resolve a value with precedence:
+;;   env-var (workflow input)
+;;     > .pleme-io-release.toml config
+;;       > hardcoded default
+(define (config-resolve env-var section field default-value)
+  (let ((env-v (env-get env-var "")))
+    (cond
+      ((not (equal? env-v "")) env-v)
+      (else (release-config-field section field default-value)))))

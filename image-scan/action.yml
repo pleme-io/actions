@@ -1,0 +1,54 @@
+name: 'pleme-io · image-scan'
+description: 'Scan a container image for vulnerabilities + secrets via Trivy. Emits typed severity + vuln-count outputs. Configurable fail-on-severity gate.'
+branding:
+  icon: 'eye'
+  color: 'red'
+
+inputs:
+  image-ref:
+    description: "Image to scan (e.g. ghcr.io/pleme-io/foo:latest)"
+    required: true
+  fail-on-severity:
+    description: "Lowest severity that fails the build: LOW | MEDIUM | HIGH | CRITICAL | none"
+    required: false
+    default: "HIGH"
+  ignore-unfixed:
+    description: "Skip vulns without an available fix"
+    required: false
+    default: "false"
+
+outputs:
+  severity:
+    value: ${{ steps.scan.outputs.severity }}
+  vuln-count:
+    value: ${{ steps.scan.outputs.vuln-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Trivy
+      shell: bash
+      run: |
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+          | sudo sh -s -- -b /usr/local/bin
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: scan
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
