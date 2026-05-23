@@ -1,0 +1,52 @@
+name: 'pleme-io · sbom-generate'
+description: 'Generate a CycloneDX or SPDX SBOM from the repo via syft. Universal — works on any source tree (Rust, Node, Python, Helm, Docker context, etc).'
+branding:
+  icon: 'file-text'
+  color: 'gray-dark'
+
+inputs:
+  output-format:
+    description: "cyclonedx-json | spdx-json | syft-json"
+    required: false
+    default: "cyclonedx-json"
+  output-file:
+    description: "Path to write the SBOM"
+    required: false
+    default: "sbom.cyclonedx.json"
+
+outputs:
+  sbom-path:
+    description: "Path of the written SBOM"
+    value: ${{ steps.sbom.outputs.sbom-path }}
+  component-count:
+    description: "Number of components in the SBOM"
+    value: ${{ steps.sbom.outputs.component-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install syft
+      shell: bash
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+          | sh -s -- -b /usr/local/bin
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: sbom
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        OUTPUT_FORMAT: ${{ inputs.output-format }}
+        OUTPUT_FILE: ${{ inputs.output-file }}

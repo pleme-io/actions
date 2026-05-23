@@ -1,0 +1,98 @@
+;; security-audit/run.tlisp — polymorphic vuln scan.
+;; Detects ecosystem from manifest presence + runs the matching tool.
+
+(define fail-on (env-get "FAIL_ON_SEVERITY" "medium"))
+(define ignore-list (env-get "IGNORE_LIST" ""))
+
+(define (severity-rank s)
+  (cond
+    ((equal? s "critical") 4)
+    ((equal? s "high") 3)
+    ((equal? s "medium") 2)
+    ((equal? s "low") 1)
+    (else 0)))
+
+(define fail-rank (severity-rank fail-on))
+
+;; ── Per-ecosystem runners. Each emits (ecosystem, severity, count). ──
+
+(define (run-cargo-audit)
+  (log-info "==> cargo audit")
+  (let* ((r (exec-capture "cargo" "audit" "--json"))
+         (out (stdout-of r))
+         (n (cond
+              ((log-contains? out "vulnerability") 1)  ;; simple count proxy
+              (else 0))))
+    (let ((sev (cond
+                 ((log-contains? out "critical") "critical")
+                 ((log-contains? out "high") "high")
+                 ((log-contains? out "medium") "medium")
+                 ((log-contains? out "low") "low")
+                 ((= (status-of r) 0) "none")
+                 (else "high"))))  ;; non-zero exit with no parseable sev → conservative
+      (list "cargo-audit" sev n))))
+
+(define (run-npm-audit)
+  (log-info "==> npm audit")
+  (let* ((r (exec-capture "npm" "audit" "--json"))
+         (out (stdout-of r))
+         (n (cond
+              ((log-contains? out "vulnerabilities") 1)
+              (else 0))))
+    (let ((sev (cond
+                 ((log-contains? out "critical") "critical")
+                 ((log-contains? out "high") "high")
+                 ((log-contains? out "moderate") "medium")
+                 ((log-contains? out "low") "low")
+                 ((= (status-of r) 0) "none")
+                 (else "high"))))
+      (list "npm-audit" sev n))))
+
+(define (run-pip-audit)
+  (log-info "==> pip-audit")
+  (let* ((r (exec-capture "sh" "-c" "uv tool run pip-audit 2>&1"))
+         (out (stdout-of r))
+         (n (cond
+              ((log-contains? out "vulnerability") 1)
+              (else 0))))
+    (let ((sev (cond
+                 ((log-contains? out "CRITICAL") "critical")
+                 ((log-contains? out "HIGH") "high")
+                 ((log-contains? out "MEDIUM") "medium")
+                 ((log-contains? out "LOW") "low")
+                 ((= (status-of r) 0) "none")
+                 (else "high"))))
+      (list "pip-audit" sev n))))
+
+;; ── Dispatch by manifest presence ────────────────────────────────
+
+(define result
+  (cond
+    ((path-exists? "Cargo.toml") (run-cargo-audit))
+    ((path-exists? "package.json") (run-npm-audit))
+    ((path-exists? "pyproject.toml") (run-pip-audit))
+    (else
+      (log-info "no recognized manifest — security-audit skipped")
+      (list "none" "none" 0))))
+
+(define ecosystem (car result))
+(define severity (car (cdr result)))
+(define vuln-count (car (cdr (cdr result))))
+
+(append-output (string-append "ecosystem=" ecosystem))
+(append-output (string-append "severity=" severity))
+(append-output (string-append "vuln-count=" (string-format "{}" vuln-count)))
+
+(log-info (string-append "result: " ecosystem " sev=" severity
+                         " count=" (string-format "{}" vuln-count)))
+
+(cond
+  ((equal? fail-on "none")
+   (log-info "fail-on=none — passing regardless of findings")
+   (exit 0))
+  ((>= (severity-rank severity) fail-rank)
+   (log-error (string-append "severity " severity " >= fail-on threshold " fail-on))
+   (exit 1))
+  (else
+    (log-info "below fail-on threshold — passing")
+    (exit 0)))

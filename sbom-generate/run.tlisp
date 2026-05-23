@@ -1,0 +1,30 @@
+;; sbom-generate/run.tlisp — universal SBOM generation via syft.
+
+(define output-format (env-get "OUTPUT_FORMAT" "cyclonedx-json"))
+(define output-file (env-get "OUTPUT_FILE" "sbom.cyclonedx.json"))
+
+(log-info (string-append "==> syft . -o " output-format "=" output-file))
+
+(define r
+  (exec-capture "syft" "." "-o" (string-append output-format "=" output-file)))
+
+(cond
+  ((not (= (status-of r) 0))
+   (log-error "syft failed")
+   (log-info (stderr-of r))
+   (append-output "sbom-path=")
+   (append-output "component-count=0")
+   (exit 1)))
+
+;; Count components — works for cyclonedx + spdx JSON shapes.
+(define component-count
+  (let* ((r2 (exec-capture "sh" "-c"
+              (string-append "jq '"
+                "(.components // .packages // []) | length"
+                "' " output-file " 2>/dev/null || echo 0"))))
+    (string-trim (stdout-of r2))))
+
+(append-output (string-append "sbom-path=" output-file))
+(append-output (string-append "component-count=" component-count))
+
+(log-info (string-append "wrote SBOM with " component-count " components"))

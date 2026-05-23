@@ -1,0 +1,81 @@
+;; license-header-check/run.tlisp — verify SPDX headers on source files.
+
+(define license (env-get "LICENSE" "MIT"))
+(define extensions (env-get "EXTENSIONS" "rs ts js py rb sh"))
+(define excludes (env-get "EXCLUDE_PATHS" "target node_modules .git vendor dist build"))
+
+;; Build a find expression: -name '*.rs' -o -name '*.ts' ...
+(define (build-find-args ext-list exclude-list)
+  ;; First the prune clauses
+  (define (prune-clauses xs)
+    (cond
+      ((null? xs) "")
+      (else
+       (string-append "-path './" (car xs) "' -prune -o "
+                      (prune-clauses (cdr xs))))))
+  ;; Then the name clauses joined by -o
+  (define (name-clauses xs)
+    (cond
+      ((null? xs) "")
+      ((null? (cdr xs))
+       (string-append "-name '*." (car xs) "'"))
+      (else
+       (string-append "-name '*." (car xs) "' -o " (name-clauses (cdr xs))))))
+  (string-append
+    "find . "
+    (prune-clauses (string-split excludes " "))
+    "\\( " (name-clauses (string-split extensions " ")) " \\)"
+    " -type f -print"))
+
+(define find-cmd (build-find-args extensions excludes))
+
+(log-info (string-append "scanning for license header: SPDX-License-Identifier: " license))
+
+(define files
+  (let* ((r (exec-capture "sh" "-c" find-cmd))
+         (out (string-trim (stdout-of r))))
+    (cond
+      ((equal? out "") (list))
+      (else (string-split out "\n")))))
+
+(define file-count (length files))
+
+;; A file passes if it contains either:
+;;   SPDX-License-Identifier: <license>
+;;   or "Licensed under <license>" / "License: <license>"
+(define (file-has-header? path)
+  (let ((r (exec-capture "sh" "-c"
+              (string-append "head -20 " path
+                             " | grep -E '"
+                             "SPDX-License-Identifier: " license "|"
+                             "Licensed under " license "|"
+                             "License: " license
+                             "' >/dev/null 2>&1"))))
+    (= (status-of r) 0)))
+
+(define (count-missing files acc)
+  (cond
+    ((null? files) acc)
+    ((file-has-header? (car files))
+     (count-missing (cdr files) acc))
+    (else
+      (log-error (string-append "  MISSING " (car files)))
+      (count-missing (cdr files) (+ acc 1)))))
+
+(define missing (count-missing files 0))
+
+(append-output (string-append "files-scanned=" (string-format "{}" file-count)))
+(append-output (string-append "missing-count=" (string-format "{}" missing)))
+
+(log-info (string-append "scanned " (string-format "{}" file-count)
+                         " files; " (string-format "{}" missing)
+                         " missing license header"))
+
+(cond
+  ((= missing 0)
+   (log-info "all files have license headers")
+   (exit 0))
+  (else
+    (log-error (string-append (string-format "{}" missing)
+                              " file(s) missing SPDX-License-Identifier: " license))
+    (exit 1)))

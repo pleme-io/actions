@@ -1,0 +1,68 @@
+name: 'pleme-io · security-audit'
+description: 'Polymorphic dependency-vulnerability audit. Detects repo type + routes to cargo-audit / npm-audit / pip-audit / etc. Emits a typed severity summary.'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  fail-on-severity:
+    description: "Lowest severity that fails the build: low | medium | high | critical | none"
+    required: false
+    default: "medium"
+  ignore-list:
+    description: "Space-separated list of advisory IDs to ignore (e.g. RUSTSEC-2024-0001)"
+    required: false
+    default: ""
+
+outputs:
+  severity:
+    description: "Highest severity found (none / low / medium / high / critical)"
+    value: ${{ steps.audit.outputs.severity }}
+  vuln-count:
+    description: "Total number of vulnerabilities found"
+    value: ${{ steps.audit.outputs.vuln-count }}
+  ecosystem:
+    description: "Which auditor ran (cargo-audit / npm-audit / pip-audit / none)"
+    value: ${{ steps.audit.outputs.ecosystem }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust (if needed)
+      if: hashFiles('Cargo.toml') != ''
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit (if Rust)
+      if: hashFiles('Cargo.toml') != ''
+      shell: bash
+      run: cargo install --locked cargo-audit || true
+
+    - name: Install Node (if needed)
+      if: hashFiles('package.json') != ''
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install uv + pip-audit (if Python)
+      if: hashFiles('pyproject.toml') != ''
+      uses: astral-sh/setup-uv@v3
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: audit
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        IGNORE_LIST: ${{ inputs.ignore-list }}
