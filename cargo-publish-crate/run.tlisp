@@ -1,0 +1,148 @@
+;; cargo-publish-crate/run.tlisp — publish a single Rust crate
+;; to crates.io. Skips when (name, version) already exists.
+;; Sleeps + retries on 429 rate-limit (max 20 retries).
+
+(define dry-run (env-get "DRY_RUN" "false"))
+(define no-verify (env-get "NO_VERIFY" "true"))
+(define max-retries 20)
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+(define (status-of result) (alist-get result "status" -1))
+(define (stdout-of result) (alist-get result "stdout" ""))
+(define (stderr-of result) (alist-get result "stderr" ""))
+
+;; -------------------------------------------------------------- ;;
+;; Read package.name + version from Cargo.toml                     ;;
+;; -------------------------------------------------------------- ;;
+
+(define (extract-quoted-value line)
+  (let* ((dq-parts (string-split line "\""))
+         (sq-parts (string-split line "'")))
+    (cond
+      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
+      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
+      (else ""))))
+
+(define (line-is-section-header? line)
+  (and (> (string-length line) 0)
+       (string-contains? line "[")))
+
+(define (walk-for-field field lines in-section)
+  (cond
+    ((null? lines) "")
+    ((string-contains? (car lines) "[package]")
+     (walk-for-field field (cdr lines) #t))
+    ((and in-section (line-is-section-header? (car lines)))
+     "")
+    ((and in-section
+          (string-contains? (car lines) field)
+          (string-contains? (car lines) "="))
+     (extract-quoted-value (car lines)))
+    (else (walk-for-field field (cdr lines) in-section))))
+
+(define (read-field field)
+  (if (path-exists? "Cargo.toml")
+    (walk-for-field field (string-split (read-file "Cargo.toml") "\n") #f)
+    ""))
+
+;; -------------------------------------------------------------- ;;
+;; Already-published check                                         ;;
+;; -------------------------------------------------------------- ;;
+
+(define (already-published? name version)
+  (let* ((url (string-append "https://crates.io/api/v1/crates/" name "/" version))
+         (r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url))
+         (code-str (stdout-of r)))
+    (equal? code-str "200")))
+
+;; -------------------------------------------------------------- ;;
+;; Build cargo publish argv                                        ;;
+;; -------------------------------------------------------------- ;;
+
+(define (publish-args)
+  (let* ((base (list "publish"))
+         (with-dry (if (equal? dry-run "true") (append base (list "--dry-run")) base)))
+    (if (equal? no-verify "true") (append with-dry (list "--no-verify")) with-dry)))
+
+(define (do-publish)
+  (apply exec-capture (cons "cargo" (publish-args))))
+
+;; -------------------------------------------------------------- ;;
+;; Rate-limit + already-uploaded detection                         ;;
+;; -------------------------------------------------------------- ;;
+
+(define (any-line-matches? lines pred)
+  (cond
+    ((null? lines) #f)
+    ((pred (car lines)) #t)
+    (else (any-line-matches? (cdr lines) pred))))
+
+(define (rate-limit-on-line? line)
+  (or (string-contains? line "status 429 Too Many Requests")
+      (string-contains? line "published too many new crates")
+      (string-contains? line "rate-limits")))
+
+(define (already-uploaded-on-line? line)
+  (or (string-contains? line "already exists on crates.io")
+      (string-contains? line "already uploaded")
+      (string-contains? line "was already published")))
+
+(define (rate-limit? log) (any-line-matches? (string-split log "\n") rate-limit-on-line?))
+(define (already-uploaded? log) (any-line-matches? (string-split log "\n") already-uploaded-on-line?))
+
+;; -------------------------------------------------------------- ;;
+;; Try-loop                                                        ;;
+;; -------------------------------------------------------------- ;;
+
+(define (try-publish attempt)
+  (cond
+    ((>= attempt max-retries)
+     (log-error "exceeded max retries")
+     (append-output "shipped=false")
+     (exit 1))
+    (else
+      (log-info (string-append "publish attempt " (string-format "{}" attempt)))
+      (let* ((r (do-publish))
+             (code (status-of r))
+             (log (string-append (stdout-of r) "\n" (stderr-of r))))
+        (cond
+          ((= code 0)
+           (log-info "published successfully")
+           (append-output "shipped=true")
+           (exit 0))
+          ((already-uploaded? log)
+           (log-info "already published — treating as success")
+           (append-output "shipped=true")
+           (exit 0))
+          ((rate-limit? log)
+           (log-info "crates.io rate limit hit — sleeping 600s")
+           (exec-capture "sleep" "600")
+           (try-publish (+ attempt 1)))
+          (else
+            (log-error "publish failed with no recognizable retry signature")
+            (log-info log)
+            (append-output "shipped=false")
+            (exit code)))))))
+
+(define name (read-field "name"))
+(define version (read-field "version"))
+
+(cond
+  ((equal? name "")
+   (log-error "cargo-publish-crate: package.name not found in Cargo.toml")
+   (append-output "shipped=false")
+   (exit 1))
+  ((equal? version "")
+   (log-error "cargo-publish-crate: package.version not found in Cargo.toml")
+   (append-output "shipped=false")
+   (exit 1))
+  ((already-published? name version)
+   (log-info (string-append "skipping '" name "@" version "' — already on registry"))
+   (append-output "shipped=true")
+   (exit 0))
+  (else
+    (try-publish 1)))

@@ -1,0 +1,44 @@
+name: 'pleme-io · cargo-publish-crate'
+description: 'Publish a single Rust crate to crates.io; skips if (name, version) already exists; sleeps + retries on 429 rate-limit. Sibling of rust-workspace-publish for non-workspace Rust repos.'
+branding:
+  icon: 'upload'
+  color: 'blue'
+
+inputs:
+  dry-run:
+    description: "Run as --dry-run only (no upload)"
+    required: false
+    default: "false"
+  no-verify:
+    description: "Skip the verification compile step"
+    required: false
+    default: "true"
+
+outputs:
+  shipped:
+    description: "'true' on success (including skip-when-already), 'false' on failure"
+    value: ${{ steps.ship.outputs.shipped }}
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Publish crate
+      id: ship
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        DRY_RUN: ${{ inputs.dry-run }}
+        NO_VERIFY: ${{ inputs.no-verify }}
