@@ -1,0 +1,55 @@
+name: 'pleme-io · email-notify'
+description: 'Send a plain-text email via SMTP. Sibling of slack-notify / discord-notify for ops contexts where webhooks aren''t available.'
+branding: { icon: 'mail', color: 'blue' }
+
+inputs:
+  smtp-host:
+    required: true
+  smtp-port:
+    required: false
+    default: "587"
+  smtp-username:
+    required: true
+  smtp-password:
+    required: true
+  from:
+    required: true
+  to:
+    description: "Comma-separated recipients"
+    required: true
+  subject:
+    required: true
+  body:
+    required: true
+
+outputs:
+  sent:
+    value: ${{ steps.mail.outputs.sent }}
+
+runs:
+  using: composite
+  steps:
+    - id: mail
+      shell: bash
+      env:
+        SMTP_HOST: ${{ inputs.smtp-host }}
+        SMTP_PORT: ${{ inputs.smtp-port }}
+        SMTP_USERNAME: ${{ inputs.smtp-username }}
+        SMTP_PASSWORD: ${{ inputs.smtp-password }}
+        FROM: ${{ inputs.from }}
+        TO: ${{ inputs.to }}
+        SUBJECT: ${{ inputs.subject }}
+        BODY: ${{ inputs.body }}
+      run: |
+        # swaks is a robust portable SMTP client (apt-installable)
+        sudo apt-get install -y swaks >/dev/null
+        IFS=',' read -ra recipients <<< "$TO"
+        for r in "${recipients[@]}"; do
+          swaks --silent 2 \
+            --server "$SMTP_HOST:$SMTP_PORT" --tls \
+            --auth-user "$SMTP_USERNAME" --auth-password "$SMTP_PASSWORD" \
+            --from "$FROM" --to "$r" \
+            --header "Subject: $SUBJECT" --body "$BODY" \
+            || { echo "sent=false" >> "$GITHUB_OUTPUT"; exit 1; }
+        done
+        echo "sent=true" >> "$GITHUB_OUTPUT"

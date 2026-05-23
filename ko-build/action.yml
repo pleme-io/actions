@@ -1,0 +1,37 @@
+name: 'pleme-io · ko-build'
+description: 'Containerless Go image build + push via ko. No Dockerfile required.'
+branding: { icon: 'package', color: 'blue' }
+
+inputs:
+  package:
+    description: "Go package path (./cmd/myapp)"
+    required: true
+  repo:
+    description: "Image repo (e.g. ghcr.io/pleme-io)"
+    required: true
+  platforms:
+    required: false
+    default: "linux/amd64,linux/arm64"
+  push:
+    required: false
+    default: "true"
+
+outputs:
+  image:
+    value: ${{ steps.ko.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with: { go-version: "stable" }
+    - uses: ko-build/setup-ko@v0.7
+    - id: ko
+      shell: bash
+      env:
+        KO_DOCKER_REPO: ${{ inputs.repo }}
+      run: |
+        push_flag="--push=true"
+        [ "${{ inputs.push }}" = "false" ] && push_flag="--push=false --local"
+        image=$(ko build $push_flag --platform "${{ inputs.platforms }}" --bare "${{ inputs.package }}")
+        echo "image=$image" >> "$GITHUB_OUTPUT"

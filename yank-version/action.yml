@@ -1,0 +1,48 @@
+name: 'pleme-io · yank-version'
+description: 'Polymorphic yank/unpublish — cargo yank / npm deprecate / pip remove. Surgical rollback for a single bad version (does NOT delete previous versions).'
+branding: { icon: 'minus-circle', color: 'red' }
+
+inputs:
+  package:
+    required: true
+  version:
+    required: true
+  reason:
+    description: "Optional reason (logged to operator)"
+    required: false
+    default: ""
+
+outputs:
+  yanked:
+    value: ${{ steps.yank.outputs.yanked }}
+  ecosystem:
+    value: ${{ steps.yank.outputs.ecosystem }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust (if Cargo.toml)
+      if: hashFiles('Cargo.toml') != ''
+      uses: dtolnay/rust-toolchain@stable
+    - name: Install Node (if package.json)
+      if: hashFiles('package.json') != ''
+      uses: actions/setup-node@v4
+      with: { node-version: "20" }
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: yank
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        VERSION: ${{ inputs.version }}
+        REASON: ${{ inputs.reason }}

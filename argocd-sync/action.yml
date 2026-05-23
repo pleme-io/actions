@@ -1,0 +1,40 @@
+name: 'pleme-io · argocd-sync'
+description: 'Trigger argocd app sync + wait for Healthy/Synced. Sibling of flux-reconcile.'
+branding: { icon: 'refresh-cw', color: 'blue' }
+
+inputs:
+  app-name:
+    required: true
+  server:
+    description: "argocd server URL (with --grpc-web if needed)"
+    required: true
+  auth-token:
+    required: true
+  timeout:
+    required: false
+    default: "300"
+
+outputs:
+  synced:
+    value: ${{ steps.sync.outputs.synced }}
+
+runs:
+  using: composite
+  steps:
+    - id: sync
+      shell: bash
+      env:
+        ARGOCD_SERVER: ${{ inputs.server }}
+        ARGOCD_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        curl -sSL -o /usr/local/bin/argocd \
+          https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+        chmod +x /usr/local/bin/argocd
+        if argocd app sync "${{ inputs.app-name }}" --grpc-web \
+           && argocd app wait "${{ inputs.app-name }}" \
+              --health --sync --timeout "${{ inputs.timeout }}" --grpc-web; then
+          echo "synced=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "synced=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

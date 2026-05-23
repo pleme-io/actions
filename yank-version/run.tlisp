@@ -1,0 +1,53 @@
+;; yank-version/run.tlisp — polymorphic yank / deprecate.
+
+(define pkg (env-required "PACKAGE"))
+(define ver (env-required "VERSION"))
+(define reason (env-get "REASON" ""))
+
+(define (detect)
+  (cond
+    ((path-exists? "Cargo.toml") "cargo")
+    ((path-exists? "package.json") "npm")
+    ((path-exists? "pyproject.toml") "python")
+    (else "unknown")))
+
+(define eco (detect))
+(append-output (string-append "ecosystem=" eco))
+
+(cond
+  ((equal? eco "unknown")
+   (log-error "no recognized manifest at repo root — cannot infer ecosystem")
+   (append-output "yanked=false")
+   (exit 1)))
+
+(log-info (string-append "==> yanking " pkg "@" ver " on " eco))
+(cond ((not (equal? reason "")) (log-info (string-append "    reason: " reason))))
+
+(define r
+  (cond
+    ((equal? eco "cargo")
+     (exec-capture "cargo" "yank" "--version" ver pkg))
+    ((equal? eco "npm")
+     (let ((msg (if (equal? reason "")
+                  (string-append pkg "@" ver " has been yanked")
+                  reason)))
+       (exec-capture "npm" "deprecate" (string-append pkg "@" ver) msg)))
+    ((equal? eco "python")
+     ;; pypi has no programmatic yank — operator must use the web UI.
+     ;; Document the gap + exit non-zero.
+     (begin
+       (log-error "pypi has no programmatic yank — use https://pypi.org/manage/project/<pkg>/release/<ver>/")
+       (cons (list) (list))))
+    (else (cons (list) (list)))))
+
+(cond
+  ((not (list? r)) (begin (append-output "yanked=false") (exit 1)))
+  ((= (status-of r) 0)
+   (log-info "yanked")
+   (append-output "yanked=true")
+   (exit 0))
+  (else
+    (log-error "yank command failed")
+    (log-info (stderr-of r))
+    (append-output "yanked=false")
+    (exit 1)))

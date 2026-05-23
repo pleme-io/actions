@@ -1,0 +1,35 @@
+name: 'pleme-io · cloudflare-worker-deploy'
+description: 'Deploy a Cloudflare Worker via wrangler. Reads wrangler.toml at repo root or at the given path.'
+branding: { icon: 'cloud', color: 'orange' }
+
+inputs:
+  workdir:
+    description: "Directory containing wrangler.toml (default repo root)"
+    required: false
+    default: "."
+  environment:
+    description: "wrangler environment (-e flag)"
+    required: false
+    default: ""
+
+outputs:
+  deployed-url:
+    value: ${{ steps.cf.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with: { node-version: "20" }
+    - id: cf
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+      run: |
+        cd "${{ inputs.workdir }}"
+        env_flag=""
+        [ -n "${{ inputs.environment }}" ] && env_flag="-e ${{ inputs.environment }}"
+        npx wrangler@latest deploy $env_flag | tee /tmp/wrangler.log
+        url=$(grep -Eo 'https://[a-z0-9.-]+\.workers\.dev' /tmp/wrangler.log | head -1)
+        echo "url=$url" >> "$GITHUB_OUTPUT"
