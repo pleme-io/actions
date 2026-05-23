@@ -1,0 +1,63 @@
+;; caixa-detect/run.tlisp — find a (defcaixa ...) in the tree.
+
+;; Try a small set of canonical locations first.
+(define candidates
+  (list "caixa.tlisp" "caixa.lisp" "Caixa.tlisp"
+        ".caixa/main.tlisp" "src/caixa.tlisp"))
+
+(define (find-canonical)
+  (let loop ((xs candidates))
+    (cond
+      ((null? xs) "")
+      ((path-exists? (car xs)) (car xs))
+      (else (loop (cdr xs))))))
+
+;; Fallback: grep across *.tlisp / *.lisp for the (defcaixa form.
+(define (grep-defcaixa)
+  (let* ((r (exec-capture "sh" "-c"
+              "grep -rln --include='*.tlisp' --include='*.lisp' '(defcaixa' . 2>/dev/null | head -1"))
+         (out (string-trim (stdout-of r))))
+    out))
+
+(define caixa-path
+  (let ((p (find-canonical)))
+    (cond
+      ((not (equal? p "")) p)
+      (else (grep-defcaixa)))))
+
+(cond
+  ((equal? caixa-path "")
+   (log-info "no (defcaixa ...) declaration found")
+   (append-output "caixa-path=")
+   (append-output "caixa-kind=unknown")
+   (append-output "caixa-name=")
+   (exit 0)))
+
+(log-info (string-append "found caixa: " caixa-path))
+
+;; Extract :kind value via grep (regex matches :kind X within a few
+;; lines of (defcaixa). Falls back to empty when absent.
+(define (extract field)
+  (let* ((cmd (string-append
+                "grep -A20 '(defcaixa' " caixa-path
+                " | grep -oE ':" field " [^[:space:])]+' | head -1 | awk '{print $2}'"))
+         (r (exec-capture "sh" "-c" cmd)))
+    (string-trim (stdout-of r))))
+
+(define caixa-name
+  (let* ((r (exec-capture "sh" "-c"
+              (string-append "grep -oE '\\(defcaixa[[:space:]]+[^[:space:])]+' "
+                             caixa-path " | head -1 | awk '{print $2}'"))))
+    (string-trim (stdout-of r))))
+
+(define caixa-kind-raw (extract "kind"))
+(define caixa-kind
+  (cond
+    ((equal? caixa-kind-raw "") "unknown")
+    (else caixa-kind-raw)))
+
+(append-output (string-append "caixa-path=" caixa-path))
+(append-output (string-append "caixa-kind=" caixa-kind))
+(append-output (string-append "caixa-name=" caixa-name))
+
+(log-info (string-append "caixa-name=" caixa-name " caixa-kind=" caixa-kind))

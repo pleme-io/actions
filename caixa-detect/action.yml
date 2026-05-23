@@ -1,0 +1,32 @@
+name: 'pleme-io · caixa-detect'
+description: 'Find caixa.tlisp (or any .tlisp file containing (defcaixa ...)) at repo root. Emits the file path + the caixa kind (Biblioteca | Binario | Servico | Supervisor | Aplicacao).'
+branding: { icon: 'package', color: 'green' }
+
+outputs:
+  caixa-path:
+    description: "Path to the .tlisp file containing (defcaixa ...)"
+    value: ${{ steps.det.outputs.caixa-path }}
+  caixa-kind:
+    description: "One of: Biblioteca | Binario | Servico | Supervisor | Aplicacao | unknown"
+    value: ${{ steps.det.outputs.caixa-kind }}
+  caixa-name:
+    description: "Symbol name passed as first arg to defcaixa"
+    value: ${{ steps.det.outputs.caixa-name }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: det
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}

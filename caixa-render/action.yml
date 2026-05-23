@@ -1,0 +1,47 @@
+name: 'pleme-io · caixa-render'
+description: 'Render cluster artifacts (Helm chart + Kubernetes manifests + Flux + CI workflows) from a (defcaixa ...) form via the `feira` CLI.'
+branding: { icon: 'layers', color: 'green' }
+
+inputs:
+  caixa-path:
+    required: false
+    default: ""
+  output-dir:
+    required: false
+    default: "rendered/"
+
+outputs:
+  output-dir:
+    value: ${{ steps.render.outputs.output-dir }}
+  artifact-count:
+    value: ${{ steps.render.outputs.artifact-count }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+    - name: Install feira (caixa renderer CLI)
+      shell: bash
+      run: cargo install --locked feira --quiet || true
+    - id: render
+      shell: bash
+      env:
+        CAIXA_PATH: ${{ inputs.caixa-path }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        caixa="${CAIXA_PATH:-caixa.tlisp}"
+        if [ ! -f "$caixa" ]; then
+          for p in caixa.lisp Caixa.tlisp .caixa/main.tlisp src/caixa.tlisp; do
+            [ -f "$p" ] && caixa="$p" && break
+          done
+        fi
+        if [ ! -f "$caixa" ]; then
+          echo "::error::no caixa file found"
+          exit 1
+        fi
+        mkdir -p "$OUTPUT_DIR"
+        feira render --in "$caixa" --out "$OUTPUT_DIR"
+        count=$(find "$OUTPUT_DIR" -type f | wc -l)
+        echo "output-dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
+        echo "artifact-count=$count" >> "$GITHUB_OUTPUT"
+        echo "rendered $count artifact(s) into $OUTPUT_DIR"

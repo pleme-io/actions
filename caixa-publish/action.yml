@@ -1,0 +1,47 @@
+name: 'pleme-io · caixa-publish'
+description: 'Publish caixa-rendered Helm chart to an OCI registry. Wraps helm-publish but consumes the caixa-render output dir.'
+branding: { icon: 'upload', color: 'green' }
+
+inputs:
+  rendered-dir:
+    description: "Directory caixa-render wrote to (default: rendered/)"
+    required: false
+    default: "rendered/"
+  chart-subdir:
+    description: "Subdirectory under rendered-dir that contains the Helm chart"
+    required: false
+    default: "helm"
+  registry:
+    required: false
+    default: "ghcr.io/pleme-io/helm"
+
+outputs:
+  shipped:
+    value: ${{ steps.pub.outputs.shipped }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-helm@v4
+    - id: pub
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ env.GHCR_TOKEN || env.GITHUB_TOKEN }}
+      run: |
+        chart_dir="${{ inputs.rendered-dir }}/${{ inputs.chart-subdir }}"
+        if [ ! -d "$chart_dir" ]; then
+          echo "::error::chart dir not found: $chart_dir"
+          echo "shipped=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        cd "$chart_dir"
+        echo "$GHCR_TOKEN" | helm registry login ghcr.io --username "${GITHUB_ACTOR:-bot}" --password-stdin
+        name=$(yq '.name' Chart.yaml)
+        version=$(yq '.version' Chart.yaml)
+        helm package .
+        if helm push "${name}-${version}.tgz" "oci://${{ inputs.registry }}"; then
+          echo "shipped=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "shipped=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

@@ -1,0 +1,49 @@
+name: 'pleme-io · caixa-bump'
+description: 'Bump the :version field inside a (defcaixa ...) form. Sibling of cargo-bump / npm-bump for the tatara-lisp + caixa SDLC primitive.'
+branding: { icon: 'arrow-up-circle', color: 'green' }
+
+inputs:
+  bump-type:
+    required: false
+    default: patch
+  skip-when-no-source-changes:
+    required: false
+    default: "true"
+  source-paths:
+    required: false
+    default: "*.tlisp *.lisp"
+  caixa-path:
+    description: "Explicit .tlisp path (default: auto-detect via caixa-detect)"
+    required: false
+    default: ""
+
+outputs:
+  bumped:
+    value: ${{ steps.bump.outputs.bumped }}
+  new-version:
+    value: ${{ steps.bump.outputs.new-version }}
+  old-version:
+    value: ${{ steps.bump.outputs.old-version }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: bump
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BUMP_TYPE: ${{ inputs.bump-type }}
+        SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}
+        SOURCE_PATHS: ${{ inputs.source-paths }}
+        CAIXA_PATH: ${{ inputs.caixa-path }}

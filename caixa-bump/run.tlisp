@@ -1,0 +1,88 @@
+;; caixa-bump/run.tlisp — bump the :version inside (defcaixa ...).
+
+(define bump-type
+  (config-resolve "BUMP_TYPE" "bump" "default-type" "patch"))
+(define skip-flag
+  (config-resolve "SKIP_WHEN_NO_SOURCE_CHANGES" "bump" "skip-when-no-source-changes" "true"))
+(define source-paths
+  (config-resolve "SOURCE_PATHS" "bump" "source-paths" "*.tlisp *.lisp"))
+(define caixa-path-in (env-get "CAIXA_PATH" ""))
+
+(define (find-caixa)
+  (cond
+    ((not (equal? caixa-path-in "")) caixa-path-in)
+    (else
+     (let* ((r (exec-capture "sh" "-c"
+                "for p in caixa.tlisp caixa.lisp Caixa.tlisp .caixa/main.tlisp src/caixa.tlisp; do [ -f \"$p\" ] && echo \"$p\" && break; done")))
+       (string-trim (stdout-of r))))))
+
+(define caixa-path (find-caixa))
+
+(cond
+  ((equal? caixa-path "")
+   (log-error "no caixa file found at canonical paths")
+   (append-output "old-version=")
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (exit 1)))
+
+(define (extract-version)
+  (let* ((r (exec-capture "sh" "-c"
+              (string-append "grep -oE ':version \"[^\"]+\"' " caixa-path
+                             " | head -1 | sed 's/:version \"//;s/\"$//'"))))
+    (string-trim (stdout-of r))))
+
+(define old-version (extract-version))
+
+(cond
+  ((equal? old-version "")
+   (log-error "no :version field found in caixa")
+   (append-output "old-version=")
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (exit 1)))
+
+(define (should-bump?)
+  (cond
+    ((not (equal? skip-flag "true")) #t)
+    (else (has-changes-since? (last-tag) source-paths))))
+
+(define (bump-semver v kind)
+  ;; Naive but typed: parse "X.Y.Z" + bump component via awk.
+  (let* ((cmd (string-append "echo " v " | awk -F. -v k=" kind
+                             " '{ if (k==\"major\") print $1+1\".0.0\";"
+                             "    else if (k==\"minor\") print $1\".\"$2+1\".0\";"
+                             "    else print $1\".\"$2\".\"$3+1 }'"))
+         (r (exec-capture "sh" "-c" cmd)))
+    (string-trim (stdout-of r))))
+
+(cond
+  ((not (should-bump?))
+   (log-info (string-append "no changes since last tag — skipping (at " old-version ")"))
+   (append-output (string-append "old-version=" old-version))
+   (append-output "bumped=false")
+   (append-output "new-version=")
+   (exit 0)))
+
+(define new-version (bump-semver old-version bump-type))
+
+;; Rewrite :version "OLD" → :version "NEW" via sed.
+(define sed-cmd
+  (string-append "sed -i.bak 's/:version \"" old-version "\"/:version \""
+                 new-version "\"/' " caixa-path
+                 " && rm " caixa-path ".bak"))
+
+(let ((r (exec-capture "sh" "-c" sed-cmd)))
+  (cond
+    ((= (status-of r) 0)
+     (log-info (string-append "bumped: " old-version " -> " new-version))
+     (append-output (string-append "old-version=" old-version))
+     (append-output "bumped=true")
+     (append-output (string-append "new-version=" new-version))
+     (exit 0))
+    (else
+      (log-error "sed rewrite failed")
+      (append-output (string-append "old-version=" old-version))
+      (append-output "bumped=false")
+      (append-output "new-version=")
+      (exit 1))))
