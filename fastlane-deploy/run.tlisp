@@ -1,0 +1,9 @@
+;; fastlane-deploy/run.tlisp
+
+(define lane (env-required "LANE"))
+(define wd (env-get "WORKING_DIRECTORY" "."))
+(exec-check "gem" "install" "fastlane" "--no-document")
+(define r (exec-capture "sh" "-c" (string-append "cd " wd " && fastlane " lane)))
+(cond
+  ((= (status-of r) 0) (append-output "deployed=true") (exit 0))
+  (else (append-output "deployed=false") (exit 1)))

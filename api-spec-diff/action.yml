@@ -15,36 +15,28 @@ inputs:
 
 outputs:
   breaking-count:
-    value: ${{ steps.diff.outputs.breaking-count }}
+    value: ${{ steps.run.outputs.breaking-count }}
 
 runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
-    - id: diff
+    - id: src
       shell: bash
       run: |
-        spec="${{ inputs.spec-path }}"
-        base="${{ inputs.base-ref }}"
-        tmp=$(mktemp -d)
-        git show "$base:$spec" > "$tmp/base.spec" 2>/dev/null || true
-        if [ ! -s "$tmp/base.spec" ]; then
-          echo "breaking-count=0" >> "$GITHUB_OUTPUT"
-          echo "no base spec — skipping"
-          exit 0
-        fi
-        # Use oasdiff for OpenAPI
-        if [[ "$spec" == *.yaml ]] || [[ "$spec" == *.yml ]] || [[ "$spec" == *.json ]]; then
-          curl -sSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz \
-            | tar xz -C /tmp && sudo mv /tmp/oasdiff /usr/local/bin/
-          breaking=$(oasdiff breaking "$tmp/base.spec" "$spec" | grep -c '^breaking' || echo 0)
-          echo "breaking-count=$breaking" >> "$GITHUB_OUTPUT"
-          if [ "${{ inputs.fail-on-breaking }}" = "true" ] && [ "$breaking" -gt 0 ]; then
-            echo "::error::$breaking breaking change(s) detected"
-            exit 1
-          fi
-        else
-          echo "breaking-count=0" >> "$GITHUB_OUTPUT"
-          echo "non-OpenAPI specs not yet supported"
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SPEC_PATH: ${{ inputs.spec-path }}
+        BASE_REF: ${{ inputs.base-ref }}
+        FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}

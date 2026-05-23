@@ -17,8 +17,23 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: run
+    - uses: maxim-lobanov/setup-xcode@v1
+      with: { xcode-version: latest-stable }
+    - id: src
       shell: bash
       run: |
-        echo "::warning::app-store-connect action stub — full implementation tracked in patterns.nix backlog"
-        echo "uploaded=stub" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IPA_PATH: ${{ inputs.ipa-path }}
+        API_KEY_ID: ${{ inputs.api-key-id }}
+        ISSUER_ID: ${{ inputs.issuer-id }}

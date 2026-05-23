@@ -1,0 +1,15 @@
+;; app-store-connect/run.tlisp
+
+(define ipa (env-required "IPA_PATH"))
+(define key-id (env-required "API_KEY_ID"))
+(define issuer (env-required "ISSUER_ID"))
+
+(define r (exec-capture "xcrun" "altool" "--upload-app"
+            "-f" ipa
+            "--apiKey" key-id
+            "--apiIssuer" issuer
+            "--type" "ios"))
+
+(cond
+  ((= (status-of r) 0) (append-output "uploaded=true") (exit 0))
+  (else (append-output "uploaded=false") (exit 1)))

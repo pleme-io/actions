@@ -1,0 +1,25 @@
+;; ko-build/run.tlisp
+
+(define pkg (env-required "PACKAGE"))
+(define repo (env-required "REPO_ARG"))
+(define platforms (env-get "PLATFORMS" "linux/amd64,linux/arm64"))
+(define push (env-get "PUSH" "true"))
+
+(let ((env-file (env-get "GITHUB_ENV" "")))
+  (cond
+    ((not (equal? env-file ""))
+     (exec-check "sh" "-c"
+       (string-append "echo 'KO_DOCKER_REPO=" repo "' >> " env-file)))))
+
+(define push-flag (if (equal? push "true") "--push=true" "--push=false --local"))
+(define cmd
+  (string-append "KO_DOCKER_REPO=" repo " ko build "
+                 push-flag " --platform '" platforms "' --bare " pkg))
+
+(define r (exec-capture "sh" "-c" cmd))
+(cond
+  ((= (status-of r) 0)
+   (let ((img (string-trim (stdout-of r))))
+     (append-output (string-append "image=" img))
+     (exit 0)))
+  (else (append-output "image=") (exit 1)))

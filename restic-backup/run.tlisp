@@ -1,0 +1,27 @@
+;; restic-backup/run.tlisp
+
+(define repo (env-required "REPOSITORY"))
+(define passwd (env-required "PASSWORD"))
+(define paths (env-required "PATHS_ARG"))
+
+(exec-check "sudo" "apt-get" "install" "-y" "-qq" "restic")
+
+(let ((env-file (env-get "GITHUB_ENV" "")))
+  (cond
+    ((not (equal? env-file ""))
+     (exec-check "sh" "-c"
+       (string-append "echo 'RESTIC_REPOSITORY=" repo "' >> " env-file))
+     (exec-check "sh" "-c"
+       (string-append "echo 'RESTIC_PASSWORD=" passwd "' >> " env-file)))))
+
+(define args (append (list "backup") (string-split paths " ")))
+(define r (apply exec-capture (cons "restic" args)))
+
+(cond
+  ((= (status-of r) 0)
+   (let* ((id-r (exec-capture "sh" "-c"
+                  "restic snapshots --json | jq -r '.[-1].short_id'"))
+          (sid (string-trim (stdout-of id-r))))
+     (append-output (string-append "snapshot-id=" sid))
+     (exit 0)))
+  (else (append-output "snapshot-id=") (exit 1)))

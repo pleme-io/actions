@@ -1,0 +1,12 @@
+;; wireguard-up/run.tlisp
+
+(define config (env-required "CONFIG"))
+(exec-check "sudo" "apt-get" "install" "-y" "-qq" "wireguard-tools")
+(define iface "wg0")
+(exec-check "sh" "-c"
+  (string-append "echo '" config "' | sudo tee /etc/wireguard/" iface ".conf > /dev/null"))
+(define r (exec-capture "sudo" "wg-quick" "up" iface))
+(cond
+  ((= (status-of r) 0)
+   (append-output (string-append "interface=" iface)) (exit 0))
+  (else (append-output "interface=") (exit 1)))

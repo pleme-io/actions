@@ -18,7 +18,7 @@ inputs:
 
 outputs:
   image:
-    value: ${{ steps.ko.outputs.image }}
+    value: ${{ steps.run.outputs.image }}
 
 runs:
   using: composite
@@ -26,12 +26,22 @@ runs:
     - uses: actions/setup-go@v5
       with: { go-version: "stable" }
     - uses: ko-build/setup-ko@v0.7
-    - id: ko
+    - id: src
       shell: bash
-      env:
-        KO_DOCKER_REPO: ${{ inputs.repo }}
       run: |
-        push_flag="--push=true"
-        [ "${{ inputs.push }}" = "false" ] && push_flag="--push=false --local"
-        image=$(ko build $push_flag --platform "${{ inputs.platforms }}" --bare "${{ inputs.package }}")
-        echo "image=$image" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        REPO_ARG: ${{ inputs.repo }}
+        PLATFORMS: ${{ inputs.platforms }}
+        PUSH: ${{ inputs.push }}

@@ -1,0 +1,38 @@
+;; db-migrate/run.tlisp
+
+(define wd (env-get "WORKDIR" "."))
+(define dir-arg (env-get "DIRECTION" "up"))
+
+(define (detect)
+  (cond
+    ((path-exists? (string-append wd "/Cargo.toml")) "rust")
+    ((path-exists? (string-append wd "/pyproject.toml")) "python")
+    ((path-exists? (string-append wd "/package.json")) "npm")
+    (else "unknown")))
+
+(define eco (detect))
+
+(define cmd
+  (cond
+    ((equal? eco "rust")
+     (string-append "cd " wd " && cargo install sqlx-cli --locked --no-default-features --features postgres,sqlite && sqlx migrate run"))
+    ((equal? eco "python")
+     (string-append "cd " wd " && uv run alembic upgrade head"))
+    ((equal? eco "npm")
+     (string-append "cd " wd " && npm install && npx knex migrate:latest"))
+    (else "")))
+
+(cond
+  ((equal? cmd "")
+   (log-error (string-append "no migration tool detected for " eco))
+   (append-output "applied-count=0") (exit 1)))
+
+(define r (exec-capture "sh" "-c" cmd))
+(cond
+  ((= (status-of r) 0)
+   (let ((count-r (exec-capture "sh" "-c"
+                    (string-append "echo '" (string-replace (stdout-of r) "'" "'"'"'")
+                                   "' | grep -c 'Applied\|migration\|up to date' || echo 0"))))
+     (append-output (string-append "applied-count=" (string-trim (stdout-of count-r))))
+     (exit 0)))
+  (else (append-output "applied-count=0") (exit 1)))

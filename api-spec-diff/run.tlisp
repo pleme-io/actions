@@ -1,0 +1,32 @@
+;; api-spec-diff/run.tlisp
+
+(define spec (env-required "SPEC_PATH"))
+(define base (env-get "BASE_REF" "main"))
+(define fail-on (env-get "FAIL_ON_BREAKING" "true"))
+
+(exec-check "sh" "-c"
+  "curl -sSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz -o /tmp/oasdiff.tgz && tar xz -C /tmp -f /tmp/oasdiff.tgz && sudo mv /tmp/oasdiff /usr/local/bin/")
+
+(exec-capture "sh" "-c"
+  (string-append "git show " base ":" spec " > /tmp/base.spec 2>/dev/null || true"))
+
+(cond
+  ((not (path-exists? "/tmp/base.spec"))
+   (log-info "no base spec — skipping")
+   (append-output "breaking-count=0") (exit 0)))
+
+(define r (exec-capture "sh" "-c"
+            (string-append "oasdiff breaking /tmp/base.spec '" spec "'")))
+(define out (stdout-of r))
+
+(define count-r
+  (exec-capture "sh" "-c"
+    (string-append "echo '" (string-replace out "'" "'"'"'")
+                   "' | grep -c '^breaking' || echo 0")))
+(define cnt (string-trim (stdout-of count-r)))
+
+(append-output (string-append "breaking-count=" cnt))
+
+(cond
+  ((and (equal? fail-on "true") (not (equal? cnt "0"))) (exit 1))
+  (else (exit 0)))
