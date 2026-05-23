@@ -168,3 +168,63 @@
 (define (cargo-published? name version)
   (http-200? (string-append "https://crates.io/api/v1/crates/"
                             name "/" version)))
+
+;; npm registry (with @scope/name URL-encoding).
+(define (npm-published? name version)
+  (let* ((u1 (string-replace name "@" "%40"))
+         (u2 (string-replace u1 "/" "%2F"))
+         (url (string-append "https://registry.npmjs.org/" u2 "/" version)))
+    (http-200? url)))
+
+;; pypi version-specific JSON endpoint.
+(define (pypi-published? name version)
+  (http-200? (string-append "https://pypi.org/pypi/" name "/" version "/json")))
+
+;; Helm OCI registry probe (v2 manifest endpoint).
+(define (helm-published? registry name version)
+  (let* ((host (string-replace registry "ghcr.io" "ghcr.io/v2"))
+         (url (string-append "https://" host "/" name "/manifests/" version)))
+    (http-200? url)))
+
+;; ────────────────────────────────────────────────────────────────
+;; JSON manifest field reader (uses jq via shell)
+;; ────────────────────────────────────────────────────────────────
+
+(define (json-read-field path field)
+  ;; field is a jq path expression: "name" or ".dependencies.foo"
+  (let ((r (exec-capture "sh" "-c"
+              (string-append "jq -r '" field "' " path " 2>/dev/null"))))
+    (if (= (status-of r) 0)
+      (let ((v (string-trim (stdout-of r))))
+        (if (equal? v "null") "" v))
+      "")))
+
+;; npm-specific shorthands.
+(define (npm-package-name) (json-read-field "package.json" ".name"))
+(define (npm-package-version) (json-read-field "package.json" ".version"))
+
+;; ────────────────────────────────────────────────────────────────
+;; YAML manifest field reader (uses yq via shell)
+;; ────────────────────────────────────────────────────────────────
+
+(define (yaml-read-field path field)
+  (let ((r (exec-capture "sh" "-c"
+              (string-append "yq '" field "' " path " 2>/dev/null"))))
+    (if (= (status-of r) 0)
+      (let ((v (string-trim (stdout-of r))))
+        (if (equal? v "null") "" v))
+      "")))
+
+;; Helm Chart.yaml shorthands.
+(define (helm-chart-name) (yaml-read-field "Chart.yaml" ".name"))
+(define (helm-chart-version) (yaml-read-field "Chart.yaml" ".version"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Python pyproject.toml shorthands (uses the TOML walker above)
+;; ────────────────────────────────────────────────────────────────
+
+(define (pyproject-name)
+  (toml-read-field "pyproject.toml" "[project]" "name"))
+
+(define (pyproject-version)
+  (toml-read-field "pyproject.toml" "[project]" "version"))
