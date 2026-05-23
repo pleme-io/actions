@@ -1,0 +1,4 @@
+;; semantic-release/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::semantic-release not yet implemented — typed schema is locked")
+(append-output "released-version=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; playwright-test/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::playwright-test not yet implemented — typed schema is locked")
+(append-output "passed=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; eas-build/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::eas-build not yet implemented — typed schema is locked")
+(append-output "build-url=stub")
+(exit 0)

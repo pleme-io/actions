@@ -1,0 +1,4 @@
+;; heroku-deploy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::heroku-deploy not yet implemented — typed schema is locked")
+(append-output "deployed=stub")
+(exit 0)

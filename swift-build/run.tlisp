@@ -1,0 +1,4 @@
+;; swift-build/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::swift-build not yet implemented — typed schema is locked")
+(append-output "built=stub")
+(exit 0)

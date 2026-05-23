@@ -1,0 +1,37 @@
+name: 'pleme-io · telegram-notify'
+description: 'Send a message to a Telegram chat via bot API.'
+branding: { icon: 'message-circle', color: 'blue' }
+
+inputs:
+  bot-token:
+    required: true
+  chat-id:
+    required: true
+  text:
+    required: true
+
+outputs:
+  sent:
+    value: ${{ steps.run.outputs.sent }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BOT_TOKEN: ${{ inputs.bot-token }}
+        CHAT_ID: ${{ inputs.chat-id }}
+        TEXT: ${{ inputs.text }}

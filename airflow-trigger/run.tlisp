@@ -1,0 +1,4 @@
+;; airflow-trigger/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::airflow-trigger not yet implemented — typed schema is locked")
+(append-output "run-id=stub")
+(exit 0)

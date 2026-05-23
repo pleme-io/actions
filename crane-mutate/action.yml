@@ -1,0 +1,35 @@
+name: 'pleme-io · crane-mutate'
+description: 'Mutate an OCI image's labels/tags via crane.'
+branding: { icon: 'edit', color: 'blue' }
+
+inputs:
+  image:
+    required: true
+  labels:
+    required: false
+    default: ""
+
+outputs:
+  mutated:
+    value: ${{ steps.run.outputs.mutated }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        LABELS: ${{ inputs.labels }}

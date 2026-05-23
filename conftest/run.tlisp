@@ -1,0 +1,4 @@
+;; conftest/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::conftest not yet implemented — typed schema is locked")
+(append-output "violations=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; crane-mutate/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::crane-mutate not yet implemented — typed schema is locked")
+(append-output "mutated=stub")
+(exit 0)

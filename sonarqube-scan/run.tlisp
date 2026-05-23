@@ -1,0 +1,4 @@
+;; sonarqube-scan/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::sonarqube-scan not yet implemented — typed schema is locked")
+(append-output "scan-id=stub")
+(exit 0)

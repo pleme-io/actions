@@ -1,0 +1,37 @@
+name: 'pleme-io · pyroscope-push'
+description: 'Push a profiling sample to a Pyroscope server.'
+branding: { icon: 'activity', color: 'purple' }
+
+inputs:
+  url:
+    required: true
+  app-name:
+    required: true
+  profile-file:
+    required: true
+
+outputs:
+  pushed:
+    value: ${{ steps.run.outputs.pushed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        URL_ARG: ${{ inputs.url }}
+        APP_NAME: ${{ inputs.app-name }}
+        PROFILE_FILE: ${{ inputs.profile-file }}

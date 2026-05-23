@@ -1,0 +1,4 @@
+;; twilio-sms/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::twilio-sms not yet implemented — typed schema is locked")
+(append-output "sid=stub")
+(exit 0)

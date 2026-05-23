@@ -1,0 +1,4 @@
+;; zola-build/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::zola-build not yet implemented — typed schema is locked")
+(append-output "site-path=stub")
+(exit 0)

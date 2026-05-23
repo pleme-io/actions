@@ -1,0 +1,4 @@
+;; golangci-lint/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::golangci-lint not yet implemented — typed schema is locked")
+(append-output "findings=stub")
+(exit 0)

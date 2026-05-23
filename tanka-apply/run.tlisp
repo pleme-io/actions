@@ -1,0 +1,4 @@
+;; tanka-apply/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::tanka-apply not yet implemented — typed schema is locked")
+(append-output "applied=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; mattermost-notify/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::mattermost-notify not yet implemented — typed schema is locked")
+(append-output "sent=stub")
+(exit 0)

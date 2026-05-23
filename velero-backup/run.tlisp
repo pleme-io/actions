@@ -1,0 +1,4 @@
+;; velero-backup/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::velero-backup not yet implemented — typed schema is locked")
+(append-output "backup-name=stub")
+(exit 0)

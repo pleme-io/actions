@@ -1,0 +1,4 @@
+;; sqitch-deploy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::sqitch-deploy not yet implemented — typed schema is locked")
+(append-output "applied=stub")
+(exit 0)

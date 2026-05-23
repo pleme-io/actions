@@ -1,0 +1,4 @@
+;; sentry-release/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::sentry-release not yet implemented — typed schema is locked")
+(append-output "release-version=stub")
+(exit 0)

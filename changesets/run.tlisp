@@ -1,0 +1,4 @@
+;; changesets/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::changesets not yet implemented — typed schema is locked")
+(append-output "published-count=stub")
+(exit 0)

@@ -1,0 +1,36 @@
+name: 'pleme-io · cypress-test'
+description: 'Run cypress run.'
+branding: { icon: 'check-circle', color: 'gray-dark' }
+
+inputs:
+  config-file:
+    required: false
+    default: "cypress.config.js"
+  workdir:
+    required: false
+    default: "."
+
+outputs:
+  passed:
+    value: ${{ steps.run.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CONFIG_FILE: ${{ inputs.config-file }}
+        WORKDIR: ${{ inputs.workdir }}

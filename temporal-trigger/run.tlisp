@@ -1,0 +1,4 @@
+;; temporal-trigger/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::temporal-trigger not yet implemented — typed schema is locked")
+(append-output "workflow-id=stub")
+(exit 0)

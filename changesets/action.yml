@@ -1,0 +1,32 @@
+name: 'pleme-io · changesets'
+description: 'Run npm/changesets version + publish flow.'
+branding: { icon: 'tag', color: 'purple' }
+
+inputs:
+  publish:
+    required: false
+    default: "true"
+
+outputs:
+  published-count:
+    value: ${{ steps.run.outputs.published-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PUBLISH: ${{ inputs.publish }}

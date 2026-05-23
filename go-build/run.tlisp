@@ -1,0 +1,4 @@
+;; go-build/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::go-build not yet implemented — typed schema is locked")
+(append-output "binaries=stub")
+(exit 0)

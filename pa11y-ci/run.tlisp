@@ -1,0 +1,4 @@
+;; pa11y-ci/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::pa11y-ci not yet implemented — typed schema is locked")
+(append-output "issues=stub")
+(exit 0)

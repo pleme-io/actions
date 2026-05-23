@@ -1,0 +1,34 @@
+name: 'pleme-io · json-schema-check'
+description: 'Validate JSON files against JSON Schema.'
+branding: { icon: 'check-circle', color: 'blue' }
+
+inputs:
+  schema:
+    required: true
+  files:
+    required: true
+
+outputs:
+  errors:
+    value: ${{ steps.run.outputs.errors }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SCHEMA: ${{ inputs.schema }}
+        FILES: ${{ inputs.files }}

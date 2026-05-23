@@ -1,0 +1,39 @@
+name: 'pleme-io · netlify-deploy'
+description: 'Deploy to Netlify via netlify CLI.'
+branding: { icon: 'cloud', color: 'green' }
+
+inputs:
+  site-id:
+    required: true
+  dir:
+    required: false
+    default: "dist/"
+  prod:
+    required: false
+    default: "false"
+
+outputs:
+  url:
+    value: ${{ steps.run.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SITE_ID: ${{ inputs.site-id }}
+        DIR: ${{ inputs.dir }}
+        PROD: ${{ inputs.prod }}

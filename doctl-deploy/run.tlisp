@@ -1,0 +1,4 @@
+;; doctl-deploy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::doctl-deploy not yet implemented — typed schema is locked")
+(append-output "deployed=stub")
+(exit 0)

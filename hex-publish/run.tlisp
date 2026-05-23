@@ -1,0 +1,4 @@
+;; hex-publish/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::hex-publish not yet implemented — typed schema is locked")
+(append-output "published=stub")
+(exit 0)

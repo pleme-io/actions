@@ -1,0 +1,34 @@
+name: 'pleme-io · cosign-verify'
+description: 'Verify a cosign signature on an artifact or image.'
+branding: { icon: 'shield', color: 'green' }
+
+inputs:
+  artifact:
+    required: true
+  certificate-identity:
+    required: true
+
+outputs:
+  verified:
+    value: ${{ steps.run.outputs.verified }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ARTIFACT: ${{ inputs.artifact }}
+        CERTIFICATE_IDENTITY: ${{ inputs.certificate-identity }}

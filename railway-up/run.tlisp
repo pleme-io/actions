@@ -1,0 +1,4 @@
+;; railway-up/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::railway-up not yet implemented — typed schema is locked")
+(append-output "deployed=stub")
+(exit 0)

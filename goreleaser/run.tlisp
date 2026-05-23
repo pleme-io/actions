@@ -1,0 +1,4 @@
+;; goreleaser/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::goreleaser not yet implemented — typed schema is locked")
+(append-output "released=stub")
+(exit 0)

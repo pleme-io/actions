@@ -1,0 +1,4 @@
+;; kics-scan/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::kics-scan not yet implemented — typed schema is locked")
+(append-output "findings-count=stub")
+(exit 0)

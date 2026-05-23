@@ -1,0 +1,4 @@
+;; loki-log-push/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::loki-log-push not yet implemented — typed schema is locked")
+(append-output "pushed=stub")
+(exit 0)

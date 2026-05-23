@@ -1,0 +1,4 @@
+;; gosec/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::gosec not yet implemented — typed schema is locked")
+(append-output "findings-count=stub")
+(exit 0)

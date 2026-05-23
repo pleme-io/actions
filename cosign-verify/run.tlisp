@@ -1,0 +1,4 @@
+;; cosign-verify/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::cosign-verify not yet implemented — typed schema is locked")
+(append-output "verified=stub")
+(exit 0)

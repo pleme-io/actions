@@ -1,0 +1,40 @@
+name: 'pleme-io · sentry-release'
+description: 'Create a Sentry release + associate commits.'
+branding: { icon: 'tag', color: 'red' }
+
+inputs:
+  auth-token:
+    required: true
+  org:
+    required: true
+  project:
+    required: true
+  version:
+    required: true
+
+outputs:
+  release-version:
+    value: ${{ steps.run.outputs.release-version }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        AUTH_TOKEN: ${{ inputs.auth-token }}
+        ORG: ${{ inputs.org }}
+        PROJECT: ${{ inputs.project }}
+        VERSION: ${{ inputs.version }}

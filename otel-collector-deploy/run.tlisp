@@ -1,0 +1,4 @@
+;; otel-collector-deploy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::otel-collector-deploy not yet implemented — typed schema is locked")
+(append-output "deployed=stub")
+(exit 0)

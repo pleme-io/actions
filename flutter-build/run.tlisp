@@ -1,0 +1,4 @@
+;; flutter-build/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::flutter-build not yet implemented — typed schema is locked")
+(append-output "artifact-path=stub")
+(exit 0)

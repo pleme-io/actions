@@ -1,0 +1,34 @@
+name: 'pleme-io · azure-deploy'
+description: 'Deploy via Azure CLI (az deployment group create).'
+branding: { icon: 'cloud', color: 'blue' }
+
+inputs:
+  resource-group:
+    required: true
+  template-file:
+    required: true
+
+outputs:
+  deployed:
+    value: ${{ steps.run.outputs.deployed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        TEMPLATE_FILE: ${{ inputs.template-file }}

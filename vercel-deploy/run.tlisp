@@ -1,0 +1,4 @@
+;; vercel-deploy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::vercel-deploy not yet implemented — typed schema is locked")
+(append-output "url=stub")
+(exit 0)

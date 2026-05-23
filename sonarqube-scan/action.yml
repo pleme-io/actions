@@ -1,0 +1,38 @@
+name: 'pleme-io · sonarqube-scan'
+description: 'Run SonarQube/SonarCloud scan + push results.'
+branding: { icon: 'activity', color: 'blue' }
+
+inputs:
+  token:
+    required: true
+  project-key:
+    required: true
+  host-url:
+    required: false
+    default: "https://sonarcloud.io"
+
+outputs:
+  scan-id:
+    value: ${{ steps.run.outputs.scan-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TOKEN: ${{ inputs.token }}
+        PROJECT_KEY: ${{ inputs.project-key }}
+        HOST_URL: ${{ inputs.host-url }}

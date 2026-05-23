@@ -1,0 +1,4 @@
+;; skopeo-copy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::skopeo-copy not yet implemented — typed schema is locked")
+(append-output "copied=stub")
+(exit 0)

@@ -1,0 +1,4 @@
+;; render-deploy/run.tlisp — STUB. Implementation lands on consumer demand.
+(log-info "::warning::render-deploy not yet implemented — typed schema is locked")
+(append-output "deploy-id=stub")
+(exit 0)
