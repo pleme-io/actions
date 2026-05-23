@@ -1,0 +1,13 @@
+;; buildkit-cache-warm/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define image (env-required "IMAGE"))
+(define cache-in (env-get "CACHE_IMAGE" ""))
+(define cache (if (equal? cache-in "") (string-append image ":buildcache") cache-in))
+(log-info (string-append "==> warming cache " cache))
+(define r (exec-capture "docker" "buildx" "build"
+            "--cache-from" (string-append "type=registry,ref=" cache)
+            "--cache-to" (string-append "type=registry,ref=" cache ",mode=max")
+            "--output" "type=cacheonly" "."))
+(cond
+  ((= (status-of r) 0) (append-output "warmed=true") (exit 0))
+  (else (append-output "warmed=false") (exit 1)))

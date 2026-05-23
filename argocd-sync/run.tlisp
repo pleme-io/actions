@@ -1,0 +1,15 @@
+;; argocd-sync/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define app (env-required "APP_NAME"))
+(define timeout (env-get "TIMEOUT" "300"))
+(log-info (string-append "==> argocd app sync " app))
+(exec-check "sh" "-c"
+  "curl -sSL -o /tmp/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 && chmod +x /tmp/argocd && sudo mv /tmp/argocd /usr/local/bin/")
+(define r1 (exec-capture "argocd" "app" "sync" app "--grpc-web"))
+(define r2 (exec-capture "argocd" "app" "wait" app "--health" "--sync" "--timeout" timeout "--grpc-web"))
+(cond
+  ((and (= (status-of r1) 0) (= (status-of r2) 0))
+   (append-output "synced=true") (exit 0))
+  (else
+   (log-error "argocd sync or wait failed")
+   (append-output "synced=false") (exit 1)))

@@ -1,0 +1,20 @@
+;; nix-build/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define ref (env-get "FLAKE_REF" ".#default"))
+(define sys (env-get "SYSTEM" ""))
+(define base (list "build" "--print-out-paths" "--no-link"))
+(define with-sys (if (equal? sys "") base (append base (list "--system" sys))))
+(define args (append with-sys (list ref)))
+(log-info (string-append "==> nix " (string-join " " args)))
+(define r (apply exec-capture (cons "nix" args)))
+(cond
+  ((= (status-of r) 0)
+   (let ((path (string-trim (stdout-of r))))
+     (log-info (string-append "built: " path))
+     (append-output (string-append "out-path=" path))
+     (exit 0)))
+  (else
+   (log-error "nix build failed")
+   (log-info (stderr-of r))
+   (append-output "out-path=")
+   (exit 1)))

@@ -12,7 +12,7 @@ inputs:
 
 outputs:
   warmed:
-    value: ${{ steps.warm.outputs.warmed }}
+    value: ${{ steps.run.outputs.warmed }}
 
 runs:
   using: composite
@@ -23,16 +23,20 @@ runs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
-    - id: warm
+    - id: src
       shell: bash
       run: |
-        cache="${{ inputs.cache-image }}"
-        [ -z "$cache" ] && cache="${{ inputs.image }}:buildcache"
-        if docker buildx build --cache-from "type=registry,ref=$cache" \
-           --cache-to "type=registry,ref=$cache,mode=max" \
-           --output "type=cacheonly" .; then
-          echo "warmed=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "warmed=false" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        CACHE_IMAGE: ${{ inputs.cache-image }}

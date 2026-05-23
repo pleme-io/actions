@@ -18,8 +18,24 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: run
+    - id: src
       shell: bash
       run: |
-        echo "::warning::artifact-fetch action stub — full implementation tracked in patterns.nix backlog"
-        echo "fetched-path=stub" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        WORKFLOW: ${{ inputs.workflow }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        TARGET_DIR: ${{ inputs.target-dir }}
+        RUN_ID: ${{ inputs.run-id }}
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}

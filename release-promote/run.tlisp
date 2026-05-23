@@ -1,0 +1,14 @@
+;; release-promote/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define img (env-required "IMAGE"))
+(define src (env-required "SOURCE_TAG"))
+(define tgt (env-required "TARGET_TAG"))
+(define src-ref (string-append img ":" src))
+(define tgt-ref (string-append img ":" tgt))
+(log-info (string-append "==> docker buildx imagetools create " tgt-ref " from " src-ref))
+(define r (exec-capture "docker" "buildx" "imagetools" "create" "-t" tgt-ref src-ref))
+(cond
+  ((= (status-of r) 0)
+   (log-info (string-append "promoted " src-ref " -> " tgt-ref))
+   (append-output "promoted=true") (exit 0))
+  (else (append-output "promoted=false") (exit 1)))

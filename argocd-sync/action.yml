@@ -16,25 +16,27 @@ inputs:
 
 outputs:
   synced:
-    value: ${{ steps.sync.outputs.synced }}
+    value: ${{ steps.run.outputs.synced }}
 
 runs:
   using: composite
   steps:
-    - id: sync
+    - id: src
       shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
       env:
+        APP_NAME: ${{ inputs.app-name }}
         ARGOCD_SERVER: ${{ inputs.server }}
         ARGOCD_AUTH_TOKEN: ${{ inputs.auth-token }}
-      run: |
-        curl -sSL -o /usr/local/bin/argocd \
-          https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-        chmod +x /usr/local/bin/argocd
-        if argocd app sync "${{ inputs.app-name }}" --grpc-web \
-           && argocd app wait "${{ inputs.app-name }}" \
-              --health --sync --timeout "${{ inputs.timeout }}" --grpc-web; then
-          echo "synced=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "synced=false" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
+        TIMEOUT: ${{ inputs.timeout }}

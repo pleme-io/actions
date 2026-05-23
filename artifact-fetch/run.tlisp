@@ -1,0 +1,43 @@
+;; artifact-fetch/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define wf (env-required "WORKFLOW"))
+(define art (env-required "ARTIFACT_NAME"))
+(define target (env-get "TARGET_DIR" "./artifacts"))
+(define rid-in (env-get "RUN_ID" ""))
+(define repo (env-get "GITHUB_REPOSITORY" ""))
+
+(exec-check "mkdir" "-p" target)
+
+(define rid
+  (cond
+    ((not (equal? rid-in "")) rid-in)
+    (else
+      (let ((r (exec-capture "gh" "run" "list"
+                 "--repo" repo
+                 "--workflow" wf
+                 "--status" "success"
+                 "--limit" "1"
+                 "--json" "databaseId"
+                 "--jq" ".[0].databaseId")))
+        (string-trim (stdout-of r))))))
+
+(cond
+  ((or (equal? rid "") (equal? rid "null"))
+   (log-error "no matching run found")
+   (append-output "fetched-path=")
+   (exit 1)))
+
+(define r (exec-capture "gh" "run" "download" rid
+            "--repo" repo
+            "--name" art
+            "--dir" target))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info (string-append "fetched run=" rid " artifact=" art))
+   (append-output (string-append "fetched-path=" target))
+   (exit 0))
+  (else
+   (log-error "gh run download failed")
+   (append-output "fetched-path=")
+   (exit 1)))
