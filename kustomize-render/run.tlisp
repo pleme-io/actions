@@ -1,0 +1,15 @@
+;; kustomize-render/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define overlay (env-required "OVERLAY"))
+(define out (env-get "OUTPUT" "rendered.yaml"))
+(log-info (string-append "==> kustomize build " overlay " -o " out))
+(define r (exec-capture "kustomize" "build" overlay "-o" out))
+(cond
+  ((= (status-of r) 0)
+   (append-output (string-append "output-path=" out))
+   (exit 0))
+  (else
+   (log-error "kustomize build failed")
+   (log-info (stderr-of r))
+   (append-output "output-path=")
+   (exit 1)))

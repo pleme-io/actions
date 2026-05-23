@@ -1,0 +1,15 @@
+;; k8s-rollout-wait/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define resource (env-required "RESOURCE"))
+(define ns (env-get "NAMESPACE" "default"))
+(define timeout (env-get "TIMEOUT" "300s"))
+(log-info (string-append "==> kubectl rollout status " resource " (-n " ns ")"))
+(define r (exec-capture "kubectl" "rollout" "status"
+            "-n" ns resource "--timeout" timeout))
+(cond
+  ((= (status-of r) 0)
+   (append-output "rolled-out=true") (exit 0))
+  (else
+   (log-error "rollout timed out or failed")
+   (log-info (stderr-of r))
+   (append-output "rolled-out=false") (exit 1)))

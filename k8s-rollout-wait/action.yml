@@ -15,19 +15,27 @@ inputs:
 
 outputs:
   rolled-out:
-    value: ${{ steps.w.outputs.rolled-out }}
+    value: ${{ steps.run.outputs.rolled-out }}
 
 runs:
   using: composite
   steps:
     - uses: azure/setup-kubectl@v4
-    - id: w
+    - id: src
       shell: bash
       run: |
-        if kubectl rollout status -n "${{ inputs.namespace }}" \
-           "${{ inputs.resource }}" --timeout="${{ inputs.timeout }}"; then
-          echo "rolled-out=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "rolled-out=false" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RESOURCE: ${{ inputs.resource }}
+        NAMESPACE: ${{ inputs.namespace }}
+        TIMEOUT: ${{ inputs.timeout }}

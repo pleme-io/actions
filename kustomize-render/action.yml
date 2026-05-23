@@ -19,9 +19,20 @@ runs:
   using: composite
   steps:
     - uses: imranismail/setup-kustomize@v2
-    - id: render
+    - id: src
       shell: bash
       run: |
-        kustomize build "${{ inputs.overlay }}" -o "${{ inputs.output }}"
-        echo "output-path=${{ inputs.output }}" >> "$GITHUB_OUTPUT"
-        echo "rendered → ${{ inputs.output }}"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        OVERLAY: ${{ inputs.overlay }}
+        OUTPUT: ${{ inputs.output }}

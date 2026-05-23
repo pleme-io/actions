@@ -1,0 +1,13 @@
+;; nix-attic-push/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define cache (env-required "CACHE_NAME"))
+(define path (env-required "PATH_ARG"))
+(log-info (string-append "==> attic push " cache))
+(define r (exec-capture "attic" "push" cache path))
+(cond
+  ((= (status-of r) 0)
+   (append-output "pushed=true") (exit 0))
+  (else
+   (log-error "attic push failed")
+   (log-info (stderr-of r))
+   (append-output "pushed=false") (exit 1)))

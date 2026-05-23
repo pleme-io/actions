@@ -1,0 +1,28 @@
+;; aws-s3-upload/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define source (env-required "SOURCE"))
+(define bucket (env-required "BUCKET"))
+(define key (env-required "KEY_ARG"))
+(define recursive (env-get "RECURSIVE" "false"))
+(define acl (env-get "ACL" "private"))
+
+(define base-args (list "s3" "cp" source
+                        (string-append "s3://" bucket "/" key)
+                        "--acl" acl))
+(define args (if (equal? recursive "true")
+               (append base-args (list "--recursive"))
+               base-args))
+
+(log-info (string-append "==> aws " (string-join " " args)))
+
+(define r (apply exec-capture (cons "aws" args)))
+
+(cond
+  ((= (status-of r) 0)
+   (append-output (string-append "s3-uri=s3://" bucket "/" key))
+   (exit 0))
+  (else
+   (log-error "aws s3 cp failed")
+   (log-info (stderr-of r))
+   (append-output "s3-uri=")
+   (exit 1)))

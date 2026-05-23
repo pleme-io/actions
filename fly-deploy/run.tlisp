@@ -1,0 +1,20 @@
+;; fly-deploy/run.tlisp — auto-migrated from shell to tlisp+stdlib
+
+(define app (env-get "APP" ""))
+(define strategy (env-get "STRATEGY" "rolling"))
+(define region (env-get "REGION" ""))
+
+(define base (list "deploy" (string-append "--strategy=" strategy)))
+(define with-app (if (equal? app "") base (append base (list "-a" app))))
+(define args (if (equal? region "") with-app (append with-app (list "--region" region))))
+
+(log-info "==> flyctl deploy")
+(define r (apply exec-capture (cons "flyctl" args)))
+
+(cond
+  ((= (status-of r) 0)
+   (append-output "deployed=true") (exit 0))
+  (else
+   (log-error "fly deploy failed")
+   (log-info (stderr-of r))
+   (append-output "deployed=false") (exit 1)))

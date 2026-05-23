@@ -18,23 +18,28 @@ inputs:
 
 outputs:
   deployed:
-    value: ${{ steps.fly.outputs.deployed }}
+    value: ${{ steps.run.outputs.deployed }}
 
 runs:
   using: composite
   steps:
     - uses: superfly/flyctl-actions/setup-flyctl@master
-    - id: fly
+    - id: src
       shell: bash
-      env:
-        FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
       run: |
-        args=( "deploy" "--strategy=${{ inputs.strategy }}" )
-        [ -n "${{ inputs.app }}" ] && args+=( "-a" "${{ inputs.app }}" )
-        [ -n "${{ inputs.region }}" ] && args+=( "--region" "${{ inputs.region }}" )
-        if flyctl "${args[@]}"; then
-          echo "deployed=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "deployed=false" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        APP: ${{ inputs.app }}
+        STRATEGY: ${{ inputs.strategy }}
+        REGION: ${{ inputs.region }}
+        FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}

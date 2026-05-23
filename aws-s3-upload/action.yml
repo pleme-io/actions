@@ -20,15 +20,28 @@ inputs:
 
 outputs:
   s3-uri:
-    value: ${{ steps.up.outputs.s3-uri }}
+    value: ${{ steps.run.outputs.s3-uri }}
 
 runs:
   using: composite
   steps:
-    - id: up
+    - id: src
       shell: bash
       run: |
-        args=( "s3" "cp" "${{ inputs.source }}" "s3://${{ inputs.bucket }}/${{ inputs.key }}" "--acl" "${{ inputs.acl }}" )
-        [ "${{ inputs.recursive }}" = "true" ] && args+=( "--recursive" )
-        aws "${args[@]}"
-        echo "s3-uri=s3://${{ inputs.bucket }}/${{ inputs.key }}" >> "$GITHUB_OUTPUT"
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SOURCE: ${{ inputs.source }}
+        BUCKET: ${{ inputs.bucket }}
+        KEY_ARG: ${{ inputs.key }}
+        RECURSIVE: ${{ inputs.recursive }}
+        ACL: ${{ inputs.acl }}
