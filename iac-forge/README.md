@@ -1,54 +1,98 @@
-# `pleme-io/actions/iac-forge`
+# pleme-io · iac-forge
 
-Generate IaC provider code (Ansible, Terraform, Pulumi, Crossplane, Steampipe, Helm) from an OpenAPI spec + a directory of resource TOMLs, using the [`iac-forge`](https://github.com/pleme-io/iac-forge-cli) Rust binary.
+> Run iac-forge codegen against a spec + provider TOML
+
+**Category**: `iac` — 🏗️ IaC — Terraform / Pulumi
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/iac-forge@v1
+    with:
+      backend: <required>
+      spec: <required>
+      resources: <required>
+```
 
 ## Inputs
 
 | Name | Required | Default | Description |
-| --- | --- | --- | --- |
-| `backend` | yes | — | One of `ansible`, `terraform`, `pulumi`, `crossplane`, `steampipe`, `helm` |
-| `spec` | yes | — | Path to OpenAPI spec (yaml or json) |
+|---|---|---|---|
+| `backend` | yes | — | ansible | terraform | pulumi | crossplane | steampipe | helm |
+| `spec` | yes | — | Path to OpenAPI spec (yaml/json) |
 | `resources` | yes | — | Path to resource TOML directory |
-| `provider` | yes | — | Path to `provider.toml` |
-| `data-sources` | no | `""` | Path to data-source TOML directory |
+| `provider` | yes | — | Path to provider.toml |
+| `data-sources` | no | `` | Path to data-source TOML directory (optional) |
 | `output` | yes | — | Output directory for generated artifacts |
-| `version` | no | `latest` | iac-forge-cli release tag (e.g. `v0.2.0`) or `latest` |
+| `version` | no | `latest` | iac-forge-cli version to use (e.g. v0.2.0 or 'latest') |
 
-## Outputs
+## Configuration via `.pleme-io-release.toml`
 
-This action has no outputs. The generated files appear in the path given by `output`.
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-## Usage
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
-```yaml
-- uses: pleme-io/actions/iac-forge@v1
-  with:
-    backend: ansible
-    spec: openapi.yaml
-    resources: resources/
-    provider: provider.toml
-    output: generated/
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `iac` category
+
+[`pulumi-up`](../pulumi-up/) · [`terraform-apply`](../terraform-apply/) · [`terraform-plan`](../terraform-plan/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.iac.iac-forge` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction iac-forge ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-Pinning a version:
+## Auto-published on free public CI
 
-```yaml
-- uses: pleme-io/actions/iac-forge@v1
-  with:
-    backend: terraform
-    spec: openapi.yaml
-    resources: resources/
-    provider: provider.toml
-    output: generated/
-    version: v0.2.0
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.iac.iac-forge
 ```
 
-## How it works
+## License
 
-This is a composite action. On every run it:
+MIT.
 
-1. Detects `$RUNNER_OS-$RUNNER_ARCH` and maps it to one of `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`.
-2. Resolves `version` (calling the GitHub API when `latest`) and downloads `iac-forge-<suffix>` from the matching [`iac-forge-cli` release](https://github.com/pleme-io/iac-forge-cli/releases).
-3. Runs `iac-forge generate --backend ... --spec ... --resources ... --provider ... [--data-sources ...] --output ...`.
-
-Upstream: [`pleme-io/iac-forge-cli`](https://github.com/pleme-io/iac-forge-cli).
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

@@ -1,54 +1,102 @@
 # pleme-io · npm-bump
 
-Bump an npm package.json version via `npm version --no-git-tag-version <type>`, refresh package-lock.json. Sibling of cargo-bump for the npm ecosystem.
+> Bump an npm package.json version via `npm version --no-git-tag-version <type>`, refresh package-lock.json. Sibling of cargo-bump for the npm ecosystem.
 
-Part of the [pleme-io action catalog](https://github.com/pleme-io/actions).
-Under the ★★ AUTO-RELEASE prime directive — see the
-[`pleme-io-auto-release`](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md)
-skill for the full operating protocol.
+**Category**: `npm` — 📦 npm ecosystem
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
-## Inputs
-
-```yaml
-  bump-type:
-    description: "patch | minor | major"
-    required: false
-    default: patch
-  skip-when-no-source-changes:
-    description: "Skip the bump when no source path changed since the previous tag"
-    required: false
-    default: "true"
-  source-paths:
-    description: "Space-separated globs the skip-detector inspects"
-    required: false
-    default: "src package.json package-lock.json"
-```
-
-## Outputs
-
-```yaml
-  bumped:
-    description: "true if a bump happened, false if skipped"
-    value: ${{ steps.bump.outputs.bumped }}
-  new-version:
-    description: "New version after bump (empty when skipped)"
-    value: ${{ steps.bump.outputs.new-version }}
-  old-version:
-    description: "Previous version (always populated)"
-    value: ${{ steps.bump.outputs.old-version }}
-```
-
-## Example
+## 30-second quickstart
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: pleme-io/actions/npm-bump@main
+  - uses: pleme-io/actions/npm-bump@v1
+    with:
+      bump-type: "patch"
+      skip-when-no-source-changes: "true"
+      source-paths: "src package.json package-lock.json"
 ```
+
+## Inputs
+
+| Name | Required | Default | Description |
+|---|---|---|---|
+| `bump-type` | no | `patch` | patch | minor | major |
+| `skip-when-no-source-changes` | no | `true` | Skip the bump when no source path changed since the previous tag |
+| `source-paths` | no | `src package.json package-lock.json` | Space-separated globs the skip-detector inspects |
+
+## Outputs
+
+| Name | Description |
+|---|---|
+| `bumped` | true if a bump happened, false if skipped |
+| `new-version` | New version after bump (empty when skipped) |
+| `old-version` | Previous version (always populated) |
+
+## Configuration via `.pleme-io-release.toml`
+
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
+
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
 ## Architecture
 
-Composite action backed by Rust + tatara-lisp. Logic lives in
-`run.tlisp`; `action.yml` orchestrates the install steps + one
-`tatara-script` invocation. Helpers shared via
-[`_tlisp-stdlib`](../_tlisp-stdlib/) — no per-action duplication.
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `npm` category
+
+[`npm-publish`](../npm-publish/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.npm.npm-bump` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction npm-bump ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
+```
+
+## Auto-published on free public CI
+
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.npm.npm-bump
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

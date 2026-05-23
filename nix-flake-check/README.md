@@ -1,39 +1,92 @@
-# `pleme-io/actions/nix-flake-check`
+# pleme-io · nix-flake-check
 
-Run `nix flake check` on a Nix flake, with the DeterminateSystems Nix installer and magic-nix-cache pre-wired.
+> Run `nix flake check` with DeterminateSystems Nix
+
+**Category**: `validation` — 🚦 Validation — per-language gates + universal lints
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/nix-flake-check@v1
+    with:
+      flake-args: ""
+      no-warn-dirty: "true"
+```
 
 ## Inputs
 
 | Name | Required | Default | Description |
-| --- | --- | --- | --- |
-| `flake-args` | no | `""` | Extra arguments appended to `nix flake check` (e.g. `--override-input foo path:./foo`) |
-| `no-warn-dirty` | no | `"true"` | Pass `--no-warn-dirty` (string `"true"`/`"false"`) |
+|---|---|---|---|
+| `flake-args` | no | `` | Extra arguments appended to `nix flake check` (e.g. --override-input) |
+| `no-warn-dirty` | no | `true` | Pass --no-warn-dirty (default true) |
 
-## Outputs
+## Configuration via `.pleme-io-release.toml`
 
-None.
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-## Usage
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
-```yaml
-- uses: pleme-io/actions/nix-flake-check@v1
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `validation` category
+
+[`npm-gate`](../npm-gate/) · [`python-gate`](../python-gate/) · [`rust-gate`](../rust-gate/) · [`tlisp-lint`](../tlisp-lint/) · [`typecheck-gate`](../typecheck-gate/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.validation.nix-flake-check` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction nix-flake-check ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-With overrides:
+## Auto-published on free public CI
 
-```yaml
-- uses: pleme-io/actions/nix-flake-check@v1
-  with:
-    flake-args: "--override-input substrate path:./substrate"
-    no-warn-dirty: "false"
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.validation.nix-flake-check
 ```
 
-## How it works
+## License
 
-This is a composite action. It:
+MIT.
 
-1. Installs Nix via [`DeterminateSystems/nix-installer-action`](https://github.com/DeterminateSystems/nix-installer-action).
-2. Enables [`DeterminateSystems/magic-nix-cache-action`](https://github.com/DeterminateSystems/magic-nix-cache-action) so repeated `nix build` calls in the same workflow share a cache.
-3. Runs `nix flake check` with optional `--no-warn-dirty` and any extra args.
-
-No external Rust binary is required — the heavy lifting is done by Nix itself.
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

@@ -1,56 +1,89 @@
 # pleme-io · detect-repo-type
 
-Detect the repo type from manifest file presence at the root.
-Emits a typed identifier the polymorphic auto-release workflow
-routes on.
+> Auto-detect the repo type from manifest file presence at the root. Emits a typed identifier (rust-workspace / rust-single-crate / npm / python / helm / ansible-collection / ruby-gem / github-action / unknown) that downstream jobs route on.
+
+**Category**: `dispatch` — 🚏 Repo-type dispatch
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/detect-repo-type@v1
+```
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `repo-type` | One of: `rust-workspace`, `rust-single-crate`, `npm`, `python`, `helm`, `ansible-collection`, `ruby-gem`, `github-action`, `unknown` |
-| `manifest-path` | The file that drove the detection (`Cargo.toml`, `package.json`, etc) |
+| `repo-type` | One of: rust-workspace, rust-single-crate, npm, python, helm, ansible-collection, ruby-gem, github-action, unknown |
+| `manifest-path` | Path of the manifest that drove the detection (for diagnostics) |
 
-## Example
+## Configuration via `.pleme-io-release.toml`
 
-```yaml
-jobs:
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      repo-type: ${{ steps.detect.outputs.repo-type }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: detect
-        uses: pleme-io/actions/detect-repo-type@v1
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-  rust-workspace-release:
-    needs: detect
-    if: needs.detect.outputs.repo-type == 'rust-workspace'
-    uses: ./.github/workflows/rust-workspace-pipeline.yml
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
-  cargo-release:
-    needs: detect
-    if: needs.detect.outputs.repo-type == 'rust-single-crate'
-    uses: ./.github/workflows/cargo-pipeline.yml
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `dispatch` category
+
+[`caixa-detect`](../caixa-detect/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.dispatch.detect-repo-type` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction detect-repo-type ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-## Precedence
+## Auto-published on free public CI
 
-When multiple manifests coexist (e.g. a Rust repo that also has
-a `Chart.yaml` for its helm chart), detection picks the FIRST
-match in this order:
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
 
-1. `Cargo.toml` with `[workspace]` → rust-workspace
-2. `Cargo.toml` with `[package]` (no `[workspace]`) → rust-single-crate
-3. `galaxy.yml` → ansible-collection
-4. `Chart.yaml` → helm
-5. `pyproject.toml` → python
-6. `package.json` → npm
-7. `*.gemspec` at root → ruby-gem
-8. `action.yml` (or `action.yaml`) → github-action
-9. otherwise → `unknown` (exit 1)
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
 
-The precedence reflects fleet-wide convention: a repo's
-"primary" artifact wins. Subordinate manifests get released via
-separate workflows triggered by the primary release.
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.dispatch.detect-repo-type
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

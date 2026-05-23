@@ -1,74 +1,102 @@
 # pleme-io · rust-workspace-bump
 
-Bump a Rust workspace's `workspace.package.version` via
-`cargo set-version --workspace --bump <type>`, regenerate
-`Cargo.nix`, refresh `Cargo.lock`. Pure composite action — no
-shell beyond install glue; all logic lives in `run.tlisp` and
-runs through `pleme-io/actions/tatara-script`.
+> Bump a Rust workspace.package.version via `cargo set-version --workspace --bump <type>`, regen Cargo.nix, commit + tag locally. No shell — composes existing rust + tatara-script + git primitives.
+
+**Category**: `bump` — ⬆️ Version bumping
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/rust-workspace-bump@v1
+    with:
+      bump-type: "patch"
+      skip-when-no-source-changes: "true"
+      source-paths: "engenho* Cargo.toml Cargo.lock"
+```
 
 ## Inputs
 
-| Name | Default | Description |
-|---|---|---|
-| `bump-type` | `patch` | `patch` / `minor` / `major` |
-| `skip-when-no-source-changes` | `true` | Skip the bump when none of the `source-paths` changed since the previous tag |
-| `source-paths` | `engenho* Cargo.toml Cargo.lock` | Space-separated globs the skip-detector inspects |
+| Name | Required | Default | Description |
+|---|---|---|---|
+| `bump-type` | no | `patch` | patch | minor | major |
+| `skip-when-no-source-changes` | no | `true` | Skip the bump when no engenho-*/, root Cargo.toml, or root Cargo.lock changes happened since the previous tag. Set false to always bump. |
+| `source-paths` | no | `engenho* Cargo.toml Cargo.lock` | Space-separated globs the skip-detector inspects for changes. Default fits an engenho-shaped workspace; override for other layouts. |
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `bumped` | `true` if a bump happened, `false` if skipped/no-op |
-| `new-version` | New `workspace.package.version` after bump (empty when `bumped=false`) |
-| `old-version` | Previous `workspace.package.version` (always populated) |
+| `bumped` | true if a bump was performed, false if skipped/no-op |
+| `new-version` | New workspace.package.version after bump (empty if no-op) |
+| `old-version` | Previous workspace.package.version (always populated) |
 
-## Example: minimal auto-bump workflow
+## Configuration via `.pleme-io-release.toml`
 
-```yaml
-name: auto-bump
-on:
-  push:
-    branches: [main]
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-permissions:
-  contents: write
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
-jobs:
-  bump:
-    runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+## Architecture
 
-      - id: bump
-        uses: pleme-io/actions/rust-workspace-bump@v1
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
 
-      - if: steps.bump.outputs.bumped == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock Cargo.nix
-          git commit -m "release: workspace v${{ steps.bump.outputs.new-version }}"
-          git tag "v${{ steps.bump.outputs.new-version }}"
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
 
-      - if: steps.bump.outputs.bumped == 'true'
-        uses: pleme-io/actions/git-push-with-token@v1
-        with:
-          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
-          branch: main
-          push-tags: "true"
+## Related primitives — `bump` category
+
+[`substrate-bump`](../substrate-bump/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.bump.rust-workspace-bump` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction rust-workspace-bump ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-## NO SHELL prime directive
+## Auto-published on free public CI
 
-Per the org rule, ALL non-trivial logic lives in `run.tlisp`
-(tatara-lisp). The shell snippets above wrapping git commit/tag
-are 3-line glue (acceptable); the bump/regen/refresh logic itself
-is pure tlisp.
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
 
-A future iteration will collapse the commit/tag glue into a
-`pleme-io/actions/git-commit-tag` action so this workflow is
-zero-shell end-to-end.
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.bump.rust-workspace-bump
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

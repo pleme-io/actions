@@ -1,39 +1,96 @@
 # pleme-io · python-publish
 
-Publish a Python package to pypi.org via uv publish; skip if (name, version) already exists; sleep + retry on rate limit.
+> Publish a Python package to pypi.org via uv publish; skip if (name, version) already exists; sleep + retry on rate limit.
 
-Part of the [pleme-io action catalog](https://github.com/pleme-io/actions).
-Under the ★★ AUTO-RELEASE prime directive — see the
-[`pleme-io-auto-release`](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md)
-skill for the full operating protocol.
+**Category**: `python` — 🐍 Python ecosystem
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
-## Inputs
-
-```yaml
-  dry-run:
-    description: "Build dist/ but don't upload"
-    required: false
-    default: "false"
-```
-
-## Outputs
-
-```yaml
-  shipped:
-    value: ${{ steps.ship.outputs.shipped }}
-```
-
-## Example
+## 30-second quickstart
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: pleme-io/actions/python-publish@main
+  - uses: pleme-io/actions/python-publish@v1
+    with:
+      dry-run: "false"
 ```
+
+## Inputs
+
+| Name | Required | Default | Description |
+|---|---|---|---|
+| `dry-run` | no | `false` | Build dist/ but don't upload |
+
+## Outputs
+
+| Name | Description |
+|---|---|
+| `shipped` |  |
+
+## Configuration via `.pleme-io-release.toml`
+
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
+
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
 ## Architecture
 
-Composite action backed by Rust + tatara-lisp. Logic lives in
-`run.tlisp`; `action.yml` orchestrates the install steps + one
-`tatara-script` invocation. Helpers shared via
-[`_tlisp-stdlib`](../_tlisp-stdlib/) — no per-action duplication.
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `python` category
+
+[`python-bump`](../python-bump/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.python.python-publish` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction python-publish ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
+```
+
+## Auto-published on free public CI
+
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.python.python-publish
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

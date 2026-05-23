@@ -1,58 +1,103 @@
-# `pleme-io/actions/tatara-script`
+# pleme-io · tatara-script
 
-Execute an embedded [`tatara-lisp`](https://github.com/pleme-io/tatara-lisp) source string with the `tatara-script` interpreter on a GitHub Actions runner. Install path is **binary-first** (cross-arch pre-built artifact from `pleme-io/tatara-lisp` releases), with a `cargo install --git` fallback if the binary asset is missing for the requested tag/arch.
+> Execute an embedded .tlisp source string with tatara-script (binary-first, cargo-install fallback)
 
-This is the redistributable primitive that every other tlisp-backed `pleme-io/actions/*` action delegates to. Use it directly when you have a one-off .tlisp body that does not warrant its own action.
+**Category**: `runtime` — ⚙️ Runtime — tatara-script
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/tatara-script@v1
+    with:
+      script: <required>
+      version: "latest"
+      args: ""
+```
 
 ## Inputs
 
 | Name | Required | Default | Description |
-| --- | --- | --- | --- |
-| `script` | yes | — | Multi-line `.tlisp` source executed by `tatara-script` (the entire body of a `.tlisp` file) |
-| `version` | no | `latest` | `tatara-lisp` release tag (e.g. `v0.1.0`) or `latest` |
-| `args` | no | `""` | Whitespace-split positional arguments forwarded to the script as `$@` |
+|---|---|---|---|
+| `script` | yes | — | Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file) |
+| `version` | no | `latest` | tatara-lisp release tag (e.g. v0.1.0) or 'latest |
+| `args` | no | `` | Positional arguments passed to the script (forwarded as $@ after the script file) |
 
 ## Outputs
 
-None. The action exits with whatever exit code the script returns.
+| Name | Description |
+|---|---|
+| `version` | Forwarded from the script's GITHUB_OUTPUT (key: version) |
+| `bumped` | Forwarded from the script's GITHUB_OUTPUT (key: bumped) |
+| `new-version` | Forwarded from the script's GITHUB_OUTPUT (key: new-version) |
+| `result` | Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all |
 
-## Usage
+## Configuration via `.pleme-io-release.toml`
 
-```yaml
-- uses: pleme-io/actions/tatara-script@v1
-  with:
-    script: |
-      (define name (env-get "GREET_NAME" "world"))
-      (log-info (string-append "hello, " name "!"))
-      (exit 0)
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
+
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
+
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `runtime` category
+
+(this is the only primitive in this category)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.runtime.tatara-script` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction tatara-script ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-Pin a specific version when reproducibility matters:
+## Auto-published on free public CI
 
-```yaml
-- uses: pleme-io/actions/tatara-script@v1
-  with:
-    version: v0.1.0
-    script: |
-      (log-info "pinned interpreter")
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.runtime.tatara-script
 ```
 
-Pass positional args:
+## License
 
-```yaml
-- uses: pleme-io/actions/tatara-script@v1
-  with:
-    args: foo bar baz
-    script: |
-      (log-info (string-append "got " (string-format "{}" (length argv)) " args"))
-```
+MIT.
 
-## Install fallback
-
-If the requested tag has no pre-built `tatara-script-<os>-<arch>` asset on the release page (e.g. an old tag predating the binary-release workflow, or a brand-new tag still being built), the action falls back to:
-
-```
-cargo install --git https://github.com/pleme-io/tatara-lisp --tag <tag> tatara-lisp-script
-```
-
-This requires `cargo` on the runner (GitHub-hosted Ubuntu/macOS runners ship it). Self-hosted runners without Rust toolchains should pin a version that has binary assets.
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

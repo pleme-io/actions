@@ -1,43 +1,100 @@
-# `pleme-io/actions/spec-watch`
+# pleme-io · spec-watch
 
-Detect changes in an upstream OpenAPI/JSON spec by comparing its sha256 against a value cached in the repo. Useful for "regenerate codegen when upstream changes" cron workflows.
+> Detect changes in an upstream OpenAPI/JSON spec by sha256 against a cached value
+
+**Category**: `spec` — 📐 Spec watching
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/spec-watch@v1
+    with:
+      upstream-url: <required>
+      cache-file: ".ci/openapi-sha"
+```
 
 ## Inputs
 
 | Name | Required | Default | Description |
-| --- | --- | --- | --- |
-| `upstream-url` | yes | — | URL of the upstream spec (any text/binary file) |
+|---|---|---|---|
+| `upstream-url` | yes | — | URL of the upstream spec (OpenAPI yaml/json or any text/binary file) |
 | `cache-file` | no | `.ci/openapi-sha` | Path (relative to repo root) where the last-seen sha256 is stored |
 
 ## Outputs
 
 | Name | Description |
-| --- | --- |
-| `changed` | `true` if the upstream sha differs from cached, `false` otherwise |
+|---|---|
+| `changed` | true if the upstream sha differs from cached, false otherwise |
 | `new-sha` | sha256 of the upstream spec fetched this run |
-| `cached-sha` | sha256 previously stored in the cache file (empty on first run) |
+| `cached-sha` | sha256 previously stored in the cache file (empty if first run) |
 
-## Usage
+## Configuration via `.pleme-io-release.toml`
 
-```yaml
-- uses: pleme-io/actions/spec-watch@v1
-  id: watch
-  with:
-    upstream-url: https://api.example.com/openapi.json
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-- if: steps.watch.outputs.changed == 'true'
-  run: |
-    echo "${{ steps.watch.outputs.new-sha }}" > .ci/openapi-sha
-    # ... regenerate, commit, open PR ...
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
+
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `spec` category
+
+(this is the only primitive in this category)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.spec.spec-watch` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction spec-watch ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-## How it works
+## Auto-published on free public CI
 
-This is a composite action. It:
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
 
-1. `curl`s the `upstream-url` to a tempfile.
-2. Computes `sha256sum` of the response.
-3. Reads `cache-file` (if present) and compares.
-4. Emits `changed`, `new-sha`, `cached-sha` outputs.
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
 
-No external Rust binary needed — this is pure shell.
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.spec.spec-watch
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

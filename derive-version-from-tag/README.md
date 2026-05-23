@@ -1,39 +1,96 @@
 # pleme-io · derive-version-from-tag
 
-Strip leading "v" from a tag ref to derive a SemVer version string
+> Strip leading "v" from a tag ref to derive a SemVer version string
 
-Part of the [pleme-io action catalog](https://github.com/pleme-io/actions).
-Under the ★★ AUTO-RELEASE prime directive — see the
-[`pleme-io-auto-release`](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md)
-skill for the full operating protocol.
+**Category**: `gh` — 🐙 GitHub API
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
-## Inputs
-
-```yaml
-  ref-name:
-    description: "Tag ref name (default: github.ref_name)"
-    required: false
-    default: ${{ github.ref_name }}
-```
-
-## Outputs
-
-```yaml
-  version:
-    description: "Derived version (ref-name with leading 'v' stripped); set by run.tlisp via $GITHUB_OUTPUT"
-```
-
-## Example
+## 30-second quickstart
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: pleme-io/actions/derive-version-from-tag@main
+  - uses: pleme-io/actions/derive-version-from-tag@v1
+    with:
+      ref-name: "${{ github.ref_name }}"
 ```
+
+## Inputs
+
+| Name | Required | Default | Description |
+|---|---|---|---|
+| `ref-name` | no | `${{ github.ref_name }}` | Tag ref name (default: github.ref_name) |
+
+## Outputs
+
+| Name | Description |
+|---|---|
+| `version` | Derived version (ref-name with leading 'v' stripped); set by run.tlisp via $GITHUB_OUTPUT |
+
+## Configuration via `.pleme-io-release.toml`
+
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
+
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
 ## Architecture
 
-Composite action backed by Rust + tatara-lisp. Logic lives in
-`run.tlisp`; `action.yml` orchestrates the install steps + one
-`tatara-script` invocation. Helpers shared via
-[`_tlisp-stdlib`](../_tlisp-stdlib/) — no per-action duplication.
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `gh` category
+
+[`gh-release-create`](../gh-release-create/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.gh.derive-version-from-tag` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction derive-version-from-tag ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
+```
+
+## Auto-published on free public CI
+
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.gh.derive-version-from-tag
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

@@ -1,51 +1,96 @@
 # pleme-io · oci-image-push
 
-Push an OCI image tarball (Nix dockerTools output) to a registry — skopeo fallback
+> Push an OCI image tarball (Nix dockerTools output) to a registry — skopeo fallback
 
-Part of the [pleme-io action catalog](https://github.com/pleme-io/actions).
-Under the ★★ AUTO-RELEASE prime directive — see the
-[`pleme-io-auto-release`](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md)
-skill for the full operating protocol.
+**Category**: `container` — 🐋 Container build (Docker / ko / buildah / podman)
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
-## Inputs
-
-```yaml
-  registry:
-    description: "Target OCI registry (e.g. ghcr.io)"
-    required: true
-  image:
-    description: "Image path (e.g. pleme-io/pangea-operator)"
-    required: true
-  tag:
-    description: "Image tag"
-    required: true
-  tarball:
-    description: "Path to the Docker/OCI image tarball produced by Nix"
-    required: false
-    default: "./result"
-  flake-ref:
-    description: "(unused in Docker mode — kept for input-compat with composite caller)"
-    required: false
-    default: "."
-```
-
-## Outputs
-
-```yaml
-(none)
-```
-
-## Example
+## 30-second quickstart
 
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: pleme-io/actions/oci-image-push@main
+  - uses: pleme-io/actions/oci-image-push@v1
+    with:
+      registry: <required>
+      image: <required>
+      tag: <required>
 ```
+
+## Inputs
+
+| Name | Required | Default | Description |
+|---|---|---|---|
+| `registry` | yes | — | Target OCI registry (e.g. ghcr.io) |
+| `image` | yes | — | Image path (e.g. pleme-io/pangea-operator) |
+| `tag` | yes | — | Image tag |
+| `tarball` | no | `./result` | Path to the Docker/OCI image tarball produced by Nix |
+| `flake-ref` | no | `.` | (unused in Docker mode — kept for input-compat with composite caller) |
+
+## Configuration via `.pleme-io-release.toml`
+
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
+
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
 ## Architecture
 
-Composite action backed by Rust + tatara-lisp. Logic lives in
-`run.tlisp`; `action.yml` orchestrates the install steps + one
-`tatara-script` invocation. Helpers shared via
-[`_tlisp-stdlib`](../_tlisp-stdlib/) — no per-action duplication.
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `container` category
+
+[`buildah-build`](../buildah-build/) · [`buildkit-cache-warm`](../buildkit-cache-warm/) · [`crane-mutate`](../crane-mutate/) · [`docker-build-and-push`](../docker-build-and-push/) · [`ko-build`](../ko-build/) · [`podman-build`](../podman-build/) · [`skopeo-copy`](../skopeo-copy/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.container.oci-image-push` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction oci-image-push ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
+```
+
+## Auto-published on free public CI
+
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.container.oci-image-push
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

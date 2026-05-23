@@ -1,40 +1,99 @@
-# `pleme-io/actions/substrate-bump`
+# pleme-io · substrate-bump
 
-Bump a project's version using the substrate flake's `bump` app: `nix run .#bump -- <type>`.
+> Bump version using substrate flake `bump` app (nix run .#bump -- <type>)
+
+**Category**: `bump` — ⬆️ Version bumping
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
+
+## 30-second quickstart
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/substrate-bump@v1
+    with:
+      bump-type: "patch"
+      release-paths: "plugins/ meta/ galaxy.yml"
+```
 
 ## Inputs
 
 | Name | Required | Default | Description |
-| --- | --- | --- | --- |
-| `bump-type` | no | `patch` | One of `patch`, `minor`, `major` |
-| `release-paths` | no | `plugins/ meta/ galaxy.yml` | Space-separated paths the bump app should touch (forward-compat; substrate decides which paths it actually edits) |
+|---|---|---|---|
+| `bump-type` | no | `patch` | patch | minor | major |
+| `release-paths` | no | `plugins/ meta/ galaxy.yml` | Space-separated paths the bump app should touch (default: plugins/ meta/ galaxy.yml) |
 
 ## Outputs
 
 | Name | Description |
-| --- | --- |
-| `bumped` | `true` if a bump was performed, `false` if it was a no-op |
-| `new-version` | New version after the bump (empty when no-op) |
+|---|---|
+| `bumped` | true if a bump was performed, false if no-op |
+| `new-version` | New version after bump (empty if no-op) |
 
-## Usage
+## Configuration via `.pleme-io-release.toml`
 
-```yaml
-- uses: pleme-io/actions/substrate-bump@v1
-  id: bump
-  with:
-    bump-type: minor
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-- if: steps.bump.outputs.bumped == 'true'
-  run: echo "Bumped to ${{ steps.bump.outputs.new-version }}"
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
+
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `bump` category
+
+[`rust-workspace-bump`](../rust-workspace-bump/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.bump.substrate-bump` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction substrate-bump ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
 ```
 
-## How it works
+## Auto-published on free public CI
 
-This is a composite action. It:
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
 
-1. Installs Nix (DeterminateSystems installer) and enables magic-nix-cache.
-2. Reads the current `version:` from `galaxy.yml` (best-effort, may be empty for non-Ansible projects).
-3. Runs `nix run .#bump -- <bump-type>` against the consumer's flake (which must expose a `bump` app).
-4. Re-reads `version:` and emits `bumped` + `new-version` outputs accordingly.
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
 
-Upstream: [`pleme-io/substrate`](https://github.com/pleme-io/substrate).
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.bump.substrate-bump
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*

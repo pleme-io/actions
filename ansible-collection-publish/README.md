@@ -1,35 +1,82 @@
-# `pleme-io/actions/ansible-collection-publish`
+# pleme-io · ansible-collection-publish
 
-Publish an Ansible collection to Ansible Galaxy using the substrate flake's `publish` app: `nix run .#publish`.
+> Publish an Ansible collection to Galaxy via substrate flake (nix run .#publish)
 
-## Inputs
+**Category**: `ansible` — 🅰️ Ansible Collection
+**Backend**: tatara-lisp (run.tlisp) wrapping CLI tools via `exec-capture`
+**Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
-None.
-
-## Outputs
-
-None.
-
-## Required env
-
-| Name | Description |
-| --- | --- |
-| `ANSIBLE_GALAXY_TOKEN` | Galaxy API token. **If unset the action is a silent no-op** (exit 0) so that PRs and unprivileged forks don't fail. |
-
-## Usage
+## 30-second quickstart
 
 ```yaml
-- uses: pleme-io/actions/ansible-collection-publish@v1
-  env:
-    ANSIBLE_GALAXY_TOKEN: ${{ secrets.ANSIBLE_GALAXY_TOKEN }}
+steps:
+  - uses: actions/checkout@v4
+  - uses: pleme-io/actions/ansible-collection-publish@v1
 ```
 
-## How it works
+## Configuration via `.pleme-io-release.toml`
 
-This is a composite action. It:
+Per-repo defaults follow 3-tier precedence:
+**env var (workflow input) > `.pleme-io-release.toml` > hardcoded default**.
 
-1. Installs Nix (DeterminateSystems) and enables magic-nix-cache.
-2. Checks for `$ANSIBLE_GALAXY_TOKEN`; if absent, exits 0 (so PR runs from forks degrade gracefully).
-3. If present, runs `nix run .#publish` (the substrate flake's `publish` app), which uploads the most recent build artifact to Galaxy.
+See the [full config schema](https://github.com/pleme-io/substrate/blob/main/lib/release/example-config.toml).
 
-Upstream: [`pleme-io/substrate`](https://github.com/pleme-io/substrate) (provides `apps.publish`).
+## Architecture
+
+Composite GitHub Action. Logic lives in [`run.tlisp`](./run.tlisp);
+[`action.yml`](./action.yml) orchestrates install steps + one
+`tatara-script` invocation. Shared helpers from
+[`_tlisp-stdlib`](../_tlisp-stdlib/).
+
+Per the ★★ NO-SHELL prime directive
+([pleme-io-pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md)):
+this action's primary logic is typed Lisp, not bash. The substrate's
+[`action-shell-lint`](../action-shell-lint/) enforces this fleet-wide on every PR.
+
+## Related primitives — `ansible` category
+
+[`ansible-collection-build`](../ansible-collection-build/)
+
+
+## Sources
+
+- **Action source**: [`action.yml`](./action.yml) + [`run.tlisp`](./run.tlisp)
+- **Catalog entry**: `substrate.lib.release.patterns.ansible.ansible-collection-publish` —
+  [patterns-full.nix](https://github.com/pleme-io/substrate/blob/main/lib/release/patterns-full.nix)
+- **Future typed source**: `(defaction ansible-collection-publish ...)` per
+  [ACTION-AS-CAIXA.md](https://github.com/pleme-io/substrate/blob/main/docs/ACTION-AS-CAIXA.md) (M1+ migration)
+
+## Operator-facing CLI
+
+Same logic locally via `cargo install pleme-io-releaser`:
+
+```bash
+pleme-release plan      # preview what an auto-release would do
+pleme-release onboard   # scaffold the 3-workflow surface to a fresh repo
+pleme-release detect    # emit detected repo type
+```
+
+## Auto-published on free public CI
+
+Every push to `main` on `pleme-io/actions`:
+1. `auto-bump.yml` fires (~10s) → tags `v0.13.{next}`
+2. `release.yml` cuts the Docker image (if applicable) + fast-forwards `v1`
+3. Consumers using `@v1` or `@v0.13.{x}` see the new revision automatically
+
+**$0/month cost** — GitHub-hosted runners + public-repo free tier.
+
+## Discovery
+
+Browse the [full catalog](../README.md) or query via Nix:
+
+```bash
+nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns.ansible.ansible-collection-publish
+```
+
+## License
+
+MIT.
+
+---
+*Auto-generated from `action.yml` by [`_gen-docs.py`](../_gen-docs.py).
+Do not hand-edit; modify the source files or regenerate.*
