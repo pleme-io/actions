@@ -1,0 +1,61 @@
+;; pr-comment/run.tlisp — idempotent PR comment via magic marker.
+
+(define body (env-required "BODY"))
+(define marker (env-required "MARKER"))
+(define pr-num (env-required "PR_NUMBER"))
+(define repo (env-required "REPO"))
+
+(define marker-line (string-append "<!-- pleme-io-comment-marker: " marker " -->"))
+(define full-body (string-append marker-line "\n" body))
+
+;; Find an existing comment by walking the issue's comments + grepping for marker.
+(define (find-existing)
+  (let* ((r (exec-capture "gh" "api"
+              (string-append "repos/" repo "/issues/" pr-num "/comments")
+              "--paginate")))
+    (cond
+      ((not (= (status-of r) 0)) "")
+      (else
+        (let* ((out (stdout-of r))
+               (jq-r (exec-capture "sh" "-c"
+                       (string-append "echo " (string-replace out "'" "'\"'\"'")
+                                      " | jq -r '.[] | select(.body | contains(\""
+                                      marker-line "\")) | .id' | head -1"))))
+          (string-trim (stdout-of jq-r)))))))
+
+(define existing-id (find-existing))
+
+(cond
+  ((equal? existing-id "")
+   (log-info "no existing comment — creating")
+   (let ((r (exec-capture "gh" "api"
+              (string-append "repos/" repo "/issues/" pr-num "/comments")
+              "-f" (string-append "body=" full-body))))
+     (cond
+       ((= (status-of r) 0)
+        (let ((id (string-trim (stdout-of (exec-capture "sh" "-c"
+                    (string-append "echo " (string-replace (stdout-of r) "'" "'\"'\"'")
+                                   " | jq '.id'"))))))
+          (append-output (string-append "comment-id=" id))
+          (append-output "action-taken=created")
+          (exit 0)))
+       (else
+         (log-error "gh api create-comment failed")
+         (append-output "comment-id=")
+         (append-output "action-taken=")
+         (exit 1)))))
+  (else
+    (log-info (string-append "updating existing comment " existing-id))
+    (let ((r (exec-capture "gh" "api" "-X" "PATCH"
+              (string-append "repos/" repo "/issues/comments/" existing-id)
+              "-f" (string-append "body=" full-body))))
+      (cond
+        ((= (status-of r) 0)
+         (append-output (string-append "comment-id=" existing-id))
+         (append-output "action-taken=updated")
+         (exit 0))
+        (else
+          (log-error "gh api update-comment failed")
+          (append-output (string-append "comment-id=" existing-id))
+          (append-output "action-taken=")
+          (exit 1))))))

@@ -1,0 +1,56 @@
+name: 'pleme-io · nix-flake-update'
+description: 'Run `nix flake update` + open PR if flake.lock changed. Idempotent — exits 0 with no PR when lock is current. Specific case of dependency-update for nix-only repos.'
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+inputs:
+  inputs-to-update:
+    description: "Space-separated flake inputs to update (empty = all)"
+    required: false
+    default: ""
+  open-pr:
+    description: "Open a PR when flake.lock changed"
+    required: false
+    default: "true"
+  pr-branch:
+    description: "Branch name for the PR"
+    required: false
+    default: "chore/flake-lock-update"
+
+outputs:
+  changed:
+    value: ${{ steps.upd.outputs.changed }}
+  pr-url:
+    value: ${{ steps.upd.outputs.pr-url }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.BOT_PAT || github.token }}
+
+    - uses: DeterminateSystems/nix-installer-action@main
+
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: upd
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        INPUTS_TO_UPDATE: ${{ inputs.inputs-to-update }}
+        OPEN_PR: ${{ inputs.open-pr }}
+        PR_BRANCH: ${{ inputs.pr-branch }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}

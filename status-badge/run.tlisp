@@ -1,0 +1,38 @@
+;; status-badge/run.tlisp — render a shields.io badge to SVG.
+
+(define label (env-required "LABEL"))
+(define value (env-required "VALUE"))
+(define color (env-get "COLOR" "green"))
+(define out-path (env-get "OUTPUT_PATH" "badge.svg"))
+(define style (env-get "STYLE" "flat"))
+
+;; URL-encode the parts that go into the shields.io path.
+(define (url-encode s)
+  (string-replace
+    (string-replace
+      (string-replace s " " "_")
+      "-" "--")
+    "/" "%2F"))
+
+(define url
+  (string-append
+    "https://img.shields.io/badge/"
+    (url-encode label) "-"
+    (url-encode value) "-"
+    color
+    "?style=" style))
+
+(log-info (string-append "==> curl " url))
+
+(let ((r (exec-capture "curl" "-sSL" "-o" out-path url)))
+  (cond
+    ((= (status-of r) 0)
+     (log-info (string-append "wrote " out-path))
+     (append-output (string-append "badge-path=" out-path))
+     (append-output (string-append "badge-url=" url))
+     (exit 0))
+    (else
+      (log-error "curl failed")
+      (append-output "badge-path=")
+      (append-output (string-append "badge-url=" url))
+      (exit 1))))

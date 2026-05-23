@@ -1,0 +1,57 @@
+name: 'pleme-io · status-badge'
+description: 'Generate an SVG status badge (shields.io-style) for a label/value pair. Universal — used to render build/test/coverage/version badges into a repo or a static site.'
+branding:
+  icon: 'tag'
+  color: 'green'
+
+inputs:
+  label:
+    description: "Badge label (left side)"
+    required: true
+  value:
+    description: "Badge value (right side)"
+    required: true
+  color:
+    description: "Right-side color (green / yellow / red / blue / hex)"
+    required: false
+    default: "green"
+  output-path:
+    description: "Where to write the SVG (default: badge.svg)"
+    required: false
+    default: "badge.svg"
+  style:
+    description: "Badge style: flat | flat-square | for-the-badge | plastic"
+    required: false
+    default: "flat"
+
+outputs:
+  badge-path:
+    value: ${{ steps.badge.outputs.badge-path }}
+  badge-url:
+    description: "Direct shields.io URL (alternative to local SVG)"
+    value: ${{ steps.badge.outputs.badge-url }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: badge
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        LABEL: ${{ inputs.label }}
+        VALUE: ${{ inputs.value }}
+        COLOR: ${{ inputs.color }}
+        OUTPUT_PATH: ${{ inputs.output-path }}
+        STYLE: ${{ inputs.style }}

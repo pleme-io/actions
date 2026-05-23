@@ -4,11 +4,17 @@
 ;; Uses pleme-io/actions/_tlisp-stdlib helpers (prepended by
 ;; action.yml's loader step):
 ;;   append-output, status-of, cargo-package-version,
-;;   last-tag, has-changes-since?
+;;   last-tag, has-changes-since?, config-resolve.
+;;
+;; All inputs resolve via 3-tier precedence:
+;;   env-var (workflow input) > .pleme-io-release.toml [bump] > hardcoded default
 
-(define bump-type (env-get "BUMP_TYPE" "patch"))
-(define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
-(define source-paths (env-get "SOURCE_PATHS" "src Cargo.toml Cargo.lock"))
+(define bump-type
+  (config-resolve "BUMP_TYPE" "bump" "default-type" "patch"))
+(define skip-flag
+  (config-resolve "SKIP_WHEN_NO_SOURCE_CHANGES" "bump" "skip-when-no-source-changes" "true"))
+(define source-paths
+  (config-resolve "SOURCE_PATHS" "bump" "source-paths" "src Cargo.toml Cargo.lock"))
 
 (define (should-bump?)
   (cond

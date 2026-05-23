@@ -1,0 +1,54 @@
+;; issue-create/run.tlisp — idempotent GH issue create or reuse.
+
+(define title (env-required "TITLE"))
+(define body (env-required "BODY"))
+(define labels (env-get "LABELS" "automation"))
+(define assignees (env-get "ASSIGNEES" ""))
+(define reuse-open (env-get "REUSE_OPEN" "true"))
+(define repo (env-required "REPO"))
+
+(define (find-open-by-title)
+  (let ((r (exec-capture "gh" "issue" "list"
+             "--repo" repo
+             "--state" "open"
+             "--search" (string-append "\"" title "\" in:title")
+             "--json" "number,url,title"
+             "--jq" (string-append ".[] | select(.title == \"" title "\") | .url"))))
+    (cond
+      ((= (status-of r) 0) (string-trim (stdout-of r)))
+      (else ""))))
+
+(define existing
+  (cond
+    ((equal? reuse-open "true") (find-open-by-title))
+    (else "")))
+
+(cond
+  ((not (equal? existing ""))
+   (log-info (string-append "reusing open issue: " existing))
+   (append-output (string-append "issue-url=" existing))
+   (append-output "action-taken=reused")
+   (exit 0))
+  (else
+    (log-info "no open issue matches — creating")
+    (let* ((args (append
+                   (list "issue" "create"
+                         "--repo" repo
+                         "--title" title
+                         "--body" body)
+                   (if (equal? labels "") (list) (list "--label" labels))
+                   (if (equal? assignees "") (list) (list "--assignee" assignees))))
+           (r (apply exec-capture (cons "gh" args))))
+      (cond
+        ((= (status-of r) 0)
+         (let ((url (string-trim (stdout-of r))))
+           (log-info (string-append "created: " url))
+           (append-output (string-append "issue-url=" url))
+           (append-output "action-taken=created")
+           (exit 0)))
+        (else
+          (log-error "gh issue create failed")
+          (log-info (stderr-of r))
+          (append-output "issue-url=")
+          (append-output "action-taken=")
+          (exit 1))))))

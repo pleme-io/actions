@@ -1,0 +1,50 @@
+name: 'pleme-io · pr-comment'
+description: 'Post or update a comment on a pull request. Idempotent via a magic marker — re-running updates the existing comment instead of spamming.'
+branding:
+  icon: 'message-square'
+  color: 'blue'
+
+inputs:
+  body:
+    description: "Markdown body of the comment"
+    required: true
+  marker:
+    description: "Hidden HTML comment that identifies this comment for upsert (default: ${{ github.workflow }})"
+    required: false
+    default: ""
+  pr-number:
+    description: "PR number (defaults to current PR if event is pull_request)"
+    required: false
+    default: ""
+
+outputs:
+  comment-id:
+    value: ${{ steps.cmt.outputs.comment-id }}
+  action-taken:
+    description: "'created' | 'updated'"
+    value: ${{ steps.cmt.outputs.action-taken }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: cmt
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BODY: ${{ inputs.body }}
+        MARKER: ${{ inputs.marker || github.workflow }}
+        PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}

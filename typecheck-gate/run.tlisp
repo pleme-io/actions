@@ -1,0 +1,40 @@
+;; typecheck-gate/run.tlisp — polymorphic typecheck.
+
+(define (detect)
+  (cond
+    ((path-exists? "Cargo.toml") "rust")
+    ((path-exists? "tsconfig.json") "typescript")
+    ((path-exists? "pyproject.toml") "python")
+    (else "unknown")))
+
+(define eco (detect))
+(append-output (string-append "tool=" eco))
+
+(define (run-rust)
+  (log-info "==> cargo check --workspace --all-targets")
+  (= (status-of (exec-capture "cargo" "check" "--workspace" "--all-targets")) 0))
+
+(define (run-ts)
+  (log-info "==> npx tsc --noEmit")
+  (let ((r (exec-capture "sh" "-c" "npm ci >/dev/null 2>&1 && npx tsc --noEmit")))
+    (= (status-of r) 0)))
+
+(define (run-python)
+  (log-info "==> uv run mypy .")
+  (let ((r (exec-capture "sh" "-c" "uv sync --dev >/dev/null 2>&1 && uv run mypy .")))
+    (= (status-of r) 0)))
+
+(define passed
+  (cond
+    ((equal? eco "rust") (run-rust))
+    ((equal? eco "typescript") (run-ts))
+    ((equal? eco "python") (run-python))
+    (else
+     (log-info "no recognized manifest — typecheck-gate skipped")
+     #t)))
+
+(append-output (string-append "passed=" (if passed "true" "false")))
+
+(cond
+  (passed (exit 0))
+  (else (exit 1)))

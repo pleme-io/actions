@@ -1,0 +1,59 @@
+name: 'pleme-io · issue-create'
+description: 'Create (or reuse) a GitHub issue for a typed event. Useful for workflow auto-reporting (test failures, broken deps, drift, etc.). Idempotent via title-match deduplication.'
+branding:
+  icon: 'alert-circle'
+  color: 'orange'
+
+inputs:
+  title:
+    description: "Issue title (used for dedup match)"
+    required: true
+  body:
+    description: "Issue body (markdown)"
+    required: true
+  labels:
+    description: "Comma-separated labels"
+    required: false
+    default: "automation"
+  assignees:
+    description: "Comma-separated assignees"
+    required: false
+    default: ""
+  reuse-open:
+    description: "Reuse an existing open issue with the same title (idempotent)"
+    required: false
+    default: "true"
+
+outputs:
+  issue-url:
+    value: ${{ steps.iss.outputs.issue-url }}
+  action-taken:
+    description: "'created' | 'reused'"
+    value: ${{ steps.iss.outputs.action-taken }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: iss
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        LABELS: ${{ inputs.labels }}
+        ASSIGNEES: ${{ inputs.assignees }}
+        REUSE_OPEN: ${{ inputs.reuse-open }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}

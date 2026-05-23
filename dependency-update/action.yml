@@ -1,0 +1,73 @@
+name: 'pleme-io · dependency-update'
+description: 'Polymorphic dependency lock refresh + open PR if anything changed. Detects ecosystem (rust → cargo update; npm → npm update; python → uv lock --upgrade; nix → nix flake update). Idempotent — exits 0 with no PR when nothing to update.'
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+inputs:
+  open-pr:
+    description: "Commit + open a PR when lock changed"
+    required: false
+    default: "true"
+  pr-branch:
+    description: "Branch name for the update PR"
+    required: false
+    default: "chore/deps-update"
+  pr-title:
+    description: "PR title template"
+    required: false
+    default: "chore(deps): refresh lockfile"
+
+outputs:
+  changed:
+    value: ${{ steps.upd.outputs.changed }}
+  pr-url:
+    value: ${{ steps.upd.outputs.pr-url }}
+  ecosystem:
+    value: ${{ steps.upd.outputs.ecosystem }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.BOT_PAT || github.token }}
+
+    - name: Install Rust (if Cargo.toml)
+      if: hashFiles('Cargo.toml') != ''
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Node (if package.json)
+      if: hashFiles('package.json') != ''
+      uses: actions/setup-node@v4
+      with: { node-version: "20" }
+
+    - name: Install uv (if pyproject.toml)
+      if: hashFiles('pyproject.toml') != ''
+      uses: astral-sh/setup-uv@v3
+
+    - name: Install Nix (if flake.nix)
+      if: hashFiles('flake.nix') != ''
+      uses: DeterminateSystems/nix-installer-action@main
+
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: upd
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        OPEN_PR: ${{ inputs.open-pr }}
+        PR_BRANCH: ${{ inputs.pr-branch }}
+        PR_TITLE: ${{ inputs.pr-title }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
