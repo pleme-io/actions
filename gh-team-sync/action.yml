@@ -1,0 +1,58 @@
+name: 'pleme-io · gh-team-sync'
+description: 'Sync GitHub team membership from a declarative YAML spec via gh api. Source-of-truth for org RBAC.'
+branding: { icon: 'users', color: 'blue' }
+
+inputs:
+  spec-file:
+    required: false
+    default: ".github/teams.yaml"
+  dry-run:
+    required: false
+    default: "false"
+
+outputs:
+  added-count:
+    value: ${{ steps.s.outputs.added-count }}
+  removed-count:
+    value: ${{ steps.s.outputs.removed-count }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+    - id: s
+      shell: bash
+      env:
+        GH_TOKEN: ${{ env.GH_ADMIN_TOKEN || github.token }}
+      run: |
+        if [ ! -f "${{ inputs.spec-file }}" ]; then
+          echo "::error::spec file not found: ${{ inputs.spec-file }}"
+          exit 1
+        fi
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+        org="${{ github.repository_owner }}"
+        added=0; removed=0
+        yq '.teams | keys | .[]' "${{ inputs.spec-file }}" | while read team; do
+          team=$(echo "$team" | tr -d '"')
+          desired=$(yq ".teams.\"$team\".members[]" "${{ inputs.spec-file }}" | tr -d '"')
+          current=$(gh api "orgs/$org/teams/$team/members" --jq '.[].login' || true)
+          for u in $desired; do
+            if ! echo "$current" | grep -qx "$u"; then
+              echo "+ adding $u to $team"
+              [ "${{ inputs.dry-run }}" = "true" ] || \
+                gh api --method PUT "orgs/$org/teams/$team/memberships/$u" || true
+              added=$((added+1))
+            fi
+          done
+          for u in $current; do
+            if ! echo "$desired" | grep -qx "$u"; then
+              echo "- removing $u from $team"
+              [ "${{ inputs.dry-run }}" = "true" ] || \
+                gh api --method DELETE "orgs/$org/teams/$team/memberships/$u" || true
+              removed=$((removed+1))
+            fi
+          done
+        done
+        echo "added-count=$added" >> "$GITHUB_OUTPUT"
+        echo "removed-count=$removed" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,32 @@
+name: 'pleme-io · codeql-scan'
+description: 'GitHub CodeQL SAST scan. Polymorphic — auto-detects language; uploads SARIF to GitHub Code Scanning.'
+branding: { icon: 'shield', color: 'red' }
+
+inputs:
+  language:
+    description: "javascript | python | java | go | csharp | ruby | rust | cpp | actions (empty = autodetect)"
+    required: false
+    default: ""
+  queries:
+    description: "Query suite (security-extended | security-and-quality | empty=default)"
+    required: false
+    default: "security-extended"
+
+outputs:
+  results-url:
+    value: ${{ steps.s.outputs.results-url }}
+
+runs:
+  using: composite
+  steps:
+    - uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ inputs.language }}
+        queries: ${{ inputs.queries }}
+    - uses: github/codeql-action/analyze@v3
+      with:
+        category: pleme-io-codeql-scan
+    - id: s
+      shell: bash
+      run: |
+        echo "results-url=https://github.com/${{ github.repository }}/security/code-scanning" >> "$GITHUB_OUTPUT"

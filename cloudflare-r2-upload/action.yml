@@ -1,0 +1,41 @@
+name: 'pleme-io · cloudflare-r2-upload'
+description: 'Upload a file or directory to Cloudflare R2 via wrangler r2 object put. S3-compatible alternative.'
+branding: { icon: 'upload', color: 'orange' }
+
+inputs:
+  bucket:
+    required: true
+  source:
+    required: true
+    description: "Local file or directory"
+  key:
+    required: true
+    description: "R2 key prefix"
+  recursive:
+    required: false
+    default: "false"
+
+outputs:
+  uploaded:
+    value: ${{ steps.r2.outputs.uploaded }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with: { node-version: "20" }
+    - id: r2
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+      run: |
+        if [ "${{ inputs.recursive }}" = "true" ]; then
+          find "${{ inputs.source }}" -type f | while read f; do
+            rel=$(echo "$f" | sed "s|^${{ inputs.source }}/||")
+            npx wrangler@latest r2 object put "${{ inputs.bucket }}/${{ inputs.key }}/$rel" --file="$f"
+          done
+        else
+          npx wrangler@latest r2 object put "${{ inputs.bucket }}/${{ inputs.key }}" --file="${{ inputs.source }}"
+        fi
+        echo "uploaded=true" >> "$GITHUB_OUTPUT"

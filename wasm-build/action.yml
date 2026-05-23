@@ -1,0 +1,46 @@
+name: 'pleme-io · wasm-build'
+description: 'Build a Rust crate to wasm32 (wasm32-unknown-unknown / wasm32-wasi). Universal — wraps cargo + wasm-pack when needed.'
+branding: { icon: 'package', color: 'purple' }
+
+inputs:
+  package:
+    description: "Cargo package to build (empty = workspace default)"
+    required: false
+    default: ""
+  target:
+    description: "wasm32-unknown-unknown | wasm32-wasi | wasm32-wasip1"
+    required: false
+    default: "wasm32-unknown-unknown"
+  release:
+    required: false
+    default: "true"
+  wasm-pack:
+    description: "Use wasm-pack (true) or plain cargo (false)"
+    required: false
+    default: "false"
+
+outputs:
+  artifact-path:
+    value: ${{ steps.wb.outputs.artifact-path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.target }}
+    - id: wb
+      shell: bash
+      run: |
+        if [ "${{ inputs.wasm-pack }}" = "true" ]; then
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
+          wasm-pack build ${{ inputs.package && format('--package {0}', inputs.package) || '' }} --target web
+          echo "artifact-path=pkg/" >> "$GITHUB_OUTPUT"
+        else
+          args=( "build" "--target" "${{ inputs.target }}" )
+          [ "${{ inputs.release }}" = "true" ] && args+=( "--release" )
+          [ -n "${{ inputs.package }}" ] && args+=( "--package" "${{ inputs.package }}" )
+          cargo "${args[@]}"
+          profile=$([ "${{ inputs.release }}" = "true" ] && echo "release" || echo "debug")
+          echo "artifact-path=target/${{ inputs.target }}/$profile/" >> "$GITHUB_OUTPUT"
+        fi

@@ -1,0 +1,38 @@
+name: 'pleme-io · k6-load-test'
+description: 'Run a k6 load test script + emit summary JSON. Pairs with thresholds for PR-time perf regression gating.'
+branding: { icon: 'activity', color: 'red' }
+
+inputs:
+  script:
+    required: true
+    description: "Path to k6 .js script"
+  vus:
+    required: false
+    default: "10"
+  duration:
+    required: false
+    default: "30s"
+
+outputs:
+  passed:
+    value: ${{ steps.k.outputs.passed }}
+  summary-path:
+    value: ${{ steps.k.outputs.summary-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: k
+      shell: bash
+      run: |
+        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update -qq && sudo apt-get install -y k6
+        if k6 run --vus "${{ inputs.vus }}" --duration "${{ inputs.duration }}" \
+                  --summary-export=k6-summary.json "${{ inputs.script }}"; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        echo "summary-path=k6-summary.json" >> "$GITHUB_OUTPUT"
