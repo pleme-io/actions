@@ -1,0 +1,45 @@
+;; python-gate/run.tlisp — PR-time quality gate for Python repos.
+
+(define run-fmt (env-get "RUN_FMT" "true"))
+(define run-lint (env-get "RUN_LINT" "true"))
+(define run-test (env-get "RUN_TEST" "true"))
+
+(define (run-step label args)
+  (log-info (string-append "==> " label))
+  (let* ((r (apply exec-capture (cons "uv" (cons "run" args))))
+         (passed (= (status-of r) 0)))
+    (cond
+      ((not passed)
+       (log-error (string-append label " FAILED"))
+       (log-info (stdout-of r))
+       (log-info (stderr-of r))))
+    passed))
+
+(define fmt-passed
+  (cond
+    ((equal? run-fmt "true") (run-step "ruff format --check" (list "ruff" "format" "--check" ".")))
+    (else #t)))
+
+(define lint-passed
+  (cond
+    ((equal? run-lint "true") (run-step "ruff check" (list "ruff" "check" ".")))
+    (else #t)))
+
+(define test-passed
+  (cond
+    ((equal? run-test "true") (run-step "pytest" (list "pytest")))
+    (else #t)))
+
+(define (bool->string b) (if b "true" "false"))
+
+(append-output (string-append "fmt-passed=" (bool->string fmt-passed)))
+(append-output (string-append "lint-passed=" (bool->string lint-passed)))
+(append-output (string-append "test-passed=" (bool->string test-passed)))
+
+(cond
+  ((and fmt-passed lint-passed test-passed)
+   (log-info "all gates passed")
+   (exit 0))
+  (else
+    (log-error "one or more gates failed")
+    (exit 1)))

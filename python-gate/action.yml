@@ -1,0 +1,57 @@
+name: 'pleme-io · python-gate'
+description: 'PR-time quality gate for a Python repo: ruff format --check + ruff check + pytest. Universal across uv/poetry/hatch layouts.'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  run-fmt:
+    description: "Run ruff format --check"
+    required: false
+    default: "true"
+  run-lint:
+    description: "Run ruff check"
+    required: false
+    default: "true"
+  run-test:
+    description: "Run pytest"
+    required: false
+    default: "true"
+
+outputs:
+  fmt-passed:
+    value: ${{ steps.gate.outputs.fmt-passed }}
+  lint-passed:
+    value: ${{ steps.gate.outputs.lint-passed }}
+  test-passed:
+    value: ${{ steps.gate.outputs.test-passed }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v3
+
+    - name: Sync deps
+      shell: bash
+      run: uv sync --all-extras --dev || true
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: gate
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RUN_FMT: ${{ inputs.run-fmt }}
+        RUN_LINT: ${{ inputs.run-lint }}
+        RUN_TEST: ${{ inputs.run-test }}

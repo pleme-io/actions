@@ -1,0 +1,59 @@
+name: 'pleme-io · npm-gate'
+description: 'PR-time quality gate for an npm repo: prettier --check + eslint + npm test (each conditionally run based on script presence in package.json).'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  run-fmt:
+    description: "Run prettier --check (when fmt script exists)"
+    required: false
+    default: "true"
+  run-lint:
+    description: "Run npm run lint (when lint script exists)"
+    required: false
+    default: "true"
+  run-test:
+    description: "Run npm test (when test script exists)"
+    required: false
+    default: "true"
+
+outputs:
+  fmt-passed:
+    value: ${{ steps.gate.outputs.fmt-passed }}
+  lint-passed:
+    value: ${{ steps.gate.outputs.lint-passed }}
+  test-passed:
+    value: ${{ steps.gate.outputs.test-passed }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install deps
+      shell: bash
+      run: npm ci || npm install
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: gate
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RUN_FMT: ${{ inputs.run-fmt }}
+        RUN_LINT: ${{ inputs.run-lint }}
+        RUN_TEST: ${{ inputs.run-test }}

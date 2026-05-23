@@ -1,0 +1,60 @@
+name: 'pleme-io · rust-gate'
+description: 'PR-time quality gate for a Rust repo: cargo fmt --check + cargo clippy + cargo test. Universal for both workspace + single-crate shapes.'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  run-fmt:
+    description: "Run cargo fmt --check"
+    required: false
+    default: "true"
+  run-clippy:
+    description: "Run cargo clippy --all-targets -- -D warnings"
+    required: false
+    default: "true"
+  run-test:
+    description: "Run cargo test --workspace"
+    required: false
+    default: "true"
+  rust-toolchain:
+    description: "Rust toolchain channel (stable / nightly / 1.89.0)"
+    required: false
+    default: "stable"
+
+outputs:
+  fmt-passed:
+    value: ${{ steps.gate.outputs.fmt-passed }}
+  clippy-passed:
+    value: ${{ steps.gate.outputs.clippy-passed }}
+  test-passed:
+    value: ${{ steps.gate.outputs.test-passed }}
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ inputs.rust-toolchain }}
+        components: rustfmt, clippy
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: gate
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RUN_FMT: ${{ inputs.run-fmt }}
+        RUN_CLIPPY: ${{ inputs.run-clippy }}
+        RUN_TEST: ${{ inputs.run-test }}

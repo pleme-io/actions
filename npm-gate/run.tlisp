@@ -1,0 +1,68 @@
+;; npm-gate/run.tlisp — PR-time quality gate for npm repos.
+
+(define run-fmt (env-get "RUN_FMT" "true"))
+(define run-lint (env-get "RUN_LINT" "true"))
+(define run-test (env-get "RUN_TEST" "true"))
+
+;; Check if a script is defined in package.json — we only run gates
+;; the repo has actually wired.
+(define (script-defined? name)
+  (let ((v (json-read-field "package.json" (string-append ".scripts." name))))
+    (and (not (equal? v "")) (not (equal? v "null")))))
+
+(define (run-npm-script name)
+  (log-info (string-append "==> npm run " name))
+  (let* ((r (exec-capture "npm" "run" name))
+         (passed (= (status-of r) 0)))
+    (cond
+      ((not passed)
+       (log-error (string-append "npm run " name " FAILED"))
+       (log-info (stdout-of r))
+       (log-info (stderr-of r))))
+    passed))
+
+(define (run-npm-test)
+  (log-info "==> npm test")
+  (let* ((r (exec-capture "npm" "test"))
+         (passed (= (status-of r) 0)))
+    (cond
+      ((not passed)
+       (log-error "npm test FAILED")
+       (log-info (stdout-of r))
+       (log-info (stderr-of r))))
+    passed))
+
+(define fmt-passed
+  (cond
+    ((and (equal? run-fmt "true") (script-defined? "fmt"))
+     (run-npm-script "fmt"))
+    ((and (equal? run-fmt "true") (script-defined? "format:check"))
+     (run-npm-script "format:check"))
+    (else #t)))
+
+(define lint-passed
+  (cond
+    ((and (equal? run-lint "true") (script-defined? "lint"))
+     (run-npm-script "lint"))
+    (else #t)))
+
+(define test-passed
+  (cond
+    ((and (equal? run-test "true")
+          (or (script-defined? "test") (script-defined? "test:ci")))
+     (run-npm-test))
+    (else #t)))
+
+(define (bool->string b) (if b "true" "false"))
+
+(append-output (string-append "fmt-passed=" (bool->string fmt-passed)))
+(append-output (string-append "lint-passed=" (bool->string lint-passed)))
+(append-output (string-append "test-passed=" (bool->string test-passed)))
+
+(cond
+  ((and fmt-passed lint-passed test-passed)
+   (log-info "all gates passed")
+   (exit 0))
+  (else
+    (log-error "one or more gates failed")
+    (exit 1)))

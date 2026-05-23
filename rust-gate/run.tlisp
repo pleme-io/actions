@@ -1,0 +1,48 @@
+;; rust-gate/run.tlisp — PR-time quality gate for Rust repos.
+;; Runs fmt + clippy + test independently; emits per-step pass/fail.
+
+(define run-fmt (env-get "RUN_FMT" "true"))
+(define run-clippy (env-get "RUN_CLIPPY" "true"))
+(define run-test (env-get "RUN_TEST" "true"))
+
+(define (run-step label args)
+  (log-info (string-append "==> " label))
+  (let* ((r (apply exec-capture (cons "cargo" args)))
+         (code (status-of r))
+         (passed (= code 0)))
+    (cond
+      ((not passed)
+       (log-error (string-append label " FAILED (exit " (string-format "{}" code) ")"))
+       (log-info (stdout-of r))
+       (log-info (stderr-of r))))
+    passed))
+
+(define fmt-passed
+  (cond
+    ((equal? run-fmt "true") (run-step "cargo fmt --check" (list "fmt" "--check")))
+    (else #t)))
+
+(define clippy-passed
+  (cond
+    ((equal? run-clippy "true")
+     (run-step "cargo clippy" (list "clippy" "--all-targets" "--" "-D" "warnings")))
+    (else #t)))
+
+(define test-passed
+  (cond
+    ((equal? run-test "true") (run-step "cargo test" (list "test" "--workspace")))
+    (else #t)))
+
+(define (bool->string b) (if b "true" "false"))
+
+(append-output (string-append "fmt-passed=" (bool->string fmt-passed)))
+(append-output (string-append "clippy-passed=" (bool->string clippy-passed)))
+(append-output (string-append "test-passed=" (bool->string test-passed)))
+
+(cond
+  ((and fmt-passed clippy-passed test-passed)
+   (log-info "all gates passed")
+   (exit 0))
+  (else
+    (log-error "one or more gates failed")
+    (exit 1)))
