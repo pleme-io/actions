@@ -1,4 +1,4 @@
-# pleme-io action catalog — 192 typed primitives
+# pleme-io action catalog — 193 typed primitives
 
 > The typed CI/CD vocabulary that powers the pleme-io fleet.
 > **All actions auto-publish to free public GitHub-hosted compute.**
@@ -28,7 +28,7 @@ pleme-release detect / plan / onboard
 nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns
 ```
 
-## The 192-primitive vocabulary
+## The 193-primitive vocabulary
 
 
 ### `akeyless` — 5 primitive(s)
@@ -67,13 +67,14 @@ nix eval --raw github:pleme-io/substrate#lib.aarch64-darwin.release.patterns
 - [`rust-workspace-bump`](./rust-workspace-bump/) — Bump a Rust workspace.package.version via `cargo set-version --workspace --bump <type>`, regen Cargo.nix, commit + tag locally. No shell — composes existing rust + tatara-script + git primitives.
 - [`substrate-bump`](./substrate-bump/) — Bump version using substrate flake `bump` app (nix run .#bump -- <type>)
 
-### `caixa` — 3 primitive(s)
+### `caixa` — 4 primitive(s)
 
 > 📦 caixa — canonical SDLC primitive
 
 - [`caixa-bump`](./caixa-bump/) — Bump the :version field inside a (defcaixa ...) form. Sibling of cargo-bump / npm-bump for the tatara-lisp + caixa SDLC primitive.
 - [`caixa-publish`](./caixa-publish/) — Publish caixa-rendered Helm chart to an OCI registry. Wraps helm-publish but consumes the caixa-render output dir.
 - [`caixa-render`](./caixa-render/) — Render cluster artifacts (Helm chart + Kubernetes manifests + Flux + CI workflows) from a (defcaixa ...) form via the `feira` CLI.
+- [`caixa-render-pr`](./caixa-render-pr/) — Render every .caixa.lisp at the repo root via pleme-doc-gen + open a PR if the rendered artifacts drift from on-disk files. The META-PRIMITIVE that closes the typed-source → mechanical-render → PR loop without operator intervention.
 
 ### `cloud` — 14 primitive(s)
 

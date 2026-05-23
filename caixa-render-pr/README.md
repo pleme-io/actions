@@ -1,6 +1,6 @@
-# pleme-io · caixa-bump
+# pleme-io · caixa-render-pr
 
-> Bump the :version field inside a (defcaixa ...) form. Sibling of cargo-bump / npm-bump for the tatara-lisp + caixa SDLC primitive.
+> Render every .caixa.lisp at the repo root via pleme-doc-gen + open a PR if the rendered artifacts drift from on-disk files. The META-PRIMITIVE that closes the typed-source → mechanical-render → PR loop without operator intervention.
 
 **Category**: `caixa` — 📦 caixa — canonical SDLC primitive
 **Backend**: tatara-lisp
@@ -11,29 +11,29 @@
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: pleme-io/actions/caixa-bump@v1
+  - uses: pleme-io/actions/caixa-render-pr@v1
     with:
-      bump-type: "patch"
-      caixa-path: ""
-      skip-when-no-source-changes: "true"
+      force: "true"
+      open-pr: "true"
+      pr-branch: "chore/caixa-render-sync"
 ```
 
 ## Inputs
 
 | Name | Required | Default | Description |
 |---|---|---|---|
-| `bump-type` | no | `patch` |  |
-| `caixa-path` | no | `` | Explicit .tlisp path (default: auto-detect via caixa-detect) |
-| `skip-when-no-source-changes` | no | `true` |  |
-| `source-paths` | no | `*.tlisp *.lisp` |  |
+| `force` | no | `true` | Re-render even when destination files exist |
+| `open-pr` | no | `true` | Commit + open a PR when render drift detected |
+| `pr-branch` | no | `chore/caixa-render-sync` |  |
+| `source-glob` | no | `*.caixa.lisp` | Glob of .caixa.lisp sources to render |
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `bumped` |  |
-| `new-version` |  |
-| `old-version` |  |
+| `drift-detected` |  |
+| `files-rendered` |  |
+| `pr-url` |  |
 
 ## Configuration via `.pleme-io-release.toml`
 
@@ -55,7 +55,7 @@ this action's primary logic is typed Lisp, not bash. The substrate's
 
 ## Related primitives — `caixa` category
 
-[`caixa-publish`](../caixa-publish/) · [`caixa-render`](../caixa-render/) · [`caixa-render-pr`](../caixa-render-pr/)
+[`caixa-bump`](../caixa-bump/) · [`caixa-publish`](../caixa-publish/) · [`caixa-render`](../caixa-render/)
 
 ## Auto-published on free public CI
 

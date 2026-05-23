@@ -52,7 +52,7 @@ this action's primary logic is typed Lisp, not bash. The substrate's
 
 ## Related primitives — `caixa` category
 
-[`caixa-bump`](../caixa-bump/) · [`caixa-render`](../caixa-render/)
+[`caixa-bump`](../caixa-bump/) · [`caixa-render`](../caixa-render/) · [`caixa-render-pr`](../caixa-render-pr/)
 
 ## Auto-published on free public CI
 
