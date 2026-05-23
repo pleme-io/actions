@@ -1,0 +1,36 @@
+name: 'pleme-io · aws-assume-role'
+description: 'Assume an AWS IAM role via OIDC (no long-lived creds). Exports AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_SESSION_TOKEN to subsequent steps.'
+branding: { icon: 'lock', color: 'orange' }
+
+inputs:
+  role-arn:
+    description: "IAM role ARN to assume"
+    required: true
+  aws-region:
+    description: "Default AWS region"
+    required: false
+    default: "us-east-1"
+  role-session-name:
+    description: "Session name (default: gh-actions-${run-id})"
+    required: false
+    default: ""
+
+outputs:
+  account-id:
+    value: ${{ steps.aws.outputs.account-id }}
+
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        aws-region: ${{ inputs.aws-region }}
+        role-session-name: ${{ inputs.role-session-name || format('gh-actions-{0}', github.run_id) }}
+
+    - id: aws
+      shell: bash
+      run: |
+        acct=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
+        echo "account-id=$acct" >> "$GITHUB_OUTPUT"
+        echo "assumed role; account=$acct region=${{ inputs.aws-region }}"

@@ -1,0 +1,40 @@
+name: 'pleme-io · fly-deploy'
+description: 'Deploy a Fly.io app via flyctl. Uses fly.toml at repo root; honors $FLY_API_TOKEN env var.'
+branding: { icon: 'cloud', color: 'purple' }
+
+inputs:
+  app:
+    description: "Fly app name (defaults to fly.toml's [app])"
+    required: false
+    default: ""
+  strategy:
+    description: "Deploy strategy: rolling | immediate | canary | bluegreen"
+    required: false
+    default: "rolling"
+  region:
+    description: "Pin deploy to a region"
+    required: false
+    default: ""
+
+outputs:
+  deployed:
+    value: ${{ steps.fly.outputs.deployed }}
+
+runs:
+  using: composite
+  steps:
+    - uses: superfly/flyctl-actions/setup-flyctl@master
+    - id: fly
+      shell: bash
+      env:
+        FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+      run: |
+        args=( "deploy" "--strategy=${{ inputs.strategy }}" )
+        [ -n "${{ inputs.app }}" ] && args+=( "-a" "${{ inputs.app }}" )
+        [ -n "${{ inputs.region }}" ] && args+=( "--region" "${{ inputs.region }}" )
+        if flyctl "${args[@]}"; then
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "deployed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi

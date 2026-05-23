@@ -1,0 +1,42 @@
+;; discord-notify/run.tlisp — POST a Discord-embed message.
+
+(define webhook (env-required "WEBHOOK_URL"))
+(define title (env-required "TITLE"))
+(define body (env-get "BODY" ""))
+(define color (env-get "COLOR" "3066993"))
+
+(define payload-jq
+  (string-append
+    "jq -n "
+    "--arg title \"$TITLE\" "
+    "--arg body \"$BODY\" "
+    "--arg color \"$COLOR\" "
+    "'{ embeds: [ { title: $title, description: $body, color: ($color | tonumber) } ] }'"))
+
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else
+       (log-error "failed to build Discord payload")
+       (exit 1)))))
+
+(define curl-cmd
+  (string-append
+    "curl -sS -o /dev/null -w '%{http_code}' "
+    "-X POST -H 'Content-Type: application/json' "
+    "-d '" (string-replace payload "'" "'\"'\"'") "' "
+    "'" webhook "'"))
+
+(define r (exec-capture "sh" "-c" curl-cmd))
+(define code (string-trim (stdout-of r)))
+
+(cond
+  ((or (equal? code "200") (equal? code "204"))
+   (log-info "delivered to Discord")
+   (append-output "delivered=true")
+   (exit 0))
+  (else
+    (log-error (string-append "Discord POST returned HTTP " code))
+    (append-output "delivered=false")
+    (exit 1)))

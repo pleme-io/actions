@@ -1,0 +1,50 @@
+;; helm-deploy/run.tlisp — upgrade --install with wait.
+
+(define release (env-required "RELEASE"))
+(define chart (env-required "CHART"))
+(define ns (env-get "NAMESPACE" "default"))
+(define values-files (env-get "VALUES_FILES" ""))
+(define set-args (env-get "SET_ARGS" ""))
+(define timeout (env-get "WAIT_TIMEOUT" "5m"))
+
+(define base-args
+  (list "upgrade" "--install" release chart
+        "--namespace" ns
+        "--create-namespace"
+        "--wait" "--timeout" timeout))
+
+(define (split-flag-args input flag)
+  ;; Turn "a b c" into (flag "a" flag "b" flag "c")
+  (cond
+    ((equal? input "") (list))
+    (else
+      (let loop ((parts (string-split input " ")) (acc (list)))
+        (cond
+          ((null? parts) acc)
+          ((equal? (car parts) "") (loop (cdr parts) acc))
+          (else (loop (cdr parts) (append acc (list flag (car parts))))))))))
+
+(define args
+  (append base-args
+          (split-flag-args values-files "-f")
+          (split-flag-args set-args "--set")))
+
+(log-info (string-append "==> helm upgrade --install " release))
+
+(define r (apply exec-capture (cons "helm" args)))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info "deployed")
+   ;; Get the revision number for traceability.
+   (let ((rev (exec-capture "sh" "-c"
+                (string-append "helm history " release " -n " ns " -o json | jq '.[-1].revision'"))))
+     (append-output "deployed=true")
+     (append-output (string-append "revision=" (string-trim (stdout-of rev))))
+     (exit 0)))
+  (else
+    (log-error "helm upgrade --install failed")
+    (log-info (stderr-of r))
+    (append-output "deployed=false")
+    (append-output "revision=")
+    (exit 1)))

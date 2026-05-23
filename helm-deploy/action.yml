@@ -1,0 +1,60 @@
+name: 'pleme-io · helm-deploy'
+description: 'helm upgrade --install with --wait. Sibling of helm-publish — this is for in-cluster installation, not registry push.'
+branding: { icon: 'upload-cloud', color: 'blue' }
+
+inputs:
+  release:
+    description: "Helm release name"
+    required: true
+  chart:
+    description: "Chart ref (local path or registry ref like oci://ghcr.io/pleme-io/helm/myapp)"
+    required: true
+  namespace:
+    description: "Target namespace"
+    required: false
+    default: "default"
+  values-files:
+    description: "Space-separated values files (-f flags)"
+    required: false
+    default: ""
+  set-args:
+    description: "Space-separated key=value --set args"
+    required: false
+    default: ""
+  wait-timeout:
+    description: "--timeout for helm upgrade --wait"
+    required: false
+    default: "5m"
+
+outputs:
+  deployed:
+    value: ${{ steps.deploy.outputs.deployed }}
+  revision:
+    value: ${{ steps.deploy.outputs.revision }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-helm@v4
+    - uses: azure/setup-kubectl@v4
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: deploy
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RELEASE: ${{ inputs.release }}
+        CHART: ${{ inputs.chart }}
+        NAMESPACE: ${{ inputs.namespace }}
+        VALUES_FILES: ${{ inputs.values-files }}
+        SET_ARGS: ${{ inputs.set-args }}
+        WAIT_TIMEOUT: ${{ inputs.wait-timeout }}

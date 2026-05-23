@@ -1,0 +1,46 @@
+name: 'pleme-io · discord-notify'
+description: 'Post a typed release event to a Discord webhook. Sibling of slack-notify.'
+branding: { icon: 'message-circle', color: 'purple' }
+
+inputs:
+  webhook-url:
+    description: "Discord incoming-webhook URL (read from secrets)"
+    required: true
+  title:
+    description: "Embed title"
+    required: true
+  body:
+    description: "Embed description (markdown)"
+    required: false
+    default: ""
+  color:
+    description: "Embed color (decimal int or hex like 0x00ff00)"
+    required: false
+    default: "3066993"
+
+outputs:
+  delivered:
+    value: ${{ steps.notify.outputs.delivered }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: notify
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        WEBHOOK_URL: ${{ inputs.webhook-url }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        COLOR: ${{ inputs.color }}

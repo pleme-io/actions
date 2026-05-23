@@ -1,0 +1,67 @@
+name: 'pleme-io · docker-build-and-push'
+description: 'Multi-arch docker buildx build + push to ghcr.io (or any OCI registry). Universal — works on any Dockerfile-bearing repo.'
+branding: { icon: 'package', color: 'blue' }
+
+inputs:
+  image:
+    description: "Image ref (e.g. ghcr.io/pleme-io/myapp). Tag inferred from git or set via tag input."
+    required: true
+  tag:
+    description: "Image tag (defaults to short SHA + 'latest')"
+    required: false
+    default: ""
+  platforms:
+    description: "Comma-separated buildx platforms"
+    required: false
+    default: "linux/amd64,linux/arm64"
+  dockerfile:
+    description: "Path to Dockerfile"
+    required: false
+    default: "Dockerfile"
+  context:
+    description: "Build context dir"
+    required: false
+    default: "."
+  push:
+    description: "Push to registry (false = build only)"
+    required: false
+    default: "true"
+
+outputs:
+  image-ref:
+    value: ${{ steps.bp.outputs.image-ref }}
+  digest:
+    value: ${{ steps.bp.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@v3
+    - if: inputs.push == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: bp
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+        PLATFORMS: ${{ inputs.platforms }}
+        DOCKERFILE: ${{ inputs.dockerfile }}
+        CONTEXT: ${{ inputs.context }}
+        PUSH: ${{ inputs.push }}
+        SHA_SHORT: ${{ github.sha }}

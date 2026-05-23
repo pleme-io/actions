@@ -1,0 +1,40 @@
+name: 'pleme-io · secrets-scan'
+description: 'gitleaks-based secret scan across the repo. Emits typed finding count + severity. Configurable fail-on-found gate.'
+branding: { icon: 'shield', color: 'red' }
+
+inputs:
+  config-path:
+    description: "Path to .gitleaks.toml (optional)"
+    required: false
+    default: ""
+  fail-on-found:
+    description: "Fail when any secret is found"
+    required: false
+    default: "true"
+
+outputs:
+  found-count:
+    value: ${{ steps.scan.outputs.found-count }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: scan
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CONFIG_PATH: ${{ inputs.config-path }}
+        FAIL_ON_FOUND: ${{ inputs.fail-on-found }}

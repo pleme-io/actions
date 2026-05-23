@@ -1,0 +1,39 @@
+;; secrets-scan/run.tlisp — gitleaks-driven secret scan.
+
+(define config (env-get "CONFIG_PATH" ""))
+(define fail-on-found (env-get "FAIL_ON_FOUND" "true"))
+
+(log-info "==> installing gitleaks")
+(exec-check "sh" "-c"
+  "curl -sSL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.18.4_linux_x64.tar.gz \
+   | tar xz -C /tmp gitleaks && sudo mv /tmp/gitleaks /usr/local/bin/")
+
+(define args
+  (append (list "detect" "--no-banner" "--redact" "--report-format=json" "--report-path=/tmp/gitleaks.json")
+          (if (equal? config "") (list) (list "--config" config))))
+
+(log-info "==> gitleaks detect")
+(define r (apply exec-capture (cons "gitleaks" args)))
+
+;; gitleaks exits 1 on findings, 0 on clean.
+;; We emit the count as a string and compare against "0" — no
+;; numeric parsing needed in tlisp.
+(define count-str
+  (cond
+    ((= (status-of r) 0) "0")
+    (else
+      (let ((c (exec-capture "sh" "-c" "jq 'length' /tmp/gitleaks.json 2>/dev/null || echo 0")))
+        (string-trim (stdout-of c))))))
+
+(append-output (string-append "found-count=" count-str))
+
+(cond
+  ((equal? count-str "0")
+   (log-info "no secrets found")
+   (exit 0))
+  ((equal? fail-on-found "true")
+   (log-error (string-append count-str " secret(s) found — failing"))
+   (exit 1))
+  (else
+   (log-info (string-append count-str " secret(s) found (fail-on-found=false, passing)"))
+   (exit 0)))

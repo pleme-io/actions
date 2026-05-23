@@ -1,0 +1,48 @@
+name: 'pleme-io · kubectl-apply'
+description: 'Apply k8s manifests + wait for rollout. Universal — works with any kubectl-reachable cluster.'
+branding: { icon: 'check-circle', color: 'blue' }
+
+inputs:
+  manifests:
+    description: "Path or glob to manifest file(s) / dir"
+    required: true
+  namespace:
+    description: "Target namespace"
+    required: false
+    default: "default"
+  wait:
+    description: "Wait for rollout (deployment/statefulset/daemonset)"
+    required: false
+    default: "true"
+  wait-timeout:
+    description: "kubectl rollout status --timeout"
+    required: false
+    default: "300s"
+
+outputs:
+  applied-count:
+    value: ${{ steps.apply.outputs.applied-count }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-kubectl@v4
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: apply
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        MANIFESTS: ${{ inputs.manifests }}
+        NAMESPACE: ${{ inputs.namespace }}
+        WAIT: ${{ inputs.wait }}
+        WAIT_TIMEOUT: ${{ inputs.wait-timeout }}

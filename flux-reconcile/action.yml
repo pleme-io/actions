@@ -1,0 +1,48 @@
+name: 'pleme-io · flux-reconcile'
+description: 'Trigger FluxCD reconcile on a HelmRelease / Kustomization / GitRepository / OCIRepository. Useful in CD pipelines that want to force-converge after a release lands.'
+branding: { icon: 'refresh-cw', color: 'blue' }
+
+inputs:
+  kind:
+    description: "helmrelease | kustomization | gitrepository | ocirepository | source"
+    required: true
+  name:
+    description: "Resource name"
+    required: true
+  namespace:
+    description: "Resource namespace"
+    required: false
+    default: "flux-system"
+  with-source:
+    description: "Pass --with-source to reconcile parent source first"
+    required: false
+    default: "false"
+
+outputs:
+  reconciled:
+    value: ${{ steps.reco.outputs.reconciled }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-kubectl@v4
+    - uses: fluxcd/flux2/action@main
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: reco
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        KIND: ${{ inputs.kind }}
+        NAME: ${{ inputs.name }}
+        NAMESPACE: ${{ inputs.namespace }}
+        WITH_SOURCE: ${{ inputs.with-source }}

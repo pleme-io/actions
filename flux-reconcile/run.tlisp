@@ -1,0 +1,25 @@
+;; flux-reconcile/run.tlisp — trigger flux reconcile.
+
+(define kind (env-required "KIND"))
+(define name (env-required "NAME"))
+(define ns (env-get "NAMESPACE" "flux-system"))
+(define with-source (env-get "WITH_SOURCE" "false"))
+
+(define args
+  (append (list "reconcile" kind name "-n" ns)
+          (if (equal? with-source "true") (list "--with-source") (list))))
+
+(log-info (string-append "==> flux reconcile " kind " " name " -n " ns))
+
+(define r (apply exec-capture (cons "flux" args)))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info "reconciled")
+   (append-output "reconciled=true")
+   (exit 0))
+  (else
+    (log-error "flux reconcile failed")
+    (log-info (stderr-of r))
+    (append-output "reconciled=false")
+    (exit 1)))

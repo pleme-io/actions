@@ -1,0 +1,49 @@
+;; docker-build-and-push/run.tlisp — multi-arch buildx + push.
+
+(define image (env-required "IMAGE"))
+(define tag-in (env-get "TAG" ""))
+(define platforms (env-get "PLATFORMS" "linux/amd64,linux/arm64"))
+(define dockerfile (env-get "DOCKERFILE" "Dockerfile"))
+(define context (env-get "CONTEXT" "."))
+(define push? (env-get "PUSH" "true"))
+(define sha (env-get "SHA_SHORT" ""))
+
+(define tag
+  (cond
+    ((not (equal? tag-in "")) tag-in)
+    ((not (equal? sha "")) (substring sha 0 7))
+    (else "latest")))
+
+(define full-ref (string-append image ":" tag))
+(define latest-ref (string-append image ":latest"))
+
+(log-info (string-append "==> docker buildx build " full-ref))
+
+(define args
+  (append
+    (list "buildx" "build"
+          "--platform" platforms
+          "-f" dockerfile
+          "-t" full-ref
+          "-t" latest-ref)
+    (if (equal? push? "true") (list "--push") (list "--load"))
+    (list context)))
+
+(define r (apply exec-capture (cons "docker" args)))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info (string-append "built + " (if (equal? push? "true") "pushed" "loaded") ": " full-ref))
+   (append-output (string-append "image-ref=" full-ref))
+   ;; Pull digest via inspect (best-effort).
+   (let ((d (exec-capture "sh" "-c"
+              (string-append "docker buildx imagetools inspect " full-ref
+                             " --format '{{.Manifest.Digest}}' 2>/dev/null"))))
+     (append-output (string-append "digest=" (string-trim (stdout-of d)))))
+   (exit 0))
+  (else
+    (log-error "docker buildx failed")
+    (log-info (stderr-of r))
+    (append-output "image-ref=")
+    (append-output "digest=")
+    (exit 1)))

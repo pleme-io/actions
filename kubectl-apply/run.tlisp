@@ -1,0 +1,60 @@
+;; kubectl-apply/run.tlisp — apply + wait for rollout.
+
+(define manifests (env-required "MANIFESTS"))
+(define ns (env-get "NAMESPACE" "default"))
+(define wait? (env-get "WAIT" "true"))
+(define timeout (env-get "WAIT_TIMEOUT" "300s"))
+
+(log-info (string-append "==> kubectl apply -n " ns " -f " manifests))
+
+(define r (exec-capture "kubectl" "apply" "-n" ns "-f" manifests))
+
+(cond
+  ((not (= (status-of r) 0))
+   (log-error "kubectl apply failed")
+   (log-info (stderr-of r))
+   (append-output "applied-count=0")
+   (exit 1)))
+
+;; Count "configured" / "created" / "unchanged" lines in the output.
+(define count
+  (let ((r2 (exec-capture "sh" "-c"
+              (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
+                             "' | grep -cE '(configured|created|unchanged)$' || echo 0"))))
+    (string-trim (stdout-of r2))))
+
+(append-output (string-append "applied-count=" count))
+
+(cond
+  ((not (equal? wait? "true"))
+   (log-info "wait=false — skipping rollout wait")
+   (exit 0)))
+
+;; Extract any deployment/statefulset/daemonset names + wait for rollout.
+(let* ((rollout-cmd
+         (string-append
+           "kubectl get -n " ns " -f " manifests
+           " -o jsonpath='{range .items[?(@.kind==\"Deployment\" || @.kind==\"StatefulSet\" || @.kind==\"DaemonSet\")]}{.kind}/{.metadata.name}{\"\\n\"}{end}'"
+           " 2>/dev/null || true"))
+       (r3 (exec-capture "sh" "-c" rollout-cmd))
+       (targets (string-split (string-trim (stdout-of r3)) "\n")))
+  (cond
+    ((or (null? targets) (and (= (length targets) 1) (equal? (car targets) "")))
+     (log-info "no rollout-bearing resources found — done")
+     (exit 0))
+    (else
+      (log-info (string-append "waiting on " (string-format "{}" (length targets)) " resource(s)"))
+      (let loop ((ts targets) (all-ok #t))
+        (cond
+          ((null? ts)
+           (cond (all-ok (exit 0)) (else (exit 1))))
+          (else
+            (let ((r4 (exec-capture "kubectl" "rollout" "status" "-n" ns
+                                    (car ts) "--timeout" timeout)))
+              (cond
+                ((= (status-of r4) 0)
+                 (log-info (string-append "  ✓ " (car ts)))
+                 (loop (cdr ts) all-ok))
+                (else
+                  (log-error (string-append "  ✗ " (car ts) " timed out"))
+                  (loop (cdr ts) #f))))))))))
