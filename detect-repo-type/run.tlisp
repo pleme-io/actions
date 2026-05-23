@@ -1,0 +1,91 @@
+;; detect-repo-type/run.tlisp — emit one of:
+;;
+;;   rust-workspace      — Cargo.toml with [workspace] section
+;;   rust-single-crate   — Cargo.toml with [package] section (no [workspace])
+;;   npm                 — package.json
+;;   python              — pyproject.toml
+;;   helm                — Chart.yaml
+;;   ansible-collection  — galaxy.yml
+;;   ruby-gem            — *.gemspec at root
+;;   github-action       — action.yml at root
+;;   unknown             — none of the above
+;;
+;; Precedence (when multiple manifests coexist):
+;;   rust > ansible > helm > python > npm > ruby > action > unknown
+;;
+;; Outputs (appended):
+;;   repo-type       the typed identifier
+;;   manifest-path   the file that drove the detection (for log lines)
+
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+(define (append-output line)
+  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
+  (write-file gh-output (string-append prior line "\n")))
+
+(define (emit type manifest)
+  (log-info (string-append "detected: " type " (manifest: " manifest ")"))
+  (append-output (string-append "repo-type=" type))
+  (append-output (string-append "manifest-path=" manifest))
+  (exit 0))
+
+;; -------------------------------------------------------------- ;;
+;; Rust detection — workspace vs single-crate                      ;;
+;; -------------------------------------------------------------- ;;
+
+(define (cargo-has-section? section)
+  (and (path-exists? "Cargo.toml")
+       (string-contains? (read-file "Cargo.toml") section)))
+
+;; -------------------------------------------------------------- ;;
+;; Ruby gem — find any *.gemspec at root                           ;;
+;; -------------------------------------------------------------- ;;
+
+(define (find-gemspec)
+  (let ((r (exec-capture "sh" "-c" "ls *.gemspec 2>/dev/null | head -1")))
+    (string-trim (alist-get r "stdout" ""))))
+
+;; -------------------------------------------------------------- ;;
+;; Dispatch — first match wins (precedence per header comment)     ;;
+;; -------------------------------------------------------------- ;;
+
+(cond
+  ;; Rust — workspace check first since [workspace] crowds out
+  ;; [package] when both are present
+  ((cargo-has-section? "[workspace]")
+   (emit "rust-workspace" "Cargo.toml"))
+  ((cargo-has-section? "[package]")
+   (emit "rust-single-crate" "Cargo.toml"))
+
+  ;; Ansible
+  ((path-exists? "galaxy.yml")
+   (emit "ansible-collection" "galaxy.yml"))
+
+  ;; Helm
+  ((path-exists? "Chart.yaml")
+   (emit "helm" "Chart.yaml"))
+
+  ;; Python — pyproject.toml is the modern manifest
+  ((path-exists? "pyproject.toml")
+   (emit "python" "pyproject.toml"))
+
+  ;; npm
+  ((path-exists? "package.json")
+   (emit "npm" "package.json"))
+
+  ;; Ruby gem
+  ((not (equal? (find-gemspec) ""))
+   (emit "ruby-gem" (find-gemspec)))
+
+  ;; GitHub action
+  ((path-exists? "action.yml")
+   (emit "github-action" "action.yml"))
+  ((path-exists? "action.yaml")
+   (emit "github-action" "action.yaml"))
+
+  ;; Nothing matched
+  (else
+    (log-error "detect-repo-type: no recognized manifest at repo root")
+    (append-output "repo-type=unknown")
+    (append-output "manifest-path=")
+    (exit 1)))
