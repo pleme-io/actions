@@ -1,0 +1,41 @@
+name: 'pleme-io · s3-mirror'
+description: 'Mirror a local directory tree to S3 with --delete semantics (aws s3 sync).'
+branding: { icon: 'upload', color: 'orange' }
+
+inputs:
+  source:
+    required: true
+  bucket:
+    required: true
+  key:
+    required: true
+  delete:
+    required: false
+    default: "false"
+
+outputs:
+  synced:
+    value: ${{ steps.run.outputs.synced }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SOURCE: ${{ inputs.source }}
+        BUCKET: ${{ inputs.bucket }}
+        KEY_ARG: ${{ inputs.key }}
+        DELETE_FLAG: ${{ inputs.delete }}

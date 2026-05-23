@@ -1,0 +1,20 @@
+;; slsa-attest/run.tlisp
+
+(define artifact (env-required "ARTIFACT_PATH"))
+(define ptype (env-get "PREDICATE_TYPE" "https://slsa.dev/provenance/v1"))
+
+(exec-check "sh" "-c"
+  "curl -sSL https://github.com/in-toto/witness/releases/latest/download/witness-linux-amd64 -o /tmp/witness && chmod +x /tmp/witness && sudo mv /tmp/witness /usr/local/bin/")
+
+(define out-path (string-append artifact ".slsa.json"))
+(define r (exec-capture "witness" "run"
+            "--step" "build"
+            "--attestations" "command-run,git,github,oci"
+            "--outfile" out-path))
+
+(cond
+  ((= (status-of r) 0)
+   (append-output (string-append "attestation-path=" out-path))
+   (exit 0))
+  (else
+   (append-output "attestation-path=") (exit 1)))

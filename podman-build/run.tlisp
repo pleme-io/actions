@@ -1,0 +1,17 @@
+;; podman-build/run.tlisp
+
+(define dockerfile (env-get "DOCKERFILE" "Containerfile"))
+(define tag (env-required "TAG"))
+(define context (env-get "CONTEXT" "."))
+
+(exec-check "sudo" "apt-get" "install" "-y" "-qq" "podman")
+
+(define r (exec-capture "podman" "build" "-f" dockerfile "-t" tag context))
+
+(cond
+  ((= (status-of r) 0)
+   (let* ((id-r (exec-capture "podman" "images" "-q" tag))
+          (img (string-trim (stdout-of id-r))))
+     (append-output (string-append "image-id=" img))
+     (exit 0)))
+  (else (append-output "image-id=") (exit 1)))

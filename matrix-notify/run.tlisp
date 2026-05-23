@@ -1,0 +1,28 @@
+;; matrix-notify/run.tlisp
+
+(define server (env-required "HOMESERVER"))
+(define tok (env-required "ACCESS_TOKEN"))
+(define room (env-required "ROOM_ID"))
+(define body (env-required "BODY"))
+
+(define payload
+  (string-append "{\"msgtype\":\"m.text\",\"body\":\""
+                 (string-replace body "\"" "\\\"") "\"}"))
+
+(define ts-r (exec-capture "sh" "-c" "date +%s%3N"))
+(define ts (string-trim (stdout-of ts-r)))
+
+(define url (string-append server "/_matrix/client/v3/rooms/" room "/send/m.room.message/" ts))
+
+(define r (exec-capture "sh" "-c"
+            (string-append "curl -sS -o /dev/null -w '%{http_code}' "
+                           "-X PUT -H 'Authorization: Bearer " tok "' "
+                           "-H 'Content-Type: application/json' "
+                           "-d '" (string-replace payload "'" "'\"'\"'") "' '" url "'")))
+(define code (string-trim (stdout-of r)))
+
+(cond
+  ((equal? code "200") (append-output "sent=true") (exit 0))
+  (else
+    (log-error (string-append "Matrix returned HTTP " code))
+    (append-output "sent=false") (exit 1)))

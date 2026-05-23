@@ -1,0 +1,39 @@
+;; vault-fetch/run.tlisp
+
+(define vurl (env-required "VAULT_URL"))
+(define role (env-required "ROLE"))
+(define path (env-required "SECRET_PATH"))
+(define out-env (env-get "OUTPUT_ENV" ""))
+
+;; 1. Get GH OIDC JWT
+(define id-url (env-required "ACTIONS_ID_TOKEN_REQUEST_URL"))
+(define id-tok (env-required "ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+(define jwt-r (exec-capture "sh" "-c"
+                (string-append "curl -sH 'Authorization: Bearer " id-tok
+                               "' '" id-url "&audience=vault'  | jq -r '.value'")))
+(define jwt (string-trim (stdout-of jwt-r)))
+
+;; 2. Vault JWT login
+(define login-payload (string-append "{\"role\":\"" role "\",\"jwt\":\"" jwt "\"}"))
+(define login-r (exec-capture "sh" "-c"
+                  (string-append "curl -sS -X POST -d '" login-payload
+                                 "' '" vurl "/v1/auth/jwt/login' | jq -r '.auth.client_token'")))
+(define client-tok (string-trim (stdout-of login-r)))
+
+;; 3. Read secret
+(define sec-r (exec-capture "sh" "-c"
+                (string-append "curl -sS -H 'X-Vault-Token: " client-tok
+                               "' '" vurl "/v1/" path "' | jq -r '.data.data | to_entries[0].value'")))
+(define value (string-trim (stdout-of sec-r)))
+
+(append-output (string-append "value=" value))
+(log-info (string-append "::add-mask::" value))
+
+(cond
+  ((not (equal? out-env ""))
+   (let ((env-file (env-get "GITHUB_ENV" "")))
+     (cond
+       ((not (equal? env-file ""))
+        (exec-check "sh" "-c"
+          (string-append "echo '" out-env "=" value "' >> " env-file)))))))
+(exit 0)

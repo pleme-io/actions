@@ -1,0 +1,62 @@
+;; action-shell-lint/run.tlisp — enforce NO-SHELL on pleme-io action.yml files.
+;;
+;; The canonical loader block is exactly:
+;;     - id: src
+;;       shell: bash
+;;       run: |
+;;         { echo 'script<<TLISP_EOF' ...
+;;
+;; We count `shell: bash` blocks elsewhere AND the line count of
+;; their `run: |` body. Any non-loader shell body > threshold lines
+;; is a violation.
+
+(define threshold-str (env-get "THRESHOLD" "10"))
+(define paths (env-get "PATHS" "*/action.yml"))
+(define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
+
+(log-info (string-append "==> scanning " paths " (threshold=" threshold-str ")"))
+
+;; Awk script that detects 'shell: bash' blocks NOT containing
+;; 'script<<TLISP_EOF' in the next 10 lines (= loader block), and
+;; counts the run body. Emits "<file>\t<lines>" per offender.
+(define awk-prog
+  "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }
+   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }
+   in_run && /TLISP_EOF/ { is_loader=1; }
+   in_run && /run: \\|/ { in_body=1; next; }
+   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }
+   in_body { lines++; }
+   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
+
+(define find-cmd
+  (string-append "find . -path './_*' -prune -o -name 'action.yml' -print "
+                 "| xargs -I{} awk -v THRESHOLD=" threshold-str
+                 " '" awk-prog "' {}"))
+
+(define r (exec-capture "sh" "-c" find-cmd))
+(define out (string-trim (stdout-of r)))
+
+(define files-r (exec-capture "sh" "-c"
+                  "find . -path './_*' -prune -o -name 'action.yml' -print | wc -l"))
+(define files (string-trim (stdout-of files-r)))
+
+(cond
+  ((equal? out "")
+   (log-info (string-append "all " files " action.yml files within shell threshold"))
+   (append-output "violations=0")
+   (append-output (string-append "files-scanned=" files))
+   (exit 0)))
+
+(log-error "shell-bodied actions exceeding threshold:")
+(let loop ((lines (string-split out "\n")) (n 0))
+  (cond
+    ((null? lines)
+     (append-output (string-append "violations=" (string-format "{}" n)))
+     (append-output (string-append "files-scanned=" files))
+     (cond
+       ((equal? fail-on "true") (exit 1))
+       (else (exit 0))))
+    ((equal? (car lines) "") (loop (cdr lines) n))
+    (else
+      (log-error (string-append "  " (car lines)))
+      (loop (cdr lines) (+ n 1)))))

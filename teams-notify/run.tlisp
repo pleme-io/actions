@@ -1,0 +1,25 @@
+;; teams-notify/run.tlisp
+
+(define webhook (env-required "WEBHOOK_URL"))
+(define title (env-required "TITLE"))
+(define text (env-required "TEXT"))
+
+(define payload-jq
+  (string-append "jq -n --arg title '" title "' --arg text '" text
+                 "' '{ \"@type\": \"MessageCard\", \"@context\": \"http://schema.org/extensions\","
+                 "    title: $title, text: $text }'"))
+
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond ((= (status-of r) 0) (stdout-of r))
+          (else (log-error "payload build failed") (exit 1)))))
+
+(define r (exec-capture "sh" "-c"
+            (string-append "curl -sS -o /dev/null -w '%{http_code}' "
+                           "-X POST -H 'Content-Type: application/json' "
+                           "-d '" (string-replace payload "'" "'\"'\"'") "' '" webhook "'")))
+(define code (string-trim (stdout-of r)))
+
+(cond
+  ((equal? code "200") (append-output "sent=true") (exit 0))
+  (else (append-output "sent=false") (exit 1)))

@@ -1,0 +1,16 @@
+;; cyclonedx-merge/run.tlisp
+
+(define inputs-glob (env-get "INPUTS_GLOB" "sbom-*.cyclonedx.json"))
+(define out (env-get "OUTPUT_ARG" "sbom-merged.cyclonedx.json"))
+
+(exec-check "sh" "-c"
+  "curl -sSL https://github.com/CycloneDX/cyclonedx-cli/releases/latest/download/cyclonedx-linux-x64 -o /tmp/cdx && chmod +x /tmp/cdx && sudo mv /tmp/cdx /usr/local/bin/")
+
+(define r (exec-capture "sh" "-c"
+            (string-append "cyclonedx merge --input-files " inputs-glob
+                           " --output-file " out)))
+
+(cond
+  ((= (status-of r) 0)
+   (append-output (string-append "output-path=" out)) (exit 0))
+  (else (append-output "output-path=") (exit 1)))

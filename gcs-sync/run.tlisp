@@ -1,0 +1,14 @@
+;; gcs-sync/run.tlisp
+
+(define source (env-required "SOURCE"))
+(define bucket (env-required "BUCKET"))
+(define key (env-required "KEY_ARG"))
+(define delete-flag (env-get "DELETE_FLAG" "false"))
+
+(define base-args (list "rsync" "-r" source (string-append "gs://" bucket "/" key)))
+(define args (if (equal? delete-flag "true") (cons "-d" base-args) base-args))
+
+(define r (apply exec-capture (cons "gsutil" args)))
+(cond
+  ((= (status-of r) 0) (append-output "synced=true") (exit 0))
+  (else (append-output "synced=false") (exit 1)))

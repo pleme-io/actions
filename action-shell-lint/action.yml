@@ -1,0 +1,44 @@
+name: 'pleme-io · action-shell-lint'
+description: 'Enforce the ★★ NO-SHELL directive on pleme-io/actions/* — scans every action.yml + counts shell-line bodies outside the canonical loader; rejects PRs that exceed threshold.'
+branding: { icon: 'shield', color: 'red' }
+
+inputs:
+  threshold:
+    description: "Max shell lines per action.yml outside the canonical loader block"
+    required: false
+    default: "10"
+  paths:
+    description: "Glob of action.yml files to scan"
+    required: false
+    default: "*/action.yml"
+  fail-on-violation:
+    required: false
+    default: "true"
+
+outputs:
+  violations:
+    value: ${{ steps.run.outputs.violations }}
+  files-scanned:
+    value: ${{ steps.run.outputs.files-scanned }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        THRESHOLD: ${{ inputs.threshold }}
+        PATHS: ${{ inputs.paths }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}

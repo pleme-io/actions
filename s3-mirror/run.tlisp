@@ -1,0 +1,14 @@
+;; s3-mirror/run.tlisp
+
+(define source (env-required "SOURCE"))
+(define bucket (env-required "BUCKET"))
+(define key (env-required "KEY_ARG"))
+(define delete-flag (env-get "DELETE_FLAG" "false"))
+
+(define args (list "s3" "sync" source (string-append "s3://" bucket "/" key)))
+(define with-delete (if (equal? delete-flag "true") (append args (list "--delete")) args))
+
+(define r (apply exec-capture (cons "aws" with-delete)))
+(cond
+  ((= (status-of r) 0) (append-output "synced=true") (exit 0))
+  (else (append-output "synced=false") (exit 1)))

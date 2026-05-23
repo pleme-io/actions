@@ -1,0 +1,43 @@
+name: 'pleme-io · vault-fetch'
+description: 'Fetch a secret from HashiCorp Vault via JWT-OIDC auth.'
+branding: { icon: 'key', color: 'gray-dark' }
+
+inputs:
+  vault-url:
+    required: true
+  role:
+    required: true
+  secret-path:
+    required: true
+  output-env:
+    required: false
+    default: ""
+
+outputs:
+  value:
+    value: ${{ steps.run.outputs.value }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        VAULT_URL: ${{ inputs.vault-url }}
+        ROLE: ${{ inputs.role }}
+        SECRET_PATH: ${{ inputs.secret-path }}
+        OUTPUT_ENV: ${{ inputs.output-env }}
+        ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}

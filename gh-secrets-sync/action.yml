@@ -1,0 +1,38 @@
+name: 'pleme-io · gh-secrets-sync'
+description: 'Sync GitHub repo/org/env secrets from a typed YAML spec (encrypted).'
+branding: { icon: 'lock', color: 'red' }
+
+inputs:
+  spec-file:
+    required: false
+    default: ".github/secrets.yaml"
+  scope:
+    required: false
+    default: "repo"
+
+outputs:
+  synced-count:
+    value: ${{ steps.run.outputs.synced-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SPEC_FILE: ${{ inputs.spec-file }}
+        SCOPE: ${{ inputs.scope }}
+        GH_TOKEN: ${{ secrets.GH_ADMIN_TOKEN || github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}

@@ -1,0 +1,29 @@
+;; snyk-test/run.tlisp
+
+(define token (env-required "TOKEN"))
+(define sev (env-get "SEVERITY_THRESHOLD" "high"))
+(define wd (env-get "PROJECT_PATH" "."))
+
+(let ((env-file (env-get "GITHUB_ENV" "")))
+  (cond
+    ((not (equal? env-file ""))
+     (exec-check "sh" "-c"
+       (string-append "echo 'SNYK_TOKEN=" token "' >> " env-file)))))
+
+(exec-check "npm" "install" "-g" "snyk")
+
+(define r (exec-capture "sh" "-c"
+            (string-append "cd " wd " && SNYK_TOKEN=" token
+                           " snyk test --severity-threshold=" sev " --json")))
+(define out (stdout-of r))
+
+(define count-r
+  (exec-capture "sh" "-c"
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
+                   "' | jq '.vulnerabilities | length' 2>/dev/null || echo 0")))
+(define cnt (string-trim (stdout-of count-r)))
+
+(append-output (string-append "vulns-count=" cnt))
+(cond
+  ((or (equal? cnt "0") (equal? cnt "")) (exit 0))
+  (else (exit 1)))

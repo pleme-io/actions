@@ -1,0 +1,35 @@
+name: 'pleme-io · slsa-attest'
+description: 'Generate SLSA provenance attestation for a build artifact (Level 3 via in-toto).'
+branding: { icon: 'shield', color: 'green' }
+
+inputs:
+  artifact-path:
+    required: true
+  predicate-type:
+    required: false
+    default: "https://slsa.dev/provenance/v1"
+
+outputs:
+  attestation-path:
+    value: ${{ steps.run.outputs.attestation-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ARTIFACT_PATH: ${{ inputs.artifact-path }}
+        PREDICATE_TYPE: ${{ inputs.predicate-type }}

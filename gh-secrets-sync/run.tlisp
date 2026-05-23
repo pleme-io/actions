@@ -1,0 +1,37 @@
+;; gh-secrets-sync/run.tlisp
+
+(define spec (env-get "SPEC_FILE" ".github/secrets.yaml"))
+(define scope (env-get "SCOPE" "repo"))
+(define repo (env-required "GITHUB_REPOSITORY"))
+
+(cond
+  ((not (path-exists? spec))
+   (log-error (string-append "spec not found: " spec))
+   (append-output "synced-count=0") (exit 1)))
+
+(define keys-r (exec-capture "sh" "-c"
+                 (string-append "yq '.secrets | keys | .[]' " spec " | tr -d '\"'")))
+(define keys (string-split (string-trim (stdout-of keys-r)) "\n"))
+
+(define synced 0)
+(let loop ((ks keys))
+  (cond
+    ((null? ks) #t)
+    ((equal? (car ks) "") (loop (cdr ks)))
+    (else
+      (let* ((val-r (exec-capture "sh" "-c"
+                      (string-append "yq '.secrets.\"" (car ks) "\"' " spec " | tr -d '\"'")))
+             (val (string-trim (stdout-of val-r))))
+        (cond
+          ((or (equal? val "") (equal? val "null"))
+           (log-info (string-append "  skip " (car ks) " — no value"))
+           (loop (cdr ks)))
+          (else
+            (exec-capture "gh" "secret" "set" (car ks) "--body" val
+                          "--repo" repo)
+            (log-info (string-append "  synced " (car ks)))
+            (set! synced (+ synced 1))
+            (loop (cdr ks))))))))
+
+(append-output (string-append "synced-count=" (string-format "{}" synced)))
+(exit 0)
