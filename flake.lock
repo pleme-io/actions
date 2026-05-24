@@ -1069,11 +1069,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1778869304,
-        "narHash": "sha256-30sZNZoA1cqF5JNO9fVX+wgiQYjB7HJqqJ4ztCDeBZE=",
+        "lastModified": 1779508470,
+        "narHash": "sha256-Ap9KJX+5xHIn3bPIpfNgT6MEXdAECECwo4/rmlQD74M=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "d233902339c02a9c334e7e593de68855ad26c4cb",
+        "rev": "29916453413845e54a65b8a1cf996842300cd299",
         "type": "github"
       },
       "original": {
@@ -1411,11 +1411,11 @@
         "substrate": "substrate"
       },
       "locked": {
-        "lastModified": 1779426307,
-        "narHash": "sha256-Zdr6Jn2rPyHcA9DAilV2KXU6o5dyhqeV5TgDVukQ9zs=",
+        "lastModified": 1779500544,
+        "narHash": "sha256-EdzZDMB+fS6tv90HVm0FgIo2dOCmxn9HO7WGkHU2+fg=",
         "owner": "pleme-io",
         "repo": "tatara-lisp",
-        "rev": "b91252fbdd15f94de85dd077e82b132cad3100db",
+        "rev": "62ece46069608f8094c2409ef88c17f7a60a5a0d",
         "type": "github"
       },
       "original": {
