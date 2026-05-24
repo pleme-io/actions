@@ -87,6 +87,17 @@
          (string-contains? trimmed "[")
          (not (string-contains? trimmed "=")))))
 
+;; True when a TOML line is `<field> = ...` for the EXACT field name.
+;; The previous predicate used (string-contains? line field) which
+;; matches `version` inside `rust-version` — produced version-unchanged
+;; "1.71" instead of the real package version on caixa-mio. Strict:
+;; split at first =, trim the LHS, byte-equal against field.
+(define (line-assigns-field? line field)
+  (let ((parts (string-split line "=")))
+    (cond
+      ((< (length parts) 2) #f)
+      (else (equal? (string-trim (car parts)) field)))))
+
 ;; Walk lines looking for the named section header, then return
 ;; the first `field = "value"` inside it. Returns "" on miss.
 (define (toml-walk-field-in-section section field lines in-section)
@@ -96,9 +107,7 @@
      (toml-walk-field-in-section section field (cdr lines) #t))
     ((and in-section (line-is-section-header? (car lines)))
      "")
-    ((and in-section
-          (string-contains? (car lines) field)
-          (string-contains? (car lines) "="))
+    ((and in-section (line-assigns-field? (car lines) field))
      (extract-quoted-value (car lines)))
     (else (toml-walk-field-in-section section field (cdr lines) in-section))))
 
