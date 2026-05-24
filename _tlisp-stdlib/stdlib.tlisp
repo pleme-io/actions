@@ -74,9 +74,18 @@
       ((>= (length sq-parts) 2) (car (cdr sq-parts)))
       (else ""))))
 
+;; A TOML section header is a line wrapped in brackets — [section] or
+;; [section.sub]. A TOML field assignment always contains `=`, even
+;; array-valued ones like `keywords = ["a", "b"]`. The previous rule
+;; (any line containing `[`) misclassified array-valued fields as
+;; section headers and exited the [package] walker early — caused
+;; cargo-bump to report "package.version not found" on num-traits
+;; and any Cargo.toml with array fields above `version`.
 (define (line-is-section-header? line)
-  (and (> (string-length line) 0)
-       (string-contains? line "[")))
+  (let ((trimmed (string-trim line)))
+    (and (> (string-length trimmed) 0)
+         (string-contains? trimmed "[")
+         (not (string-contains? trimmed "=")))))
 
 ;; Walk lines looking for the named section header, then return
 ;; the first `field = "value"` inside it. Returns "" on miss.
