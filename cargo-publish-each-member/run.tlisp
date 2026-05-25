@@ -80,15 +80,27 @@
 (define (publish-member dir)
   (let* ((args (string-append "cd " dir " && cargo publish"
                               (if (equal? dry-run "true") " --dry-run" "")
-                              (if (equal? no-verify "true") " --no-verify" "")))
+                              (if (equal? no-verify "true") " --no-verify" "")
+                              " 2>&1"))
          (r (exec-capture "sh" "-c" args))
-         (s (status-of r)))
+         (s (status-of r))
+         (out (stdout-of r)))
     (cond
       ((= s 0) 'published)
-      ((or (string-contains? (stderr-of r) "already uploaded")
-           (string-contains? (stderr-of r) "already exists"))
+      ((or (string-contains? out "already uploaded")
+           (string-contains? out "already exists"))
        'already-published)
-      ((string-contains? (stderr-of r) "429")
+      ;; 401/403 means the crate name is owned by someone else (very
+      ;; common for substrate-absorbed crates publishing under the
+      ;; original upstream name). Treat as 'not-our-crate' — typed
+      ;; soft-skip; bump + tag already happened, just no publish.
+      ((or (string-contains? out "the remote server responded with")
+           (string-contains? out "denied")
+           (string-contains? out "Unauthorized")
+           (string-contains? out "is already taken")
+           (string-contains? out "Invalid token"))
+       'not-our-crate)
+      ((string-contains? out "429")
        'rate-limited)
       (else 'failed))))
 
@@ -133,10 +145,20 @@
             (log-info (string-append name " " cur-ver " -> " new-ver
                                      (cond ((equal? outcome 'published) " : published")
                                            ((equal? outcome 'already-published) " : already-published")
+                                           ((equal? outcome 'not-our-crate) " : not-our-crate (skipped)")
                                            ((equal? outcome 'rate-limited) " : rate-limited")
                                            (else " : failed"))))
             (cond
-              ((or (equal? outcome 'published) (equal? outcome 'already-published))
+              ;; published / already-published / not-our-crate are all
+              ;; substrate-correct outcomes: bump+tag happened, publish
+              ;; is best-effort. not-our-crate happens when the upstream
+              ;; name is owned by someone else on crates.io — substrate
+              ;; absorbed the source, just can't republish under that
+              ;; name (operator can rename + manually publish if they
+              ;; want).
+              ((or (equal? outcome 'published)
+                   (equal? outcome 'already-published)
+                   (equal? outcome 'not-our-crate))
                (set! published-markers (string-append published-markers "x")))
               (else
                (set! failed-markers (string-append failed-markers "x")))))))))))
