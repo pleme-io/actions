@@ -1,0 +1,75 @@
+name: 'pleme-io · cargo-publish-each-member'
+description: 'Publish each workspace member to crates.io at its own [package].version. For multi-crate workspaces WITHOUT a shared [workspace.package].version (rust-url / bindgen / dirs-next / ratatui pattern). Bumps each member individually, tags member-name-v-version, publishes per-member; rust-workspace-publish is for the engenho-style shared-version pattern.'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  bump-type:
+    description: "patch | minor | major (per-member bump, applied when --skip-when-no-source-changes finds changes)"
+    required: false
+    default: patch
+  dry-run:
+    description: "Run cargo publish as --dry-run only (no upload)"
+    required: false
+    default: "false"
+  no-verify:
+    description: "Skip cargo publish's verification compile (faster, more tolerant of edge cases)"
+    required: false
+    default: "true"
+  skip-when-no-source-changes:
+    description: "Per-member: skip bump+publish when no member-dir changes since previous member tag"
+    required: false
+    default: "true"
+
+outputs:
+  published-count:
+    description: "Number of members successfully published"
+    value: ${{ steps.publish.outputs.published-count }}
+  skipped-count:
+    description: "Number of members skipped (no source changes since last tag)"
+    value: ${{ steps.publish.outputs.skipped-count }}
+  failed-count:
+    description: "Number of members that failed (transient + non-fatal — see logs)"
+    value: ${{ steps.publish.outputs.failed-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-edit
+      shell: bash
+      run: cargo install --locked cargo-edit
+
+    - name: Configure cargo credentials
+      shell: bash
+      run: |
+        mkdir -p ~/.cargo
+        if [ -n "$CRATES_API_TOKEN" ]; then
+          printf '[registry]\ntoken = "%s"\n' "$CRATES_API_TOKEN" > ~/.cargo/credentials.toml
+        fi
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run cargo-publish-each-member
+      id: publish
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BUMP_TYPE: ${{ inputs.bump-type }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        NO_VERIFY: ${{ inputs.no-verify }}
+        SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}

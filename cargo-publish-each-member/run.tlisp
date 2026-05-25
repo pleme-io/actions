@@ -1,0 +1,145 @@
+;; cargo-publish-each-member/run.tlisp — iterate workspace members,
+;; per-member bump + publish at each member's own [package].version.
+;;
+;; For multi-crate workspaces WITHOUT a shared [workspace.package].version
+;; (rust-url / bindgen / dirs-next / ratatui pattern). Each member is
+;; independently versioned; cargo-bump + rust-workspace-bump don't fit.
+;;
+;; Stdlib helpers (prepended by action.yml's loader step):
+;;   exec-capture, status-of, stdout-of, stderr-of, append-output,
+;;   path-exists?, read-file, string-split, string-trim, log-info,
+;;   log-error.
+
+(define bump-type (env-get "BUMP_TYPE" "patch"))
+(define dry-run (env-get "DRY_RUN" "false"))
+(define no-verify (env-get "NO_VERIFY" "true"))
+(define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
+(define gh-output (env-required "GITHUB_OUTPUT"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Workspace member enumeration
+;; ────────────────────────────────────────────────────────────────
+;; `cargo metadata --no-deps --format-version 1 | jq -r ...` lists
+;; every workspace member's name + manifest-path. We loop members
+;; in source order. NO SHELL beyond the single jq glue line —
+;; tatara-script doesn't yet ship a JSON parser builtin.
+
+(define (workspace-members-with-paths)
+  (let* ((r (exec-capture "sh" "-c"
+              "cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | \"\\(.name)\\t\\(.manifest_path)\"'"))
+         (out (stdout-of r)))
+    (cond
+      ((not (= (status-of r) 0)) '())
+      (else
+        (filter (lambda (line) (not (equal? line "")))
+                (string-split (string-trim out) "\n"))))))
+
+(define (member-name line) (car (string-split line "\t")))
+(define (member-manifest-path line) (car (cdr (string-split line "\t"))))
+(define (member-dir line)
+  (let ((p (member-manifest-path line)))
+    ;; strip trailing /Cargo.toml
+    (let ((parts (string-split p "/")))
+      ;; rejoin all-but-last
+      (string-join (reverse (cdr (reverse parts))) "/"))))
+
+;; ────────────────────────────────────────────────────────────────
+;; Per-member bump + publish
+;; ────────────────────────────────────────────────────────────────
+
+(define (member-already-tagged? name version)
+  ;; tag convention: <member-name>-v<version>
+  (let* ((tag (string-append name "-v" version))
+         (r (exec-capture "git" "rev-parse" "-q" "--verify"
+                          (string-append "refs/tags/" tag))))
+    (= (status-of r) 0)))
+
+(define (member-has-source-changes? dir last-tag)
+  (cond
+    ((equal? last-tag "") #t)
+    (else
+      (let ((r (exec-capture "git" "diff" "--quiet"
+                             last-tag "HEAD" "--" dir)))
+        (not (= (status-of r) 0))))))
+
+(define (last-member-tag name)
+  ;; Find the most-recent <name>-v* tag. Empty if none yet.
+  (let ((r (exec-capture "sh" "-c"
+              (string-append "git tag --list --sort=-version:refname '"
+                             name "-v*' | head -n1"))))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
+
+(define (bump-member dir)
+  ;; cargo-edit's `cargo set-version --bump <type>` inside the member dir.
+  (let ((r (exec-capture "sh" "-c"
+              (string-append "cd " dir " && cargo set-version --bump " bump-type))))
+    (= (status-of r) 0)))
+
+(define (publish-member dir)
+  (let* ((args (string-append "cd " dir " && cargo publish"
+                              (if (equal? dry-run "true") " --dry-run" "")
+                              (if (equal? no-verify "true") " --no-verify" "")))
+         (r (exec-capture "sh" "-c" args))
+         (s (status-of r)))
+    (cond
+      ((= s 0) 'published)
+      ((or (string-contains? (stderr-of r) "already uploaded")
+           (string-contains? (stderr-of r) "already exists"))
+       'already-published)
+      ((string-contains? (stderr-of r) "429")
+       'rate-limited)
+      (else 'failed))))
+
+(define (read-member-version dir)
+  (toml-read-field (string-append dir "/Cargo.toml") "[package]" "version"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Main loop
+;; ────────────────────────────────────────────────────────────────
+
+(define published-count 0)
+(define skipped-count 0)
+(define failed-count 0)
+
+(define (process-member line)
+  (let* ((name (member-name line))
+         (dir  (member-dir line))
+         (cur-ver (read-member-version dir))
+         (last-tag (last-member-tag name))
+         (changed (member-has-source-changes? dir last-tag)))
+    (cond
+      ((equal? cur-ver "")
+       (log-error (string-append "member " name " has no [package].version — skipping"))
+       (set! skipped-count (+ skipped-count 1)))
+      ((and (equal? skip-flag "true") (not changed))
+       (log-info (string-append "member " name " unchanged since " last-tag " — skipping"))
+       (set! skipped-count (+ skipped-count 1)))
+      (else
+       (log-info (string-append "bumping member " name " from " cur-ver))
+       (cond
+         ((not (bump-member dir))
+          (log-error (string-append "cargo set-version failed for " name))
+          (set! failed-count (+ failed-count 1)))
+         (else
+          (let* ((new-ver (read-member-version dir))
+                 (outcome (publish-member dir)))
+            (log-info (string-append name " " cur-ver " -> " new-ver " : " (symbol->string outcome)))
+            (cond
+              ((or (equal? outcome 'published) (equal? outcome 'already-published))
+               (set! published-count (+ published-count 1)))
+              (else
+               (set! failed-count (+ failed-count 1)))))))))))
+
+(define members (workspace-members-with-paths))
+(log-info (string-append "publishing " (number->string (length members)) " workspace members"))
+(for-each process-member members)
+
+(append-output (string-append "published-count=" (number->string published-count)))
+(append-output (string-append "skipped-count=" (number->string skipped-count)))
+(append-output (string-append "failed-count=" (number->string failed-count)))
+(log-info (string-append "done: " (number->string published-count) " published, "
+                         (number->string skipped-count) " skipped, "
+                         (number->string failed-count) " failed"))
+(exit (if (> failed-count 0) 1 0))
