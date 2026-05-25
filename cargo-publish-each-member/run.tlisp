@@ -38,10 +38,10 @@
 (define (member-manifest-path line) (car (cdr (string-split line "\t"))))
 (define (member-dir line)
   (let ((p (member-manifest-path line)))
-    ;; strip trailing /Cargo.toml
+    ;; strip trailing /Cargo.toml; tatara-script's string-join takes
+    ;; (separator list) — Scheme-standard (list separator) is wrong here.
     (let ((parts (string-split p "/")))
-      ;; rejoin all-but-last
-      (string-join (reverse (cdr (reverse parts))) "/"))))
+      (string-join "/" (reverse (cdr (reverse parts)))))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; Per-member bump + publish
