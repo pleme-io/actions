@@ -137,6 +137,78 @@
   (toml-read-field "Cargo.toml" "[package]" "name"))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Cargo publish failure-mode detection — typed predicates
+;; ────────────────────────────────────────────────────────────────
+;; Shared between rust-workspace-publish + cargo-publish-each-member +
+;; future cargo publishers. Each predicate inspects an arbitrary log
+;; chunk (cargo publish's stderr/stdout merged) and returns #t if the
+;; named failure-mode pattern is present.
+
+(define (any-line-matches? lines pred)
+  (cond
+    ((null? lines) #f)
+    ((pred (car lines)) #t)
+    (else (any-line-matches? (cdr lines) pred))))
+
+(define (cargo-publish-already-uploaded-line? line)
+  (or (string-contains? line "already exists on crates.io")
+      (string-contains? line "already uploaded")
+      (string-contains? line "was already published")))
+
+(define (cargo-publish-already-uploaded? log)
+  (any-line-matches? (string-split log "\n") cargo-publish-already-uploaded-line?))
+
+(define (cargo-publish-conflict-line? line)
+  (or (string-contains? line "is already in use")
+      (string-contains? line "is already taken")
+      (string-contains? line "is already on the registry")
+      (string-contains? line "crate name is not allowed")
+      (string-contains? line "Unauthorized")
+      (string-contains? line "denied")
+      (string-contains? line "Invalid token")))
+
+(define (cargo-publish-conflict? log)
+  (any-line-matches? (string-split log "\n") cargo-publish-conflict-line?))
+
+(define (cargo-publish-rate-limited-line? line)
+  (or (string-contains? line "status 429 Too Many Requests")
+      (string-contains? line "published too many new crates")
+      (string-contains? line "rate-limits")
+      (string-contains? line "429 Too Many")))
+
+(define (cargo-publish-rate-limited? log)
+  (any-line-matches? (string-split log "\n") cargo-publish-rate-limited-line?))
+
+(define (cargo-publish-dep-missing-line? line)
+  ;; cargo emits "no matching package named `X` found" when a workspace
+  ;; dep isn't yet on the registry — i.e. the dep wasn't published
+  ;; first; defer this crate + retry after a full pass.
+  (or (string-contains? line "no matching package named")
+      (string-contains? line "failed to select a version for")))
+
+(define (cargo-publish-dep-missing? log)
+  (any-line-matches? (string-split log "\n") cargo-publish-dep-missing-line?))
+
+;; Classify an arbitrary cargo publish output into a typed outcome
+;; symbol. Order matters — already-uploaded checked first so a crate
+;; that's both 'already published' AND 'name taken by someone else'
+;; reports as already-uploaded (the more specific outcome). Returns:
+;;   'published         — exit 0 (caller passes status separately)
+;;   'already-uploaded  — same (name, version) already on registry
+;;   'conflict          — name owned by someone else / 401 / 403
+;;   'rate-limited      — 429, back off and retry
+;;   'dep-missing       — workspace dep not yet on registry; defer
+;;   'failed            — unrecognized failure, surface to operator
+(define (classify-cargo-publish-outcome log status)
+  (cond
+    ((= status 0) 'published)
+    ((cargo-publish-already-uploaded? log) 'already-uploaded)
+    ((cargo-publish-conflict? log) 'conflict)
+    ((cargo-publish-rate-limited? log) 'rate-limited)
+    ((cargo-publish-dep-missing? log) 'dep-missing)
+    (else 'failed)))
+
+;; ────────────────────────────────────────────────────────────────
 ;; git introspection
 ;; ────────────────────────────────────────────────────────────────
 

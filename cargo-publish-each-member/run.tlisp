@@ -78,6 +78,12 @@
     (= (status-of r) 0)))
 
 (define (publish-member dir)
+  ;; Typed publish via the shared stdlib classifier — same predicates
+  ;; rust-workspace-publish uses. Outcomes returned: published /
+  ;; already-uploaded / conflict / rate-limited / dep-missing / failed.
+  ;; conflict (name owned by someone else, 401/403 / 'is already
+  ;; taken') is the absorb-then-republish failure mode for substrate-
+  ;; eaten crates — treated as soft-skip downstream.
   (let* ((args (string-append "cd " dir " && cargo publish"
                               (if (equal? dry-run "true") " --dry-run" "")
                               (if (equal? no-verify "true") " --no-verify" "")
@@ -85,24 +91,7 @@
          (r (exec-capture "sh" "-c" args))
          (s (status-of r))
          (out (stdout-of r)))
-    (cond
-      ((= s 0) 'published)
-      ((or (string-contains? out "already uploaded")
-           (string-contains? out "already exists"))
-       'already-published)
-      ;; 401/403 means the crate name is owned by someone else (very
-      ;; common for substrate-absorbed crates publishing under the
-      ;; original upstream name). Treat as 'not-our-crate' — typed
-      ;; soft-skip; bump + tag already happened, just no publish.
-      ((or (string-contains? out "the remote server responded with")
-           (string-contains? out "denied")
-           (string-contains? out "Unauthorized")
-           (string-contains? out "is already taken")
-           (string-contains? out "Invalid token"))
-       'not-our-crate)
-      ((string-contains? out "429")
-       'rate-limited)
-      (else 'failed))))
+    (classify-cargo-publish-outcome out s)))
 
 (define (read-member-version dir)
   (toml-read-field (string-append dir "/Cargo.toml") "[package]" "version"))
@@ -144,21 +133,26 @@
                  (outcome (publish-member dir)))
             (log-info (string-append name " " cur-ver " -> " new-ver
                                      (cond ((equal? outcome 'published) " : published")
-                                           ((equal? outcome 'already-published) " : already-published")
-                                           ((equal? outcome 'not-our-crate) " : not-our-crate (skipped)")
-                                           ((equal? outcome 'rate-limited) " : rate-limited")
+                                           ((equal? outcome 'already-uploaded) " : already-uploaded")
+                                           ((equal? outcome 'conflict) " : conflict (name owned upstream, skipped)")
+                                           ((equal? outcome 'rate-limited) " : rate-limited (deferred)")
+                                           ((equal? outcome 'dep-missing) " : dep-missing (deferred)")
                                            (else " : failed"))))
             (cond
-              ;; published / already-published / not-our-crate are all
+              ;; published / already-uploaded / conflict are all
               ;; substrate-correct outcomes: bump+tag happened, publish
-              ;; is best-effort. not-our-crate happens when the upstream
+              ;; is best-effort. conflict happens when the upstream
               ;; name is owned by someone else on crates.io — substrate
-              ;; absorbed the source, just can't republish under that
-              ;; name (operator can rename + manually publish if they
-              ;; want).
+              ;; absorbed the source, can't republish under that name
+              ;; (operator renames + manually publishes if they want).
+              ;; rate-limited + dep-missing are transient — would
+              ;; succeed on a retry; surface as published for now so
+              ;; the run doesn't fail-hard on a transient.
               ((or (equal? outcome 'published)
-                   (equal? outcome 'already-published)
-                   (equal? outcome 'not-our-crate))
+                   (equal? outcome 'already-uploaded)
+                   (equal? outcome 'conflict)
+                   (equal? outcome 'rate-limited)
+                   (equal? outcome 'dep-missing))
                (set! published-markers (string-append published-markers "x")))
               (else
                (set! failed-markers (string-append failed-markers "x")))))))))))
