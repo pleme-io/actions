@@ -98,10 +98,15 @@
 ;; ────────────────────────────────────────────────────────────────
 ;; Main loop
 ;; ────────────────────────────────────────────────────────────────
+;; Per-iteration outcomes are accumulated as marker strings. We
+;; never convert numbers to strings inside tlisp (tatara-script
+;; lacks number->string / symbol->string); we use string-append
+;; of marker characters + final string-length for the count
+;; emission, and exec-capture the count line into GITHUB_OUTPUT.
 
-(define published-count 0)
-(define skipped-count 0)
-(define failed-count 0)
+(define published-markers "")
+(define skipped-markers "")
+(define failed-markers "")
 
 (define (process-member line)
   (let* ((name (member-name line))
@@ -112,34 +117,45 @@
     (cond
       ((equal? cur-ver "")
        (log-error (string-append "member " name " has no [package].version — skipping"))
-       (set! skipped-count (+ skipped-count 1)))
+       (set! skipped-markers (string-append skipped-markers "x")))
       ((and (equal? skip-flag "true") (not changed))
        (log-info (string-append "member " name " unchanged since " last-tag " — skipping"))
-       (set! skipped-count (+ skipped-count 1)))
+       (set! skipped-markers (string-append skipped-markers "x")))
       (else
        (log-info (string-append "bumping member " name " from " cur-ver))
        (cond
          ((not (bump-member dir))
           (log-error (string-append "cargo set-version failed for " name))
-          (set! failed-count (+ failed-count 1)))
+          (set! failed-markers (string-append failed-markers "x")))
          (else
           (let* ((new-ver (read-member-version dir))
                  (outcome (publish-member dir)))
-            (log-info (string-append name " " cur-ver " -> " new-ver " : " (symbol->string outcome)))
+            (log-info (string-append name " " cur-ver " -> " new-ver
+                                     (cond ((equal? outcome 'published) " : published")
+                                           ((equal? outcome 'already-published) " : already-published")
+                                           ((equal? outcome 'rate-limited) " : rate-limited")
+                                           (else " : failed"))))
             (cond
               ((or (equal? outcome 'published) (equal? outcome 'already-published))
-               (set! published-count (+ published-count 1)))
+               (set! published-markers (string-append published-markers "x")))
               (else
-               (set! failed-count (+ failed-count 1)))))))))))
+               (set! failed-markers (string-append failed-markers "x")))))))))))
 
 (define members (workspace-members-with-paths))
-(log-info (string-append "publishing " (number->string (length members)) " workspace members"))
+(log-info "publishing workspace members")
 (for-each process-member members)
 
-(append-output (string-append "published-count=" (number->string published-count)))
-(append-output (string-append "skipped-count=" (number->string skipped-count)))
-(append-output (string-append "failed-count=" (number->string failed-count)))
-(log-info (string-append "done: " (number->string published-count) " published, "
-                         (number->string skipped-count) " skipped, "
-                         (number->string failed-count) " failed"))
-(exit (if (> failed-count 0) 1 0))
+;; tatara-script lacks number->string; build the count emission in
+;; shell. Marker strings are pure 'x' characters — safe to
+;; interpolate. wc -c counts the chars; output goes to GITHUB_OUTPUT.
+(define count-script
+  (string-append
+    "P=$(printf %s '" published-markers "' | wc -c | tr -d ' ');"
+    "S=$(printf %s '" skipped-markers "' | wc -c | tr -d ' ');"
+    "F=$(printf %s '" failed-markers "' | wc -c | tr -d ' ');"
+    "printf 'published-count=%d\\nskipped-count=%d\\nfailed-count=%d\\n' "
+    "\"$P\" \"$S\" \"$F\" >> \"$GITHUB_OUTPUT\";"
+    "printf 'done: %d published, %d skipped, %d failed\\n' "
+    "\"$P\" \"$S\" \"$F\""))
+(exec-capture "sh" "-c" count-script)
+(exit (if (equal? failed-markers "") 0 1))
