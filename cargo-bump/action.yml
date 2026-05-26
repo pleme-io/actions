@@ -37,7 +37,11 @@ runs:
 
     - name: Install cargo-edit
       shell: bash
-      run: cargo install --locked cargo-edit
+      # Pin to 0.13.6 — 0.13.10 has a manifest-parse regression on
+      # several caixa mirrors (caixa-jpeg-decoder + downstream).
+      # Bump only after confirming a green run across the auto-release
+      # cohort.
+      run: cargo install --locked --version 0.13.6 cargo-edit
 
     - name: Install Nix (for crate2nix regenerate)
       uses: DeterminateSystems/nix-installer-action@main
