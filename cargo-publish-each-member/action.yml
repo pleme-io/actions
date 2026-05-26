@@ -41,7 +41,8 @@ runs:
 
     - name: Install cargo-edit
       shell: bash
-      run: cargo install --locked cargo-edit
+      # Pin to 0.13.6 — see substrate cargo-bump for rationale.
+      run: cargo install --locked --version 0.13.6 cargo-edit
 
     - name: Configure cargo credentials
       shell: bash
