@@ -15,6 +15,8 @@
   (config-resolve "SKIP_WHEN_NO_SOURCE_CHANGES" "bump" "skip-when-no-source-changes" "true"))
 (define source-paths
   (config-resolve "SOURCE_PATHS" "bump" "source-paths" "src Cargo.toml Cargo.lock"))
+(define regenerate-cargo-nix
+  (config-resolve "REGENERATE_CARGO_NIX" "bump" "regenerate-cargo-nix" "true"))
 
 (define (should-bump?)
   (cond
@@ -46,6 +48,19 @@
   (append-output "bumped=false")
   (append-output "new-version="))
 
+(define (post-bump-checks old-v)
+  (exec-capture "cargo" "update")
+  (let ((new-v (cargo-package-version)))
+    (cond
+      ((equal? new-v old-v)
+       (emit-failure
+         (string-append "version unchanged after bump: " old-v)
+         old-v)
+       1)
+      (else
+        (emit-success old-v new-v)
+        0))))
+
 (define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
   (let ((bump-status (do-bump)))
@@ -53,6 +68,9 @@
       ((not (= bump-status 0))
        (emit-failure "cargo set-version failed" old-v)
        bump-status)
+      ((not (equal? regenerate-cargo-nix "true"))
+       (log-info "regenerate-cargo-nix=false — skipping crate2nix step")
+       (post-bump-checks old-v))
       (else
         (log-info "regenerating Cargo.nix")
         (let ((regen-status (do-regen)))
@@ -61,17 +79,7 @@
              (emit-failure "crate2nix generate failed" old-v)
              regen-status)
             (else
-              (exec-capture "cargo" "update")
-              (let ((new-v (cargo-package-version)))
-                (cond
-                  ((equal? new-v old-v)
-                   (emit-failure
-                     (string-append "version unchanged after bump: " old-v)
-                     old-v)
-                   1)
-                  (else
-                    (emit-success old-v new-v)
-                    0))))))))))
+              (post-bump-checks old-v))))))))
 
 (define old-version (cargo-package-version))
 
