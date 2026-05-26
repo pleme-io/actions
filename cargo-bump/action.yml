@@ -17,6 +17,10 @@ inputs:
     description: "Space-separated globs the skip-detector inspects for changes since the last tag"
     required: false
     default: "src Cargo.toml Cargo.lock"
+  regenerate-cargo-nix:
+    description: "Regenerate Cargo.nix via crate2nix after the version bump. Set to 'false' for repos with path deps to sibling repos (CI doesn't check them out, so crate2nix would fail)."
+    required: false
+    default: "true"
 
 outputs:
   bumped:
@@ -70,3 +74,4 @@ runs:
         BUMP_TYPE: ${{ inputs.bump-type }}
         SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}
         SOURCE_PATHS: ${{ inputs.source-paths }}
+        REGENERATE_CARGO_NIX: ${{ inputs.regenerate-cargo-nix }}
