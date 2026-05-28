@@ -1,0 +1,119 @@
+;; pull-request-gate/run.tlisp
+;;
+;; Read the pull_request_target event from $GITHUB_EVENT_PATH and route the
+;; PR through one of four typed branches:
+;;
+;;   1. Author in ALLOWLIST                                  → no-op, pass
+;;   2. Author is a bot (suffix '[bot]' or in BOT_ALLOWLIST) → label `bot-pr`, pass
+;;   3. FIRST_TIME_CONTRIBUTOR + every-file matches the
+;;      RESTRICTED_PATHS_REGEX                               → reject per REJECTION_ACTION
+;;   4. Else (FIRST_TIME_CONTRIBUTOR with substantive diff)  → label `external-review-required`
+;;
+;; Defends against vendor badge-trojan PRs (e.g. SafeSkill / OyaAIProd) that
+;; insert a single shields.io badge in README.md. Designed to be reconciled
+;; fleet-wide by pangea-operator on rio via the ExternalContributorPolicy
+;; typed primitive (Phase 2).
+
+(define event-path        (env-required "GITHUB_EVENT_PATH"))
+(define repo              (env-required "GITHUB_REPOSITORY"))
+(define allowlist         (env-get     "ALLOWLIST" ""))
+(define bot-allowlist     (env-get     "BOT_ALLOWLIST" ""))
+(define restricted-pred   (env-get     "RESTRICTED_PATHS_JQ_PREDICATE"
+                                       ". == \"README.md\" or . == \"LICENSE\" or startswith(\".github/\") or startswith(\"docs/\") or endswith(\".md\")"))
+(define rejection-action  (env-get     "REJECTION_ACTION" "close_and_lock"))
+
+(define pr-number      (json-read-field event-path ".pull_request.number"))
+(define pr-author      (json-read-field event-path ".pull_request.user.login"))
+(define pr-association (json-read-field event-path ".pull_request.author_association"))
+
+(log-info (string-append "pull-request-gate: PR #" pr-number
+                         " from '" pr-author
+                         "' (author_association=" pr-association ")"))
+
+;; ── predicates ────────────────────────────────────────────────────────
+
+(define (author-in-list? author list-str)
+  (any-line-matches?
+    (string-split list-str "\n")
+    (lambda (line) (equal? (string-trim line) author))))
+
+(define (looks-like-bot? author)
+  (or (string-contains? author "[bot]")
+      (author-in-list? author bot-allowlist)))
+
+;; Run a typed jq predicate over every file in the PR. The predicate binds
+;; `.` to the filename string and returns bool; all() across the file array
+;; gives the "every file is documentation" decision. --paginate handles
+;; large diffs (>30 files per page). Returns true|false on stdout.
+(define (all-files-restricted?)
+  (let ((r (exec-capture "sh" "-c"
+            (string-append
+              "gh api /repos/" repo "/pulls/" pr-number "/files "
+              "--paginate "
+              "--jq '[.[].filename] | map(" restricted-pred ") | all'"))))
+    (and (= (status-of r) 0)
+         (equal? (string-trim (stdout-of r)) "true"))))
+
+;; ── actions ───────────────────────────────────────────────────────────
+
+(define drive-by-comment-body
+  (string-append
+    "This pull request was automatically closed by "
+    "[`pleme-io/actions/pull-request-gate`]"
+    "(https://github.com/pleme-io/actions/tree/main/pull-request-gate).\n\n"
+    "pleme-io declines first-time external contributions whose entire diff "
+    "modifies only documentation, READMEs, badges, `.github/` workflows, or "
+    "license files. This rule defends against vendor badge-trojan and "
+    "SEO-spam pull requests.\n\n"
+    "If you have a substantive contribution, please open a "
+    "[GitHub Discussion](../discussions) first to coordinate. Substantive "
+    "code contributions from new external accounts are gated for "
+    "CODEOWNERS review, not auto-closed."))
+
+(define (close-and-lock-drive-by)
+  (log-info "→ external drive-by detected; commenting, labeling, closing, locking")
+  (exec-check "gh" "pr" "comment" pr-number "--repo" repo
+              "--body" drive-by-comment-body)
+  (exec-check "gh" "pr" "edit" pr-number "--repo" repo
+              "--add-label" "external-drive-by")
+  (exec-check "gh" "pr" "close" pr-number "--repo" repo)
+  (exec-check "gh" "api" "--method" "PUT"
+              (string-append "/repos/" repo "/issues/" pr-number "/lock")
+              "-f" "lock_reason=spam"))
+
+(define (label-and-request-review label)
+  (log-info (string-append "→ labeling PR '" label "'"))
+  (exec-check "gh" "pr" "edit" pr-number "--repo" repo
+              "--add-label" label))
+
+;; ── decision tree ─────────────────────────────────────────────────────
+
+(cond
+  ;; (1) Allowlisted author
+  ((author-in-list? pr-author allowlist)
+   (log-info (string-append "Author '" pr-author "' is in allowlist; passing through."))
+   (exit 0))
+
+  ;; (2) Bot
+  ((looks-like-bot? pr-author)
+   (log-info (string-append "Author '" pr-author "' is a known bot; labeling 'bot-pr'."))
+   (exec-check "gh" "pr" "edit" pr-number "--repo" repo "--add-label" "bot-pr")
+   (exit 0))
+
+  ;; (3) First-time external + restricted-only diff
+  ((and (equal? pr-association "FIRST_TIME_CONTRIBUTOR")
+        (all-files-restricted?))
+   (cond
+     ((equal? rejection-action "close_and_lock")    (close-and-lock-drive-by))
+     ((equal? rejection-action "label_only")        (label-and-request-review "external-drive-by"))
+     ((equal? rejection-action "request_approval")  (label-and-request-review "external-review-required"))
+     (else
+      (log-error (string-append "Unknown rejection-action: '" rejection-action
+                                "' — expected close_and_lock | label_only | request_approval"))
+      (exit 1)))
+   (exit 0))
+
+  ;; (4) External with substantive diff
+  (else
+   (label-and-request-review "external-review-required")
+   (exit 0)))
