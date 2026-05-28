@@ -1,0 +1,58 @@
+name: 'pleme-io · pull-request-gate'
+description: 'Gate pull_request_target events: allow approved authors, label bots, auto-close+lock external drive-by PRs that only modify documentation. Defends against vendor badge-trojan spam.'
+branding: { icon: 'shield', color: 'red' }
+
+inputs:
+  allowlist:
+    description: "Newline-separated GitHub logins permitted to open PRs without gating (org members, curated externals). Bot logins matching '*[bot]' or in bot-allowlist are handled separately."
+    required: false
+    default: ""
+  bot-allowlist:
+    description: "Newline-separated bot logins explicitly accepted (in addition to any '*[bot]' suffix detection). Each accepted bot PR is labeled 'bot-pr' and passed through."
+    required: false
+    default: |
+      dependabot[bot]
+      renovate[bot]
+      github-actions[bot]
+  restricted-paths-jq-predicate:
+    description: "jq predicate expression evaluated per file path (the . variable). All() across the PR's files must hold for the PR to count as a drive-by candidate. Typed predicates avoid the regex-escape footgun jq's test() suffers under nested shell+JSON quoting."
+    required: false
+    default: '. == "README.md" or . == "LICENSE" or startswith(".github/") or startswith("docs/") or endswith(".md")'
+  rejection-action:
+    description: "What to do when a drive-by candidate is detected: 'close_and_lock' (auto-close + lock conversation as spam + label), 'label_only' (label only, leave open), 'request_approval' (label external-review-required + request CODEOWNERS)."
+    required: false
+    default: "close_and_lock"
+  github-token:
+    description: "Token with pull-requests:write + issues:write. Defaults to the workflow's GITHUB_TOKEN; override only for cross-repo writes."
+    required: false
+    default: ${{ github.token }}
+  tatara-version:
+    description: "tatara-lisp release tag (e.g. v0.1.0) or 'latest'."
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - name: Execute gate
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+        version: ${{ inputs.tatara-version }}
+      env:
+        ALLOWLIST: ${{ inputs.allowlist }}
+        BOT_ALLOWLIST: ${{ inputs.bot-allowlist }}
+        RESTRICTED_PATHS_JQ_PREDICATE: ${{ inputs.restricted-paths-jq-predicate }}
+        REJECTION_ACTION: ${{ inputs.rejection-action }}
+        GH_TOKEN: ${{ inputs.github-token }}
