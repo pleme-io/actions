@@ -40,6 +40,25 @@
     "    uses: pleme-io/substrate/.github/workflows/security-gate.yml@main\n"
     "    secrets: inherit\n"))
 
+;; Target the per-language reusable DIRECTLY (the proven engenho/tend/
+;; hashfix pattern) instead of the polymorphic auto-release.yml@main
+;; dispatcher, which `startup_failure`s when invoked via `uses:`.
+;; Detection mirrors pleme-io/actions/detect-repo-type precedence.
+(define (release-reusable)
+  (cond
+    ((and (path-exists? "Cargo.toml")
+          (string-contains? (read-file "Cargo.toml") "[workspace]"))
+     "rust-auto-release.yml")
+    ((and (path-exists? "Cargo.toml")
+          (string-contains? (read-file "Cargo.toml") "[package]"))
+     "cargo-auto-release.yml")
+    ((path-exists? "Chart.yaml") "helm-auto-release.yml")
+    ((path-exists? "pyproject.toml") "python-auto-release.yml")
+    ((path-exists? "package.json") "npm-auto-release.yml")
+    ;; No per-language reusable for this type yet — fall back to the
+    ;; polymorphic dispatcher (no worse than the prior behavior).
+    (else "auto-release.yml")))
+
 (define auto-release-yaml
   (string-append
     "name: auto-release\n"
@@ -56,7 +75,7 @@
     "\n"
     "jobs:\n"
     "  release:\n"
-    "    uses: pleme-io/substrate/.github/workflows/auto-release.yml@main\n"
+    "    uses: pleme-io/substrate/.github/workflows/" (release-reusable) "@main\n"
     "    with:\n"
     "      bump-type: ${{ inputs.bump-type || '" default-bump-type "' }}\n"
     "    secrets: inherit\n"))
