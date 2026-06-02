@@ -1,0 +1,122 @@
+# pleme-io/actions/doca — typed OCI artifact manager (push / transfer / inspect /
+# tag / list). Binary: oci-push, exposed as the substrate flake app `oci-push`
+# and invoked via `nix run github:pleme-io/substrate#oci-push`.
+#
+# NO-SHELL: the run step has NO conditionals, NO loops, NO flag-mapping. Every
+# input is surfaced as an `INPUT_*` env var; the oci-push binary reads `INPUT_*`
+# as the fallback when a CLI flag is absent (flag wins; env is fallback). The
+# action never branches on which inputs are set — it passes them all as env and
+# lets the typed binary decide. `operation` is the sole positional arg.
+#
+# Dependency-free / no bootstrap deadlock: a composite action whose only runtime
+# dependency is the Nix installer + `nix run …#oci-push`. It does NOT package or
+# run a pre-built pleme-io image, so the tool that publishes the fleet's first
+# images can itself run through this action on a clean runner (pre-bootstrap-safe
+# per the AUTO-RELEASE directive).
+name: 'pleme-io · doca'
+description: 'Typed OCI artifact manager (push / transfer / inspect / tag / list) via nix run github:pleme-io/substrate#oci-push. Inputs surfaced as INPUT_* env; the binary reads them as flag fallbacks — no shell flag-mapping.'
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  operation:
+    description: "Operation: push | transfer | inspect | tag | list | delete. Sole positional arg."
+    required: true
+  registry:
+    description: "Destination registry host (push). Flag: --registry. Env: INPUT_REGISTRY."
+    required: false
+    default: ""
+  image:
+    description: "Image repository/name within the registry (push). Flag: --image. Env: INPUT_IMAGE."
+    required: false
+    default: ""
+  tag:
+    description: "Primary tag to apply (push). Flag: --tag. Env: INPUT_TAG."
+    required: false
+    default: ""
+  additional-tags:
+    description: "Space-separated extra tags applied alongside --tag (push). Flag: --additional-tags. Env: INPUT_ADDITIONAL_TAGS."
+    required: false
+    default: ""
+  tarball:
+    description: "Path to the local docker-archive tarball to push (push). Flag: --tarball. Env: INPUT_TARBALL."
+    required: false
+    default: ""
+  backend:
+    description: "Push backend: native (pure-Rust oci-client, default) | skopeo. Flag: --backend. Env: INPUT_BACKEND."
+    required: false
+    default: ""
+  dest-user:
+    description: "Destination registry username (push / transfer). Flag: --dest-user. Env: INPUT_DEST_USER."
+    required: false
+    default: ""
+  dest-pass:
+    description: "Destination registry password/token — pass via a secret (push / transfer). Flag: --dest-pass. Env: INPUT_DEST_PASS."
+    required: false
+    default: ""
+  src:
+    description: "Source reference for a transfer (e.g. docker.io/library/alpine:3.20). Flag: --src. Env: INPUT_SRC."
+    required: false
+    default: ""
+  dest:
+    description: "Destination reference for a transfer. Flag: --dest. Env: INPUT_DEST."
+    required: false
+    default: ""
+  src-user:
+    description: "Source registry username (transfer). Flag: --src-user. Env: INPUT_SRC_USER."
+    required: false
+    default: ""
+  src-pass:
+    description: "Source registry password/token — pass via a secret (transfer). Flag: --src-pass. Env: INPUT_SRC_PASS."
+    required: false
+    default: ""
+  ref:
+    description: "OCI reference to inspect / list / tag (e.g. ghcr.io/pleme-io/mado:latest). Flag: --ref. Env: INPUT_REF."
+    required: false
+    default: ""
+  new-tag:
+    description: "New tag to apply to an existing manifest (tag operation). Flag: --new-tag. Env: INPUT_NEW_TAG."
+    required: false
+    default: ""
+  user:
+    description: "Username for single-registry auth (inspect / list / tag). Flag: --user. Env: INPUT_USER."
+    required: false
+    default: ""
+  pass:
+    description: "Password/token for single-registry auth — pass via a secret. Flag: --pass. Env: INPUT_PASS."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@main
+      with:
+        # Upstream Nix so extra-conf is honored; sandbox=relaxed permits any
+        # IFD in the substrate flake closure (consistent with image-push.yml).
+        determinate: false
+        extra-conf: |
+          sandbox = relaxed
+
+    - name: doca dispatch
+      shell: bash
+      run: nix run github:pleme-io/substrate#oci-push -- ${{ inputs.operation }}
+      env:
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
+        INPUT_TARBALL: ${{ inputs.tarball }}
+        INPUT_BACKEND: ${{ inputs.backend }}
+        INPUT_DEST_USER: ${{ inputs.dest-user }}
+        INPUT_DEST_PASS: ${{ inputs.dest-pass }}
+        INPUT_SRC: ${{ inputs.src }}
+        INPUT_DEST: ${{ inputs.dest }}
+        INPUT_SRC_USER: ${{ inputs.src-user }}
+        INPUT_SRC_PASS: ${{ inputs.src-pass }}
+        INPUT_REF: ${{ inputs.ref }}
+        INPUT_NEW_TAG: ${{ inputs.new-tag }}
+        INPUT_USER: ${{ inputs.user }}
+        INPUT_PASS: ${{ inputs.pass }}
