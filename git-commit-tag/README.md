@@ -13,7 +13,7 @@ steps:
   - uses: actions/checkout@v4
   - uses: pleme-io/actions/git-commit-tag@v1
     with:
-      add-paths: "Cargo.toml Cargo.lock Cargo.nix"
+      add-paths: "Cargo.toml Cargo.lock Cargo.nix Cargo.gen.lock"
       commit-message-template: "release: workspace v{version}"
       identity-email: "41898282+github-actions[bot]@users.noreply.github.com"
 ```
@@ -22,7 +22,7 @@ steps:
 
 | Name | Required | Default | Description |
 |---|---|---|---|
-| `add-paths` | no | `Cargo.toml Cargo.lock Cargo.nix` | Space-separated git pathspecs to stage. Default fits a Rust workspace. |
+| `add-paths` | no | `Cargo.toml Cargo.lock Cargo.nix Cargo.gen.lock` | Space-separated git pathspecs to stage. Default fits a Rust workspace. |
 | `commit-message-template` | no | `release: workspace v{version}` | Commit message template; '{version}' is substituted with the version input |
 | `identity-email` | no | `41898282+github-actions[bot]@users.noreply.github.com` | git user.email to set for the commit |
 | `identity-name` | no | `github-actions[bot]` | git user.name to set for the commit |

@@ -19,7 +19,7 @@ inputs:
   add-paths:
     description: "Space-separated git pathspecs to stage. Default fits a Rust workspace."
     required: false
-    default: "Cargo.toml Cargo.lock Cargo.nix"
+    default: "Cargo.toml Cargo.lock Cargo.nix Cargo.gen.lock"
   identity-name:
     description: "git user.name to set for the commit"
     required: false

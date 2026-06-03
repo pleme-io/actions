@@ -4,7 +4,7 @@
 (define version (env-required "VERSION"))
 (define tag-prefix (env-get "TAG_PREFIX" "v"))
 (define template (env-get "COMMIT_MESSAGE_TEMPLATE" "release: workspace v{version}"))
-(define add-paths-str (env-get "ADD_PATHS" "Cargo.toml Cargo.lock Cargo.nix"))
+(define add-paths-str (env-get "ADD_PATHS" "Cargo.toml Cargo.lock Cargo.nix Cargo.gen.lock"))
 (define identity-name (env-get "IDENTITY_NAME" "github-actions[bot]"))
 (define identity-email (env-get "IDENTITY_EMAIL"
                         "41898282+github-actions[bot]@users.noreply.github.com"))

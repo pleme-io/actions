@@ -52,3 +52,10 @@
     (assert (equal? (next-free-version "0.2.7" "minor" (lambda (v) (in-list? v existing)))
                     "0.3.1")
             "minor candidate 0.3.0 collides -> 0.3.1, staying in 0.3.x")))
+
+(deftest "ensure-gen-lock-fresh: non-delta repo (no Cargo.gen.lock) passes"
+  ;; The D2 gate is freshness-driven and only engages for delta-only
+  ;; repos. The test harness cwd has no Cargo.gen.lock, so this
+  ;; exercises the not-delta short-circuit — no exec, no regen.
+  (assert (ensure-gen-lock-fresh)
+          "absent Cargo.gen.lock means the gate is a no-op"))
