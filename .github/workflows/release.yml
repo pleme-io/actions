@@ -57,6 +57,15 @@ jobs:
       tag: ${{ github.ref_name }}
     secrets: inherit
 
+  helm-mirror-image:
+    uses: pleme-io/substrate/.github/workflows/image-push.yml@main
+    permissions: { contents: read, packages: write, id-token: write }
+    with:
+      imageAttr: helm-mirror-image
+      imageName: pleme-io/action-helm-mirror
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
   helm-oci-publish-image:
     uses: pleme-io/substrate/.github/workflows/image-push.yml@main
     permissions: { contents: read, packages: write, id-token: write }

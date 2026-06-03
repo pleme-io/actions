@@ -1,0 +1,47 @@
+;; helm-mirror/run.tlisp — mirror a Helm monorepo's third-party subchart deps
+;; into the pleme-io OCI registry (the hermetic supply-chain law).
+;;
+;; Everything is derived from the wrapper charts' own Chart.yaml dependencies by
+;; `forge helm mirror` — there is NO catalog. Idempotent: a (name,version) already
+;; in the registry is skipped, so only a NEW upstream version ever touches the
+;; third-party repo. A repo with no third-party subchart deps is a clean no-op.
+;;
+;; Inputs (env):
+;;   REGISTRY — oci:// URL to mirror INTO (default oci://ghcr.io/pleme-io/charts)
+;;
+;; Pre-condition: `helm registry login` already done by the caller workflow (the
+;; OCI write credential). Nix already installed. Runs at the consumer repo root,
+;; so its flake's pinned forge + chart layout are the source of truth.
+
+;; INPUT_* (Docker mode) preferred; bare name retained as composite fallback.
+(define registry
+  (env-get "INPUT_REGISTRY" (env-get "REGISTRY" "oci://ghcr.io/pleme-io/charts")))
+
+(define (mirror-app-available?)
+  ;; The substrate `mkHelmAllApps` exposes `.#mirror`; prefer it so the consumer's
+  ;; pinned forge + chartsDir are used. `nix eval` checks existence WITHOUT running.
+  (exec-ok? "nix" "eval" "--raw" ".#mirror.program"))
+
+(define (mirror-via-app)
+  (exec-check "nix" "run" ".#mirror" "--" registry))
+
+(define (mirror-via-forge)
+  ;; Fallback for a flake that exposes forge but not the .#mirror app.
+  (exec-check "nix" "run" ".#forge" "--"
+              "helm" "mirror"
+              "--charts-dir" "charts"
+              "--registry"   registry))
+
+(log-info (string-append "mirroring third-party subcharts -> " registry))
+
+(define status
+  (if (mirror-app-available?)
+    (begin (log-info "using .#mirror app") (mirror-via-app))
+    (begin (log-info ".#mirror not in flake; using .#forge helm mirror") (mirror-via-forge))))
+
+(when (not (= status 0))
+  (log-error (string-append "helm mirror failed (status "
+                            (string-format "{}" status) ")"))
+  (exit status))
+
+(log-info "subcharts mirrored")

@@ -1,0 +1,17 @@
+name: 'pleme-io · helm-mirror'
+description: 'Mirror a Helm monorepo''s third-party subchart deps into the pleme-io OCI registry (hermetic supply chain)'
+branding:
+  icon: 'copy'
+  color: 'purple'
+
+inputs:
+  registry:
+    description: "OCI registry to mirror INTO (oci:// scheme)"
+    required: false
+    default: "oci://ghcr.io/pleme-io/charts"
+
+runs:
+  using: docker
+  image: docker://ghcr.io/pleme-io/action-helm-mirror:latest
+  env:
+    REGISTRY: ${{ inputs.registry }}
