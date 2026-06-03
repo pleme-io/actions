@@ -133,50 +133,12 @@
 (define (refresh-lock)
   (exec-capture "cargo" "update" "--workspace"))
 
-;; ── Cargo.gen.lock D2 freshness ───────────────────────────────────
-;; Delta-only repos commit Cargo.gen.lock, byte-tied to Cargo.lock via
-;; sha256 (the D2 freshness gate in substrate's lockfile-delta.nix).
-;; The bump pipeline rewrites Cargo.lock (version write + refresh-lock),
-;; so the delta MUST be regenerated in the same release commit — else
-;; every consumer flake hits the eval throw "lockfile-delta:
-;; Cargo.gen.lock is STALE". 2026-06-03: 11 fleet repos' mains were
-;; stale exactly this way (release bumps without regen) and blocked
-;; `nix run .#rebuild` fleet-wide.
-;;
-;; The gate is freshness-driven, not attempt-driven: if Cargo.lock
-;; didn't actually change (refresh-lock is best-effort and may no-op on
-;; isolated runners), the tie still holds and no regen is needed. Only
-;; when the tie is broken do we regen — and a regen that fails to
-;; restore the tie is FATAL, because pushing it would brick every
-;; downstream eval.
-(define (gen-lock-committed-sha)
-  (json-read-field "Cargo.gen.lock" ".cargo_lock_sha256"))
-
-(define (cargo-lock-sha)
-  (let ((r (exec-capture "sha256sum" "Cargo.lock")))
-    (if (= (status-of r) 0)
-      (car (string-split (string-trim (stdout-of r)) " "))
-      "")))
-
-(define (gen-lock-fresh?)
-  (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
-
-(define (regen-gen-lock)
-  (exec-capture "nix" "run" "github:pleme-io/gen" "--" "build" "."))
-
-;; #t when the repo is not delta-only OR the tie holds (possibly after
-;; a regen); #f only when the tie is broken and regen couldn't fix it.
-(define (ensure-gen-lock-fresh)
-  (cond
-    ((not (path-exists? "Cargo.gen.lock")) #t)
-    ((gen-lock-fresh?) #t)
-    (else
-      (regen-gen-lock)
-      (cond
-        ((gen-lock-fresh?)
-         (log-info "Cargo.gen.lock regenerated (D2 tie restored)")
-         #t)
-        (else #f)))))
+;; Cargo.gen.lock D2 freshness gate — `ensure-gen-lock-fresh` lives in
+;; the stdlib (shared with cargo-bump): freshness-driven, regen via
+;; `nix run github:pleme-io/gen -- build .` only when the bump broke
+;; the Cargo.lock↔Cargo.gen.lock sha256 tie; FATAL (caller-side) when
+;; the regen can't restore it. 2026-06-03: 11 fleet repos' mains went
+;; stale exactly this way and bricked every consumer flake eval.
 
 (define (emit-skip msg old-v)
   (log-info msg)

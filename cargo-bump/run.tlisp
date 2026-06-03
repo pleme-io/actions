@@ -50,16 +50,25 @@
 
 (define (post-bump-checks old-v)
   (exec-capture "cargo" "update")
-  (let ((new-v (cargo-package-version)))
-    (cond
-      ((equal? new-v old-v)
-       (emit-failure
-         (string-append "version unchanged after bump: " old-v)
-         old-v)
-       1)
-      (else
-        (emit-success old-v new-v)
-        0))))
+  ;; D2 gate (stdlib ensure-gen-lock-fresh): delta-only repos must leave
+  ;; with Cargo.gen.lock sha-tied to the rewritten Cargo.lock, else every
+  ;; consumer flake eval dies on the lockfile-delta STALE throw. FATAL
+  ;; when regen can't restore the tie.
+  (cond
+    ((not (ensure-gen-lock-fresh))
+     (emit-failure "Cargo.gen.lock stale after bump and `gen build` could not restore the D2 tie" old-v)
+     1)
+    (else
+      (let ((new-v (cargo-package-version)))
+        (cond
+          ((equal? new-v old-v)
+           (emit-failure
+             (string-append "version unchanged after bump: " old-v)
+             old-v)
+           1)
+          (else
+            (emit-success old-v new-v)
+            0))))))
 
 (define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
