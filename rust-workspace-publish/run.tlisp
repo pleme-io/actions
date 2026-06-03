@@ -164,12 +164,16 @@
 
 (define (commit-and-push original)
   (let ((new-name (string-append rename-prefix original)))
-    (exec-check "git" "add"
-                (string-append original "/Cargo.toml") "Cargo.toml")
-    (exec-check "git" "commit" "-m"
-                (string-append "rename: " original " -> " new-name
-                               " (registry name conflict)"))
-    (exec-capture "git" "push" "origin" "HEAD:main")))
+    ;; Per-path add (a missing pathspec must not abort the whole stage),
+    ;; then commit + push via exec-or-die: a silently-ignored push here
+    ;; left the rename UNPUSHED while the loop treated it as done → the
+    ;; conflicting name was re-published every pass.
+    (for-each (lambda (p) (exec-check "git" "add" p))
+              (list (string-append original "/Cargo.toml") "Cargo.toml"))
+    (exec-or-die (list "git" "commit" "-m"
+                       (string-append "rename: " original " -> " new-name
+                                      " (registry name conflict)")))
+    (exec-or-die (list "git" "push" "origin" "HEAD:main"))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Per-crate publish loop with retry                               ;;

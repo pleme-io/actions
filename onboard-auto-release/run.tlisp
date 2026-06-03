@@ -116,7 +116,15 @@
               "--title" "chore(ci): onboard to pleme-io auto-release"
               "--body" "Per ★★ AUTO-RELEASE directive. Workflows scaffolded via pleme-io/actions/onboard-auto-release."
               "--repo" repo)))
-     (set! pr-url (string-trim (stdout-of r))))))
+     ;; Check status — a failed `gh pr create` returns non-zero with the
+     ;; error on stderr; the old code set pr-url from stdout regardless,
+     ;; emitting an empty/garbage PR URL while the action reported success.
+     (cond
+       ((= (status-of r) 0)
+        (set! pr-url (string-trim (stdout-of r))))
+       (else
+        (log-error (string-append "gh pr create failed: " (stderr-of r)))
+        (exit 1))))))
 
 ;; ── Emit outputs ───────────────────────────────────────────────
 
