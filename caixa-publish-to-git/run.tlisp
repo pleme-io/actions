@@ -46,8 +46,8 @@
    (exit 0)))
 
 (configure-git-bot)
-(exec-check "git" "tag" "-a" tag "-m"
-            (string-append "caixa-publish-to-git: " tag))
+(exec-or-die (list "git" "tag" "-a" tag "-m"
+                   (string-append "caixa-publish-to-git: " tag)))
 
 (cond
   ((equal? push-flag "true")

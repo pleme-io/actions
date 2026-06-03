@@ -109,9 +109,9 @@
                "41898282+github-actions[bot]@users.noreply.github.com")
    (exec-capture "git" "checkout" "-b" pr-branch)
    (exec-check "git" "add" ".github/workflows/")
-   (exec-check "git" "commit" "-m"
-               "chore(ci): onboard to pleme-io auto-release directive\n\nAdds the canonical 3-workflow surface per the ★★ AUTO-RELEASE\nprime directive. See:\n  https://github.com/pleme-io/blackmatter-pleme/blob/main/docs/pleme-io-CLAUDE.md\n  https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md")
-   (exec-capture "git" "push" "origin" pr-branch "--force-with-lease")
+   (exec-or-die (list "git" "commit" "-m"
+               "chore(ci): onboard to pleme-io auto-release directive\n\nAdds the canonical 3-workflow surface per the ★★ AUTO-RELEASE\nprime directive. See:\n  https://github.com/pleme-io/blackmatter-pleme/blob/main/docs/pleme-io-CLAUDE.md\n  https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-auto-release/SKILL.md"))
+   (exec-or-die (list "git" "push" "origin" pr-branch "--force-with-lease"))
    (let ((r (exec-capture "gh" "pr" "create"
               "--title" "chore(ci): onboard to pleme-io auto-release"
               "--body" "Per ★★ AUTO-RELEASE directive. Workflows scaffolded via pleme-io/actions/onboard-auto-release."
