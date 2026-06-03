@@ -21,6 +21,10 @@ inputs:
     description: "Maximum number of conflict-rename retry iterations. Default 20 covers a 15-crate workspace with safety margin."
     required: false
     default: "20"
+  publish-mode:
+    description: "full (default) = bump+ship on push, riding crates.io's new-crate rate limit in-job (capped at 30m); drip = a cron tick that publishes only what current capacity allows and defers the rest (never sleeps in-job). The two compose to bootstrap a large workspace hands-off, never red."
+    required: false
+    default: "full"
 
 outputs:
   shipped-count:
@@ -29,6 +33,12 @@ outputs:
   renamed-crates:
     description: "Comma-separated list of crates that got auto-renamed"
     value: ${{ steps.ship.outputs.renamed-crates }}
+  pending-crates:
+    description: "Comma-separated crates left for the next capacity window (rate-limited / dep-deferred). Empty when the bootstrap is complete."
+    value: ${{ steps.ship.outputs.pending-crates }}
+  bootstrap-complete:
+    description: "true when every workspace member is on the registry (nothing left to drip)."
+    value: ${{ steps.ship.outputs.bootstrap-complete }}
 
 runs:
   using: composite
@@ -58,3 +68,4 @@ runs:
         NO_VERIFY: ${{ inputs.no-verify }}
         RENAME_PREFIX: ${{ inputs.rename-prefix }}
         MAX_RENAME_RETRIES: ${{ inputs.max-rename-retries }}
+        PUBLISH_MODE: ${{ inputs.publish-mode }}
