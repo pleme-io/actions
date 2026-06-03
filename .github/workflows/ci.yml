@@ -61,6 +61,16 @@ jobs:
       # No extra shell here — the orchestration lives in run.tlisp.
       - uses: ./tlisp-lint
 
+  tlisp-tests:
+    name: Run every *.test.tlisp via tatara-script --test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Discovers each <action>/run.test.tlisp, runs its (deftest ...) forms
+      # against the real run.tlisp (TLISP_TEST=1 gates the unit's main), and
+      # fails the gate on any failing assertion.
+      - uses: ./tlisp-test
+
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files
     runs-on: ubuntu-latest

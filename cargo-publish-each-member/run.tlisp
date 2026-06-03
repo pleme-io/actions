@@ -20,8 +20,8 @@
 ;; for a version that was not on the registry.
 ;;
 ;; Side effects (publish / sleep / commit-tag) are injected as an `ops` alist
-;; so the multi-pass driver is unit-tested with mocks — see the CPEM_TESTMODE
-;; gate at the bottom + cargo-publish-each-member.test.tlisp.
+;; so the multi-pass driver is unit-tested with mocks — see the TLISP_TEST
+;; gate at the bottom + run.test.tlisp (run via the tlisp-test action).
 ;;
 ;; Stdlib helpers (prepended by action.yml's loader): exec-capture, exec-or-die,
 ;; status-of/stdout-of/stderr-of, classify-cargo-publish-outcome,
@@ -260,7 +260,7 @@
     0))
 
 (cond
-  ((equal? (env-get "CPEM_TESTMODE" "") "1")
-   (log-info "CPEM_TESTMODE=1 — driver loaded; main skipped (test harness drives it)"))
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — driver loaded; main skipped (the test harness drives it)"))
   (else
    (exit (run-all real-ops))))
