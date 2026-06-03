@@ -27,8 +27,11 @@
            (log-info (string-append "  skip " (car ks) " — no value"))
            (loop (cdr ks)))
           (else
-            (exec-capture "gh" "secret" "set" (car ks) "--body" val
-                          "--repo" repo)
+            ;; exec-or-die: a failed `gh secret set` must abort, not silently
+            ;; bump the synced count (the old bare call reported a secret as
+            ;; synced even when the set failed).
+            (exec-or-die (list "gh" "secret" "set" (car ks) "--body" val
+                               "--repo" repo))
             (log-info (string-append "  synced " (car ks)))
             (set! synced (+ synced 1))
             (loop (cdr ks))))))))
