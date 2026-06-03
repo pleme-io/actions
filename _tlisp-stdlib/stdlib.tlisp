@@ -239,6 +239,50 @@
   (exec-capture "git" "config" "--global" "--add" "safe.directory" "*"))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Fail-loud subprocess + git ref guards
+;;
+;; `exec-check` returns the child's exit code (Value::Int) and only
+;; RAISES when the command cannot be spawned at all — a non-zero
+;; child exit is returned, never raised
+;; (tatara-lisp-script/src/stdlib/process.rs:25-38). So a bare
+;; `(exec-check …)` whose success matters SILENTLY proceeds when the
+;; step fails. That is the root cause of the 2026-06-03 auto-release
+;; version-skew class: git-commit-tag ran `git commit` / `git tag`
+;; as bare statements, ignored their non-zero exits, and tagged an
+;; un-bumped HEAD.
+;;
+;;   (exec-or-die (list "git" "commit" "-m" msg))  ; abort on failure
+;;   (git-tag-exists? "v1.2.3")                     ; #t iff tag present
+;;
+;; Use `exec-or-die` for every step that MUST succeed; keep bare
+;; `exec-check` only where a non-zero exit is tolerable by design
+;; (e.g. per-path `git add` of optional files).
+;; ────────────────────────────────────────────────────────────────
+
+;; Run CMD-LIST (a list of strings) with inherited stdio. Returns 0
+;; on success; on any non-zero child exit, log the failing command +
+;; code and abort the whole action with that code.
+(define (exec-or-die cmd-list)
+  (let ((status (apply exec-check cmd-list)))
+    (cond
+      ((= status 0) 0)
+      (else
+        (log-error (string-append "exec-or-die: `"
+                                  (string-join " " cmd-list)
+                                  "` failed (exit "
+                                  (string-format "{}" status) ")"))
+        (exit status)))))
+
+;; #t iff TAG already exists as a local ref. `git rev-parse --verify
+;; --quiet refs/tags/<tag>` exits 0 when the tag resolves, non-zero
+;; otherwise. Guards against re-creating a tag on a new commit
+;; (version skew) — `git tag -a <existing>` fails, but exec-check
+;; returns that code rather than raising, so callers must guard.
+(define (git-tag-exists? tag)
+  (= 0 (status-of (exec-capture "git" "rev-parse" "--verify" "--quiet"
+                                (string-append "refs/tags/" tag)))))
+
+;; ────────────────────────────────────────────────────────────────
 ;; Log scanning — match any line by predicate
 ;; ────────────────────────────────────────────────────────────────
 

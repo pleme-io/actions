@@ -18,9 +18,23 @@
 (define commit-message (string-replace template "{version}" version))
 (define add-paths (string-split add-paths-str " "))
 
-;; Configure bot identity for this repo.
-(exec-check "git" "config" "user.name" identity-name)
-(exec-check "git" "config" "user.email" identity-email)
+;; Configure bot identity for this repo (must succeed — a missing
+;; identity makes the commit below fail in a more confusing way).
+(exec-or-die (list "git" "config" "user.name" identity-name))
+(exec-or-die (list "git" "config" "user.email" identity-email))
+
+;; Tag-collision guard — checked BEFORE any mutation (fail fast).
+;; `git tag -a <existing>` fails, but exec-check returns that non-zero
+;; code rather than raising, so the old bare call swallowed it and the
+;; stale, pre-existing tag got pushed (the 2026-06-03 version-skew
+;; bug). Refuse to release onto an existing tag; the operator must
+;; reconcile the workspace version against it first.
+(when (git-tag-exists? tag)
+  (log-error (string-append "tag " tag " already exists — refusing to "
+                            "release onto an existing tag (version-skew "
+                            "guard). Reconcile the workspace version "
+                            "against the existing tag before releasing."))
+  (exit 1))
 
 ;; Stage each path SEPARATELY. `git add a b c` fails ATOMICALLY if ANY
 ;; pathspec doesn't match an existing file — e.g. `Cargo.nix` in a repo
@@ -36,12 +50,15 @@
 ;; stage.
 (for-each (lambda (p) (exec-check "git" "add" p)) add-paths)
 
-;; Commit. exec-check raises on non-zero exit so callers can see
-;; the failure mode via the runner log.
-(exec-check "git" "commit" "-m" commit-message)
+;; Commit. exec-check RETURNS the exit code (it does NOT raise on a
+;; non-zero child), so a bare call would silently proceed to tagging
+;; even when the commit failed — e.g. an empty commit because nothing
+;; staged — landing the tag on an un-bumped HEAD (the 2026-06-03
+;; version-skew bug). exec-or-die aborts loudly instead.
+(exec-or-die (list "git" "commit" "-m" commit-message))
 
-;; Annotated tag.
-(exec-check "git" "tag" "-a" tag "-m" commit-message)
+;; Annotated tag — must succeed, else the release ships without its tag.
+(exec-or-die (list "git" "tag" "-a" tag "-m" commit-message))
 
 (append-output (string-append "tag=" tag))
 (log-info (string-append "committed + tagged " tag))

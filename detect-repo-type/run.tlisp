@@ -83,9 +83,14 @@
   ((path-exists? "action.yaml")
    (emit "github-action" "action.yaml"))
 
-  ;; Nothing matched
+  ;; Nothing matched. A detector REPORTS its answer (including
+  ;; "unknown") and succeeds — exiting non-zero here fails the detect
+  ;; job, which in the polymorphic auto-release workflow cascades to
+  ;; skip+red every dispatch job for a repo that simply has no
+  ;; packageable artifact (and should no-op green per the AUTO-RELEASE
+  ;; exemption). Callers branch on `repo-type=unknown` via job `if:`.
   (else
-    (log-error "detect-repo-type: no recognized manifest at repo root")
+    (log-info "detect-repo-type: no recognized manifest at repo root (unknown)")
     (append-output "repo-type=unknown")
     (append-output "manifest-path=")
-    (exit 1)))
+    (exit 0)))
