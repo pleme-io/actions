@@ -42,27 +42,14 @@
 ;; them, then publish per-crate so we can skip / rename / retry
 ;; individually instead of all-or-nothing.
 
-(define (workspace-version)
-  ;; Pull the workspace.package.version from Cargo.toml via the same
-  ;; section walker rust-workspace-bump uses.
-  (define (extract-quoted line)
-    (let ((parts (string-split line "\"")))
-      (if (>= (length parts) 2) (car (cdr parts)) "")))
-  (define (walk lines in-section)
-    (cond
-      ((null? lines) "")
-      ((string-contains? (car lines) "[workspace.package]")
-       (walk (cdr lines) #t))
-      ((and in-section
-            (string-contains? (car lines) "[")
-            (not (string-contains? (car lines) "[workspace.package]")))
-       "")
-      ((and in-section
-            (string-contains? (car lines) "version")
-            (string-contains? (car lines) "="))
-       (extract-quoted (car lines)))
-      (else (walk (cdr lines) in-section))))
-  (walk (string-split (read-file "Cargo.toml") "\n") #f))
+;; workspace.package.version is read via the stdlib's hardened
+;; `cargo-workspace-version`. The previous local walker exited the
+;; [workspace.package] section on ANY line containing `[` (so an array
+;; field like `keywords = ["a","b"]` above `version` ended the section →
+;; empty version → publish failed) and matched `version` as a substring
+;; (so `rust-version` could win). The stdlib's `line-is-section-header?`
+;; (bracket AND no `=`) + `line-assigns-field?` (exact field) fix both —
+;; solve once, in one place.
 
 (define (workspace-members)
   ;; `cargo metadata --no-deps --format-version 1` returns JSON with
@@ -194,7 +181,7 @@
         (replace-once-in-file crate-toml
           (string-append "name = \"" original "\"")
           (string-append "name = \"" new-name "\""))
-        (let* ((ver (workspace-version))
+        (let* ((ver (cargo-workspace-version))
                (old-line (string-append original
                           " = { path = \"" original
                           "\", version = \"" ver "\" }"))
@@ -229,7 +216,7 @@
 ;; Per-crate publish loop with retry                               ;;
 ;; -------------------------------------------------------------- ;;
 
-(define version (workspace-version))
+(define version (cargo-workspace-version))
 
 ;; Returns one of:
 ;;   ("done" . <final-name>) — successfully published (or skipped)
