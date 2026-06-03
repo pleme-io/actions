@@ -57,6 +57,22 @@ jobs:
       # can be tested against their own changes without first
       # tagging a release.
       - uses: ./tlisp-lint
+      # Semantic rule lint over the same .tlisp files, using the
+      # tatara-script binary the step above already put on $GITHUB_PATH
+      # (its tatara-script@v1 install appends BIN_DIR to the job PATH).
+      # The git-mutation-discard rule makes the auto-release silent-failure
+      # class un-reintroducible: a discarded exec-check/exec-capture of a
+      # `git` commit/tag/push fails the gate. Capability-probed so it no-ops
+      # cleanly until a lint-capable tatara-script (the release that ships
+      # `tatara-script lint`) is `latest`.
+      - name: Semantic rule lint (tatara-script lint)
+        shell: bash
+        run: |
+          if tatara-script --help 2>&1 | grep -qw lint; then
+            tatara-script lint .
+          else
+            echo "::warning::installed tatara-script has no 'lint' subcommand yet; skipping semantic rule lint (activates once a lint-capable release is latest)"
+          fi
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files
