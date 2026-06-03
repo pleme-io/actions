@@ -1,5 +1,5 @@
 name: 'pleme-io · crane-mutate'
-description: 'Mutate an OCI image's labels/tags via crane.'
+description: "Mutate an OCI image's labels/tags via crane."
 branding: { icon: 'edit', color: 'blue' }
 
 inputs:
