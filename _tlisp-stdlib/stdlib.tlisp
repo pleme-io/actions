@@ -137,6 +137,48 @@
   (toml-read-field "Cargo.toml" "[package]" "name"))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Cargo.gen.lock D2 freshness gate
+;; ────────────────────────────────────────────────────────────────
+;; Delta-only repos commit Cargo.gen.lock, byte-tied to Cargo.lock via
+;; sha256 (the D2 gate in substrate's lockfile-delta.nix). Any bump
+;; pipeline that rewrites Cargo.lock MUST leave with the tie intact —
+;; else every consumer flake eval dies on "lockfile-delta:
+;; Cargo.gen.lock is STALE" (2026-06-03: 11 fleet repos at once).
+;; Shared between rust-workspace-bump + cargo-bump + future bumpers.
+;;
+;; Freshness-driven, not attempt-driven: an absent Cargo.gen.lock
+;; (non-delta repo) or an intact tie short-circuits; only a broken tie
+;; triggers `gen build`; a regen that cannot restore the tie should be
+;; treated as FATAL by the caller (pushing it bricks downstream evals).
+
+(define (gen-lock-committed-sha)
+  (json-read-field "Cargo.gen.lock" ".cargo_lock_sha256"))
+
+(define (cargo-lock-sha)
+  (let ((r (exec-capture "sha256sum" "Cargo.lock")))
+    (if (= (status-of r) 0)
+      (car (string-split (string-trim (stdout-of r)) " "))
+      "")))
+
+(define (gen-lock-fresh?)
+  (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
+
+(define (regen-gen-lock)
+  (exec-capture "nix" "run" "github:pleme-io/gen" "--" "build" "."))
+
+(define (ensure-gen-lock-fresh)
+  (cond
+    ((not (path-exists? "Cargo.gen.lock")) #t)
+    ((gen-lock-fresh?) #t)
+    (else
+      (regen-gen-lock)
+      (cond
+        ((gen-lock-fresh?)
+         (log-info "Cargo.gen.lock regenerated (D2 tie restored)")
+         #t)
+        (else #f)))))
+
+;; ────────────────────────────────────────────────────────────────
 ;; Cargo publish failure-mode detection — typed predicates
 ;; ────────────────────────────────────────────────────────────────
 ;; Shared between rust-workspace-publish + cargo-publish-each-member +
