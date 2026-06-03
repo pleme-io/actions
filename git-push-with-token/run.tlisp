@@ -64,15 +64,22 @@
 (when (not (= set-url-status 0))
   (log-error "git remote set-url failed") (exit set-url-status))
 
-(define push-branch-status (exec-check "git" "push" "origin" branch))
-(when (not (= push-branch-status 0))
-  (log-error (string-append "git push origin " branch " failed"))
-  (exit push-branch-status))
+;; Push the branch and (optionally) every tag in ONE transaction.
+;; The old code pushed the branch, then `--tags` separately: a
+;; failure between the two could land a tag without its commit (or a
+;; commit without its tag) — release skew. `--atomic` makes the
+;; remote accept all refs or none, so the branch + its release tag
+;; are indivisible. This is a Docker action (no stdlib), so the
+;; status check stays inline rather than via exec-or-die.
+(define push-status
+  (if ptags?
+      (exec-check "git" "push" "--atomic" "origin" branch "--tags")
+      (exec-check "git" "push" "origin" branch)))
+(when (not (= push-status 0))
+  (log-error (string-append "git push"
+                            (if ptags? " --atomic" "")
+                            " origin " branch
+                            (if ptags? " --tags" "") " failed"))
+  (exit push-status))
 
-(when ptags?
-  (define push-tags-status (exec-check "git" "push" "origin" "--tags"))
-  (when (not (= push-tags-status 0))
-    (log-error "git push origin --tags failed")
-    (exit push-tags-status)))
-
-(log-info (string-append "pushed " branch (if ptags? " + tags" "")))
+(log-info (string-append "pushed " branch (if ptags? " + tags (atomic)" "")))
