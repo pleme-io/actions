@@ -2,6 +2,7 @@
 ;;
 ;;   rust-workspace      — Cargo.toml with [workspace] section
 ;;   rust-single-crate   — Cargo.toml with [package] section (no [workspace])
+;;   go                  — go.mod
 ;;   npm                 — package.json
 ;;   python              — pyproject.toml
 ;;   helm                — Chart.yaml
@@ -11,7 +12,7 @@
 ;;   unknown             — none of the above
 ;;
 ;; Precedence (when multiple manifests coexist):
-;;   rust > ansible > helm > python > npm > ruby > action > unknown
+;;   rust > go > ansible > helm > python > npm > ruby > action > unknown
 ;;
 ;; Outputs (appended):
 ;;   repo-type       the typed identifier
@@ -56,6 +57,10 @@
    (emit "rust-workspace" "Cargo.toml"))
   ((cargo-has-section? "[package]")
    (emit "rust-single-crate" "Cargo.toml"))
+
+  ;; Go — go.mod (pull-model module: tag-only delivery, FSM-MODULE)
+  ((path-exists? "go.mod")
+   (emit "go" "go.mod"))
 
   ;; Ansible
   ((path-exists? "galaxy.yml")
