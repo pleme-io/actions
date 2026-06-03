@@ -50,6 +50,7 @@
         "derive-version-from-tag"
         "gem-publish"
         "git-push-with-token"
+        "helm-mirror"
         "helm-oci-publish"
         "oci-image-push"
       ];
