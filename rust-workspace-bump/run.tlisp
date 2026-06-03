@@ -85,15 +85,24 @@
     (string-trim (stdout-of r))))
 
 ;; Write the new version into [workspace.package].version textually.
-;; `^version = "…"` is unique to [workspace.package]: members use
-;; `version.workspace = true`, and [workspace.dependencies] entries are
-;; `name = { …, version = "…" }` (not line-start `version =`). No cargo
+;; A line-start `version` key is unique to [workspace.package]: members
+;; use `version.workspace = true`, and [workspace.dependencies] entries
+;; are `name = { …, version = "…" }` (not line-start `version`). No cargo
 ;; resolution. Intra-workspace dep requirements use caret ("X.Y.Z") so
 ;; they keep accepting the bumped version without edits.
+;;
+;; The match is WHITESPACE-TOLERANT around `=` — pleme-io workspaces
+;; align their `[workspace.package]` block (`version       = "0.1.0"`) so
+;; the value lines up with `edition` / `rust-version`. A rigid
+;; `^version = "…"` pattern silently no-ops on every aligned workspace,
+;; the readback below then trips "version unchanged after bump", and the
+;; whole release fails. `[[:space:]]*` on both sides of `=` matches any
+;; alignment; the replacement normalizes to a single space (TOML-valid,
+;; self-consistent on the next bump).
 (define (write-workspace-version old-v new-v)
   (let ((r (exec-capture "sh" "-c"
               (string-append
-                "sed -i.bak 's/^version = \"" old-v "\"/version = \"" new-v "\"/' Cargo.toml"
+                "sed -i.bak 's/^version[[:space:]]*=[[:space:]]*\"" old-v "\"/version = \"" new-v "\"/' Cargo.toml"
                 " && rm -f Cargo.toml.bak"))))
     (= (status-of r) 0)))
 
