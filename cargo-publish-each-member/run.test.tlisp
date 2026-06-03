@@ -1,79 +1,55 @@
-;; cargo-publish-each-member/run.test.tlisp — unit tests for the publish
-;; driver. The driver's side effects (publish / sleep / commit-tag) are
-;; injected as an `ops` alist, so this harness drives the REAL functions from
+;; cargo-publish-each-member/run.test.tlisp — (deftest …) unit tests for the
+;; publish driver, run via tatara-script's canonical --test mode by the
+;; tlisp-test action. The driver's side effects (publish / sleep / commit-tag)
+;; are injected as an `ops` alist, so these tests drive the REAL functions from
 ;; run.tlisp with mocks — no cargo, no git, no network.
 ;;
-;; Run (the action loader prepends the stdlib; CPEM_TESTMODE=1 makes run.tlisp
-;; define the driver but skip its main):
-;;
-;;   cat _tlisp-stdlib/stdlib.tlisp \
-;;       cargo-publish-each-member/run.tlisp \
-;;       cargo-publish-each-member/run.test.tlisp > /tmp/t.tlisp
-;;   CPEM_TESTMODE=1 GITHUB_OUTPUT=/tmp/o tatara-script /tmp/t.tlisp
-;;
-;; Exits non-zero on any failed assertion.
+;; The tlisp-test runner prepends the stdlib + the sibling run.tlisp and sets
+;; TLISP_TEST=1 (so run.tlisp defines the driver but skips its main), then runs
+;; `tatara-script --test`. Each (assert COND MSG) raises on failure → the
+;; enclosing deftest reports ✘.
 
-(define fails 0)
-(define (check label ok)
-  (if ok
-    (log-info (string-append "  PASS " label))
-    (begin (log-error (string-append "  FAIL " label)) (set! fails (+ fails 1)))))
 (define (in-list? x xs)
   (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (in-list? x (cdr xs)))))
 
-;; Per-key call counter (newest cons wins in alist-get) so a mock publish can
-;; return a different outcome on each (re)attempt of the same dir.
-(define counters (list))
-(define (next-call! k)
-  (let ((n (+ 1 (alist-get counters k 0))))
-    (set! counters (cons (cons k n) counters))
-    n))
+(deftest "member-disposition: rate-limited/dep-missing are NOT counted as ship"
+  (assert (equal? (member-disposition 'published) 'ship) "published -> ship")
+  (assert (equal? (member-disposition 'already-uploaded) 'ship) "already-uploaded -> ship")
+  (assert (equal? (member-disposition 'conflict) 'skip) "conflict -> skip")
+  (assert (equal? (member-disposition 'rate-limited) 'retry) "rate-limited -> retry")
+  (assert (equal? (member-disposition 'dep-missing) 'defer) "dep-missing -> defer")
+  (assert (equal? (member-disposition 'failed) 'fail) "failed -> fail"))
 
-;; 1. member-disposition — the classification fix. rate-limited/dep-missing
-;;    must NOT map to 'ship (the pre-fix bug counted them as published).
-(check "disp published->ship"     (equal? (member-disposition 'published) 'ship))
-(check "disp already->ship"       (equal? (member-disposition 'already-uploaded) 'ship))
-(check "disp conflict->skip"      (equal? (member-disposition 'conflict) 'skip))
-(check "disp rate-limited->retry" (equal? (member-disposition 'rate-limited) 'retry))
-(check "disp dep-missing->defer"  (equal? (member-disposition 'dep-missing) 'defer))
-(check "disp failed->fail"        (equal? (member-disposition 'failed) 'fail))
+(deftest "resolve-member rides a 429 inline (rate-limited x2) then ships"
+  (let ((calls 0) (sleeps 0))
+    (let ((ops (list (cons "publish" (lambda (dir) (set! calls (+ calls 1))
+                                       (if (< calls 3) 'rate-limited 'published)))
+                     (cons "sleep" (lambda () (set! sleeps (+ sleeps 1)))))))
+      (assert (equal? (resolve-member ops "d" 1) 'ship) "ships after retries")
+      (assert (= sleeps 2) "slept exactly twice"))))
 
-;; 2. resolve-member rides a 429 inline: rate-limited x2, then published.
-(define sleeps 0)
-(define rl-ops
-  (list (cons "publish" (lambda (dir) (if (< (next-call! "rl") 3) 'rate-limited 'published)))
-        (cons "sleep" (lambda () (set! sleeps (+ sleeps 1))))))
-(check "resolve rate-limit -> ship"  (equal? (resolve-member rl-ops "d" 1) 'ship))
-(check "resolve rate-limit slept 2x" (= sleeps 2))
+(deftest "drive-publish buckets correctly + commit-tags ONLY real ships"
+  (let ((tagged (list)))
+    (let ((ops (list (cons "publish" (lambda (dir) (if (equal? dir "b") 'conflict 'published)))
+                     (cons "sleep" (lambda () #t))
+                     (cons "commit-tag" (lambda (name ver dir) (set! tagged (cons name tagged)))))))
+      (let ((r (drive-publish ops
+                              (list (list "A" "a" "1.0") (list "B" "b" "1.0") (list "C" "c" "1.0"))
+                              (list) (list) 1)))
+        (assert (= (length (car r)) 2) "2 shipped (A,C)")
+        (assert (= (length (car (cdr r))) 1) "1 skipped (B conflict)")
+        (assert (= (length tagged) 2) "commit-tag fired only for the 2 ships")
+        (assert (not (in-list? "B" tagged)) "B (conflict) was NOT tagged")))))
 
-;; 3. drive-publish bucketing + commit-tag ONLY on a real ship.
-(define tagged (list))
-(define mix-ops
-  (list (cons "publish" (lambda (dir) (cond ((equal? dir "b") 'conflict) (else 'published))))
-        (cons "sleep" (lambda () #t))
-        (cons "commit-tag" (lambda (name ver dir) (set! tagged (cons name tagged))))))
-(define mix (drive-publish mix-ops
-                           (list (list "A" "a" "1.0") (list "B" "b" "1.0") (list "C" "c" "1.0"))
-                           (list) (list) 1))
-(check "mix shipped=2 (A,C)"           (= (length (car mix)) 2))
-(check "mix skipped=1 (B)"             (= (length (car (cdr mix))) 1))
-(check "mix commit-tag only ships (2)" (= (length tagged) 2))
-(check "mix B (conflict) NOT tagged"   (not (in-list? "B" tagged)))
-
-;; 4. drive-publish multi-pass: a member dep-missing on pass 1 (sibling not yet
-;;    on the registry) publishes on pass 2 — both eventually ship.
-(define dm-ops
-  (list (cons "publish" (lambda (dir)
-                          (cond ((equal? dir "dep") (if (< (next-call! "dep") 2) 'dep-missing 'published))
-                                (else 'published))))
-        (cons "sleep" (lambda () #t))
-        (cons "commit-tag" (lambda (name ver dir) #t))))
-(define dm (drive-publish dm-ops
-                          (list (list "DEP" "dep" "1.0") (list "X" "x" "1.0"))
-                          (list) (list) 1))
-(check "dep-missing eventually ships both" (= (length (car dm)) 2))
-
-(log-info (string-append "── cargo-publish-each-member: "
-                         (if (= fails 0) "ALL PASS"
-                             (string-append (string-format "{}" fails) " FAILED"))))
-(exit (if (= fails 0) 0 1))
+(deftest "drive-publish multi-pass: dep-missing pass 1, ships pass 2"
+  (let ((calls 0))
+    (let ((ops (list (cons "publish" (lambda (dir)
+                                       (cond ((equal? dir "dep") (set! calls (+ calls 1))
+                                              (if (< calls 2) 'dep-missing 'published))
+                                             (else 'published))))
+                     (cons "sleep" (lambda () #t))
+                     (cons "commit-tag" (lambda (name ver dir) #t)))))
+      (let ((r (drive-publish ops
+                              (list (list "DEP" "dep" "1.0") (list "X" "x" "1.0"))
+                              (list) (list) 1)))
+        (assert (= (length (car r)) 2) "both eventually shipped across passes")))))
