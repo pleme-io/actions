@@ -14,9 +14,9 @@ inputs:
     required: false
     default: "true"
   source-paths:
-    description: "Space-separated globs the skip-detector inspects for changes. Default fits an engenho-shaped workspace; override for other layouts."
+    description: "Space-separated git pathspecs the skip-detector inspects for changes since the last tag. Default catches any Rust source (`*.rs`, matched at any depth) + the workspace manifests — repo-agnostic, so a non-engenho workspace's source-only change still triggers a bump. Override for layouts with significant non-`.rs` source (e.g. vendored schemas)."
     required: false
-    default: "engenho* Cargo.toml Cargo.lock"
+    default: "*.rs Cargo.toml Cargo.lock"
 
 outputs:
   bumped:
