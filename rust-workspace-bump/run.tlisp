@@ -9,35 +9,15 @@
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
-(define (extract-quoted-value line)
-  (let* ((dq-parts (string-split line "\""))
-         (sq-parts (string-split line "'")))
-    (cond
-      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
-      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
-      (else ""))))
-
-(define (line-is-section-header? line)
-  (and (> (string-length line) 0)
-       (string-contains? line "[")))
-
-(define (walk-for-version lines in-section)
-  (cond
-    ((null? lines) "")
-    ((string-contains? (car lines) "[workspace.package]")
-     (walk-for-version (cdr lines) #t))
-    ((and in-section (line-is-section-header? (car lines)))
-     "")
-    ((and in-section
-          (string-contains? (car lines) "version")
-          (string-contains? (car lines) "="))
-     (extract-quoted-value (car lines)))
-    (else (walk-for-version (cdr lines) in-section))))
-
-(define (read-workspace-version)
-  (if (path-exists? "Cargo.toml")
-    (walk-for-version (string-split (read-file "Cargo.toml") "\n") #f)
-    ""))
+;; workspace.package.version is read via the stdlib's hardened
+;; `cargo-workspace-version`. The previous local walk-for-version /
+;; line-is-section-header? exited the [workspace.package] section on ANY
+;; line containing `[` (so an array field like `keywords = ["a","b"]` above
+;; `version` ended the section → empty version → bump aborted) and matched
+;; `version` as a substring (so `rust-version` could win). The stdlib helper
+;; (bracket AND no `=`, exact-field match) fixes both — solve once, in one
+;; place. read-workspace-version is now an alias kept for call-site clarity.
+(define (read-workspace-version) (cargo-workspace-version))
 
 (define (status-of result)
   (alist-get result "status" -1))
