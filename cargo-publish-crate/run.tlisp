@@ -91,8 +91,26 @@
       (string-contains? line "already uploaded")
       (string-contains? line "was already published")))
 
+;; A dependency this crate needs is not yet on crates.io. cargo emits
+;; "no matching package named `X` found" (+ "failed to prepare local
+;; package for uploading"). This is the AUTO-RELEASE "auto-defer crates
+;; whose deps aren't yet on the registry" case — NOT a failure: the dep
+;; publishes via its own repo's auto-release, then THIS crate's next run
+;; succeeds. Treat as a deferred SUCCESS (green CI), never a hard red.
+;; NOTE (dedup follow-up): these predicates duplicate
+;; `_tlisp-stdlib/stdlib.tlisp`'s `classify-cargo-publish-outcome`
+;; (already used by cargo-publish-each-member). The compounding fix is to
+;; prepend the stdlib here (like cargo-publish-each-member's action.yml)
+;; and call that classifier instead of this ad-hoc set. Strings below are
+;; kept BYTE-IDENTICAL to the stdlib's `cargo-publish-dep-missing-line?`
+;; so the two can't disagree until the dedup lands.
+(define (dep-not-published-on-line? line)
+  (or (string-contains? line "no matching package named")
+      (string-contains? line "failed to select a version for")))
+
 (define (rate-limit? log) (any-line-matches? (string-split log "\n") rate-limit-on-line?))
 (define (already-uploaded? log) (any-line-matches? (string-split log "\n") already-uploaded-on-line?))
+(define (dep-not-published? log) (any-line-matches? (string-split log "\n") dep-not-published-on-line?))
 
 ;; -------------------------------------------------------------- ;;
 ;; Try-loop                                                        ;;
@@ -117,6 +135,11 @@
           ((already-uploaded? log)
            (log-info "already published — treating as success")
            (append-output "shipped=true")
+           (exit 0))
+          ((dep-not-published? log)
+           (log-info "a dependency is not yet on crates.io — deferring (green); this crate publishes once the dep lands")
+           (append-output "shipped=false")
+           (append-output "deferred=true")
            (exit 0))
           ((rate-limit? log)
            (log-info "crates.io rate limit hit — sleeping 600s")
