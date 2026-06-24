@@ -51,6 +51,19 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
+
+        # Prefer a tatara-script already on PATH (baked into the runner image,
+        # e.g. the nix-built pleme-io/arc-runner). Only resolve a tag + download
+        # / cargo-build when none is present. This is what lets pleme-io
+        # tatara-lisp actions run NATIVELY on a pure-nix runner: the baked binary
+        # short-circuits the FHS release download a nix image can't execve, and
+        # skips the api.github.com/releases/latest call entirely.
+        if command -v tatara-script >/dev/null 2>&1; then
+          echo "Using pre-installed tatara-script: $(command -v tatara-script)"
+          echo "bin-dir=$(dirname "$(command -v tatara-script)")" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         OS=$(uname -s)
         ARCH=$(uname -m)
         case "$OS-$ARCH" in
