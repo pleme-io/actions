@@ -77,11 +77,15 @@
   (exit cp-status))
 
 ;; sha256 sidecar — cd into dist so the sum names the basename only.
+;; Use baked coreutils `sha256sum` (NOT perl `shasum`, which the nix arc-runner
+;; image doesn't carry) via `bash` (the image bakes bash; a pure-nix image has
+;; no /bin/sh). Output format `<hash>  <name>` is identical to `shasum -a 256`,
+;; so `sha256sum -c` verification downstream is unchanged.
 (define sha-status
-  (exec-check "sh" "-c"
-              (string-append "cd dist && shasum -a 256 \"" dst-name "\" > \"" dst-name ".sha256\"")))
+  (exec-check "bash" "-c"
+              (string-append "cd dist && sha256sum \"" dst-name "\" > \"" dst-name ".sha256\"")))
 (when (not (= sha-status 0))
-  (log-error "shasum failed")
+  (log-error "sha256sum failed")
   (exit sha-status))
 
 (log-info (string-append "staged " dst-path " + " dst-path ".sha256"))
