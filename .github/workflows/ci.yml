@@ -10,7 +10,7 @@ jobs:
     name: Validate every action.yml
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check each action has an action.yml
         run: |
           set -euo pipefail
@@ -52,7 +52,7 @@ jobs:
     name: Lint every *.tlisp file (paren / string / comment balance)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Self-host the lint action from the same repo's path so PRs
       # can be tested against their own changes without first
       # tagging a release. ./tlisp-lint runs three layers in tatara-lisp:
@@ -65,7 +65,7 @@ jobs:
     name: Run every *.test.tlisp via tatara-script --test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Discovers each <action>/run.test.tlisp, runs its (deftest ...) forms
       # against the real run.tlisp (TLISP_TEST=1 gates the unit's main), and
       # fails the gate on any failing assertion.
@@ -75,7 +75,7 @@ jobs:
     name: Enforce ★★ NO-SHELL directive across action.yml files
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./action-shell-lint
         with:
           threshold: "15"          # PR-fail when an action has > 15 shell lines outside the loader
@@ -85,7 +85,7 @@ jobs:
     name: Regenerate catalog + per-action docs via pleme-doc-gen (Rust)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install pleme-doc-gen
         run: cargo install --locked --git https://github.com/pleme-io/pleme-doc-gen pleme-doc-gen
@@ -104,7 +104,7 @@ jobs:
     name: Smoke — spec-watch (pure shell, no upstream dep)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: First run (no cache) — changed=true
         id: first
         uses: ./spec-watch
