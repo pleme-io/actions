@@ -1,0 +1,156 @@
+;; breathe-runner/run.tlisp — preflight posture gate for camelot
+;; breathable spot runners.
+;;
+;; Part of the super-cache-ci action vocabulary (verb #1). A
+;; super-cache-ci build runs on camelot's taint-separated, breathable,
+;; 100%-spot, scale-to-zero in-cluster GHA runners (never rio). This
+;; verb is the FIRST step of every such build: it asserts the job
+;; actually landed on that posture and arms the retirada drain hook,
+;; so a build never silently runs on an unmanaged / on-demand / rio
+;; runner and never gets spot-reclaimed without a checkpoint.
+;;
+;; The runner cannot read its own node's k8s labels directly, so the
+;; posture is surfaced as ENV that the crunkrun Stream / ARC scale-set
+;; injects (downward API from the node's karpenter.sh/capacity-type
+;; label, the camelot node-group, the stream's minRunners). The env
+;; names are config-driven so a stream that surfaces them differently
+;; still works. enforce=false makes every requirement advisory (for
+;; hosted-runner dry-runs and the smoke).
+;;
+;; Tier-honest LiveTODOs (never rounded up):
+;;   - The posture ASSERTIONS are shipped now (they read injected env
+;;     and gate). The live signal INJECTION is the camelot crunkrun
+;;     Stream's job [LiveTODO: super-cache-ci crunkrun Stream surfaces
+;;     CAMELOT_CAPACITY_TYPE / CAMELOT_NODE_GROUP / CAMELOT_MIN_RUNNERS].
+;;   - The retirada drain->checkpoint hook is NOT shipped. drain-armed
+;;     is true ONLY when CAMELOT_RETIRADA=ready is present; otherwise it
+;;     is honestly false + a warning [LiveTODO: retirada
+;;     Spot::InterruptionHandler checkpoint-to-Pg].
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, config-resolve.
+;;
+;; Inputs (env, all config-resolvable via [breathe-runner] section):
+;;   REQUIRE_SPOT REQUIRE_CAMELOT_TAINT REQUIRE_SCALE_TO_ZERO
+;;   DRAIN_HANDLER ENFORCE CAPACITY_TYPE_ENV NODE_GROUP_ENV MIN_RUNNERS_ENV
+;; Outputs (appended):
+;;   runner-ok capacity-type node-group scale-to-zero drain-armed
+
+;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────
+
+;; Normalize a raw capacity-type env value to spot | on-demand |
+;; unknown | <passthrough>. Karpenter emits exactly "spot" /
+;; "on-demand".
+(define (br:classify-capacity raw)
+  (let ((v (string-trim raw)))
+    (cond
+      ((equal? v "") "unknown")
+      ((equal? v "spot") "spot")
+      ((equal? v "on-demand") "on-demand")
+      (else v))))
+
+;; A requirement is satisfied when it is not required, OR the signal
+;; meets it.
+(define (br:spot-ok? capacity require-spot)
+  (or (not (equal? require-spot "true")) (equal? capacity "spot")))
+
+(define (br:taint-ok? node-group require-taint)
+  (or (not (equal? require-taint "true"))
+      (not (equal? (string-trim node-group) ""))))
+
+(define (br:scale-ok? min-runners require-s2z)
+  (or (not (equal? require-s2z "true"))
+      (equal? (string-trim min-runners) "0")))
+
+;; The retirada drain hook is armed only when explicitly requested AND
+;; the handler is actually present. Never claims armed otherwise.
+(define (br:drain-armed? drain-handler retirada-ready)
+  (and (equal? drain-handler "true") (equal? retirada-ready "ready")))
+
+;; scale-to-zero output value: true | false | unknown (empty signal).
+(define (br:scale-value min-runners)
+  (cond
+    ((equal? (string-trim min-runners) "0") "true")
+    ((equal? (string-trim min-runners) "") "unknown")
+    (else "false")))
+
+;; Collect the unmet-requirement messages (empty list = posture OK).
+(define (br:assess capacity node-group min-runners
+                   require-spot require-taint require-s2z)
+  (append
+    (if (br:spot-ok? capacity require-spot)
+      (list)
+      (list (string-append "not on a spot node (capacity-type=" capacity
+                           ", require-spot=true)")))
+    (if (br:taint-ok? node-group require-taint)
+      (list)
+      (list "not on a camelot-isolated node group (node-group empty, require-camelot-taint=true)"))
+    (if (br:scale-ok? min-runners require-s2z)
+      (list)
+      (list (string-append "stream is not scale-to-zero (min-runners=" min-runners
+                           ", require-scale-to-zero=true)")))))
+
+(define (br:log-failures failures)
+  (cond
+    ((null? failures) #t)
+    (else
+      (log-error (string-append "  - " (car failures)))
+      (br:log-failures (cdr failures)))))
+
+;; ── Main ─────────────────────────────────────────────────────────
+
+(define (main)
+  (let* ((require-spot  (config-resolve "REQUIRE_SPOT" "breathe-runner" "require-spot" "true"))
+         (require-taint (config-resolve "REQUIRE_CAMELOT_TAINT" "breathe-runner" "require-camelot-taint" "true"))
+         (require-s2z   (config-resolve "REQUIRE_SCALE_TO_ZERO" "breathe-runner" "require-scale-to-zero" "false"))
+         (drain-handler (config-resolve "DRAIN_HANDLER" "breathe-runner" "drain-handler" "true"))
+         (enforce       (config-resolve "ENFORCE" "breathe-runner" "enforce" "true"))
+         (cap-env       (config-resolve "CAPACITY_TYPE_ENV" "breathe-runner" "capacity-type-env" "CAMELOT_CAPACITY_TYPE"))
+         (ng-env        (config-resolve "NODE_GROUP_ENV" "breathe-runner" "node-group-env" "CAMELOT_NODE_GROUP"))
+         (mr-env        (config-resolve "MIN_RUNNERS_ENV" "breathe-runner" "min-runners-env" "CAMELOT_MIN_RUNNERS"))
+         (capacity      (br:classify-capacity (env-get cap-env "")))
+         (node-group    (string-trim (env-get ng-env "")))
+         (min-runners   (string-trim (env-get mr-env "")))
+         (retirada-ready (env-get "CAMELOT_RETIRADA" ""))
+         (drain-armed   (br:drain-armed? drain-handler retirada-ready))
+         (failures      (br:assess capacity node-group min-runners
+                                   require-spot require-taint require-s2z)))
+    ;; posture outputs (always emitted, whatever the gate decides)
+    (append-output (string-append "capacity-type=" capacity))
+    (append-output (string-append "node-group=" node-group))
+    (append-output (string-append "scale-to-zero=" (br:scale-value min-runners)))
+    (append-output (string-append "drain-armed=" (if drain-armed "true" "false")))
+    ;; retirada arming — honest about the unshipped handler
+    (cond
+      (drain-armed
+        (log-info "retirada drain->checkpoint hook armed (CAMELOT_RETIRADA=ready)"))
+      ((equal? drain-handler "true")
+        (log-info "::warning::breathe-runner: drain-handler requested but retirada Spot::InterruptionHandler not present (CAMELOT_RETIRADA!=ready) — drain-armed=false [LiveTODO: retirada checkpoint-to-Pg]"))
+      (else
+        (log-info "drain-handler=false — not arming the retirada hook")))
+    ;; gate
+    (cond
+      ((null? failures)
+       (log-info (string-append "breathe-runner OK — capacity-type=" capacity
+                                ", node-group=" node-group
+                                ", scale-to-zero=" (br:scale-value min-runners)))
+       (append-output "runner-ok=true")
+       (exit 0))
+      ((equal? enforce "true")
+       (log-error "breathe-runner: camelot spot-runner posture NOT met (enforce=true):")
+       (br:log-failures failures)
+       (append-output "runner-ok=false")
+       (exit 1))
+      (else
+       (log-info "::warning::breathe-runner: posture not met but enforce=false — continuing (advisory):")
+       (br:log-failures failures)
+       (append-output "runner-ok=false")
+       (exit 0)))))
+
+;; Gated on TLISP_TEST so the tlisp-test harness loads the pure
+;; classify/ok?/assess helpers and drives them with fixtures, without
+;; reading the real runner env or exiting.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — breathe-runner helpers loaded; main skipped (the test harness drives them)"))
+  (else (main)))
