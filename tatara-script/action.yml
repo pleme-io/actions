@@ -34,6 +34,52 @@ outputs:
   result:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
     value: ${{ steps.exec.outputs.result }}
+  # Delivery-leg keys (super-cache-ci): nix-image / ghcr-publish / zot-pull-scan
+  # (+ image-scan's severity/vuln-count). A composite action forwards only
+  # DECLARED keys, so these must live here for the scripts' outputs to reach
+  # a consumer workflow. Added per this file's own "add it here" convention.
+  tarball-amd64:
+    description: "Forwarded (key: tarball-amd64) — nix-image amd64 tarball path"
+    value: ${{ steps.exec.outputs.tarball-amd64 }}
+  tarball-arm64:
+    description: "Forwarded (key: tarball-arm64) — nix-image arm64 tarball path"
+    value: ${{ steps.exec.outputs.tarball-arm64 }}
+  tarballs:
+    description: "Forwarded (key: tarballs) — nix-image 'arch:path' list"
+    value: ${{ steps.exec.outputs.tarballs }}
+  via-service:
+    description: "Forwarded (key: via-service) — nix-image sui-served flag"
+    value: ${{ steps.exec.outputs.via-service }}
+  built:
+    description: "Forwarded (key: built) — nix-image all-arches-built flag"
+    value: ${{ steps.exec.outputs.built }}
+  tag:
+    description: "Forwarded (key: tag) — ghcr-publish exact AUTOBUMP tag"
+    value: ${{ steps.exec.outputs.tag }}
+  ref:
+    description: "Forwarded (key: ref) — ghcr-publish full pushed ref"
+    value: ${{ steps.exec.outputs.ref }}
+  ref-amd64:
+    description: "Forwarded (key: ref-amd64) — ghcr-publish amd64 ref"
+    value: ${{ steps.exec.outputs.ref-amd64 }}
+  ref-arm64:
+    description: "Forwarded (key: ref-arm64) — ghcr-publish arm64 ref"
+    value: ${{ steps.exec.outputs.ref-arm64 }}
+  pushed:
+    description: "Forwarded (key: pushed) — ghcr-publish push-success flag"
+    value: ${{ steps.exec.outputs.pushed }}
+  admitted:
+    description: "Forwarded (key: admitted) — zot-pull-scan faucet admission flag"
+    value: ${{ steps.exec.outputs.admitted }}
+  severity:
+    description: "Forwarded (key: severity) — image-scan / zot-pull-scan highest severity"
+    value: ${{ steps.exec.outputs.severity }}
+  vuln-count:
+    description: "Forwarded (key: vuln-count) — image-scan / zot-pull-scan vuln count"
+    value: ${{ steps.exec.outputs.vuln-count }}
+  local-archive:
+    description: "Forwarded (key: local-archive) — zot-pull-scan pulled archive path"
+    value: ${{ steps.exec.outputs.local-archive }}
 
 runs:
   using: composite

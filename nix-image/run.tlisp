@@ -1,0 +1,121 @@
+;; nix-image/run.tlisp — build multi-arch nix OCI image tarballs via
+;; dockerTools (NO Dockerfile), one per requested arch.
+;;
+;; Wrapper over the substrate `mkImageReleaseApp` / `dockerImage-<arch>`
+;; convention: the flake exposes packages.<system>.<image-attr>-<arch>
+;; producing a docker-archive tarball (pkgs.dockerTools.buildLayeredImage).
+;;
+;; Tier-honest (SUPER-CACHE-CI ledger, delivery leg):
+;;   - local `nix build .#<image-attr>-<arch>`             → now
+;;   - route the build through the sui super-cache service → LiveTODO:super-cache-build
+;;     (SUI_ENDPOINT set ⇒ warm-layer reuse; today we log the LiveTODO and fall
+;;      back to a CORRECT local build, and report via-service=false — never a
+;;      faked warm path).
+;;
+;; Uses stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, stderr-of.
+;;
+;; Inputs (env):
+;;   IMAGE_ATTR   flake output attr base (default "dockerImage")
+;;   ARCHES       space-separated arch list (default "amd64")
+;;   FLAKE_REF    flake ref to build (default ".")
+;;   SUI_ENDPOINT sui service endpoint; empty = local build
+;;
+;; Outputs (append-output → GITHUB_OUTPUT):
+;;   tarball-amd64 / tarball-arm64  per-arch out path (docker-archive)
+;;   tarballs                       "amd64:/nix/…;arm64:/nix/…"
+;;   via-service                    "true" iff a build was served by sui (today: false)
+;;   built                          "true" iff every requested arch built
+;;   result                         generic catch-all == first tarball, or "" on failure
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+(define (arch->system arch)
+  (cond
+    ((equal? arch "amd64") "x86_64-linux")
+    ((equal? arch "x86_64") "x86_64-linux")
+    ((equal? arch "arm64") "aarch64-linux")
+    ((equal? arch "aarch64") "aarch64-linux")
+    (else "")))
+
+(define (image-attr-for base arch)
+  (string-append base "-" arch))
+
+;; #t iff building ARCH on a runner whose `uname -m` MACHINE is the same
+;; machine class — an off-target build mislabels the arch and `exec format
+;; error`s at runtime (substrate image-push.yml native-arch rule).
+(define (native-arch? machine arch)
+  (and (not (equal? (arch->system arch) ""))
+       (equal? (arch->system arch) (arch->system machine))))
+
+;; ── build one arch ───────────────────────────────────────────────
+;; Returns the out-path ("" on failure).
+(define (build-one flake-ref image-attr arch endpoint)
+  (let* ((sys (arch->system arch))
+         (attr (image-attr-for image-attr arch))
+         (target (string-append flake-ref "#" attr)))
+    (cond
+      ((equal? sys "")
+       (log-error (string-append "nix-image: unknown arch " arch))
+       "")
+      (else
+       ;; LiveTODO:super-cache-build — when SUI_ENDPOINT is set we would route
+       ;; this derivation through the sui daemon for warm layer-cache reuse.
+       ;; That seam is not yet live; log the LiveTODO + do a correct LOCAL
+       ;; build rather than fake a warm hit. via-service stays false.
+       (when (not (equal? endpoint ""))
+         (log-info (string-append "::warning::nix-image: SUI_ENDPOINT set ("
+                    endpoint ") but super-cache-build routing is a LiveTODO — "
+                    "building locally (via-service=false)")))
+       (log-info (string-append "==> nix build --system " sys " " target))
+       (let ((r (exec-capture "nix" "build" "--system" sys
+                              "--print-out-paths" "--no-link" target)))
+         (cond
+           ((= (status-of r) 0)
+            (let ((p (string-trim (stdout-of r))))
+              (log-info (string-append "built " arch " -> " p))
+              p))
+           (else
+            (log-error (string-append "nix-image: build failed for " arch))
+            (log-info (stderr-of r))
+            "")))))))
+
+(define (emit-arch arch path)
+  (append-output (string-append "tarball-" arch "=" path)))
+
+;; Fold over the requested arches. acc-ok = every arch so far built;
+;; acc-pairs = ordered "arch:path" list; first-path = first successful tarball.
+(define (run-build arches flake-ref image-attr endpoint machine acc-ok acc-pairs first-path)
+  (cond
+    ((null? arches)
+     (append-output (string-append "tarballs=" (string-join ";" acc-pairs)))
+     (append-output "via-service=false")
+     (append-output (string-append "built=" (if acc-ok "true" "false")))
+     (append-output (string-append "result=" first-path))
+     (if acc-ok 0 1))
+    (else
+     (let ((arch (car arches)))
+       (when (not (native-arch? machine arch))
+         (log-info (string-append "::warning::nix-image: building " arch
+                    " on a " machine " runner (non-native) — prefer a native-arch "
+                    "runner (image-push.yml rule) to avoid exec-format mislabeling")))
+       (let* ((path (build-one flake-ref image-attr arch endpoint))
+              (ok (not (equal? path ""))))
+         (when ok (emit-arch arch path))
+         (run-build (cdr arches) flake-ref image-attr endpoint machine
+                    (and acc-ok ok)
+                    (if ok (append acc-pairs (list (string-append arch ":" path))) acc-pairs)
+                    (if (and (equal? first-path "") ok) path first-path)))))))
+
+(define (main)
+  (let* ((image-attr (env-get "IMAGE_ATTR" "dockerImage"))
+         (arches (string-split (string-trim (env-get "ARCHES" "amd64")) " "))
+         (flake-ref (env-get "FLAKE_REF" "."))
+         (endpoint (env-get "SUI_ENDPOINT" ""))
+         (machine (string-trim (stdout-of (exec-capture "uname" "-m")))))
+    (run-build arches flake-ref image-attr endpoint machine #t (list) "")))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — nix-image helpers loaded; main skipped"))
+  (else
+   (exit (main))))
