@@ -1,0 +1,72 @@
+name: 'pleme-io · gen-build-spec'
+description: 'Emit the typed *.build-spec.json for a repo via `gen build .` and enforce the GEN-TYPED-SPEC-CONTRACT stale gate (a committed spec that drifts from the regen is a CI FAILURE, never a runtime fetch). Step 3 of the super-cache-ci pipeline — produces the spec-path + spec-hash the tiered cache verbs key on. TIER-HONEST: lang=cargo is the NOW path (gen-cargo conquered, ledger row 9); npm/pip/gomod are a named LiveTODO (row 10); an absent `gen` reports an honest gen-absent-livetodo branch unless require-gen=true.'
+branding:
+  icon: 'file-text'
+  color: 'green'
+
+inputs:
+  lang:
+    description: "auto | cargo | npm | pip | gomod — auto resolves by manifest precedence (rust > go > node > python). Only cargo has a shipped interpreter today."
+    required: false
+    default: "auto"
+  spec-path:
+    description: "Override the build-spec path. Empty => derived from the detected language (e.g. Cargo.build-spec.json)."
+    required: false
+    default: ""
+  ci-stale-check:
+    description: "When true (default), a committed build-spec that drifts from `gen build .` FAILS the job (GEN-TYPED-SPEC-CONTRACT). Set false to regenerate without gating (e.g. an auto-commit flow)."
+    required: false
+    default: "true"
+  require-gen:
+    description: "When true, an absent `gen` on PATH is a hard failure (exit 1) instead of an honest gen-absent-livetodo report. NEVER a faked green."
+    required: false
+    default: "false"
+
+outputs:
+  lang:
+    description: "The resolved language (cargo | npm | pip | gomod | unknown)."
+    value: ${{ steps.run.outputs.lang }}
+  spec-path:
+    description: "The typed build-spec path (threaded into super-cache-restore/build/save)."
+    value: ${{ steps.run.outputs.spec-path }}
+  spec-hash:
+    description: "sha256 content-address of the build-spec — equals the downstream super-cache key (supercache:content-key). Empty when the spec is absent. (A BLAKE3 spec-hash is a LiveTODO once a b3sum client helper lands.)"
+    value: ${{ steps.run.outputs.spec-hash }}
+  regenerated:
+    description: "true iff `gen build .` actually ran (cargo NOW path); false on the lang/gen-absent LiveTODO branches."
+    value: ${{ steps.run.outputs.regenerated }}
+  stale:
+    description: "true | false | unknown — whether the committed spec drifted from the regen (unknown on the LiveTODO branches)."
+    value: ${{ steps.run.outputs.stale }}
+  changed:
+    description: "Alias of stale — whether the regen changed the committed spec content."
+    value: ${{ steps.run.outputs.changed }}
+  reason:
+    description: "ok | stale-spec | lang-livetodo | gen-absent | gen-absent-livetodo | gen-build-failed | no-spec."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run gen-build-spec
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        LANG_ARG: ${{ inputs.lang }}
+        SPEC_PATH: ${{ inputs.spec-path }}
+        CI_STALE_CHECK: ${{ inputs.ci-stale-check }}
+        REQUIRE_GEN: ${{ inputs.require-gen }}
