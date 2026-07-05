@@ -114,6 +114,85 @@ outputs:
   outcome-chain:
     description: "Forwarded (key: outcome-chain) — tameshi-attest kensa OutcomeChain flag"
     value: ${{ steps.exec.outputs.outcome-chain }}
+  # super-cache-ci service + cache + spec keys: sui-service-up /
+  # super-cache-restore / super-cache-build / super-cache-save /
+  # gen-build-spec. A composite forwards only DECLARED keys, so the
+  # reference pipeline's step-to-step output threading (endpoint -> restore
+  # -> build -> save -> attest) is always-empty until these live here.
+  # Added per this file's own "add it here" convention (additive; the keys
+  # are disjoint from the delivery-leg + preflight/attest sets above).
+  endpoint:
+    description: "Forwarded (key: endpoint) — sui-service-up resolved service endpoint"
+    value: ${{ steps.exec.outputs.endpoint }}
+  store-backend:
+    description: "Forwarded (key: store-backend) — sui-service-up durable store tier"
+    value: ${{ steps.exec.outputs.store-backend }}
+  cache-backend:
+    description: "Forwarded (key: cache-backend) — sui-service-up hot cache tier"
+    value: ${{ steps.exec.outputs.cache-backend }}
+  sandbox:
+    description: "Forwarded (key: sandbox) — sui-service-up build sandbox (tmpfs|disk)"
+    value: ${{ steps.exec.outputs.sandbox }}
+  never-touch-disk:
+    description: "Forwarded (key: never-touch-disk) — computed postgres∧redis∧tmpfs predicate"
+    value: ${{ steps.exec.outputs.never-touch-disk }}
+  up:
+    description: "Forwarded (key: up) — sui-service-up endpoint-reachable flag"
+    value: ${{ steps.exec.outputs.up }}
+  reason:
+    description: "Forwarded (key: reason) — service/cache/spec verbs' typed why-string"
+    value: ${{ steps.exec.outputs.reason }}
+  cache-hit:
+    description: "Forwarded (key: cache-hit) — super-cache-restore warm-path hit flag"
+    value: ${{ steps.exec.outputs.cache-hit }}
+  hit-tier:
+    description: "Forwarded (key: hit-tier) — super-cache-restore tier (redis|pg|object|miss)"
+    value: ${{ steps.exec.outputs.hit-tier }}
+  key:
+    description: "Forwarded (key: key) — content-addressed super-cache key threaded restore->build->save"
+    value: ${{ steps.exec.outputs.key }}
+  outputs:
+    description: "Forwarded (key: outputs) — restored/built store-path list"
+    value: ${{ steps.exec.outputs.outputs }}
+  from-cache:
+    description: "Forwarded (key: from-cache) — super-cache-build served-from-cache flag"
+    value: ${{ steps.exec.outputs.from-cache }}
+  output-hashes:
+    description: "Forwarded (key: output-hashes) — super-cache-build BLAKE3 output hashes"
+    value: ${{ steps.exec.outputs.output-hashes }}
+  eval-ms:
+    description: "Forwarded (key: eval-ms) — super-cache-build RAM eval time"
+    value: ${{ steps.exec.outputs.eval-ms }}
+  build-ms:
+    description: "Forwarded (key: build-ms) — super-cache-build derive time"
+    value: ${{ steps.exec.outputs.build-ms }}
+  saved:
+    description: "Forwarded (key: saved) — super-cache-save newly-persisted flag"
+    value: ${{ steps.exec.outputs.saved }}
+  skipped:
+    description: "Forwarded (key: skipped) — super-cache-save write-if-absent idempotent skip"
+    value: ${{ steps.exec.outputs.skipped }}
+  tier:
+    description: "Forwarded (key: tier) — super-cache-save durable tier that accepted the write"
+    value: ${{ steps.exec.outputs.tier }}
+  lang:
+    description: "Forwarded (key: lang) — gen-build-spec resolved language"
+    value: ${{ steps.exec.outputs.lang }}
+  spec-path:
+    description: "Forwarded (key: spec-path) — gen-build-spec typed build-spec path"
+    value: ${{ steps.exec.outputs.spec-path }}
+  spec-hash:
+    description: "Forwarded (key: spec-hash) — gen-build-spec build-spec content-address"
+    value: ${{ steps.exec.outputs.spec-hash }}
+  regenerated:
+    description: "Forwarded (key: regenerated) — gen-build-spec did-gen-run flag"
+    value: ${{ steps.exec.outputs.regenerated }}
+  stale:
+    description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
+    value: ${{ steps.exec.outputs.stale }}
+  changed:
+    description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag"
+    value: ${{ steps.exec.outputs.changed }}
 
 runs:
   using: composite
