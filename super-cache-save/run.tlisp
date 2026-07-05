@@ -1,0 +1,93 @@
+;; super-cache-save/run.tlisp — persist a build's outputs to the durable
+;; super-cache tiers, WRITE-IF-ABSENT, content-addressed, NO lock.
+;; Canonical doctrine: theory/SUPER-CACHE-CI.md §II.3 (idempotent
+;; write-if-absent keyed by the content address — the
+;; eliminate-the-shared-cell pattern; concurrent-runner coherence is free).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info/log-error, path-exists?, write-file,
+;;   exec-capture, supercache:content-key, supercache:cache-dir,
+;;   supercache:local-entry-path.
+;;
+;; TIER-HONEST. The DESTINATION durable tiers are Postgres L2 (index +
+;; pointer) + object L3 (NAR bytes) with warm Redis L1 — a LiveTODO
+;; behind sui's SHIPPED Store / StorageBackend traits (rows 4/5/6). The
+;; NOW-path persists to a local content-addressed object tier
+;; (<cache-dir>/<key>.entry) — the same shape super-cache-restore reads.
+;; When no cache dir is configured, the save is an HONEST no-op, never a
+;; faked success.
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+(define (save-key key-in spec-path)
+  (cond
+    ((not (equal? key-in "")) key-in)
+    (else (supercache:content-key spec-path))))
+
+;; Write-if-absent into the local object tier. Returns a typed reason:
+;;   "already-present" — the key exists; idempotent skip (no lock)
+;;   "written"         — newly persisted
+;;   "write-failed"    — the write did not land
+(define (save-to-local dir key outputs)
+  (let ((entry (supercache:local-entry-path dir key)))
+    (cond
+      ((path-exists? entry) "already-present")
+      (else
+       (exec-capture "mkdir" "-p" dir)
+       (write-file entry (string-append outputs "\n"))
+       (cond
+         ((path-exists? entry) "written")
+         (else "write-failed"))))))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (emit key saved skipped tier reason)
+  (append-output (string-append "key=" key))
+  (append-output (string-append "saved=" saved))
+  (append-output (string-append "skipped=" skipped))
+  (append-output (string-append "tier=" tier))
+  (append-output (string-append "reason=" reason)))
+
+(define (main)
+  (let* ((key-in    (env-get "KEY" ""))
+         (spec-path (env-get "SPEC_PATH" ""))
+         (outputs   (env-get "OUTPUTS" ""))
+         (endpoint  (env-get "ENDPOINT" ""))
+         (key       (save-key key-in spec-path))
+         (cache-dir (supercache:cache-dir)))
+    (cond
+      ;; No key ⇒ nothing to address; honest no-op (not a faked save).
+      ((equal? key "")
+       (log-info "super-cache-save: no key resolvable (KEY empty and SPEC_PATH absent/empty) — nothing persisted")
+       (emit key "false" "false" "none" "no-key")
+       0)
+      ;; No local durable tier configured ⇒ the Pg/object tiers are a
+      ;; LiveTODO; do not fake a persist.
+      ((equal? cache-dir "")
+       (when (not (equal? endpoint ""))
+         (log-info (string-append "super-cache-save: no cache-dir; pending-super-cache-ci rows 4,5,6 — durable Pg/object tiers via " endpoint " are a LiveTODO")))
+       (when (equal? endpoint "")
+         (log-info "super-cache-save: no cache-dir configured — pending-super-cache-ci rows 4,5,6 (durable tiers LiveTODO)"))
+       (emit key "false" "false" "none" "no-durable-tier")
+       0)
+      (else
+       (let ((reason (save-to-local cache-dir key outputs)))
+         (cond
+           ((equal? reason "already-present")
+            (log-info (string-append "super-cache-save: key already present (idempotent skip) " key))
+            (emit key "false" "true" "object" reason)
+            0)
+           ((equal? reason "written")
+            (log-info (string-append "super-cache-save: persisted " key " -> "
+                                     (supercache:local-entry-path cache-dir key)))
+            (emit key "true" "false" "object" reason)
+            0)
+           (else
+            (log-error (string-append "super-cache-save: failed to write "
+                                      (supercache:local-entry-path cache-dir key)))
+            (emit key "false" "false" "none" reason)
+            1)))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — super-cache-save helpers loaded; main skipped"))
+  (else
+   (exit (main))))

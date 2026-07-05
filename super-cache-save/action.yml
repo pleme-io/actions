@@ -1,0 +1,71 @@
+name: 'pleme-io · super-cache-save'
+description: 'Persist a build''s outputs to the durable super-cache tiers, write-if-absent, content-addressed, no lock (the eliminate-the-shared-cell pattern; concurrent-runner coherence is free). TIER-HONEST: the durable Postgres/object tiers are a named LiveTODO behind sui''s shipped Store/StorageBackend traits; the now-path persists to a local content-addressed object tier and is an honest no-op when no tier is configured.'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  endpoint:
+    description: "The sui service endpoint (from sui-service-up). Used for the durable Pg/object tier write (LiveTODO). Optional."
+    required: false
+    default: ""
+  key:
+    description: "Content-addressed cache key (from super-cache-restore). Empty => computed as sha256 over spec-path."
+    required: false
+    default: ""
+  spec-path:
+    description: "Path to the typed build-spec. Used to compute the key when key is empty."
+    required: false
+    default: ""
+  outputs:
+    description: "Space-separated build output list (store paths / files) to persist under the key."
+    required: false
+    default: ""
+  cache-dir:
+    description: "Directory backing the local content-addressed object tier (the now-path). Empty => the durable Pg/object tiers (LiveTODO) and an honest no-op otherwise."
+    required: false
+    default: ""
+
+outputs:
+  saved:
+    description: "true if the outputs were newly persisted."
+    value: ${{ steps.run.outputs.saved }}
+  skipped:
+    description: "true if the key was already present (idempotent write-if-absent skip)."
+    value: ${{ steps.run.outputs.skipped }}
+  key:
+    description: "The content-addressed key that was persisted (or skipped)."
+    value: ${{ steps.run.outputs.key }}
+  tier:
+    description: "object | none — which durable tier accepted the write."
+    value: ${{ steps.run.outputs.tier }}
+  reason:
+    description: "written | already-present | no-key | no-durable-tier | write-failed."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run super-cache-save
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        KEY: ${{ inputs.key }}
+        SPEC_PATH: ${{ inputs.spec-path }}
+        OUTPUTS: ${{ inputs.outputs }}
+        SUI_CACHE_DIR: ${{ inputs.cache-dir }}

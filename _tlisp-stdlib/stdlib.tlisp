@@ -462,3 +462,93 @@
     (cond
       ((not (equal? env-v "")) env-v)
       (else (release-config-field section field default-value)))))
+
+;; ────────────────────────────────────────────────────────────────
+;; super-cache-ci — sui service + tiered-cache helpers
+;; ────────────────────────────────────────────────────────────────
+;; Shared across sui-service-up / super-cache-restore / super-cache-save
+;; (the ≥2-consumer rule — Pillar 12). Canonical doctrine:
+;; theory/SUPER-CACHE-CI.md. TIER-HONEST: the daemon-connected tiered
+;; path (Redis L1 → Postgres L2, SUPER-CACHE-CI.md §II.2) is a LiveTODO
+;; behind sui's SHIPPED traits — `Store` (sui-store/src/traits.rs:236)
+;; and `StorageBackend` (sui-cache/src/storage/mod.rs:27). The now-path
+;; helpers below cover (a) service config resolution + endpoint health,
+;; and (b) a local content-addressed object tier for the cache verbs.
+;; A `Result::Err` / a miss is mitigation, never a faked hit — every
+;; helper degrades to an honest miss/`#f`, never a rounded-up success.
+
+;; The sui-daemon-graph default UDS (sui-daemon-graph/src/main.rs:
+;; SocketPath::for_app("sui-graph")).
+(define (supercache:default-uds)
+  (string-append (env-get "XDG_RUNTIME_DIR" "/run") "/sui-graph.sock"))
+
+;; Resolve the sui service endpoint: env SUI_ENDPOINT
+;;   > .pleme-io-release.toml [super-cache-ci] endpoint
+;;     > the daemon's default UDS.
+(define (supercache:endpoint-resolve)
+  (config-resolve "SUI_ENDPOINT" "super-cache-ci" "endpoint"
+                  (supercache:default-uds)))
+
+;; A UDS endpoint is a filesystem path (no host:port colon). A colon ⇒
+;; a host:port TCP endpoint (a cluster `.svc`).
+(define (supercache:endpoint-is-uds? endpoint)
+  (not (string-contains? endpoint ":")))
+
+;; Endpoint liveness. UDS ⇒ the socket file exists (the daemon bound
+;; it). TCP (`.svc:port`) liveness needs a client ping the daemon does
+;; not yet ship a CLI for — `sui-daemon-client` is a LIBRARY
+;; (`DaemonClient`), not a binary — so it is a LiveTODO and returns #f.
+(define (supercache:endpoint-alive? endpoint)
+  (cond
+    ((supercache:endpoint-is-uds? endpoint) (path-exists? endpoint))
+    (else #f)))
+
+;; The honest structural never-touch-DURABLE-disk predicate
+;; (SUPER-CACHE-CI.md §III): true ONLY when the store is Postgres AND the
+;; cache is Redis AND the sandbox is tmpfs. A COMPUTED predicate, never a
+;; claimed constant — ephemeral/graphstore/local/disk ⇒ #f. Tier-honesty
+;; is CI-caught here, not prose.
+(define (supercache:never-touch-disk? store cache sandbox)
+  (and (equal? store "postgres")
+       (equal? cache "redis")
+       (equal? sandbox "tmpfs")))
+
+;; Content-addressed client-side cache key: sha256 over the build-spec
+;; file. This is the RESTORE↔BUILD↔SAVE lookup key threaded across the
+;; verbs; the daemon's derivation-level BLAKE3 store address remains
+;; authoritative for store-level dedup. Returns "" when the spec is
+;; absent (an unresolvable key ⇒ an honest miss downstream).
+(define (supercache:content-key spec-path)
+  (cond
+    ((equal? spec-path "") "")
+    ((not (path-exists? spec-path)) "")
+    (else
+      (let ((r (exec-capture "sha256sum" spec-path)))
+        (if (= (status-of r) 0)
+          (car (string-split (string-trim (stdout-of r)) " "))
+          "")))))
+
+;; Local content-addressed object tier (the now-path). The Redis L1 /
+;; Postgres L2 tiers are LiveTODO behind sui-cache::StorageBackend /
+;; sui-store::Store. The entry lives at <cache-dir>/<key>.entry and holds
+;; the space-separated output list — write-if-absent, content-addressed,
+;; NO lock (the eliminate-the-shared-cell property: two runners saving the
+;; same key produce identical content, so a race is benign).
+(define (supercache:cache-dir)
+  (config-resolve "SUI_CACHE_DIR" "super-cache-ci" "cache-dir" ""))
+
+(define (supercache:local-entry-path dir key)
+  (string-append dir "/" key ".entry"))
+
+(define (supercache:cache-local-has? dir key)
+  (and (not (equal? dir ""))
+       (not (equal? key ""))
+       (path-exists? (supercache:local-entry-path dir key))))
+
+;; Classify a probe result into a tier string. The now-path resolves only
+;; the local object tier or a miss; redis|pg are LiveTODO (they never
+;; classify true until TieredBackend + RedisBackend land).
+(define (supercache:classify-tier local-hit?)
+  (cond
+    (local-hit? "object")
+    (else "miss")))

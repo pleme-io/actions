@@ -1,0 +1,25 @@
+;; super-cache-save/run.test.tlisp — (deftest …) smoke for the pure
+;; helpers + the write-if-absent local object tier, run via
+;; tatara-script --test by the tlisp-test action (TLISP_TEST=1 gates main).
+
+(deftest "save-key prefers an explicit key over the spec-path"
+  (assert (equal? (save-key "explicit" "/nonexistent.json") "explicit") "explicit key wins")
+  (assert (equal? (save-key "" "/nonexistent.json") "") "no key + absent spec => empty")
+  (assert (equal? (save-key "" "") "") "no key + no spec => empty"))
+
+(deftest "save-to-local is write-if-absent: persists once, then idempotently skips"
+  (define dir "/tmp/scache-save-test")
+  (exec-capture "rm" "-rf" dir)
+  (exec-capture "mkdir" "-p" dir)
+  (assert (equal? (save-to-local dir "k1" "/nix/store/aaa /nix/store/bbb") "written") "first write => written")
+  (assert (path-exists? (supercache:local-entry-path dir "k1")) "entry landed on disk")
+  (assert (equal? (save-to-local dir "k1" "/nix/store/aaa /nix/store/bbb") "already-present") "second save => idempotent skip")
+  (assert (equal? (save-to-local dir "k1" "DIFFERENT") "already-present") "content-addressed skip does not overwrite"))
+
+(deftest "the persisted entry round-trips the exact output list"
+  (define dir "/tmp/scache-save-roundtrip")
+  (exec-capture "rm" "-rf" dir)
+  (exec-capture "mkdir" "-p" dir)
+  (save-to-local dir "k2" "/nix/store/ccc")
+  (assert (equal? (string-trim (read-file (supercache:local-entry-path dir "k2"))) "/nix/store/ccc")
+          "restore reads back what save wrote"))
