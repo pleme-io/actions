@@ -1,0 +1,20 @@
+;; super-cache-build/run.test.tlisp — (deftest …) smoke for the pure
+;; DERIVE DECISION, run via tatara-script --test by the tlisp-test
+;; action. The runner prepends the stdlib + the sibling run.tlisp
+;; (TLISP_TEST=1 gates main), then asserts. scb:outcome IS the CORE
+;; action's central invariant — a restore HIT short-circuits the derive;
+;; FORCE overrides; a miss derives. No live sui service is needed to
+;; prove this contract (that is the point — the decision is pure).
+
+(deftest "scb:should-derive? — hit+no-force skips; miss/force derive"
+  (assert (not (scb:should-derive? "true" "false")) "cache hit, no force => skip derive")
+  (assert (scb:should-derive? "true" "true") "hit + force => derive anyway")
+  (assert (scb:should-derive? "false" "false") "cache miss => derive")
+  (assert (scb:should-derive? "false" "true") "miss + force => derive")
+  (assert (scb:should-derive? "" "") "unset (treated as miss) => derive"))
+
+(deftest "scb:outcome — the core hit/derive decision string"
+  (assert (equal? (scb:outcome "true" "false") "hit") "hit, no force => short-circuit (no sui RPC)")
+  (assert (equal? (scb:outcome "true" "true") "derive") "force overrides a hit => re-derive")
+  (assert (equal? (scb:outcome "false" "false") "derive") "miss => derive")
+  (assert (equal? (scb:outcome "false" "true") "derive") "miss + force => derive"))
