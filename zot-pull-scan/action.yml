@@ -1,0 +1,70 @@
+name: 'pleme-io · zot-pull-scan'
+description: 'The zot faucet gate: pull an image from a private zot registry, scan the PULLED bytes with Trivy, and admit it into the trusted zone ONLY when the scan clears the fail-on-severity gate. Nothing enters the trusted zone unscanned. Composes skopeo (pull) + Trivy (the image-scan surface).'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  ref:
+    description: "zot image ref to pull + scan (e.g. zot.internal/pleme-io/svc:tag)"
+    required: true
+  fail-on-severity:
+    description: "Lowest severity that REJECTS admission: LOW | MEDIUM | HIGH | CRITICAL | none"
+    required: false
+    default: "HIGH"
+  ignore-unfixed:
+    description: "Skip vulns without an available fix"
+    required: false
+    default: "false"
+  dest:
+    description: "Local docker-archive path for the pulled bytes"
+    required: false
+    default: "zot-pull.tar"
+
+outputs:
+  admitted:
+    description: "'true' iff pulled AND the scan cleared the gate"
+    value: ${{ steps.run.outputs.admitted }}
+  severity:
+    description: "Highest severity found (CRITICAL|HIGH|MEDIUM|LOW|none)"
+    value: ${{ steps.run.outputs.severity }}
+  vuln-count:
+    description: "Coarse count of Severity occurrences"
+    value: ${{ steps.run.outputs.vuln-count }}
+  local-archive:
+    description: "Path of the pulled docker-archive"
+    value: ${{ steps.run.outputs.local-archive }}
+  result:
+    description: "'admitted' | 'rejected' | 'pull-failed'"
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure trivy + skopeo
+      shell: bash
+      run: |
+        command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
+        command -v trivy  >/dev/null 2>&1 || curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REF: ${{ inputs.ref }}
+        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
+        DEST: ${{ inputs.dest }}

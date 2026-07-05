@@ -1,0 +1,70 @@
+name: 'pleme-io · nix-image'
+description: 'Build multi-arch nix OCI image tarballs via dockerTools (NO Dockerfile), one per arch, from the substrate dockerImage-<arch> convention. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO); correct local nix build otherwise.'
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  image-attr:
+    description: "Flake output attr base; per-arch resolves to <image-attr>-<arch>"
+    required: false
+    default: "dockerImage"
+  arches:
+    description: "Space-separated arch list to build (e.g. 'amd64 arm64')"
+    required: false
+    default: "amd64"
+  flake-ref:
+    description: "Flake ref to build from"
+    required: false
+    default: "."
+  endpoint:
+    description: "sui super-cache service endpoint. Set => warm-layer routing (LiveTODO:super-cache-build); empty => local build."
+    required: false
+    default: ""
+
+outputs:
+  tarball-amd64:
+    description: "amd64 docker-archive out-path (empty if not requested / failed)"
+    value: ${{ steps.run.outputs.tarball-amd64 }}
+  tarball-arm64:
+    description: "arm64 docker-archive out-path (empty if not requested / failed)"
+    value: ${{ steps.run.outputs.tarball-arm64 }}
+  tarballs:
+    description: "Semicolon-joined 'arch:path' list of every built tarball"
+    value: ${{ steps.run.outputs.tarballs }}
+  via-service:
+    description: "'true' iff a build was served by sui (today always 'false' — LiveTODO)"
+    value: ${{ steps.run.outputs.via-service }}
+  built:
+    description: "'true' iff every requested arch built"
+    value: ${{ steps.run.outputs.built }}
+  result:
+    description: "Generic catch-all: the first successful tarball (or empty on failure)"
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE_ATTR: ${{ inputs.image-attr }}
+        ARCHES: ${{ inputs.arches }}
+        FLAKE_REF: ${{ inputs.flake-ref }}
+        SUI_ENDPOINT: ${{ inputs.endpoint }}
