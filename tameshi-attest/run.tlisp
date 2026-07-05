@@ -1,0 +1,214 @@
+;; tameshi-attest/run.tlisp — assemble + BLAKE3-hash a typed
+;; super-cache-ci build receipt.
+;;
+;; Part of the super-cache-ci action vocabulary (verb #10). Takes the
+;; typed outputs of the earlier verbs (gen-build-spec spec-hash,
+;; super-cache-build output-hashes + timings, super-cache-restore
+;; cache-hit/hit-tier, ghcr-publish image-digests) and emits ONE
+;; content-addressed receipt: a canonical JSON document whose
+;; attestation.receipt_hash is a real BLAKE3 over the canonicalized
+;; body. The receipt is the transferable proof that this build ran
+;; with these inputs, hit this cache tier, and produced these outputs.
+;;
+;; TYPED EMISSION: the receipt JSON is built by `jq` (the typed JSON
+;; serializer), never by string-concatenation. The BLAKE3 hash is a
+;; real b3sum (on-PATH b3sum, else `nix run nixpkgs#b3sum`); if no
+;; BLAKE3 tool exists the action FAILS rather than emit a receipt
+;; that lies about its algorithm.
+;;
+;; Tier-honest LiveTODOs (never rounded up):
+;;   - Ed25519 SIGNING of the receipt is NOT shipped. `sign=true`
+;;     warns loudly and still emits an honest receipt with
+;;     attestation.signed=false. LiveTODO: cofre SecretRef key + a
+;;     detached signature.
+;;   - kensa OutcomeChain APPEND is NOT shipped. `emit-outcome-chain=true`
+;;     warns and sets attestation.outcome_chain=false. LiveTODO:
+;;     append the receipt hash to the kensa OutcomeChain (the
+;;     continuously-attested-theorem half of the Viggy promessa).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, stderr-of, config-resolve.
+;;
+;; Inputs (env, all config-resolvable via [tameshi-attest] section):
+;;   SUBJECT OUTPUT_HASHES SPEC_HASH CACHE_HIT HIT_TIER
+;;   EVAL_MS BUILD_MS IMAGE_DIGESTS RECEIPT_PATH SIGN EMIT_OUTCOME_CHAIN
+;; Outputs (appended):
+;;   attested receipt-path receipt-hash receipt-algo signed outcome-chain
+
+;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────
+
+;; Normalize a string flag to a JSON bool literal ("true" | "false").
+(define (attest:norm-bool s)
+  (if (equal? (string-trim s) "true") "true" "false"))
+
+;; Normalize a list-shaped input (space- OR comma-separated) into a
+;; single space-separated string; jq's split(" ")+select(length>0)
+;; drops the empties, so collapsing commas to spaces is enough.
+(define (attest:normalize-list s)
+  (string-replace s "," " "))
+
+;; Subject defaults to the repo slug when the caller passes none.
+(define (attest:normalize-subject raw repo)
+  (if (equal? (string-trim raw) "") repo raw))
+
+;; First whitespace-delimited field of a b3sum result alist, or ""
+;; when the command failed. b3sum prints "<hex>  <path>".
+(define (attest:b3-first result)
+  (if (= (status-of result) 0)
+    (car (string-split (string-trim (stdout-of result)) " "))
+    ""))
+
+;; ── BLAKE3 resolver — real hash or honest failure ───────────────
+
+(define (attest:cmd-present? name)
+  (= 0 (status-of (exec-capture "sh" "-c"
+                    (string-append "command -v " name " >/dev/null 2>&1")))))
+
+;; BLAKE3 of a file. Prefer an on-PATH b3sum (baked nix runner),
+;; fall back to `nix run nixpkgs#b3sum`. "" iff no tool is available.
+(define (attest:blake3-file path)
+  (cond
+    ((attest:cmd-present? "b3sum")
+     (attest:b3-first (exec-capture "b3sum" path)))
+    ((attest:cmd-present? "nix")
+     (attest:b3-first (exec-capture "nix" "run" "nixpkgs#b3sum" "--" path)))
+    (else "")))
+
+;; ── Receipt JSON build — jq is the typed serializer ─────────────
+;; The jq program contains NO double-quote characters: every string
+;; literal (schema, algo, separator, empty) is passed as a --arg, so
+;; the whole program embeds inside a tlisp string with zero escaping.
+
+(define attest:jq-program
+  "{ schema: $schema, subject: $subject, git: { sha: $git_sha, ref: $git_ref }, run: { id: $run_id, number: $run_num, workflow: $workflow }, timestamp: $ts, build_spec: { hash: $spec_hash }, outputs: { hashes: ($outs | split($sep) | map(select(length>0))) }, cache: { hit: $cache_hit, tier: $tier }, timings_ms: { eval: (if $evalms == $empty then null else ($evalms|tonumber) end), build: (if $buildms == $empty then null else ($buildms|tonumber) end) }, images: ($imgs | split($sep) | map(select(length>0))), attestation: { hash_algorithm: $algo, receipt_hash: $rhash, signed: $signed, signature: null, outcome_chain: $ochain } }")
+
+(define (attest:build-base subject git-sha git-ref run-id run-num workflow
+                           ts spec-hash outs imgs cache-hit tier
+                           evalms buildms rhash)
+  (apply exec-capture
+    (list "jq" "-n" "-S"
+      "--arg" "schema" "pleme-io.super-cache-ci.receipt/v1"
+      "--arg" "subject" subject
+      "--arg" "git_sha" git-sha
+      "--arg" "git_ref" git-ref
+      "--arg" "run_id" run-id
+      "--arg" "run_num" run-num
+      "--arg" "workflow" workflow
+      "--arg" "ts" ts
+      "--arg" "spec_hash" spec-hash
+      "--arg" "outs" outs
+      "--arg" "imgs" imgs
+      "--arg" "tier" tier
+      "--arg" "evalms" evalms
+      "--arg" "buildms" buildms
+      "--arg" "sep" " "
+      "--arg" "empty" ""
+      "--arg" "algo" "blake3"
+      "--arg" "rhash" rhash
+      "--argjson" "cache_hit" cache-hit
+      "--argjson" "signed" "false"
+      "--argjson" "ochain" "false"
+      attest:jq-program)))
+
+;; ── LiveTODO honesty for the unshipped signing / chain seams ────
+
+(define (attest:warn-livetodos sign-flag chain-flag)
+  (cond
+    ((equal? sign-flag "true")
+     (log-info "::warning::tameshi-attest: sign=true but Ed25519 signing is NOT shipped — emitting attestation.signed=false [LiveTODO: cofre SecretRef + detached signature]"))
+    (else #t))
+  (cond
+    ((equal? chain-flag "true")
+     (log-info "::warning::tameshi-attest: emit-outcome-chain=true but kensa OutcomeChain append is NOT shipped — emitting attestation.outcome_chain=false [LiveTODO: kensa append]"))
+    (else #t)))
+
+;; ── Main ─────────────────────────────────────────────────────────
+
+(define (attest:emit-failure msg)
+  (log-error msg)
+  (append-output "attested=false")
+  (append-output "receipt-path=")
+  (append-output "receipt-hash=")
+  (append-output "receipt-algo="))
+
+(define (main)
+  (let* ((repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
+         (subject (attest:normalize-subject
+                    (config-resolve "SUBJECT" "tameshi-attest" "subject" "") repo))
+         (spec-hash (config-resolve "SPEC_HASH" "tameshi-attest" "spec-hash" ""))
+         (outs (attest:normalize-list
+                 (config-resolve "OUTPUT_HASHES" "tameshi-attest" "output-hashes" "")))
+         (imgs (attest:normalize-list
+                 (config-resolve "IMAGE_DIGESTS" "tameshi-attest" "image-digests" "")))
+         (cache-hit (attest:norm-bool
+                      (config-resolve "CACHE_HIT" "tameshi-attest" "cache-hit" "false")))
+         (tier (config-resolve "HIT_TIER" "tameshi-attest" "hit-tier" "miss"))
+         (evalms (config-resolve "EVAL_MS" "tameshi-attest" "eval-ms" ""))
+         (buildms (config-resolve "BUILD_MS" "tameshi-attest" "build-ms" ""))
+         (receipt-path (config-resolve "RECEIPT_PATH" "tameshi-attest" "receipt-path" "tameshi-receipt.json"))
+         (sign-flag (config-resolve "SIGN" "tameshi-attest" "sign" "false"))
+         (chain-flag (config-resolve "EMIT_OUTCOME_CHAIN" "tameshi-attest" "emit-outcome-chain" "false"))
+         (git-sha (env-get "GITHUB_SHA" ""))
+         (git-ref (env-get "GITHUB_REF" ""))
+         (run-id (env-get "GITHUB_RUN_ID" ""))
+         (run-num (env-get "GITHUB_RUN_NUMBER" ""))
+         (workflow (env-get "GITHUB_WORKFLOW" ""))
+         (tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
+         (base-path (string-append tmp-dir "/tameshi-base.json"))
+         (canon-path (string-append tmp-dir "/tameshi-canon.json"))
+         (ts (string-trim (stdout-of (exec-capture "date" "-u" "+%Y-%m-%dT%H:%M:%SZ")))))
+    (attest:warn-livetodos sign-flag chain-flag)
+    (log-info (string-append "==> tameshi-attest: assembling receipt for " subject))
+    ;; 1. build the base receipt (receipt_hash="") via jq
+    (let ((base (attest:build-base subject git-sha git-ref run-id run-num workflow
+                                   ts spec-hash outs imgs cache-hit tier
+                                   evalms buildms "")))
+      (cond
+        ((not (= (status-of base) 0))
+         (log-info (stderr-of base))
+         (attest:emit-failure "tameshi-attest: jq failed to build the base receipt (is jq installed?)")
+         (exit 1))
+        (else
+         (write-file base-path (stdout-of base))
+         ;; 2. canonicalize (sorted, compact) for a stable hash pre-image
+         (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+           (cond
+             ((not (= (status-of canon) 0))
+              (attest:emit-failure "tameshi-attest: jq failed to canonicalize the receipt")
+              (exit 1))
+             (else
+              (write-file canon-path (string-trim (stdout-of canon)))
+              ;; 3. real BLAKE3 over the canonical pre-image
+              (let ((rhash (attest:blake3-file canon-path)))
+                (cond
+                  ((equal? rhash "")
+                   (attest:emit-failure "tameshi-attest: no BLAKE3 tool available (b3sum / nix) — refusing to emit a receipt that lies about its algorithm")
+                   (exit 1))
+                  (else
+                   ;; 4. inject the hash into the final receipt
+                   (let ((final (exec-capture "jq" "-S" "--arg" "rhash" rhash
+                                  ".attestation.receipt_hash = $rhash" base-path)))
+                     (cond
+                       ((not (= (status-of final) 0))
+                        (attest:emit-failure "tameshi-attest: jq failed to inject the receipt hash")
+                        (exit 1))
+                       (else
+                        (write-file receipt-path (stdout-of final))
+                        (log-info (string-append "receipt written -> " receipt-path))
+                        (log-info (string-append "blake3 receipt-hash = " rhash))
+                        (append-output "attested=true")
+                        (append-output (string-append "receipt-path=" receipt-path))
+                        (append-output (string-append "receipt-hash=" rhash))
+                        (append-output "receipt-algo=blake3")
+                        (append-output "signed=false")
+                        (append-output "outcome-chain=false")
+                        (exit 0)))))))))))))))
+
+;; Gated on TLISP_TEST so the tlisp-test harness loads the pure
+;; helpers (norm-bool / normalize-list / normalize-subject / b3-first)
+;; and drives them with fixtures, without running the real jq/b3sum
+;; pipeline.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — attest helpers loaded; main skipped (the test harness drives them)"))
+  (else (main)))

@@ -1,0 +1,106 @@
+name: 'pleme-io · tameshi-attest'
+description: 'Assemble + BLAKE3-hash a typed super-cache-ci build receipt (spec-hash + output-hashes + cache tier + timings + image digests) into a content-addressed, independently-verifiable JSON. The final verb of a super-cache-ci build. Requires a BLAKE3 provider on the runner (b3sum on PATH, else nix).'
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  subject:
+    description: "The artifact / service being attested. Defaults to $GITHUB_REPOSITORY."
+    required: false
+    default: ""
+  spec-hash:
+    description: "The build-spec BLAKE3 (from gen-build-spec)."
+    required: false
+    default: ""
+  output-hashes:
+    description: "Space- or comma-separated BLAKE3 hashes of the build outputs (from super-cache-build)."
+    required: false
+    default: ""
+  cache-hit:
+    description: "Whether the build was served from the super-cache (from super-cache-restore)."
+    required: false
+    default: "false"
+  hit-tier:
+    description: "Which cache tier served the build: miss | redis | pg | object (from super-cache-restore)."
+    required: false
+    default: "miss"
+  eval-ms:
+    description: "Eval time in milliseconds (from super-cache-build). Empty -> null in the receipt."
+    required: false
+    default: ""
+  build-ms:
+    description: "Build time in milliseconds (from super-cache-build). Empty -> null in the receipt."
+    required: false
+    default: ""
+  image-digests:
+    description: "Space- or comma-separated OCI image digests (from ghcr-publish)."
+    required: false
+    default: ""
+  receipt-path:
+    description: "Where to write the receipt JSON."
+    required: false
+    default: "tameshi-receipt.json"
+  sign:
+    description: "Request Ed25519 signing. NOT shipped — when true, warns and emits attestation.signed=false. [LiveTODO: cofre SecretRef + detached signature]"
+    required: false
+    default: "false"
+  emit-outcome-chain:
+    description: "Request a kensa OutcomeChain append. NOT shipped — when true, warns and emits attestation.outcome_chain=false. [LiveTODO: kensa append]"
+    required: false
+    default: "false"
+
+outputs:
+  attested:
+    description: "true when the receipt was assembled + hashed successfully."
+    value: ${{ steps.attest.outputs.attested }}
+  receipt-path:
+    description: "Path of the written receipt JSON."
+    value: ${{ steps.attest.outputs.receipt-path }}
+  receipt-hash:
+    description: "The BLAKE3 receipt hash (content address of the canonical receipt body)."
+    value: ${{ steps.attest.outputs.receipt-hash }}
+  receipt-algo:
+    description: "The hash algorithm — blake3."
+    value: ${{ steps.attest.outputs.receipt-algo }}
+  signed:
+    description: "Whether the receipt is Ed25519-signed (false until the signing LiveTODO ships)."
+    value: ${{ steps.attest.outputs.signed }}
+  outcome-chain:
+    description: "Whether the receipt was appended to a kensa OutcomeChain (false until the chain LiveTODO ships)."
+    value: ${{ steps.attest.outputs.outcome-chain }}
+
+runs:
+  using: composite
+  steps:
+    # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
+    # action's run.tlisp so the body can use every stdlib primitive.
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Assemble + BLAKE3-hash the receipt
+      id: attest
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SUBJECT: ${{ inputs.subject }}
+        SPEC_HASH: ${{ inputs.spec-hash }}
+        OUTPUT_HASHES: ${{ inputs.output-hashes }}
+        CACHE_HIT: ${{ inputs.cache-hit }}
+        HIT_TIER: ${{ inputs.hit-tier }}
+        EVAL_MS: ${{ inputs.eval-ms }}
+        BUILD_MS: ${{ inputs.build-ms }}
+        IMAGE_DIGESTS: ${{ inputs.image-digests }}
+        RECEIPT_PATH: ${{ inputs.receipt-path }}
+        SIGN: ${{ inputs.sign }}
+        EMIT_OUTCOME_CHAIN: ${{ inputs.emit-outcome-chain }}

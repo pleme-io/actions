@@ -80,6 +80,40 @@ outputs:
   local-archive:
     description: "Forwarded (key: local-archive) — zot-pull-scan pulled archive path"
     value: ${{ steps.exec.outputs.local-archive }}
+  # super-cache-ci preflight/attest keys: breathe-runner + tameshi-attest.
+  runner-ok:
+    description: "Forwarded (key: runner-ok) — breathe-runner posture-ok flag"
+    value: ${{ steps.exec.outputs.runner-ok }}
+  capacity-type:
+    description: "Forwarded (key: capacity-type) — breathe-runner spot|on-demand|unknown"
+    value: ${{ steps.exec.outputs.capacity-type }}
+  node-group:
+    description: "Forwarded (key: node-group) — breathe-runner camelot node-group"
+    value: ${{ steps.exec.outputs.node-group }}
+  scale-to-zero:
+    description: "Forwarded (key: scale-to-zero) — breathe-runner scale-to-zero tri-state"
+    value: ${{ steps.exec.outputs.scale-to-zero }}
+  drain-armed:
+    description: "Forwarded (key: drain-armed) — breathe-runner retirada drain-armed flag"
+    value: ${{ steps.exec.outputs.drain-armed }}
+  attested:
+    description: "Forwarded (key: attested) — tameshi-attest receipt-assembled flag"
+    value: ${{ steps.exec.outputs.attested }}
+  receipt-path:
+    description: "Forwarded (key: receipt-path) — tameshi-attest receipt JSON path"
+    value: ${{ steps.exec.outputs.receipt-path }}
+  receipt-hash:
+    description: "Forwarded (key: receipt-hash) — tameshi-attest BLAKE3 receipt hash"
+    value: ${{ steps.exec.outputs.receipt-hash }}
+  receipt-algo:
+    description: "Forwarded (key: receipt-algo) — tameshi-attest hash algorithm (blake3)"
+    value: ${{ steps.exec.outputs.receipt-algo }}
+  signed:
+    description: "Forwarded (key: signed) — tameshi-attest Ed25519-signed flag"
+    value: ${{ steps.exec.outputs.signed }}
+  outcome-chain:
+    description: "Forwarded (key: outcome-chain) — tameshi-attest kensa OutcomeChain flag"
+    value: ${{ steps.exec.outputs.outcome-chain }}
 
 runs:
   using: composite
