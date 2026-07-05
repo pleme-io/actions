@@ -1,0 +1,67 @@
+name: 'pleme-io · super-cache-restore'
+description: 'Probe the tiered super-cache (Redis L1 -> Postgres L2 -> object L3) for a build''s outputs and report the hit + tier (the warm path). TIER-HONEST: the Redis/Pg tiers via the sui service are a named LiveTODO behind sui''s shipped StorageBackend/Store traits; the now-path resolves a local content-addressed object tier and reports an honest miss otherwise.'
+branding:
+  icon: 'download-cloud'
+  color: 'blue'
+
+inputs:
+  endpoint:
+    description: "The sui service endpoint (from sui-service-up). Used for the Redis/Pg tier query (LiveTODO). Optional."
+    required: false
+    default: ""
+  key:
+    description: "Content-addressed cache key. Empty => computed as sha256 over spec-path."
+    required: false
+    default: ""
+  spec-path:
+    description: "Path to the typed build-spec (from gen-build-spec). Used to compute the key when key is empty."
+    required: false
+    default: ""
+  tiers:
+    description: "Comma-separated tiers to consult (redis,pg,object). Informational today; the local object tier is the now-path."
+    required: false
+    default: "redis,pg,object"
+  cache-dir:
+    description: "Directory backing the local content-addressed object tier (the now-path). Empty => the Redis/Pg tiers via the endpoint (LiveTODO) and an honest miss otherwise."
+    required: false
+    default: ""
+
+outputs:
+  cache-hit:
+    description: "true if a tier resolved the key, else false (a cold-cache miss is not a failure)."
+    value: ${{ steps.run.outputs.cache-hit }}
+  hit-tier:
+    description: "redis | pg | object | miss — which tier answered."
+    value: ${{ steps.run.outputs.hit-tier }}
+  key:
+    description: "The resolved content-addressed key (threaded into super-cache-build/save)."
+    value: ${{ steps.run.outputs.key }}
+  outputs:
+    description: "The restored output list on a hit (empty on a miss)."
+    value: ${{ steps.run.outputs.outputs }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run super-cache-restore
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        KEY: ${{ inputs.key }}
+        SPEC_PATH: ${{ inputs.spec-path }}
+        SUI_CACHE_DIR: ${{ inputs.cache-dir }}
