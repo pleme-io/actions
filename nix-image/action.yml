@@ -1,16 +1,24 @@
 name: 'pleme-io · nix-image'
-description: 'Build multi-arch nix OCI image tarballs via dockerTools (NO Dockerfile), one per arch, from the substrate dockerImage-<arch> convention. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO); correct local nix build otherwise.'
+description: 'Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and akeyless-nix-images (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO); correct local nix build otherwise.'
 branding:
   icon: 'package'
   color: 'blue'
 
 inputs:
   image-attr:
-    description: "Flake output attr base; per-arch resolves to <image-attr>-<arch>"
+    description: "Flake output attr base (the {base} placeholder)"
     required: false
     default: "dockerImage"
+  attr-template:
+    description: "Flake-attr template over {base} {arch} {svc}. Default '{base}-{arch}' (mkImageReleaseApp). Multi-service mkGoDockerImage: '{base}-{arch}-{svc}'. akeyless-nix-images: 'dockerImage:{arch}:{svc}'."
+    required: false
+    default: "{base}-{arch}"
+  svc:
+    description: "Service name substituted for {svc} (multi-service flakes, e.g. mkGoDockerImage). Empty for single-image flakes; required when attr-template names {svc}."
+    required: false
+    default: ""
   arches:
-    description: "Space-separated arch list to build (e.g. 'amd64 arm64')"
+    description: "Space-separated arch list to build (e.g. 'amd64 arm64'). For a NATIVE build, pass one arch matching the runner (runs-on:[camelot,<arch>])."
     required: false
     default: "amd64"
   flake-ref:
@@ -65,6 +73,8 @@ runs:
         script: ${{ steps.src.outputs.script }}
       env:
         IMAGE_ATTR: ${{ inputs.image-attr }}
+        ATTR_TEMPLATE: ${{ inputs.attr-template }}
+        SVC: ${{ inputs.svc }}
         ARCHES: ${{ inputs.arches }}
         FLAKE_REF: ${{ inputs.flake-ref }}
         SUI_ENDPOINT: ${{ inputs.endpoint }}
