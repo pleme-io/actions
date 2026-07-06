@@ -1,0 +1,114 @@
+;; zot-push/run.tlisp — push a nix OCI image tarball to the PRIVATE
+;; in-cluster Zot registry under the ★ AUTOBUMP exact tag, and report
+;; the pushed repository DIGEST (the exact deploy coordinate a
+;; manifest-list-join joins + an environment pins).
+;;
+;; Part of the super-cache-ci DELIVERY leg. Sibling of `ghcr-publish`:
+;; ghcr-publish ships pleme-io OSS artifacts to ghcr.io/pleme-io
+;; (public TLS, ★★ TOOL-DISTRIBUTION); zot-push ships FedRAMP-sensitive
+;; akeyless images to the cluster-internal Zot
+;; (zot.zot-system.svc.cluster.local:5000/akeyless-<svc>), NEVER
+;; ghcr.io (routing a FedRAMP image through ghcr is the wrong-org trap).
+;; Both are `skopeo copy docker-archive: -> docker://`; the shared push
+;; algebra lives in _tlisp-stdlib (oci:*), so this is a thin typed
+;; wrapper, not a duplicate.
+;;
+;; AUTOBUMP (org ★★ AUTO-RELEASE → "never :latest"): the exact tag is
+;; <arch>-r<run>-<sha> — sortable (r<run>), immutable, traceable. The
+;; multi-arch coordinate r<run>-<sha> is composed later by
+;; manifest-list-join over the per-arch digests this action reports.
+;;
+;; Tier: SHIPPABLE-NOW. The tag/base algebra is pure + unit-tested; the
+;; push wraps skopeo (baked into the runner). Auth is a PRE-CONDITION
+;; (docker/login to the Zot registry, or an insecure cluster-internal
+;; registry via INSECURE=true).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, oci:autobump-tag,
+;;   oci:target-ref, oci:moving-tag, oci:flag-true?,
+;;   oci:skopeo-push-archive, oci:skopeo-copy-remote,
+;;   oci:skopeo-remote-digest.
+;;
+;; Inputs (env):
+;;   REGISTRY      cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
+;;   REPO          full base override "<host>/<repo>" (no tag); wins when set
+;;   IMAGE         repo path override "<repo>" (used with REGISTRY when REPO empty)
+;;   SVC           akeyless service name (auth|uam|…); composes "akeyless-<svc>"
+;;   ARCH          image arch for the tag prefix (default amd64)
+;;   RUN_NUMBER    github.run_number — the numeric sort key r<n>  (required)
+;;   SHA           github.sha — the trace suffix                  (required)
+;;   TARBALL       docker-archive path (default ./result)
+;;   MOVING_LATEST also push <arch>-latest human pointer (default "false")
+;;   INSECURE      cluster-internal Zot is http/self-signed (default "true")
+;;
+;; Outputs (append-output → GITHUB_OUTPUT):
+;;   tag / ref / ref-<arch> / digest / pushed / reason
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+;; Compose the target base with akeyless repo-shape (akeyless-<svc>).
+;; Thin akeyless-specialized delegator over the shared oci:compose-base
+;; (repo-prefix = "akeyless-"); no duplicated precedence logic.
+(define (zot:compose-base repo registry image svc)
+  (oci:compose-base repo registry image "akeyless-" svc))
+
+;; ── main ──────────────────────────────────────────────────────────
+(define (zot:emit-fail reason)
+  (append-output "pushed=false")
+  (append-output (string-append "reason=" reason)))
+
+(define (main)
+  (let* ((registry (env-get "REGISTRY" "zot.zot-system.svc.cluster.local:5000"))
+         (repo (env-get "REPO" ""))
+         (image (env-get "IMAGE" ""))
+         (svc (env-get "SVC" ""))
+         (arch (env-get "ARCH" "amd64"))
+         (run (env-required "RUN_NUMBER"))
+         (sha (env-required "SHA"))
+         (tarball (env-get "TARBALL" "./result"))
+         (moving (oci:flag-true? (env-get "MOVING_LATEST" "false")))
+         (insecure (oci:flag-true? (env-get "INSECURE" "true")))
+         (base (zot:compose-base repo registry image svc)))
+    (cond
+      ((equal? base "")
+       (log-error "zot-push: need REPO, or IMAGE, or SVC to resolve a target repository")
+       (zot:emit-fail "need-target")
+       1)
+      (else
+       (let* ((tag (oci:autobump-tag arch run sha))
+              (ref (oci:target-ref base tag)))
+         (log-info (string-append "==> zot-push " tarball " -> docker://" ref
+                    (if insecure " (insecure)" "")))
+         (let ((s (oci:skopeo-push-archive tarball ref insecure)))
+           (cond
+             ((not (= s 0))
+              (log-error (string-append "zot-push: skopeo push failed (exit "
+                          (string-format "{}" s) ") for " ref))
+              (zot:emit-fail "push-fail")
+              s)
+             (else
+              ;; the pushed repository digest = the EXACT deploy coordinate.
+              (let ((digest (oci:skopeo-remote-digest ref insecure)))
+                (when (equal? digest "")
+                  (log-info "::warning::zot-push: could not resolve pushed digest (skopeo inspect failed) — emitting digest= (honest empty), push itself succeeded"))
+                (append-output (string-append "tag=" tag))
+                (append-output (string-append "ref=" ref))
+                (append-output (string-append "ref-" arch "=" ref))
+                (append-output (string-append "digest=" digest))
+                (append-output "pushed=true")
+                (append-output "reason=pushed")
+                ;; moving human pointer — NEVER a deploy source.
+                (when moving
+                  (let ((ms (oci:skopeo-copy-remote ref
+                              (oci:target-ref base (oci:moving-tag arch)) insecure)))
+                    (when (not (= ms 0))
+                      (log-info (string-append "::warning::zot-push: moving "
+                                 (oci:moving-tag arch) " pointer push failed (non-fatal)")))))
+                (log-info (string-append "pushed exact " ref
+                           (if (equal? digest "") "" (string-append " @ " digest))))
+                0)))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — zot-push helpers loaded; main skipped"))
+  (else
+   (exit (main))))

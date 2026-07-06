@@ -1,0 +1,121 @@
+name: 'pleme-io · cartorio-attest'
+description: 'FedRAMP three-pillar compliance receipt for a delivered image digest: a BLAKE3 chain-linked receipt + an SBOM from Nix inputs (CycloneDX from the Nix closure) + SLSA v1.0 provenance. Sibling of tameshi-attest (the build receipt), sharing the BLAKE3 core, adding the SBOM+SLSA pillars.'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  subject:
+    description: "Image name (default: image-ref, else the repo slug)"
+    required: false
+    default: ""
+  image-ref:
+    description: "The (index) ref being attested — the SLSA subject name"
+    required: false
+    default: ""
+  image-digest:
+    description: "The (index) digest sha256:… — the SLSA subject digest (from manifest-list-join)"
+    required: false
+    default: ""
+  nix-store-path:
+    description: "Comma/space list of built image out-paths — the Nix-closure SBOM source"
+    required: false
+    default: ""
+  prev-receipt-hash:
+    description: "The prior receipt hash to chain to (e.g. the tameshi build-receipt hash)"
+    required: false
+    default: ""
+  builder-id:
+    description: "SLSA builder.id (default: GITHUB_WORKFLOW_REF)"
+    required: false
+    default: ""
+  sbom-path:
+    description: "Output CycloneDX SBOM path"
+    required: false
+    default: "cartorio-sbom.cdx.json"
+  slsa-path:
+    description: "Output SLSA provenance predicate path"
+    required: false
+    default: "cartorio-slsa.json"
+  receipt-path:
+    description: "Output cartorio compliance-receipt path"
+    required: false
+    default: "cartorio-receipt.json"
+  sign:
+    description: "Request DSSE/cosign signing (LiveTODO — emits an honest signed=false)"
+    required: false
+    default: "false"
+  emit-outcome-chain:
+    description: "Request kensa OutcomeChain append (LiveTODO — emits an honest outcome-chain=false)"
+    required: false
+    default: "false"
+
+outputs:
+  attested:
+    description: "'true' iff the receipt assembled + hashed"
+    value: ${{ steps.run.outputs.attested }}
+  receipt-path:
+    description: "The cartorio compliance-receipt JSON path"
+    value: ${{ steps.run.outputs.receipt-path }}
+  receipt-hash:
+    description: "BLAKE3 content-address of the canonical receipt"
+    value: ${{ steps.run.outputs.receipt-hash }}
+  receipt-algo:
+    description: "Receipt hash algorithm (blake3)"
+    value: ${{ steps.run.outputs.receipt-algo }}
+  sbom-path:
+    description: "The CycloneDX SBOM path"
+    value: ${{ steps.run.outputs.sbom-path }}
+  sbom-format:
+    description: "SBOM format (CycloneDX-1.5)"
+    value: ${{ steps.run.outputs.sbom-format }}
+  sbom-components:
+    description: "Component count in the Nix-closure SBOM (0 when digest-only / no store path)"
+    value: ${{ steps.run.outputs.sbom-components }}
+  slsa-path:
+    description: "The SLSA provenance predicate path"
+    value: ${{ steps.run.outputs.slsa-path }}
+  slsa-predicate-type:
+    description: "SLSA predicate type (https://slsa.dev/provenance/v1)"
+    value: ${{ steps.run.outputs.slsa-predicate-type }}
+  signed:
+    description: "'true' iff DSSE/cosign-signed (LiveTODO — false today)"
+    value: ${{ steps.run.outputs.signed }}
+  outcome-chain:
+    description: "'true' iff appended to the kensa OutcomeChain (LiveTODO — false today)"
+    value: ${{ steps.run.outputs.outcome-chain }}
+  reason:
+    description: "Typed discriminant: attested | jq-*-fail | no-blake3-tool"
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SUBJECT: ${{ inputs.subject }}
+        IMAGE_REF: ${{ inputs.image-ref }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+        NIX_STORE_PATH: ${{ inputs.nix-store-path }}
+        PREV_RECEIPT_HASH: ${{ inputs.prev-receipt-hash }}
+        BUILDER_ID: ${{ inputs.builder-id }}
+        SBOM_PATH: ${{ inputs.sbom-path }}
+        SLSA_PATH: ${{ inputs.slsa-path }}
+        RECEIPT_PATH: ${{ inputs.receipt-path }}
+        SIGN: ${{ inputs.sign }}
+        EMIT_OUTCOME_CHAIN: ${{ inputs.emit-outcome-chain }}
