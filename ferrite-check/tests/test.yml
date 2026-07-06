@@ -1,0 +1,116 @@
+name: test-ferrite-check
+on:
+  push:
+    paths:
+      - 'ferrite-check/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'ferrite-check/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE — the action's row in the super-cache-ci CI matrix.
+# Evals a real materializable package (nixpkgs#hello), asserts the DIRECT
+# effect — the written PoMS file, a materializable=true verdict, a real
+# reproducible BLAKE3 receipt hash, a source-hash content-address — then
+# proves the by-source-hash cache HIT (a second run over the same source
+# re-emits a byte-identical PoMS and reports cached=true). It also asserts
+# the honest NOT-materializable path over a bogus attr. The forwarded output
+# VALUES reach a consumer only once tatara-script@v1 grows the declared
+# forwards (a named coordination LiveTODO); the plumbing is proven by
+# run.test.tlisp + the files' own content here.
+jobs:
+  ferrite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Nix provides the eval engine + b3sum (the receipt hash) + a real
+      # materializable package (nixpkgs#hello).
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      # ── 1. materializable package: fresh eval + PoMS + cache write ──
+      - id: fresh
+        uses: ./ferrite-check
+        with:
+          flake-ref: nixpkgs
+          image-attr: hello
+          attr-template: hello            # no {svc}; targets nixpkgs#hello directly
+          arch: amd64
+          poms-dir: ${{ github.workspace }}/.poms-cache
+          prev-receipt-hash: 00000000genbuildspec
+          poms-path: ${{ github.workspace }}/poms.json
+          require: "true"
+          sign: "true"                    # exercises the honest signing LiveTODO warning
+
+      - name: Assert the fresh PoMS + reproduce its BLAKE3
+        env:
+          PPATH: ${{ github.workspace }}/poms.json
+        run: |
+          set -euo pipefail
+          test -f "$PPATH" || { echo "no PoMS at $PPATH"; exit 1; }
+          # PoMS shape + verdict + chain link + subject package
+          jq -e '.schema == "pleme-io.ferrite.materialization-spec/v1"' "$PPATH" >/dev/null
+          jq -e '.materialization.materializable == true' "$PPATH" >/dev/null
+          jq -e '.materialization.drv_path | endswith(".drv")' "$PPATH" >/dev/null
+          jq -e '.source.algorithm == "nix-store-path" and (.source.hash | length > 0)' "$PPATH" >/dev/null
+          jq -e '.chain.prev == "00000000genbuildspec"' "$PPATH" >/dev/null
+          jq -e '.attestation.hash_algorithm == "blake3"' "$PPATH" >/dev/null
+          # sign=true requested but signing is a LiveTODO — must be HONEST
+          jq -e '.attestation.signed == false and .attestation.signature == null' "$PPATH" >/dev/null
+          # verdict + cached flag surfaced as step outputs
+          [ "${{ steps.fresh.outputs.materializable }}" = "true" ] || { echo "expected materializable=true"; exit 1; }
+          [ "${{ steps.fresh.outputs.cached }}" = "false" ] || { echo "expected cached=false on the fresh eval"; exit 1; }
+          # independently reproduce the receipt hash (a real content-address,
+          # not a decorative field).
+          STORED=$(jq -r '.attestation.receipt_hash' "$PPATH")
+          printf '%s' "$(jq -S -c '.attestation.receipt_hash = ""' "$PPATH")" > "$RUNNER_TEMP/canon.json"
+          RECOMPUTED=$(nix run nixpkgs#b3sum -- "$RUNNER_TEMP/canon.json" | cut -d' ' -f1)
+          [ -n "$STORED" ] || { echo "poms receipt_hash empty"; exit 1; }
+          [ "$RECOMPUTED" = "$STORED" ] \
+            || { echo "hash mismatch: stored=$STORED recomputed=$RECOMPUTED"; exit 1; }
+          echo "ferrite PoMS verified — reproducible BLAKE3 = $STORED, source = $(jq -r '.source.hash' "$PPATH")"
+
+      # ── 2. same source again: expect a by-source-hash cache HIT ──
+      - id: hit
+        uses: ./ferrite-check
+        with:
+          flake-ref: nixpkgs
+          image-attr: hello
+          attr-template: hello
+          arch: amd64
+          poms-dir: ${{ github.workspace }}/.poms-cache
+          prev-receipt-hash: 00000000genbuildspec
+          poms-path: ${{ github.workspace }}/poms2.json
+          require: "true"
+
+      - name: Assert the cache HIT re-emits a byte-identical PoMS
+        run: |
+          set -euo pipefail
+          [ "${{ steps.hit.outputs.cached }}" = "true" ] || { echo "expected cached=true on the second run"; exit 1; }
+          [ "${{ steps.hit.outputs.materializable }}" = "true" ] || { echo "expected materializable=true on the hit"; exit 1; }
+          # content-addressed ⇒ the re-emitted PoMS is byte-identical, so its
+          # receipt hash is stable + verifiable.
+          diff <(jq -S . "${{ github.workspace }}/poms.json") <(jq -S . "${{ github.workspace }}/poms2.json") \
+            || { echo "cache-hit PoMS diverged from the fresh PoMS"; exit 1; }
+          echo "ferrite cache HIT verified — identical PoMS re-emitted, derive skippable"
+
+      # ── 3. NOT materializable (bogus attr), require=false: exit 2 ──
+      - id: nomat
+        continue-on-error: true
+        uses: ./ferrite-check
+        with:
+          flake-ref: nixpkgs
+          image-attr: this-attr-does-not-exist-xyzzy
+          attr-template: this-attr-does-not-exist-xyzzy
+          arch: amd64
+          require: "false"
+          poms-path: ${{ github.workspace }}/nomat.json
+
+      - name: Assert the honest not-materializable verdict
+        run: |
+          set -euo pipefail
+          [ "${{ steps.nomat.outputs.materializable }}" = "false" ] || { echo "expected materializable=false for a bogus attr"; exit 1; }
+          [ "${{ steps.nomat.outputs.reason }}" = "not-materializable" ] || { echo "expected reason=not-materializable"; exit 1; }
+          echo "ferrite honest not-materializable verdict verified"
