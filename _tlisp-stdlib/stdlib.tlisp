@@ -552,3 +552,132 @@
   (cond
     (local-hit? "object")
     (else "miss")))
+
+;; ────────────────────────────────────────────────────────────────
+;; OCI delivery — tag algebra + skopeo push/inspect (the
+;; super-cache-ci DELIVERY / MANIFEST leg). Shared across
+;; zot-push + manifest-list-join (the ≥2-consumer rule, Pillar 12).
+;;
+;; Namespaced `oci:` so these NEVER collide with an action's local
+;; defs. `ghcr-publish/run.tlisp` still carries its own bare
+;; `autobump-tag` / `image-base` / `target-ref` / `moving-tag` +
+;; `skopeo-copy-archive` / `skopeo-copy-remote`; converging it onto
+;; these `oci:` helpers is a NAMED LiveTODO (a follow-up refactor,
+;; kept out of this slice to avoid disturbing a shipped, tested file).
+;;
+;; `insecure?` threads the cluster-internal-Zot case: the in-cluster
+;; registry is plain-http / self-signed, so pushes/inspects add the
+;; skopeo `--*-tls-verify=false` flags. ghcr.io (public TLS) passes
+;; insecure?=#f.
+;; ────────────────────────────────────────────────────────────────
+
+;; The AUTOBUMP per-arch exact tag <arch>-r<run>-<sha> — sortable
+;; (r<run> = the numeric key a Flux ImagePolicy extracts), immutable,
+;; traceable (<sha>). NEVER a moving tag; NEVER a deploy `:latest`.
+(define (oci:autobump-tag arch run sha)
+  (string-append arch "-r" run "-" sha))
+
+;; The MULTI-ARCH index coordinate r<run>-<sha> (NO arch prefix — a
+;; manifest list spans arches). Its per-arch children carry
+;; oci:autobump-tag; the index tag is what an environment pins.
+(define (oci:index-tag run sha)
+  (string-append "r" run "-" sha))
+
+;; The moving human pointer <arch>-latest — a convenience pointer that
+;; is NEVER a deploy source (org ★★ AUTOBUMP law).
+(define (oci:moving-tag arch)
+  (string-append arch "-latest"))
+
+;; Image base: an explicit `repo` wins; else compose registry/image.
+(define (oci:image-base repo registry image)
+  (cond
+    ((not (equal? repo "")) repo)
+    (else (string-append registry "/" image))))
+
+;; Compose a target base with a service repo-shape. Precedence:
+;;   explicit `repo` > `registry/image` > `registry/<repo-prefix><svc>`.
+;; "" when no target is resolvable (an honest need-target error). Shared
+;; by zot-push + manifest-list-join (repo-prefix = "akeyless-" at the
+;; akeyless call sites).
+(define (oci:compose-base repo registry image repo-prefix svc)
+  (cond
+    ((not (equal? repo "")) repo)
+    ((not (equal? image "")) (string-append registry "/" image))
+    ((not (equal? svc ""))  (string-append registry "/" repo-prefix svc))
+    (else "")))
+
+;; Full ref = <base>:<tag>.
+(define (oci:target-ref base tag)
+  (string-append base ":" tag))
+
+;; A truthy string flag → bool.
+(define (oci:flag-true? s) (equal? (string-trim s) "true"))
+
+;; skopeo copy docker-archive:<tarball> -> docker://<dst-ref>. Auth is
+;; a pre-condition (docker login to the target registry). Returns the
+;; child status (0 = ok). insecure? ⇒ --dest-tls-verify=false.
+(define (oci:skopeo-push-archive tarball dst-ref insecure?)
+  (let ((tls (if insecure? (list "--dest-tls-verify=false") (list))))
+    (status-of (apply exec-capture
+      (append (list "skopeo" "--insecure-policy" "copy")
+              tls
+              (list (string-append "docker-archive:" tarball)
+                    (string-append "docker://" dst-ref)))))))
+
+;; skopeo copy docker://<src> -> docker://<dst> (moving-tag repush /
+;; cross-registry promote). Returns the child status (0 = ok).
+(define (oci:skopeo-copy-remote src-ref dst-ref insecure?)
+  (let ((tls (if insecure?
+               (list "--src-tls-verify=false" "--dest-tls-verify=false")
+               (list))))
+    (status-of (apply exec-capture
+      (append (list "skopeo" "--insecure-policy" "copy")
+              tls
+              (list (string-append "docker://" src-ref)
+                    (string-append "docker://" dst-ref)))))))
+
+;; The repository DIGEST of a pushed ref — the EXACT deploy coordinate
+;; (what a manifest-list joins + what an environment pins by digest).
+;; `skopeo inspect --format {{.Digest}}`. Returns "" on failure — the
+;; caller must treat "" as an honest miss, NEVER emit a faked digest.
+(define (oci:skopeo-remote-digest ref insecure?)
+  (let* ((tls (if insecure? (list "--tls-verify=false") (list)))
+         (r (apply exec-capture
+              (append (list "skopeo" "--insecure-policy" "inspect"
+                            "--format" "{{.Digest}}")
+                      tls
+                      (list (string-append "docker://" ref))))))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+;; ────────────────────────────────────────────────────────────────
+;; BLAKE3 content-addressing (the ATTEST leg). Shared across
+;; cartorio-attest + tameshi-attest (the ≥2-consumer rule). A real
+;; b3sum (on-PATH, baked into the runner image), else `nix run
+;; nixpkgs#b3sum`; "" iff NO BLAKE3 tool exists — callers FAIL rather
+;; than emit a receipt that lies about its algorithm.
+;;
+;; `tameshi-attest/run.tlisp` still carries its own `attest:blake3-file`
+;; / `attest:cmd-present?` / `attest:b3-first`; converging it onto
+;; these `hash:` helpers is a NAMED LiveTODO (same follow-up-refactor
+;; discipline as the oci: block above).
+;; ────────────────────────────────────────────────────────────────
+
+(define (hash:cmd-present? name)
+  (= 0 (status-of (exec-capture "sh" "-c"
+                    (string-append "command -v " name " >/dev/null 2>&1")))))
+
+;; First whitespace-delimited field of a b3sum result ("<hex>  <path>"),
+;; or "" when the command failed.
+(define (hash:b3-first result)
+  (if (= (status-of result) 0)
+    (car (string-split (string-trim (stdout-of result)) " "))
+    ""))
+
+;; BLAKE3 of a file: prefer on-PATH b3sum, fall back to nix. "" iff none.
+(define (hash:blake3-file path)
+  (cond
+    ((hash:cmd-present? "b3sum")
+     (hash:b3-first (exec-capture "b3sum" path)))
+    ((hash:cmd-present? "nix")
+     (hash:b3-first (exec-capture "nix" "run" "nixpkgs#b3sum" "--" path)))
+    (else "")))

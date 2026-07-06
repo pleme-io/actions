@@ -1,0 +1,56 @@
+name: test-zot-push
+on:
+  push:
+    paths:
+      - 'zot-push/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'zot-push/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE — the action's row in the super-cache-ci CI matrix.
+# GitHub only auto-runs workflows under .github/workflows/; this fixture
+# is the authoritative behavioral smoke for a consumer copy.
+#
+# It exercises the REAL end-to-end push against a throwaway insecure OCI
+# registry service (registry:2 on localhost:5000) — a genuinely green
+# path with NO cluster Zot needed. It asserts STEP SUCCESS (the action
+# runs to completion + exits 0) and then INDEPENDENTLY re-inspects the
+# registry to prove the exact-tagged image really landed — the digest
+# check does not depend on the tatara-script@v1 output-forward set
+# (which must grow to carry `digest`/`reason` before a consumer can read
+# them — a named coordination LiveTODO on the shared forwarder).
+jobs:
+  push-to-local-registry:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure skopeo
+        run: command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
+      - name: Materialize a tiny docker-archive to push
+        run: skopeo --insecure-policy copy docker://busybox:latest docker-archive:img.tar
+      - id: push
+        uses: ./zot-push
+        with:
+          registry: localhost:5000
+          svc: auth
+          arch: amd64
+          run-number: "412"
+          sha: 9c1f2ab
+          tarball: img.tar
+          insecure: "true"
+      - name: Independently prove the exact tag landed in the registry
+        run: |
+          set -euo pipefail
+          REF="localhost:5000/akeyless-auth:amd64-r412-9c1f2ab"
+          DIGEST=$(skopeo --insecure-policy inspect --tls-verify=false --format '{{.Digest}}' "docker://$REF")
+          [ -n "$DIGEST" ] || { echo "no image at $REF"; exit 1; }
+          echo "zot-push verified — $REF @ $DIGEST"

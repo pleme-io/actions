@@ -1,0 +1,104 @@
+name: 'pleme-io · zot-push'
+description: 'Push a nix OCI image tarball to the PRIVATE in-cluster Zot registry (zot.zot-system.svc.cluster.local:5000/akeyless-<svc>) under the AUTOBUMP exact tag <arch>-r<run>-<sha>, and report the pushed repository digest (the exact deploy coordinate). FedRAMP-sensitive images NEVER go to ghcr.io.'
+branding:
+  icon: 'lock'
+  color: 'purple'
+
+inputs:
+  registry:
+    description: "Cluster Zot host:port (used when repo is empty)"
+    required: false
+    default: "zot.zot-system.svc.cluster.local:5000"
+  repo:
+    description: "Full base override '<host>/<repo>' (no tag). Wins when set."
+    required: false
+    default: ""
+  image:
+    description: "Repo path override '<repo>' (composed with registry when repo empty)"
+    required: false
+    default: ""
+  svc:
+    description: "Akeyless service name (auth|uam|kfm|…); composes 'akeyless-<svc>'"
+    required: false
+    default: ""
+  arch:
+    description: "Image architecture for the tag prefix"
+    required: false
+    default: "amd64"
+  run-number:
+    description: "github.run_number — the numeric sort key r<n>"
+    required: true
+  sha:
+    description: "github.sha — the trace suffix"
+    required: true
+  tarball:
+    description: "docker-archive path produced by nix-image"
+    required: false
+    default: "./result"
+  moving-latest:
+    description: "Also push the moving <arch>-latest human pointer (never a deploy source)"
+    required: false
+    default: "false"
+  insecure:
+    description: "Cluster-internal Zot is http/self-signed — add skopeo --*-tls-verify=false"
+    required: false
+    default: "true"
+
+outputs:
+  tag:
+    description: "The exact AUTOBUMP tag pushed (<arch>-r<run>-<sha>)"
+    value: ${{ steps.run.outputs.tag }}
+  ref:
+    description: "Full pushed ref <base>:<tag>"
+    value: ${{ steps.run.outputs.ref }}
+  ref-amd64:
+    description: "Full pushed ref when arch=amd64 (empty otherwise)"
+    value: ${{ steps.run.outputs.ref-amd64 }}
+  ref-arm64:
+    description: "Full pushed ref when arch=arm64 (empty otherwise)"
+    value: ${{ steps.run.outputs.ref-arm64 }}
+  digest:
+    description: "The pushed repository digest (sha256:…) — the exact deploy coordinate"
+    value: ${{ steps.run.outputs.digest }}
+  pushed:
+    description: "'true' iff the exact tag pushed successfully"
+    value: ${{ steps.run.outputs.pushed }}
+  reason:
+    description: "Typed discriminant: pushed | need-target | push-fail"
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure skopeo
+      shell: bash
+      run: |
+        command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REPO: ${{ inputs.repo }}
+        IMAGE: ${{ inputs.image }}
+        SVC: ${{ inputs.svc }}
+        ARCH: ${{ inputs.arch }}
+        RUN_NUMBER: ${{ inputs.run-number }}
+        SHA: ${{ inputs.sha }}
+        TARBALL: ${{ inputs.tarball }}
+        MOVING_LATEST: ${{ inputs.moving-latest }}
+        INSECURE: ${{ inputs.insecure }}

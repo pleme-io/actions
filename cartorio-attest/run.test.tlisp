@@ -1,0 +1,41 @@
+;; cartorio-attest/run.test.tlisp — (deftest …) smoke for the pure
+;; helpers (digest split, subject normalization, store-path parsing),
+;; run via tatara-script --test by the tlisp-test action. The full
+;; jq/nix/b3sum pipeline is exercised end-to-end by tests/test.yml.
+
+(deftest "cartorio:digest-algo / digest-hex split 'sha256:hex' (bare hex -> sha256)"
+  (assert (equal? (cartorio:digest-algo "sha256:abc123") "sha256") "algo")
+  (assert (equal? (cartorio:digest-hex "sha256:abc123") "abc123") "hex")
+  (assert (equal? (cartorio:digest-algo "deadbeef") "sha256") "bare -> sha256 algo")
+  (assert (equal? (cartorio:digest-hex "deadbeef") "deadbeef") "bare -> hex"))
+
+(deftest "cartorio:normalize-subject: subject > image-ref > repo"
+  (assert (equal? (cartorio:normalize-subject "explicit" "ref" "repo") "explicit") "subject wins")
+  (assert (equal? (cartorio:normalize-subject "" "reg/akeyless-auth:tag" "org/repo")
+                  "reg/akeyless-auth:tag") "image-ref next")
+  (assert (equal? (cartorio:normalize-subject "" "" "org/repo") "org/repo") "repo fallback"))
+
+(deftest "cartorio:store-paths splits comma/space + drops empties"
+  (assert (equal? (cartorio:store-paths "/nix/store/a,/nix/store/b")
+                  (list "/nix/store/a" "/nix/store/b")) "comma list")
+  (assert (equal? (cartorio:store-paths "/nix/store/a /nix/store/b")
+                  (list "/nix/store/a" "/nix/store/b")) "space list")
+  (assert (equal? (cartorio:store-paths "/nix/store/a, ,/nix/store/b,")
+                  (list "/nix/store/a" "/nix/store/b")) "mixed + empties dropped")
+  (assert (equal? (cartorio:store-paths "") (list)) "empty -> ()"))
+
+(deftest "cartorio:norm-bool normalizes to a JSON bool literal"
+  (assert (equal? (cartorio:norm-bool "true") "true") "true")
+  (assert (equal? (cartorio:norm-bool " true ") "true") "trimmed true")
+  (assert (equal? (cartorio:norm-bool "yes") "false") "non-true -> false")
+  (assert (equal? (cartorio:norm-bool "") "false") "empty -> false"))
+
+(deftest "hash:b3-first extracts the hex field of a b3sum-style result"
+  (assert (equal? (hash:b3-first (list (cons "status" 0)
+                                       (cons "stdout" "abcdef0123  file.json")
+                                       (cons "stderr" "")))
+                  "abcdef0123") "first field")
+  (assert (equal? (hash:b3-first (list (cons "status" 1)
+                                       (cons "stdout" "")
+                                       (cons "stderr" "err")))
+                  "") "failed command -> empty"))

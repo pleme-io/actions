@@ -193,6 +193,56 @@ outputs:
   changed:
     description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag"
     value: ${{ steps.exec.outputs.changed }}
+  # super-cache-ci warm + remote-execution leg: sui-warm-hydrate /
+  # sui-remote-build. A composite forwards only DECLARED keys; these are
+  # disjoint from the sets above. Added per this file's "add it here"
+  # convention. (endpoint / never-touch-disk / hit-tier / reason / built /
+  # from-cache / outputs / output-hashes / eval-ms / build-ms already live
+  # above.)
+  warmed:
+    description: "Forwarded (key: warmed) — sui-warm-hydrate real-warm flag (false until TieredBackend + warm-set RPC)"
+    value: ${{ steps.exec.outputs.warmed }}
+  warm-count:
+    description: "Forwarded (key: warm-count) — sui-warm-hydrate count of keys actually warmed"
+    value: ${{ steps.exec.outputs.warm-count }}
+  worker:
+    description: "Forwarded (key: worker) — sui-remote-build execution plane (reapi|local; local until the REAPI worker ships)"
+    value: ${{ steps.exec.outputs.worker }}
+  # super-cache-ci delivery/manifest/attest leg: zot-push +
+  # manifest-list-join + cartorio-attest. A composite forwards only
+  # DECLARED keys; these are disjoint from the sets above (tag / ref* /
+  # pushed / reason and attested / receipt-* / signed / outcome-chain
+  # already live above). Added per this file's "add it here" convention.
+  digest:
+    description: "Forwarded (key: digest) — zot-push pushed repository digest (exact deploy coord)"
+    value: ${{ steps.exec.outputs.digest }}
+  index-ref:
+    description: "Forwarded (key: index-ref) — manifest-list-join multi-arch index ref"
+    value: ${{ steps.exec.outputs.index-ref }}
+  index-digest:
+    description: "Forwarded (key: index-digest) — manifest-list-join index digest (exact multi-arch coord)"
+    value: ${{ steps.exec.outputs.index-digest }}
+  arches:
+    description: "Forwarded (key: arches) — manifest-list-join arches folded into the index"
+    value: ${{ steps.exec.outputs.arches }}
+  joined:
+    description: "Forwarded (key: joined) — manifest-list-join index-composed flag"
+    value: ${{ steps.exec.outputs.joined }}
+  sbom-path:
+    description: "Forwarded (key: sbom-path) — cartorio-attest CycloneDX SBOM path"
+    value: ${{ steps.exec.outputs.sbom-path }}
+  sbom-format:
+    description: "Forwarded (key: sbom-format) — cartorio-attest SBOM format (CycloneDX-1.5)"
+    value: ${{ steps.exec.outputs.sbom-format }}
+  sbom-components:
+    description: "Forwarded (key: sbom-components) — cartorio-attest Nix-closure component count"
+    value: ${{ steps.exec.outputs.sbom-components }}
+  slsa-path:
+    description: "Forwarded (key: slsa-path) — cartorio-attest SLSA provenance predicate path"
+    value: ${{ steps.exec.outputs.slsa-path }}
+  slsa-predicate-type:
+    description: "Forwarded (key: slsa-predicate-type) — cartorio-attest SLSA predicate type"
+    value: ${{ steps.exec.outputs.slsa-predicate-type }}
 
 runs:
   using: composite

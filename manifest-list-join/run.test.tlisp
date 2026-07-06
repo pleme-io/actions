@@ -1,0 +1,42 @@
+;; manifest-list-join/run.test.tlisp — (deftest …) smoke for the pure
+;; arch/ref parsing + the index-tag/base algebra, run via tatara-script
+;; --test by the tlisp-test action. The tool-driving (buildah/docker/…)
+;; is exercised end-to-end by tests/test.yml against a local registry.
+
+;; NOTE: tatara-lisp `(cons a b)` on atoms yields the 2-element list
+;; `(a b)`, so a "pair" is `(arch ref)` and the ref is `(car (cdr pair))`.
+(deftest "mlj:split-pair splits 'arch=ref'; bare segment -> (list '' ref)"
+  (assert (equal? (mlj:split-pair "amd64=reg/x:t") (list "amd64" "reg/x:t")) "arch=ref")
+  (assert (equal? (mlj:split-pair "reg/x:t") (list "" "reg/x:t")) "bare ref -> unknown arch"))
+
+(deftest "mlj:parse-pairs parses the comma list + drops empties"
+  (let ((p (mlj:parse-pairs (string-split "amd64=A,arm64=B" ","))))
+    (assert (= (length p) 2) "two pairs")
+    (assert (equal? (car (car p)) "amd64") "first arch")
+    (assert (equal? (car (cdr (car p))) "A") "first ref"))
+  (let ((p (mlj:parse-pairs (string-split "amd64=A,,arm64=B," ","))))
+    (assert (= (length p) 2) "empty segments dropped")))
+
+(deftest "mlj:refs-of + mlj:arches-of project the pairs"
+  (let ((p (mlj:parse-pairs (string-split "amd64=A,arm64=B" ","))))
+    (assert (equal? (mlj:refs-of p) (list "A" "B")) "refs in order")
+    (assert (equal? (mlj:arches-of p) "amd64 arm64") "space-joined arches")))
+
+(deftest "mlj:resolve-tag: explicit TAG > composed r<run>-<sha> > ''"
+  (assert (equal? (mlj:resolve-tag "v9" "1" "abc") "v9") "explicit tag wins")
+  (assert (equal? (mlj:resolve-tag "" "412" "9c1f2ab") "r412-9c1f2ab") "composed index tag")
+  (assert (equal? (mlj:resolve-tag "" "" "abc") "") "no run -> empty")
+  (assert (equal? (mlj:resolve-tag "" "412" "") "") "no sha -> empty"))
+
+(deftest "oci:index-tag is the arch-less multi-arch coordinate r<run>-<sha>"
+  (assert (equal? (oci:index-tag "412" "9c1f2ab") "r412-9c1f2ab") "index tag")
+  (assert (equal? (oci:target-ref
+                    (oci:compose-base "" "reg:5000" "" "akeyless-" "auth")
+                    (oci:index-tag "7" "cafe"))
+                  "reg:5000/akeyless-auth:r7-cafe")
+          "index ref composed end-to-end"))
+
+(deftest "mlj:regctl-ref-flags interleaves --ref before each ref"
+  (assert (equal? (mlj:regctl-ref-flags (list "A" "B"))
+                  (list "--ref" "A" "--ref" "B"))
+          "regctl --ref flags"))
