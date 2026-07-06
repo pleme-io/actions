@@ -63,11 +63,13 @@
 ;; ── delivery leg (build a nix OCI image -> private ghcr -> zot faucet) ──
 
 (defaction "nix-image"
-  :description "Build multi-arch nix OCI image tarballs via dockerTools (NO Dockerfile), one per arch, from the substrate dockerImage-<arch> convention. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO:super-cache-build); correct local nix build otherwise."
-  :inputs  ((:name "image-attr" :type :string :required nil :default "dockerImage")
-            (:name "arches"     :type :string :required nil :default "amd64")
-            (:name "flake-ref"  :type :string :required nil :default ".")
-            (:name "endpoint"   :type :string :required nil :default ""))
+  :description "Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and akeyless-nix-images (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO:super-cache-build); correct local nix build otherwise."
+  :inputs  ((:name "image-attr"    :type :string :required nil :default "dockerImage")
+            (:name "attr-template" :type :string :required nil :default "{base}-{arch}")
+            (:name "svc"           :type :string :required nil :default "")
+            (:name "arches"        :type :string :required nil :default "amd64")
+            (:name "flake-ref"     :type :string :required nil :default ".")
+            (:name "endpoint"      :type :string :required nil :default ""))
   :outputs ((:name "tarball-amd64") (:name "tarball-arm64") (:name "tarballs")
             (:name "via-service")   (:name "built")         (:name "result"))
   :behavior      (:runtime :tatara-script :run-tlisp "nix-image/run.tlisp")

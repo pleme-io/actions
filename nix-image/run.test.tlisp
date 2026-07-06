@@ -9,9 +9,34 @@
   (assert (equal? (arch->system "aarch64") "aarch64-linux") "aarch64 -> aarch64-linux")
   (assert (equal? (arch->system "sparc") "") "unknown -> empty"))
 
-(deftest "image-attr-for appends the arch to the base attr"
+(deftest "image-attr-for appends the arch to the base attr (default convention, over render-attr)"
   (assert (equal? (image-attr-for "dockerImage" "amd64") "dockerImage-amd64") "amd64 attr")
   (assert (equal? (image-attr-for "svcImage" "arm64") "svcImage-arm64") "arm64 attr"))
+
+;; The attr-template MATRIX — one row per flake-attr convention the verb
+;; targets. A new convention adds a row here + a template value at the call
+;; site; it never forks the resolver (TYPED EMISSION, generation-over-composition).
+(deftest "render-attr covers every flake-attr convention"
+  ;; {base}-{arch}            — substrate mkImageReleaseApp (default, single image)
+  (assert (equal? (render-attr "{base}-{arch}" "dockerImage" "amd64" "")
+                  "dockerImage-amd64") "dash-pair (mkImageReleaseApp)")
+  ;; {base}-{arch}-{svc}      — substrate mkGoDockerImage (multi-service, dash-triple)
+  (assert (equal? (render-attr "{base}-{arch}-{svc}" "dockerImage" "amd64" "auth")
+                  "dockerImage-amd64-auth") "dash-triple (mkGoDockerImage)")
+  (assert (equal? (render-attr "{base}-{arch}-{svc}" "dockerImage" "arm64" "gateway")
+                  "dockerImage-arm64-gateway") "dash-triple arm64")
+  ;; dockerImage:{arch}:{svc} — akeyless-nix-images (multi-service, colon-triple)
+  (assert (equal? (render-attr "dockerImage:{arch}:{svc}" "dockerImage" "arm64" "gateway")
+                  "dockerImage:arm64:gateway") "colon-triple (akeyless-nix-images)")
+  ;; dockerImage:{arch}       — substrate go service-flake (single-service, colon-pair)
+  (assert (equal? (render-attr "dockerImage:{arch}" "dockerImage" "amd64" "")
+                  "dockerImage:amd64") "colon-pair (go service-flake)"))
+
+(deftest "template-uses-svc? gates the ambiguous-attr keyway exit-1"
+  (assert (template-uses-svc? "{base}-{arch}-{svc}") "dash-triple names {svc}")
+  (assert (template-uses-svc? "dockerImage:{arch}:{svc}") "colon-triple names {svc}")
+  (assert (not (template-uses-svc? "{base}-{arch}")) "default has no {svc}")
+  (assert (not (template-uses-svc? "dockerImage:{arch}")) "colon-pair has no {svc}"))
 
 (deftest "native-arch? is true only for a matching machine class"
   (assert (native-arch? "x86_64" "amd64") "x86_64 runner builds amd64 natively")

@@ -1,25 +1,39 @@
 ;; nix-image/run.tlisp — build multi-arch nix OCI image tarballs via
-;; dockerTools (NO Dockerfile), one per requested arch.
+;; dockerTools (NO Dockerfile), one per requested arch, NATIVE-ARCH (no QEMU).
 ;;
-;; Wrapper over the substrate `mkImageReleaseApp` / `dockerImage-<arch>`
-;; convention: the flake exposes packages.<system>.<image-attr>-<arch>
-;; producing a docker-archive tarball (pkgs.dockerTools.buildLayeredImage).
+;; A NATIVE build fans out over `runs-on: [camelot, <arch>]`: each arch builds
+;; on its own native-metal runner (`nix build --system <sys>`), so there is no
+;; binfmt/QEMU emulation — the emulated leg that made the Dockerfile pipeline
+;; ~90 min disappears. The action always warns when it detects an off-target
+;; (non-native) build (an `exec format error` at runtime otherwise).
+;;
+;; Attr resolution is a TYPED TEMPLATE over {base} {arch} {svc}, so the same
+;; verb targets every flake-attr convention without a fork:
+;;   {base}-{arch}            substrate mkImageReleaseApp        (default; single image)
+;;   {base}-{arch}-{svc}      substrate mkGoDockerImage          (multi-service, dash-triple)
+;;   dockerImage:{arch}:{svc} akeyless-nix-images                (multi-service, colon-triple)
+;;   dockerImage:{arch}       substrate go service-flake         (single-service, colon-pair)
+;; The flake exposes packages.<system>.<resolved-attr> producing a
+;; docker-archive tarball (pkgs.dockerTools.buildLayeredImage — layered for
+;; cache efficiency).
 ;;
 ;; Tier-honest (SUPER-CACHE-CI ledger, delivery leg):
-;;   - local `nix build .#<image-attr>-<arch>`             → now
+;;   - local native `nix build .#<resolved-attr>`          → now  (SHIPPABLE-NOW)
 ;;   - route the build through the sui super-cache service → LiveTODO:super-cache-build
 ;;     (SUI_ENDPOINT set ⇒ warm-layer reuse; today we log the LiveTODO and fall
 ;;      back to a CORRECT local build, and report via-service=false — never a
 ;;      faked warm path).
 ;;
 ;; Uses stdlib helpers (prepended by action.yml's loader):
-;;   append-output, status-of, stdout-of, stderr-of.
+;;   append-output, status-of, stdout-of, stderr-of, string-replace.
 ;;
 ;; Inputs (env):
-;;   IMAGE_ATTR   flake output attr base (default "dockerImage")
-;;   ARCHES       space-separated arch list (default "amd64")
-;;   FLAKE_REF    flake ref to build (default ".")
-;;   SUI_ENDPOINT sui service endpoint; empty = local build
+;;   IMAGE_ATTR    flake output attr base ({base}) (default "dockerImage")
+;;   ATTR_TEMPLATE attr template over {base} {arch} {svc} (default "{base}-{arch}")
+;;   SVC           service name substituted for {svc} (default ""; multi-service flakes)
+;;   ARCHES        space-separated arch list (default "amd64")
+;;   FLAKE_REF     flake ref to build (default ".")
+;;   SUI_ENDPOINT  sui service endpoint; empty = local build
 ;;
 ;; Outputs (append-output → GITHUB_OUTPUT):
 ;;   tarball-amd64 / tarball-arm64  per-arch out path (docker-archive)
@@ -27,6 +41,11 @@
 ;;   via-service                    "true" iff a build was served by sui (today: false)
 ;;   built                          "true" iff every requested arch built
 ;;   result                         generic catch-all == first tarball, or "" on failure
+;;
+;; Exit (keyway):
+;;   0  every requested arch built (or a degenerate empty arch-set)
+;;   1  a build failed, OR attr-template names {svc} but SVC is empty
+;;      (an ambiguous-attr config error — a loud honest failure, never a faked green)
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 (define (arch->system arch)
@@ -37,8 +56,26 @@
     ((equal? arch "aarch64") "aarch64-linux")
     (else "")))
 
+;; Render a flake-attr template. Placeholders {base} {arch} {svc} are each
+;; substituted (all occurrences) — a typed template renderer, NOT string
+;; concatenation, so a new convention is a new template value, never a code
+;; fork. See the header for the four conventions this covers.
+(define (render-attr template base arch svc)
+  (string-replace
+    (string-replace
+      (string-replace template "{base}" base)
+      "{arch}" arch)
+    "{svc}" svc))
+
+;; #t iff the template references {svc} (⇒ SVC must be non-empty, else the
+;; resolved attr is ambiguous — the keyway exit-1 config gate in `main`).
+(define (template-uses-svc? template)
+  (string-contains? template "{svc}"))
+
+;; Backward-compat shorthand for the default single-image convention,
+;; expressed over render-attr (one resolver, no duplicated concatenation).
 (define (image-attr-for base arch)
-  (string-append base "-" arch))
+  (render-attr "{base}-{arch}" base arch ""))
 
 ;; #t iff building ARCH on a runner whose `uname -m` MACHINE is the same
 ;; machine class — an off-target build mislabels the arch and `exec format
@@ -49,9 +86,9 @@
 
 ;; ── build one arch ───────────────────────────────────────────────
 ;; Returns the out-path ("" on failure).
-(define (build-one flake-ref image-attr arch endpoint)
+(define (build-one flake-ref template image-attr svc arch endpoint)
   (let* ((sys (arch->system arch))
-         (attr (image-attr-for image-attr arch))
+         (attr (render-attr template image-attr arch svc))
          (target (string-append flake-ref "#" attr)))
     (cond
       ((equal? sys "")
@@ -84,7 +121,7 @@
 
 ;; Fold over the requested arches. acc-ok = every arch so far built;
 ;; acc-pairs = ordered "arch:path" list; first-path = first successful tarball.
-(define (run-build arches flake-ref image-attr endpoint machine acc-ok acc-pairs first-path)
+(define (run-build arches flake-ref template image-attr svc endpoint machine acc-ok acc-pairs first-path)
   (cond
     ((null? arches)
      (append-output (string-append "tarballs=" (string-join ";" acc-pairs)))
@@ -97,22 +134,39 @@
        (when (not (native-arch? machine arch))
          (log-info (string-append "::warning::nix-image: building " arch
                     " on a " machine " runner (non-native) — prefer a native-arch "
-                    "runner (image-push.yml rule) to avoid exec-format mislabeling")))
-       (let* ((path (build-one flake-ref image-attr arch endpoint))
+                    "runner (runs-on: [camelot, " arch "]) to avoid exec-format mislabeling")))
+       (let* ((path (build-one flake-ref template image-attr svc arch endpoint))
               (ok (not (equal? path ""))))
          (when ok (emit-arch arch path))
-         (run-build (cdr arches) flake-ref image-attr endpoint machine
+         (run-build (cdr arches) flake-ref template image-attr svc endpoint machine
                     (and acc-ok ok)
                     (if ok (append acc-pairs (list (string-append arch ":" path))) acc-pairs)
                     (if (and (equal? first-path "") ok) path first-path)))))))
 
 (define (main)
   (let* ((image-attr (env-get "IMAGE_ATTR" "dockerImage"))
+         (template (env-get "ATTR_TEMPLATE" "{base}-{arch}"))
+         (svc (env-get "SVC" ""))
          (arches (string-split (string-trim (env-get "ARCHES" "amd64")) " "))
          (flake-ref (env-get "FLAKE_REF" "."))
          (endpoint (env-get "SUI_ENDPOINT" ""))
          (machine (string-trim (stdout-of (exec-capture "uname" "-m")))))
-    (run-build arches flake-ref image-attr endpoint machine #t (list) "")))
+    (cond
+      ;; Keyway config gate: a template that names {svc} with an empty SVC
+      ;; resolves to an ambiguous attr — refuse loudly (exit 1) rather than
+      ;; build the wrong target or a literal-"{svc}" attr.
+      ((and (template-uses-svc? template) (equal? svc ""))
+       (log-error (string-append "nix-image: attr-template names {svc} (\""
+                  template "\") but the svc input is empty — refusing to build "
+                  "an ambiguous attr"))
+       (append-output "tarballs=")
+       (append-output "via-service=false")
+       (append-output "built=false")
+       (append-output "result=")
+       1)
+      (else
+       (run-build arches flake-ref template image-attr svc endpoint machine
+                  #t (list) "")))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
