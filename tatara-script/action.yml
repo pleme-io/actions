@@ -243,6 +243,34 @@ outputs:
   slsa-predicate-type:
     description: "Forwarded (key: slsa-predicate-type) — cartorio-attest SLSA predicate type"
     value: ${{ steps.exec.outputs.slsa-predicate-type }}
+  # super-cache-ci per-package materializability gate: ferrite-check. A
+  # composite forwards only DECLARED keys; these are disjoint from the sets
+  # above (signed / outcome-chain / reason already live above; attr is
+  # ferrite-specific). Added per this file's "add it here" convention.
+  materializable:
+    description: "Forwarded (key: materializable) — ferrite-check package-materializable verdict"
+    value: ${{ steps.exec.outputs.materializable }}
+  cached:
+    description: "Forwarded (key: cached) — ferrite-check by-source-hash PoMS cache-hit flag (derive skippable)"
+    value: ${{ steps.exec.outputs.cached }}
+  source-hash:
+    description: "Forwarded (key: source-hash) — ferrite-check content-addressed source/cache key"
+    value: ${{ steps.exec.outputs.source-hash }}
+  drv-path:
+    description: "Forwarded (key: drv-path) — ferrite-check resolved .drv store path"
+    value: ${{ steps.exec.outputs.drv-path }}
+  attr:
+    description: "Forwarded (key: attr) — ferrite-check resolved flake attr (template rendered)"
+    value: ${{ steps.exec.outputs.attr }}
+  poms-path:
+    description: "Forwarded (key: poms-path) — ferrite-check emitted PoMS JSON path"
+    value: ${{ steps.exec.outputs.poms-path }}
+  poms-hash:
+    description: "Forwarded (key: poms-hash) — ferrite-check real BLAKE3 PoMS receipt hash"
+    value: ${{ steps.exec.outputs.poms-hash }}
+  poms-algo:
+    description: "Forwarded (key: poms-algo) — ferrite-check PoMS hash algorithm (blake3)"
+    value: ${{ steps.exec.outputs.poms-algo }}
 
 runs:
   using: composite

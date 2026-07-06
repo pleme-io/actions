@@ -1,0 +1,119 @@
+name: 'pleme-io · ferrite-check'
+description: "Per-package MATERIALIZABILITY gate of the camelot image pipeline: for ONE package (a flake image attr) verify it can be materialized (its attr resolves to a derivation via a cheap `nix eval`, NOT a derive) BEFORE the expensive build, content-address its SOURCE, and emit a PoMS — a Proof-of-Materialization-Spec receipt — cached by that source hash so a re-run over unchanged source is a pure cache hit (no re-eval, no derive). Single-responsibility sibling of build-matrix (the fan) + gen-build-spec (the freshness gate); it gates one fan cell's materializability. TYPED EMISSION: the PoMS JSON is composed by jq, never hand-concatenated; the receipt hash is a real BLAKE3 (the action FAILS rather than emit a receipt that lies about its algorithm). Sibling of tameshi-attest (build receipt) + cartorio-attest (delivery receipt) on ONE chain (carries chain.prev, shares the BLAKE3 core)."
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  flake-ref:
+    description: "Flake ref to eval (e.g. . or github:akeylesslabs/akeyless-nix-images)."
+    required: false
+    default: "."
+  image-attr:
+    description: "Attr base ({base}) substituted into attr-template."
+    required: false
+    default: "dockerImage"
+  attr-template:
+    description: "Attr template over {base} {arch} {svc}. Default is the akeyless colon-triple; the same template grammar as nix-image (dockerImage:{arch}:{svc} | {base}-{arch}-{svc} | {base}-{arch} | dockerImage:{arch})."
+    required: false
+    default: "dockerImage:{arch}:{svc}"
+  svc:
+    description: "Service name substituted for {svc}. REQUIRED when attr-template names {svc}, else the resolved attr is ambiguous (exit 1)."
+    required: false
+    default: ""
+  arch:
+    description: "Arch substituted for {arch}; maps to a nix system double (amd64/x86_64 -> x86_64-linux, arm64/aarch64 -> aarch64-linux). An unknown arch is a config error (exit 1)."
+    required: false
+    default: "amd64"
+  poms-dir:
+    description: "Directory holding the <source-hash>.poms.json cache. Empty (default) means no cache lookup — always a fresh eval + emit. A committed cache dir gives the by-source-hash HIT skip (write-if-absent, content-addressed, no lock)."
+    required: false
+    default: ""
+  prev-receipt-hash:
+    description: "Prior receipt hash to chain to (e.g. gen-build-spec's), written into the PoMS chain.prev so PoMS -> build -> deliver chains. Empty = a chain root."
+    required: false
+    default: ""
+  poms-path:
+    description: "Where to write the emitted PoMS JSON."
+    required: false
+    default: "ferrite-poms.json"
+  require:
+    description: "When true (default), a NOT-materializable verdict is a hard exit 1 (a broken package must fail the pipeline before the derive). Set false for a clean typed exit 2 the caller branches on."
+    required: false
+    default: "true"
+  sign:
+    description: "Exercises the honest signing LiveTODO path when true (DSSE/cosign not shipped — the PoMS stays attestation.signed=false)."
+    required: false
+    default: "false"
+  emit-outcome-chain:
+    description: "Exercises the honest OutcomeChain LiveTODO path when true (kensa append not shipped — the PoMS stays attestation.outcome_chain=false)."
+    required: false
+    default: "false"
+
+outputs:
+  materializable:
+    description: "true iff the package's attr resolves to a derivation (materializable), else false."
+    value: ${{ steps.run.outputs.materializable }}
+  cached:
+    description: "true iff the verdict came from a cached PoMS for this source hash (the derive can be skipped)."
+    value: ${{ steps.run.outputs.cached }}
+  source-hash:
+    description: "The content-addressed source/cache key (the output store-path basename)."
+    value: ${{ steps.run.outputs.source-hash }}
+  drv-path:
+    description: "The resolved .drv store path (empty when not materializable)."
+    value: ${{ steps.run.outputs.drv-path }}
+  attr:
+    description: "The resolved flake attr (template rendered over base/arch/svc)."
+    value: ${{ steps.run.outputs.attr }}
+  poms-path:
+    description: "Path to the emitted PoMS JSON."
+    value: ${{ steps.run.outputs.poms-path }}
+  poms-hash:
+    description: "The real BLAKE3 receipt hash of the PoMS (independently reproducible)."
+    value: ${{ steps.run.outputs.poms-hash }}
+  poms-algo:
+    description: "The PoMS hash algorithm (blake3)."
+    value: ${{ steps.run.outputs.poms-algo }}
+  signed:
+    description: "false — DSSE/cosign signing is a LiveTODO."
+    value: ${{ steps.run.outputs.signed }}
+  outcome-chain:
+    description: "false — kensa OutcomeChain append is a LiveTODO."
+    value: ${{ steps.run.outputs.outcome-chain }}
+  reason:
+    description: "ok | cached | not-materializable | ambiguous-attr | nix-absent | jq-fail | no-blake3-tool."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run ferrite-check
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        FLAKE_REF: ${{ inputs.flake-ref }}
+        IMAGE_ATTR: ${{ inputs.image-attr }}
+        ATTR_TEMPLATE: ${{ inputs.attr-template }}
+        SVC: ${{ inputs.svc }}
+        ARCH: ${{ inputs.arch }}
+        POMS_DIR: ${{ inputs.poms-dir }}
+        PREV_RECEIPT_HASH: ${{ inputs.prev-receipt-hash }}
+        POMS_PATH: ${{ inputs.poms-path }}
+        REQUIRE: ${{ inputs.require }}
+        SIGN: ${{ inputs.sign }}
+        EMIT_OUTCOME_CHAIN: ${{ inputs.emit-outcome-chain }}

@@ -171,3 +171,21 @@
 ;;     the FedRAMP three-pillar receipt: BLAKE3 chain link + Nix-closure
 ;;     SBOM (CycloneDX) + SLSA v1.0 provenance. Sibling of tameshi-attest
 ;;     (the build receipt), sharing the BLAKE3 core (stdlib hash:*).
+
+;; ── per-package materializability gate leg (the cheap pre-derive gate) ──
+;; Also a CO-LOCATED defaction (ships its own ferrite-check/defaction.lisp
+;; with the same tier-honest header) — POINTER not copy, per the block
+;; above:
+;;
+;;   ferrite-check       → ferrite-check/defaction.lisp
+;;     for ONE package (a flake image attr) verify it is MATERIALIZABLE (the
+;;     attr resolves to a derivation via a cheap `nix eval`, NOT a derive)
+;;     BEFORE the expensive build, content-address its SOURCE (the output
+;;     store-path), and emit a PoMS — a Proof-of-Materialization-Spec
+;;     receipt (schema pleme-io.ferrite.materialization-spec/v1) — cached by
+;;     that source hash so a re-run over unchanged source is a pure cache
+;;     HIT (skip re-eval + derive). Single-responsibility sibling of
+;;     build-matrix (the (svc,arch) fan) + gen-build-spec (the spec
+;;     freshness gate); it gates one fan cell. Sibling of tameshi-attest /
+;;     cartorio-attest on ONE chain (carries chain.prev, shares the BLAKE3
+;;     core stdlib hash:*).
