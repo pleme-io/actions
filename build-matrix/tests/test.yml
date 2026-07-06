@@ -1,0 +1,60 @@
+name: test-build-matrix
+on:
+  push:
+    paths:
+      - 'build-matrix/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'build-matrix/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE (a fixture, not an auto-run gate — GitHub only executes
+# workflows under .github/workflows/). The authoritative gate for this action
+# is the repo-level `tlisp-tests` job (build-matrix/run.test.tlisp — the
+# 11-case verification matrix over the pure attr grammar + arch map + every
+# services/arches/exclude filter path) + `lint-tlisp`, both of which run
+# against run.tlisp itself and need NO nix.
+#
+# build-matrix's runtime path needs `nix` (flake enumeration) + `jq` (the
+# typed matrix serializer). On a hosted runner that bakes NEITHER, the action
+# does NOT crash — it probes PATH first and reports an honest reason=nix-absent
+# (exit 1), never a faked matrix. The green happy path (a real image×arch
+# matrix) runs on a runner that bakes nix+jq (the camelot arc-runner) and is
+# proven locally via run.test.tlisp + an end-to-end `nix eval` round-trip
+# against a colon-triple flake; it is not exercised here to keep the fixture
+# nix-independent.
+jobs:
+  tool-absent-is-honest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Absent nix reports an honest typed reason, never a faked matrix
+        id: bm
+        continue-on-error: true
+        uses: ./build-matrix
+        with:
+          flake-ref: "."
+      - name: Assert the report is an honest tool-absent branch
+        env:
+          REASON: ${{ steps.bm.outputs.reason }}
+          COUNT: ${{ steps.bm.outputs.count }}
+        run: |
+          set -euo pipefail
+          case "$REASON" in
+            nix-absent|jq-absent|nix-eval-failed) echo "honest tool/eval branch: $REASON" ;;
+            *) echo "unexpected reason on a no-nix runner: $REASON"; exit 1 ;;
+          esac
+          [ "$COUNT" = "0" ] || { echo "expected count=0 on the absent branch, got $COUNT"; exit 1; }
+
+  # Aspirational happy path (documentation) — runs green only on a runner that
+  # bakes nix+jq. Left here as the shape a nix-baked consumer wires:
+  #
+  #   - uses: ./build-matrix
+  #     with:
+  #       flake-ref: github:akeylesslabs/akeyless-nix-images
+  #       eval-system: x86_64-linux
+  #       image-base: dockerImage
+  #       services: "auth uam gateway"
+  #       arches: "amd64"
+  #   # then: strategy.matrix: ${{ fromJSON(steps.<id>.outputs.matrix) }}
