@@ -60,6 +60,52 @@
   :semver-compat :minor
   :attestation   :optional)
 
+;; ── warm + remote-execution leg (DEGRADED-UNTIL-STORE) ──────────────
+;; Both verbs' fast behavior is gated on the keystone
+;; `TieredBackend = RedisBackend(L1)→PgStore(L2)→S3Storage(L3)` behind
+;; sui's SHIPPED Store/StorageBackend traits (+ a daemon warm-set RPC for
+;; sui-warm-hydrate, + the REAPI worker binary for sui-remote-build).
+;; Until then each is an HONEST degrade — a no-op warm / a correct local
+;; fallback build — reported truthfully (warmed=false / worker=local),
+;; NEVER a faked warm/build. The single `*-shipped?` keystone constant in
+;; each run.tlisp promotes it to fleet-wide-fast with zero other change.
+;; These NET-NEW verbs formalize the keyway's third exit code (exit 2 = a
+;; clean typed "no", the degrade under require-*=false; exit 1 under
+;; require-*=true; exit 0 on the real path) per the design's A2.
+
+(defaction "sui-warm-hydrate"
+  :description "GRAPH-job warm verb: pre-load the sui daemon's tiered super-cache (Redis L1 -> Postgres L2 -> object L3) with the fan-out's content keys BEFORE the build matrix explodes, so every parallel job starts warm. DEGRADED-UNTIL-STORE: the warm-set RPC + TieredBackend are a named LiveTODO; today an honest no-op (warmed=false, never a faked warm)."
+  :inputs  ((:name "endpoint"      :type :string :required nil :default "")
+            (:name "spec-paths"    :type :string :required nil :default "")
+            (:name "keys"          :type :string :required nil :default "")
+            (:name "tiers"         :type :string :required nil :default "redis,pg,object")
+            (:name "store-backend" :type :string :required nil :default "graphstore")
+            (:name "cache-backend" :type :string :required nil :default "local")
+            (:name "sandbox"       :type :string :required nil :default "tmpfs")
+            (:name "require-warm"  :type :string :required nil :default "false"))
+  :outputs ((:name "warmed") (:name "warm-count") (:name "hit-tier")
+            (:name "never-touch-disk") (:name "reason"))
+  :behavior      (:runtime :tatara-script :run-tlisp "sui-warm-hydrate/run.tlisp")
+  :semver-compat :minor
+  :attestation   :optional)
+
+(defaction "sui-remote-build"
+  :description "BUILD-job remote-execution verb: dispatch a derivation to a REAPI spot worker over the sui daemon, keyed by the gen build-spec. DEGRADED-UNTIL-STORE: the REAPI worker binary + TieredBackend are a named LiveTODO; gracefully falls back to the correct local daemon-node build (worker=local, built=false honest — super-cache-build's derive core is itself unshipped), never a faked build."
+  :inputs  ((:name "endpoint"      :type :string :required nil :default "")
+            (:name "spec-path"     :type :string :required nil :default "")
+            (:name "key"           :type :string :required nil :default "")
+            (:name "arch"          :type :string :required nil :default "amd64")
+            (:name "sandbox"       :type :string :required nil :default "tmpfs")
+            (:name "store-backend" :type :string :required nil :default "graphstore")
+            (:name "cache-backend" :type :string :required nil :default "local")
+            (:name "require-build" :type :string :required nil :default "false"))
+  :outputs ((:name "built") (:name "from-cache") (:name "outputs")
+            (:name "output-hashes") (:name "eval-ms") (:name "build-ms")
+            (:name "worker") (:name "never-touch-disk") (:name "reason"))
+  :behavior      (:runtime :tatara-script :run-tlisp "sui-remote-build/run.tlisp")
+  :semver-compat :minor
+  :attestation   :required)
+
 ;; ── delivery leg (build a nix OCI image -> private ghcr -> zot faucet) ──
 
 (defaction "nix-image"
