@@ -1,0 +1,86 @@
+name: 'pleme-io · sui-warm-hydrate'
+description: 'GRAPH-job warm verb — pre-load the sui daemon''s tiered super-cache (Redis L1 → Postgres L2 → object L3) with the fan-out''s content keys BEFORE the build matrix explodes, so every parallel build job starts warm. DEGRADED-UNTIL-STORE: the warm-set RPC + TieredBackend are a named LiveTODO — today an HONEST no-op (warmed=false, warm-count=0, never a faked warm); require-warm=true fails loud.'
+branding:
+  icon: 'thermometer'
+  color: 'orange'
+
+inputs:
+  endpoint:
+    description: "The sui service endpoint (from sui-service-up). Empty => resolved from [super-cache-ci] config then the daemon's default UDS."
+    required: false
+    default: ""
+  spec-paths:
+    description: "Comma-separated typed gen build-spec paths for the fan-out (each is sha256-content-keyed). Used when keys is empty."
+    required: false
+    default: ""
+  keys:
+    description: "Comma-separated explicit content keys to warm. Wins over spec-paths."
+    required: false
+    default: ""
+  tiers:
+    description: "Comma-separated tiers to warm (redis,pg,object). Reported honestly; the warm itself is a LiveTODO."
+    required: false
+    default: "redis,pg,object"
+  store-backend:
+    description: "postgres | graphstore | local (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "graphstore"
+  cache-backend:
+    description: "redis | local | s3 (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "local"
+  sandbox:
+    description: "tmpfs | disk (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "tmpfs"
+  require-warm:
+    description: "'true' => a store-absent / endpoint-unreachable degrade (the LiveTODO) is a hard failure (exit 1) instead of an honest exit-2 no-op. NEVER a faked warm."
+    required: false
+    default: "false"
+
+outputs:
+  warmed:
+    description: "true only when the tiered backend + warm RPC actually pre-loaded the keys (false today — the LiveTODO, never a claim)."
+    value: ${{ steps.run.outputs.warmed }}
+  warm-count:
+    description: "Number of keys actually warmed (0 today; = requested count once the keystone flips)."
+    value: ${{ steps.run.outputs.warm-count }}
+  hit-tier:
+    description: "The warmest tier loaded (none today; redis on a real warm)."
+    value: ${{ steps.run.outputs.hit-tier }}
+  never-touch-disk:
+    description: "true only when store=postgres AND cache=redis AND sandbox=tmpfs (a computed predicate, never a claim)."
+    value: ${{ steps.run.outputs.never-touch-disk }}
+  reason:
+    description: "no-keys | store-absent-degraded | endpoint-unreachable-degraded | warmed — why this run ended where it did."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run sui-warm-hydrate
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        SPEC_PATHS: ${{ inputs.spec-paths }}
+        KEYS: ${{ inputs.keys }}
+        TIERS: ${{ inputs.tiers }}
+        STORE_BACKEND: ${{ inputs.store-backend }}
+        CACHE_BACKEND: ${{ inputs.cache-backend }}
+        SANDBOX: ${{ inputs.sandbox }}
+        REQUIRE_WARM: ${{ inputs.require-warm }}

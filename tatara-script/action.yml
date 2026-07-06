@@ -193,6 +193,21 @@ outputs:
   changed:
     description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag"
     value: ${{ steps.exec.outputs.changed }}
+  # super-cache-ci warm + remote-execution leg: sui-warm-hydrate /
+  # sui-remote-build. A composite forwards only DECLARED keys; these are
+  # disjoint from the sets above. Added per this file's "add it here"
+  # convention. (endpoint / never-touch-disk / hit-tier / reason / built /
+  # from-cache / outputs / output-hashes / eval-ms / build-ms already live
+  # above.)
+  warmed:
+    description: "Forwarded (key: warmed) — sui-warm-hydrate real-warm flag (false until TieredBackend + warm-set RPC)"
+    value: ${{ steps.exec.outputs.warmed }}
+  warm-count:
+    description: "Forwarded (key: warm-count) — sui-warm-hydrate count of keys actually warmed"
+    value: ${{ steps.exec.outputs.warm-count }}
+  worker:
+    description: "Forwarded (key: worker) — sui-remote-build execution plane (reapi|local; local until the REAPI worker ships)"
+    value: ${{ steps.exec.outputs.worker }}
 
 runs:
   using: composite

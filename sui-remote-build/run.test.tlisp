@@ -1,0 +1,47 @@
+;; sui-remote-build/run.test.tlisp — (deftest …) matrix for the pure
+;; remote-build decision surface, run via tatara-script --test by the
+;; tlisp-test action. The runner prepends the stdlib + the sibling
+;; run.tlisp (TLISP_TEST=1 gates main), then asserts. No live sui service
+;; / REAPI worker is needed to prove this contract — the decision is pure
+;; (that IS the point: the DEGRADED-UNTIL-STORE honesty is a typed
+;; decision, not a runtime check that could silently drift).
+;;
+;; The matrix covers every (reapi-shipped? × endpoint-alive? ×
+;; require-build) cell that changes the worker plane, the reason
+;; discriminant, `built?`, or the exit code — so a future keystone flip
+;; (srb:reapi-worker-shipped? #f -> #t) has its remote branch already
+;; proven green.
+
+(deftest "srb:select-worker — reapi only when shipped ∧ alive, else local fallback"
+  (assert (equal? (srb:select-worker #f #t) "local") "worker unshipped => local (TODAY, even when alive)")
+  (assert (equal? (srb:select-worker #f #f) "local") "worker unshipped + down => local")
+  (assert (equal? (srb:select-worker #t #f) "local") "shipped but endpoint down => local fallback")
+  (assert (equal? (srb:select-worker #t #t) "reapi") "shipped + alive => reapi (the destination)"))
+
+(deftest "srb:reason — the discriminant follows the worker plane"
+  (assert (equal? (srb:reason "reapi") "remote-built") "reapi => remote-built")
+  (assert (equal? (srb:reason "local") "local-fallback-derive-livetodo") "local => honest fallback LiveTODO"))
+
+(deftest "srb:built? — a real build only on the remote plane today"
+  (assert (srb:built? "reapi") "reapi => built (destination)")
+  (assert (not (srb:built? "local")) "local fallback derive is a LiveTODO => built=false, never faked"))
+
+(deftest "srb:exit-code — the keyway three-code contract"
+  (assert (= (srb:exit-code "reapi" "false") 0) "remote build => 0")
+  (assert (= (srb:exit-code "reapi" "true") 0) "remote build => 0 even with require-build")
+  (assert (= (srb:exit-code "local" "false") 2) "local fallback + no-require => 2 (clean no)")
+  (assert (= (srb:exit-code "local" "true") 1) "local fallback + require-build => 1 (loud)"))
+
+(deftest "end-to-end pure composition — worker -> reason -> built? -> code"
+  ;; TODAY's cell: worker unshipped, endpoint alive, no require => the honest degrade.
+  (let* ((worker (srb:select-worker srb:reapi-worker-shipped? #t))
+         (reason (srb:reason worker))
+         (code   (srb:exit-code worker "false")))
+    (assert (equal? worker "local") "keystone off => local")
+    (assert (equal? reason "local-fallback-derive-livetodo") "=> honest fallback reason")
+    (assert (not (srb:built? worker)) "=> built=false")
+    (assert (= code 2) "=> exit 2, a clean handled no")))
+
+(deftest "srb:reapi-worker-shipped? — the honest keystone is OFF today"
+  (assert (not srb:reapi-worker-shipped?)
+          "the REAPI worker binary + TieredBackend keystone is a LiveTODO — MUST be #f until it ships"))

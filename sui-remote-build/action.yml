@@ -1,0 +1,98 @@
+name: 'pleme-io · sui-remote-build'
+description: 'BUILD-job remote-execution verb — dispatch a derivation to a REAPI spot worker over the sui daemon (RAM eval, tmpfs sandbox, DB store), keyed by the gen build-spec. DEGRADED-UNTIL-STORE: the REAPI worker binary + TieredBackend are a named LiveTODO — gracefully falls back to the correct LOCAL daemon-node build (worker=local, built=false honest, never a faked build); require-build=true fails loud.'
+branding:
+  icon: 'server'
+  color: 'green'
+
+inputs:
+  endpoint:
+    description: "The sui service endpoint (from sui-service-up). Empty => resolved from [super-cache-ci] config then the daemon's default UDS."
+    required: false
+    default: ""
+  spec-path:
+    description: "Path to the typed gen build-spec (from gen-build-spec), e.g. Cargo.build-spec.json. Used to derive the key when key is empty."
+    required: false
+    default: ""
+  key:
+    description: "Content-addressed cache key (from super-cache-restore). Empty => computed as sha256 over spec-path."
+    required: false
+    default: ""
+  arch:
+    description: "Target arch (amd64|arm64) — reported and feeds the REAPI worker pool selection."
+    required: false
+    default: "amd64"
+  sandbox:
+    description: "tmpfs | disk (from sui-service-up). tmpfs is the never-touch-disk path."
+    required: false
+    default: "tmpfs"
+  store-backend:
+    description: "postgres | graphstore | local (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "graphstore"
+  cache-backend:
+    description: "redis | local | s3 (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "local"
+  require-build:
+    description: "'true' => a local-fallback derive-LiveTODO (no REAPI worker) is a hard failure (exit 1) instead of an honest exit-2 built=false. NEVER a faked build."
+    required: false
+    default: "false"
+
+outputs:
+  built:
+    description: "true only when a REAPI worker actually built (false today — the LiveTODO, never a claim)."
+    value: ${{ steps.run.outputs.built }}
+  from-cache:
+    description: "true when the outputs came from the super-cache (no derive)."
+    value: ${{ steps.run.outputs.from-cache }}
+  outputs:
+    description: "Built store paths (empty on the derive LiveTODO)."
+    value: ${{ steps.run.outputs.outputs }}
+  output-hashes:
+    description: "BLAKE3 hashes of the outputs (empty until the live derive ships)."
+    value: ${{ steps.run.outputs.output-hashes }}
+  eval-ms:
+    description: "RAM eval time in ms (empty until the live derive ships)."
+    value: ${{ steps.run.outputs.eval-ms }}
+  build-ms:
+    description: "Build time in ms (empty until the live derive ships)."
+    value: ${{ steps.run.outputs.build-ms }}
+  worker:
+    description: "The execution plane that ran: reapi (remote) | local (fallback). local today (the REAPI worker binary is unwired)."
+    value: ${{ steps.run.outputs.worker }}
+  never-touch-disk:
+    description: "true only when store=postgres AND cache=redis AND sandbox=tmpfs (a computed predicate, never a claim)."
+    value: ${{ steps.run.outputs.never-touch-disk }}
+  reason:
+    description: "remote-built | local-fallback-derive-livetodo — why this run ended where it did."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run sui-remote-build
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        SPEC_PATH: ${{ inputs.spec-path }}
+        KEY: ${{ inputs.key }}
+        ARCH: ${{ inputs.arch }}
+        SANDBOX: ${{ inputs.sandbox }}
+        STORE_BACKEND: ${{ inputs.store-backend }}
+        CACHE_BACKEND: ${{ inputs.cache-backend }}
+        REQUIRE_BUILD: ${{ inputs.require-build }}
