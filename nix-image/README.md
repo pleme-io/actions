@@ -49,11 +49,22 @@ jobs:
 `{base}` = `image-attr`. A template that names `{svc}` requires a non-empty
 `svc` (else the resolved attr is ambiguous — see the keyway contract).
 
+## Max-parallel (within-derivation)
+
+`max-jobs` (default `auto`) + `cores` (default `0`) auto-tune the `nix build`
+to the node's **actual** vCPU count — a camelot time-floor 48xl (192 vCPU) is
+saturated, never under-run by a hardcoded number. `auto`/`0` are nix's own
+box-detect sentinels, so a bigger spot node is filled without any per-box
+tuning; the build logs the detected `nproc` so the saturation is observable.
+The **across-images** level (build every service concurrently) lives in the
+`super-cache-ci-build-matrix.yml` reusable, not here — this verb owns one
+`(svc, arch)` cell and its within-derivation saturation.
+
 ## Keyway contract
 
 | | |
 |---|---|
-| **inputs** | `image-attr`, `attr-template`, `svc`, `arches`, `flake-ref`, `endpoint` (typed YAML) |
+| **inputs** | `image-attr`, `attr-template`, `svc`, `arches`, `flake-ref`, `endpoint`, `max-jobs`, `cores` (typed YAML) |
 | **receipt** | `tarball-<arch>`, `tarballs` (`arch:path;…`), `built`, `via-service`, `result` (→ `$GITHUB_OUTPUT`) |
 | **exit 0** | every requested arch built (or a degenerate empty arch-set) |
 | **exit 1** | a build failed, **or** `attr-template` names `{svc}` but `svc` is empty (a loud, honest config error — never a faked green) |
