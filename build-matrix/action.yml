@@ -36,7 +36,7 @@ inputs:
 
 outputs:
   matrix:
-    description: "GHA matrix JSON: {\"include\":[{image,arch,attr,system},...]}. Consume as strategy.matrix: ${{ fromJSON(steps.<id>.outputs.matrix) }}."
+    description: "GHA matrix JSON: {\"include\":[{image,arch,attr,system},...]}. Consume as strategy.matrix fromJSON of this step's matrix output."
     value: ${{ steps.run.outputs.matrix }}
   count:
     description: "Number of rows in the matrix (integer)."
