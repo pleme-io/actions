@@ -60,7 +60,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
     - id: run
-      uses: pleme-io/actions/tatara-script@v1
+      uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
       env:
