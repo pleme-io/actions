@@ -29,12 +29,24 @@ inputs:
     description: "sui super-cache service endpoint. Set => warm-layer routing (LiveTODO:super-cache-build); empty => local build."
     required: false
     default: ""
+  targets:
+    description: "N: parallel build targets sharing this node (the matrix row count). The tuner partitions V=nproc across N so total planned concurrency ~= V without oversubscribing (max-jobs N, cores floor(V/N) for a narrow DAG). Default '1' = a lone build gets the whole box."
+    required: false
+    default: "1"
+  dag-shape:
+    description: "'narrow' (monolithic buildGoModule fleet — jobs=N, cores=V/N; default) | 'wide' (per-package/gen-gomod — jobs=V, cores=1)."
+    required: false
+    default: "narrow"
+  auto-tune:
+    description: "'true' (default) — discover V=nproc + partition over targets/dag-shape. 'false' — pass max-jobs/cores through raw (legacy)."
+    required: false
+    default: "true"
   max-jobs:
-    description: "nix --max-jobs (WITHIN-derivation parallelism: how many derivations build at once). 'auto' = one per detected core (saturates ANY box — a 48xl=192 vCPU is filled, never under-run by a hardcoded number). Never a fixed integer unless a quota bounds it."
+    description: "nix --max-jobs OVERRIDE. Non-empty + non-'auto' ⇒ a HARD CAP (a quota bound) that WINS over the tuner. 'auto'/'' ⇒ the tuner computes it. Never a fixed integer unless a quota bounds it."
     required: false
     default: "auto"
   cores:
-    description: "nix --cores (cores PER derivation build). '0' = all available cores (let each build's parallel make see the whole box). The saturating default."
+    description: "nix --cores OVERRIDE. Non-empty + non-'0' ⇒ a HARD CAP that WINS over the tuner. '0'/'' ⇒ the tuner computes it. The tuner also bounds Go's own -p/GOMAXPROCS to this value."
     required: false
     default: "0"
 
@@ -86,5 +98,8 @@ runs:
         ARCHES: ${{ inputs.arches }}
         FLAKE_REF: ${{ inputs.flake-ref }}
         SUI_ENDPOINT: ${{ inputs.endpoint }}
+        TARGETS: ${{ inputs.targets }}
+        DAG_SHAPE: ${{ inputs.dag-shape }}
+        AUTO_TUNE: ${{ inputs.auto-tune }}
         NIX_MAX_JOBS: ${{ inputs.max-jobs }}
         NIX_CORES: ${{ inputs.cores }}
