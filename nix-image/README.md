@@ -49,22 +49,42 @@ jobs:
 `{base}` = `image-attr`. A template that names `{svc}` requires a non-empty
 `svc` (else the resolved attr is ambiguous — see the keyway contract).
 
-## Max-parallel (within-derivation)
+## Adaptive core-partition (within-node)
 
-`max-jobs` (default `auto`) + `cores` (default `0`) auto-tune the `nix build`
-to the node's **actual** vCPU count — a camelot time-floor 48xl (192 vCPU) is
-saturated, never under-run by a hardcoded number. `auto`/`0` are nix's own
-box-detect sentinels, so a bigger spot node is filled without any per-box
-tuning; the build logs the detected `nproc` so the saturation is observable.
-The **across-images** level (build every service concurrently) lives in the
-`super-cache-ci-build-matrix.yml` reusable, not here — this verb owns one
-`(svc, arch)` cell and its within-derivation saturation.
+`auto-tune` (default `true`) makes the verb **discover** the node's actual vCPU
+count `V` (`nproc`) and **partition** it across `N = targets` parallel builds so
+total planned concurrency ≈ `V` **without over-subscribing** it:
+
+- `dag-shape: narrow` (default; the monolithic `buildGoModule` fleet) →
+  `--max-jobs N`, `--cores max(1, floor(V/N))`. `V=96, N=9` → `9 × 10` (90 ≤ 96);
+  `V=192, N=9` → `9 × 21`; `V=32, N=9` → `9 × 3`.
+- `dag-shape: wide` (per-package / gen-gomod, many small derivations) →
+  `--max-jobs V`, `--cores 1` (nix's list-scheduler fills the box with 1-core builds).
+
+The typed invariant (unit-tested over the full `V × N` grid): `planned = max-jobs
+× cores ≤ V` (no over-subscription) and `slack < N` (saturating). The tuner also
+bounds **Go's own** parallelism (`GOMAXPROCS` + `GOFLAGS=-p`) to `cores`, because
+nix `--cores` alone does not reach a raw `go install` (substrate service-flake
+passes `-p $NIX_BUILD_CORES` to close that seam).
+
+Why not blind `--max-jobs auto --cores 0`? That over-subscribes: with `N` images
+concurrent, each build fans out to **all** `V` cores → demand `N × V ≫ V`
+(MEASURED: 9-service cold fleet peaked at load 300 on a 96-vCPU node = 3.1×; the
+partition dropped it to 139 = 1.45×). The tuner is **adaptive** — it reads
+whatever spot instance the evolving-degrade ladder placed, never a hardcoded count.
+
+An explicit `max-jobs` (non-`auto`) or `cores` (non-`0`) is a **hard quota cap**
+that WINS over the tuner; `auto-tune: false` is the legacy raw passthrough. The
+build logs the discovered box + the chosen partition. The **across-images** level
+(build every service concurrently) lives in the `super-cache-ci-build-matrix.yml`
+reusable, which passes the row count as `targets` — this verb owns one
+`(svc, arch)` cell and its within-node partition.
 
 ## Keyway contract
 
 | | |
 |---|---|
-| **inputs** | `image-attr`, `attr-template`, `svc`, `arches`, `flake-ref`, `endpoint`, `max-jobs`, `cores` (typed YAML) |
+| **inputs** | `image-attr`, `attr-template`, `svc`, `arches`, `flake-ref`, `endpoint`, `targets`, `dag-shape`, `auto-tune`, `max-jobs`, `cores` (typed YAML) |
 | **receipt** | `tarball-<arch>`, `tarballs` (`arch:path;…`), `built`, `via-service`, `result` (→ `$GITHUB_OUTPUT`) |
 | **exit 0** | every requested arch built (or a degenerate empty arch-set) |
 | **exit 1** | a build failed, **or** `attr-template` names `{svc}` but `svc` is empty (a loud, honest config error — never a faked green) |

@@ -115,7 +115,16 @@
             (:name "svc"           :type :string :required nil :default "")
             (:name "arches"        :type :string :required nil :default "amd64")
             (:name "flake-ref"     :type :string :required nil :default ".")
-            (:name "endpoint"      :type :string :required nil :default ""))
+            (:name "endpoint"      :type :string :required nil :default "")
+            ;; ADAPTIVE CORE-PARTITION: discover V=nproc, partition across N
+            ;; targets so planned concurrency (max-jobs*cores) <= V and ~= V.
+            (:name "targets"       :type :string :required nil :default "1")
+            (:name "dag-shape"     :type (:enum (:options ("narrow" "wide"))) :required nil :default "narrow")
+            (:name "auto-tune"     :type :string :required nil :default "true")
+            ;; explicit CAPS (quota bounds) that WIN over the tuner; the
+            ;; sentinels "auto"/"0" hand control to the tuner.
+            (:name "max-jobs"      :type :string :required nil :default "auto")
+            (:name "cores"         :type :string :required nil :default "0"))
   :outputs ((:name "tarball-amd64") (:name "tarball-arm64") (:name "tarballs")
             (:name "via-service")   (:name "built")         (:name "result"))
   :behavior      (:runtime :tatara-script :run-tlisp "nix-image/run.tlisp")
