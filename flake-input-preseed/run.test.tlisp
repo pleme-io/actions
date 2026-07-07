@@ -1,0 +1,32 @@
+;; flake-input-preseed/run.test.tlisp — (deftest …) smoke for the pure
+;; helpers, run via tatara-script --test by the tlisp-test action
+;; (TLISP_TEST=1 gates main so the nix side effects never run under test).
+
+(deftest "preseed-parse-inputs splits on whitespace and commas, dropping empties"
+  (assert (equal? (preseed-parse-inputs "akeyless-main-repo") (list "akeyless-main-repo")) "single token")
+  (assert (equal? (preseed-parse-inputs "akeyless-main-repo nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "space list")
+  (assert (equal? (preseed-parse-inputs "akeyless-main-repo,nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "comma list")
+  (assert (equal? (preseed-parse-inputs "akeyless-main-repo, nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "comma+space list")
+  (assert (null? (preseed-parse-inputs "   ")) "whitespace-only => empty")
+  (assert (null? (preseed-parse-inputs "")) "empty => empty"))
+
+(deftest "preseed-flag-true? only 'true' is true"
+  (assert (preseed-flag-true? "true") "true => #t")
+  (assert (preseed-flag-true? " true ") "trims")
+  (assert (not (preseed-flag-true? "false")) "false => #f")
+  (assert (not (preseed-flag-true? "")) "empty => #f"))
+
+(deftest "preseed-join joins with a separator, no trailing sep"
+  (assert (equal? (preseed-join (list) " ") "") "empty list => empty")
+  (assert (equal? (preseed-join (list "/nix/store/a") " ") "/nix/store/a") "single => no sep")
+  (assert (equal? (preseed-join (list "/nix/store/a" "/nix/store/b") " ") "/nix/store/a /nix/store/b") "two joined"))
+
+(deftest "preseed-reason classifies the terminal state honestly"
+  (assert (equal? (preseed-reason "" 1 0) "no-endpoint") "no endpoint")
+  (assert (equal? (preseed-reason "http://sui" 0 0) "no-inputs") "no inputs")
+  (assert (equal? (preseed-reason "http://sui" 2 0) "nothing-preseeded") "all missed")
+  (assert (equal? (preseed-reason "http://sui" 2 1) "partial") "some missed")
+  (assert (equal? (preseed-reason "http://sui" 2 2) "preseeded") "all pulled"))
+
+(deftest "flakeinput:narhash->source-path returns empty for an empty narHash (no faked path)"
+  (assert (equal? (flakeinput:narhash->source-path "") "") "empty narHash => empty path, never a guess"))

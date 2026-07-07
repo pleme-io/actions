@@ -29,3 +29,11 @@
   (save-to-local dir "k2" "/nix/store/ccc")
   (assert (equal? (string-trim (read-file (supercache:local-entry-path dir "k2"))) "/nix/store/ccc")
           "restore reads back what save wrote"))
+
+(deftest "flake-inputs->list parses a space/comma node-name list, dropping empties (the WARM lever push half)"
+  (assert (equal? (flake-inputs->list "akeyless-main-repo") (list "akeyless-main-repo")) "single")
+  (assert (equal? (flake-inputs->list "akeyless-main-repo nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "space list")
+  (assert (equal? (flake-inputs->list "akeyless-main-repo,nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "comma list")
+  (assert (equal? (flake-inputs->list "akeyless-main-repo, nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "comma+space")
+  (assert (null? (flake-inputs->list "  ")) "whitespace-only => empty")
+  (assert (null? (flake-inputs->list "")) "empty => empty"))
