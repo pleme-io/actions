@@ -603,6 +603,18 @@
                "); in l.nodes.\"" name "\".locked.narHash"))))
     (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
 
+;; nix32(base32)-encode an SRI/other-form sha256 narHash across nix
+;; versions: `nix hash convert` (nix 2.19+) first, else the older
+;; `nix hash to-base32`. "" iff neither is available/succeeds.
+(define (flakeinput:narhash->nix32 narhash)
+  (let ((c (exec-capture "nix" "hash" "convert" "--hash-algo" "sha256"
+                         "--to" "nix32" narhash)))
+    (cond
+      ((= (status-of c) 0) (string-trim (stdout-of c)))
+      (else
+       (let ((o (exec-capture "nix" "hash" "to-base32" narhash)))
+         (if (= (status-of o) 0) (string-trim (stdout-of o)) ""))))))
+
 ;; The fixed-output SOURCE store path for a locked narHash (recursive
 ;; sha256, tree name "source") — `nix-store --print-fixed-path` over the
 ;; nix32-encoded hash. "" on any failure.
@@ -610,14 +622,12 @@
   (cond
     ((equal? narhash "") "")
     (else
-     (let ((br (exec-capture "nix" "hash" "convert" "--hash-algo" "sha256"
-                             "--to" "nix32" narhash)))
+     (let ((b32 (flakeinput:narhash->nix32 narhash)))
        (cond
-         ((not (= (status-of br) 0)) "")
+         ((equal? b32 "") "")
          (else
           (let ((pr (exec-capture "nix-store" "--print-fixed-path"
-                                  "--recursive" "sha256"
-                                  (string-trim (stdout-of br)) "source")))
+                                  "--recursive" "sha256" b32 "source")))
             (if (= (status-of pr) 0) (string-trim (stdout-of pr)) ""))))))))
 
 ;; The SOURCE store path for input <name> in <flake-lock> (absolute path).
