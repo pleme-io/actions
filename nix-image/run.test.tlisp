@@ -44,3 +44,20 @@
   (assert (not (native-arch? "x86_64" "arm64")) "x86_64 runner cross-builds arm64")
   (assert (not (native-arch? "aarch64" "amd64")) "aarch64 runner cross-builds amd64")
   (assert (not (native-arch? "x86_64" "sparc")) "unknown arch is never native"))
+
+;; MAX-PARALLEL, within-derivation — the saturating default (auto/0) emits both
+;; flags; an empty value DROPS its flag (no `--max-jobs ` syntax error); an
+;; explicit cap threads through verbatim.
+(deftest "ni:parallel-flags saturates by default + drops empty + threads a cap"
+  ;; the super-cache-ci build default: auto max-jobs, all cores → both flags
+  (assert (equal? (ni:parallel-flags "auto" "0")
+                  (list "--max-jobs" "auto" "--cores" "0")) "auto/0 saturating default")
+  ;; a blank input drops that flag (nix uses its own default) — never `--cores `
+  (assert (equal? (ni:parallel-flags "auto" "")
+                  (list "--max-jobs" "auto")) "empty cores drops --cores")
+  (assert (equal? (ni:parallel-flags "" "0")
+                  (list "--cores" "0")) "empty max-jobs drops --max-jobs")
+  (assert (null? (ni:parallel-flags "" "")) "both empty -> no flags")
+  ;; an explicit cap (only when a quota bounds it) threads verbatim + trims
+  (assert (equal? (ni:parallel-flags "  16 " " 8 ")
+                  (list "--max-jobs" "16" "--cores" "8")) "explicit cap trimmed + threaded"))

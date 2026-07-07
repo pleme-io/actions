@@ -29,6 +29,14 @@ inputs:
     description: "sui super-cache service endpoint. Set => warm-layer routing (LiveTODO:super-cache-build); empty => local build."
     required: false
     default: ""
+  max-jobs:
+    description: "nix --max-jobs (WITHIN-derivation parallelism: how many derivations build at once). 'auto' = one per detected core (saturates ANY box — a 48xl=192 vCPU is filled, never under-run by a hardcoded number). Never a fixed integer unless a quota bounds it."
+    required: false
+    default: "auto"
+  cores:
+    description: "nix --cores (cores PER derivation build). '0' = all available cores (let each build's parallel make see the whole box). The saturating default."
+    required: false
+    default: "0"
 
 outputs:
   tarball-amd64:
@@ -78,3 +86,5 @@ runs:
         ARCHES: ${{ inputs.arches }}
         FLAKE_REF: ${{ inputs.flake-ref }}
         SUI_ENDPOINT: ${{ inputs.endpoint }}
+        NIX_MAX_JOBS: ${{ inputs.max-jobs }}
+        NIX_CORES: ${{ inputs.cores }}
