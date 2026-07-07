@@ -16,6 +16,12 @@
   (assert (equal? (save-to-local dir "k1" "/nix/store/aaa /nix/store/bbb") "already-present") "second save => idempotent skip")
   (assert (equal? (save-to-local dir "k1" "DIFFERENT") "already-present") "content-addressed skip does not overwrite"))
 
+(deftest "token->store-path extracts the /nix/store path, dropping any arch: prefix"
+  (assert (equal? (token->store-path "amd64:/nix/store/xyz-img.tar.gz") "/nix/store/xyz-img.tar.gz") "arch:path => path")
+  (assert (equal? (token->store-path "/nix/store/abc-hello") "/nix/store/abc-hello") "bare store path unchanged")
+  (assert (equal? (token->store-path "not-a-store-path") "") "non-store token => empty")
+  (assert (equal? (token->store-path "") "") "empty token => empty"))
+
 (deftest "the persisted entry round-trips the exact output list"
   (define dir "/tmp/scache-save-roundtrip")
   (exec-capture "rm" "-rf" dir)
