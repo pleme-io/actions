@@ -90,6 +90,45 @@
     (else (+ (push-tokens endpoint (string-split (car segs) " "))
              (push-segments endpoint (cdr segs))))))
 
+;; ── flake-input SOURCE push (the WARM lever's push half) ─────────
+;; Besides the build OUTPUTS, push each named flake input's SOURCE FOD to
+;; the endpoint. A locked input's source is a content-addressed store path
+;; derivable purely from flake.lock's narHash (flakeinput:source-path), so
+;; a subsequent warm build can `nix copy --from <endpoint>` it
+;; (flake-input-preseed) INSTEAD of re-git-cloning the ~40s monorepo. Same
+;; push-one best-effort discipline: an unresolvable path or failed copy is
+;; logged + skipped, never a hard fail. Returns the count pushed.
+;; Parse a space/comma list of flake-input node names into clean tokens
+;; (recursion + append; no `map` — the dialect has none). Accepts
+;; "a b", "a,b", "a, b".
+(define (flake-inputs->list raw)
+  (fis-split-ws (string-split raw ",") (list)))
+(define (fis-split-ws segs acc)
+  (cond
+    ((null? segs) acc)
+    (else (fis-split-ws (cdr segs)
+            (append acc (fis-nonempty (string-split (car segs) " ")))))))
+(define (fis-nonempty toks)
+  (cond
+    ((null? toks) (list))
+    ((equal? (string-trim (car toks)) "") (fis-nonempty (cdr toks)))
+    (else (cons (string-trim (car toks)) (fis-nonempty (cdr toks))))))
+
+(define (push-flake-input endpoint flake-lock name)
+  (let ((src (flakeinput:source-path flake-lock name)))
+    (cond
+      ((equal? src "")
+       (log-error (string-append "super-cache-save: cannot resolve source path for flake input '"
+                                 name "' from " flake-lock " — skip (stays a clone next warm)"))
+       0)
+      (else (push-one endpoint src)))))
+
+(define (push-flake-inputs endpoint flake-lock names)
+  (cond
+    ((null? names) 0)
+    (else (+ (push-flake-input endpoint flake-lock (car names))
+             (push-flake-inputs endpoint flake-lock (cdr names))))))
+
 ;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
 (define (emit key saved skipped tier reason)
   (append-output (string-append "key=" key))
@@ -99,24 +138,34 @@
   (append-output (string-append "reason=" reason)))
 
 (define (main)
-  (let* ((key-in    (env-get "KEY" ""))
-         (spec-path (env-get "SPEC_PATH" ""))
-         (outputs   (env-get "OUTPUTS" ""))
-         (endpoint  (env-get "ENDPOINT" ""))
-         (key       (save-key key-in spec-path))
-         (cache-dir (supercache:cache-dir)))
+  (let* ((key-in      (env-get "KEY" ""))
+         (spec-path   (env-get "SPEC_PATH" ""))
+         (outputs     (env-get "OUTPUTS" ""))
+         (endpoint    (env-get "ENDPOINT" ""))
+         (flake-lock  (env-get "FLAKE_LOCK" ""))
+         (flake-inputs (env-get "FLAKE_INPUTS" ""))
+         (key         (save-key key-in spec-path))
+         (cache-dir   (supercache:cache-dir)))
     (cond
       ;; No key ⇒ nothing to address; honest no-op (not a faked save).
       ((equal? key "")
        (log-info "super-cache-save: no key resolvable (KEY empty and SPEC_PATH absent/empty) — nothing persisted")
        (emit key "false" "false" "none" "no-key")
+       (append-output "inputs-pushed=0")
        0)
       ;; No local durable tier, but a sui ENDPOINT is present ⇒ the durable
       ;; write is a real `nix copy --to <endpoint>` of the built store paths (the
       ;; sui TieredBackend persists them to Redis L1 + Postgres L2). This is the
-      ;; write-back that populates the cache so the next build is warm.
+      ;; write-back that populates the cache so the next build is warm. We ALSO
+      ;; push the named flake-input SOURCE FODs (the WARM lever's push half) so a
+      ;; subsequent warm build preseeds them instead of re-git-cloning.
       ((and (equal? cache-dir "") (not (equal? endpoint "")) (not (equal? outputs "")))
-       (let ((pushed (push-outputs endpoint outputs)))
+       (let ((pushed (push-outputs endpoint outputs))
+             (inputs-pushed (cond
+                              ((or (equal? flake-lock "") (equal? flake-inputs "")) 0)
+                              (else (push-flake-inputs endpoint flake-lock
+                                      (flake-inputs->list flake-inputs))))))
+         (append-output (string-append "inputs-pushed=" (string-format "{}" inputs-pushed)))
          (cond
            ((= pushed 0)
             (log-error (string-append "super-cache-save: 0 store paths pushed to " endpoint
@@ -124,7 +173,9 @@
             (emit key "false" "false" "none" "nothing-pushed")
             0)
            (else
-            (log-info (string-append "super-cache-save: wrote closure(s) to the sui super-cache " endpoint))
+            (log-info (string-append "super-cache-save: wrote closure(s) + "
+                                     (string-format "{}" inputs-pushed)
+                                     " flake-input source(s) to the sui super-cache " endpoint))
             (emit key "true" "false" "sui" "pushed")
             0))))
       ;; No local durable tier AND no endpoint ⇒ nothing to persist to; honest no-op.

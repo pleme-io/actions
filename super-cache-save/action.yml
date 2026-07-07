@@ -25,6 +25,14 @@ inputs:
     description: "Directory backing the local content-addressed object tier (the now-path). Empty => the durable Pg/object tiers (LiveTODO) and an honest no-op otherwise."
     required: false
     default: ""
+  flake-lock:
+    description: "Path to the flake.lock whose locked narHash pins the flake-input source FODs (the WARM lever push half). Empty => no flake-input push."
+    required: false
+    default: ""
+  flake-inputs:
+    description: "Space/comma list of flake-input NODE names whose SOURCE FODs to also push to the endpoint (e.g. 'akeyless-main-repo'), so a warm build preseeds them instead of re-git-cloning. Empty => outputs-only push."
+    required: false
+    default: ""
 
 outputs:
   saved:
@@ -42,6 +50,9 @@ outputs:
   reason:
     description: "written | already-present | no-key | no-durable-tier | write-failed."
     value: ${{ steps.run.outputs.reason }}
+  inputs-pushed:
+    description: "Number of flake-input SOURCE FODs pushed to the endpoint (the WARM lever push half; 0 unless flake-lock + flake-inputs are set)."
+    value: ${{ steps.run.outputs.inputs-pushed }}
 
 runs:
   using: composite
@@ -69,3 +80,5 @@ runs:
         SPEC_PATH: ${{ inputs.spec-path }}
         OUTPUTS: ${{ inputs.outputs }}
         SUI_CACHE_DIR: ${{ inputs.cache-dir }}
+        FLAKE_LOCK: ${{ inputs.flake-lock }}
+        FLAKE_INPUTS: ${{ inputs.flake-inputs }}

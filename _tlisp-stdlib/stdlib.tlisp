@@ -554,6 +554,79 @@
     (else "miss")))
 
 ;; ────────────────────────────────────────────────────────────────
+;; flakeinput: — flake-input SOURCE FOD store-path algebra (the WARM
+;; flake-input lever).
+;;
+;; A locked flake input's fetched source tree is a fixed-output
+;; (content-addressed) store path derived PURELY from the lock's
+;; narHash: /nix/store/<h>-source whose CA is fixed:r:sha256:<narHash>.
+;; So the path is KNOWABLE from flake.lock WITHOUT any git clone /
+;; tarball fetch — which lets us
+;;   (a) PUSH the fetched source to the super-cache (super-cache-save's
+;;       flake-inputs push), and
+;;   (b) PRE-SEED it back on a warm pod via `nix copy --from <endpoint>`
+;;       (flake-input-preseed) — an in-cluster substituter pull (~8s for
+;;       the akeyless-main-repo 450MiB→70MiB xz source, measured) that
+;;       REPLACES the eval-time git clone the git fetcher would otherwise
+;;       run (~21–40s, egress-bound).
+;;
+;; WHY the explicit copy is load-bearing: nix's git/tarball fetcher
+;; NEVER consults binary-cache substituters for a source tree — even a
+;; LOCKED input with the FOD already present in the substituter is
+;; re-cloned (measured: warm `nix flake prefetch` == cold clone). So
+;; `substituters=<sui>` alone does nothing for the source; the source
+;; must be copied into the local store explicitly. Once local, the
+;; in-flake locked eval reuses the CA path and skips the clone (measured:
+;; in-flake drvPath eval 21s→14s, zero akeyless-main-repo clone).
+;;
+;; Shared by super-cache-save (push, `nix copy --to`) + flake-input-preseed
+;; (pull, `nix copy --from`): the ≥2-consumer rule (Pillar 12).
+;; ────────────────────────────────────────────────────────────────
+
+;; Resolve a path to absolute (nix path literals need a leading "/"; a bare
+;; "flake.lock" is not one). readlink -f is on every runner + the nixos/nix
+;; image; on failure the input passes through unchanged (an already-absolute
+;; path is idempotent under readlink -f).
+(define (flakeinput:abs-path p)
+  (let ((r (exec-capture "readlink" "-f" p)))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) p)))
+
+;; The locked narHash of input <name> read straight from a flake.lock via
+;; pure-nix builtins.fromJSON (no jq). flake-lock may be relative — it is
+;; resolved to absolute here. "" on any failure (missing node, unreadable
+;; lock, nix error).
+(define (flakeinput:narhash flake-lock name)
+  (let ((r (exec-capture "nix" "eval" "--impure" "--raw" "--expr"
+             (string-append
+               "let l = builtins.fromJSON (builtins.readFile "
+               (flakeinput:abs-path flake-lock)
+               "); in l.nodes.\"" name "\".locked.narHash"))))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+;; The fixed-output SOURCE store path for a locked narHash (recursive
+;; sha256, tree name "source") — `nix-store --print-fixed-path` over the
+;; nix32-encoded hash. "" on any failure.
+(define (flakeinput:narhash->source-path narhash)
+  (cond
+    ((equal? narhash "") "")
+    (else
+     (let ((br (exec-capture "nix" "hash" "convert" "--hash-algo" "sha256"
+                             "--to" "nix32" narhash)))
+       (cond
+         ((not (= (status-of br) 0)) "")
+         (else
+          (let ((pr (exec-capture "nix-store" "--print-fixed-path"
+                                  "--recursive" "sha256"
+                                  (string-trim (stdout-of br)) "source")))
+            (if (= (status-of pr) 0) (string-trim (stdout-of pr)) ""))))))))
+
+;; The SOURCE store path for input <name> in <flake-lock> (absolute path).
+;; "" iff the node/narHash/path can't be resolved — the caller treats ""
+;; as an honest skip, NEVER a faked push/preseed.
+(define (flakeinput:source-path flake-lock name)
+  (flakeinput:narhash->source-path (flakeinput:narhash flake-lock name)))
+
+;; ────────────────────────────────────────────────────────────────
 ;; OCI delivery — tag algebra + skopeo push/inspect (the
 ;; super-cache-ci DELIVERY / MANIFEST leg). Shared across
 ;; zot-push + manifest-list-join (the ≥2-consumer rule, Pillar 12).

@@ -1,0 +1,63 @@
+name: 'pleme-io · flake-input-preseed'
+description: 'WARM flake-input lever — pull a heavy flake input''s SOURCE FOD out of the super-cache into the local store BEFORE the build, so the in-flake locked eval reuses the content-addressed path and SKIPS the ~40s eval-time git clone. nix''s git/tarball fetcher never substitutes a source tree, so `substituters=<sui>` alone is a no-op for source — this explicit `nix copy --from` is the load-bearing form of the lever. Pairs with super-cache-save''s flake-inputs push. TIER-HONEST: a miss (endpoint down / source not yet pushed / path unresolvable) degrades to the clone and is reported, never faked; require=true fails loud.'
+branding:
+  icon: 'download-cloud'
+  color: 'green'
+
+inputs:
+  endpoint:
+    description: "The super-cache endpoint to pull from (from sui-service-up), e.g. http://sui.camelot-build.svc. Empty => honest no-op (the build clones)."
+    required: false
+    default: ""
+  flake-lock:
+    description: "Path to the flake.lock whose locked narHash pins the input source. Resolved to absolute (nix path literals need a leading /)."
+    required: false
+    default: "flake.lock"
+  inputs:
+    description: "Space/comma list of flake-input NODE names to preseed (as they appear under flake.lock nodes), e.g. 'akeyless-main-repo nixpkgs'. The big git input is the load-bearing one."
+    required: false
+    default: ""
+  require:
+    description: "'true' => a partial preseed (any named input not pulled) is a hard failure (exit 1) instead of an honest degrade-to-clone. Default false."
+    required: false
+    default: "false"
+
+outputs:
+  paths:
+    description: "Space-separated SOURCE store paths successfully pulled into the local store."
+    value: ${{ steps.run.outputs.paths }}
+  requested:
+    description: "Number of input names requested."
+    value: ${{ steps.run.outputs.requested }}
+  preseeded:
+    description: "Number of input sources actually pulled from the endpoint (0 => the build clones)."
+    value: ${{ steps.run.outputs.preseeded }}
+  reason:
+    description: "no-endpoint | no-inputs | nothing-preseeded | partial | preseeded — why this run ended where it did."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run flake-input-preseed
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        FLAKE_LOCK: ${{ inputs.flake-lock }}
+        INPUTS: ${{ inputs.inputs }}
+        REQUIRE: ${{ inputs.require }}
