@@ -34,6 +34,12 @@ outputs:
   result:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
     value: ${{ steps.exec.outputs.result }}
+  matrix:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: matrix) — the build-matrix image×arch GHA matrix JSON"
+    value: ${{ steps.exec.outputs.matrix }}
+  count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: count) — a row/item count (e.g. build-matrix rows)"
+    value: ${{ steps.exec.outputs.count }}
   # Delivery-leg keys (super-cache-ci): nix-image / ghcr-publish / zot-pull-scan
   # (+ image-scan's severity/vuln-count). A composite action forwards only
   # DECLARED keys, so these must live here for the scripts' outputs to reach

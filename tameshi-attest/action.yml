@@ -89,7 +89,7 @@ runs:
 
     - name: Assemble + BLAKE3-hash the receipt
       id: attest
-      uses: pleme-io/actions/tatara-script@v1
+      uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
       env:
