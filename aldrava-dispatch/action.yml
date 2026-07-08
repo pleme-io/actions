@@ -1,0 +1,154 @@
+name: 'pleme-io · aldrava-dispatch'
+description: 'The typed knock: match a PR comment against a registered command catalog, resolve commenter trust, and dispatch the target (label relabel / workflow_dispatch / repository_dispatch) — never mutates on an untrusted knock.'
+branding:
+  icon: 'bell'
+  color: 'blue'
+
+inputs:
+  catalog-path:
+    description: "Path to a (defcommentcommand ...) catalog file (e.g. .github/aldrava.lisp). When set, every other command/trigger/target-* input is ignored — the catalog is the sole source of registered commands."
+    required: false
+    default: ""
+  command:
+    description: "Inline single-command mode: the command's name (e.g. 'test'). Ignored when catalog-path is set."
+    required: false
+    default: ""
+  trigger:
+    description: "Inline mode: the literal comment prefix (e.g. '/test'). Defaults to '/<command>'."
+    required: false
+    default: ""
+  min-permission:
+    description: "Inline mode: minimum GitHub repo permission a commenter must hold (none|read|triage|write|maintain|admin)."
+    required: false
+    default: "write"
+  trust-pr-author:
+    description: "Inline mode: always trust the PR's own author regardless of min-permission."
+    required: false
+    default: "true"
+  allowlist:
+    description: "Inline mode: comma-separated logins trusted regardless of permission or PR authorship."
+    required: false
+    default: ""
+  target-label:
+    description: "Inline mode: relabel target — the label to remove-then-add on a trusted knock."
+    required: false
+    default: ""
+  target-workflow:
+    description: "Inline mode: workflow_dispatch target — the workflow filename to dispatch."
+    required: false
+    default: ""
+  target-workflow-ref:
+    description: "Inline mode: git ref to dispatch the workflow against. Defaults to the PR's own head branch."
+    required: false
+    default: ""
+  target-repository-dispatch-event:
+    description: "Inline mode: repository_dispatch target — the event_type to fire."
+    required: false
+    default: ""
+  target-repository-dispatch-repo:
+    description: "Inline mode: repository_dispatch target repo (owner/repo). Defaults to the current repo."
+    required: false
+    default: ""
+  repo:
+    description: "owner/repo to operate against."
+    required: false
+    default: ${{ github.repository }}
+  token:
+    description: "GitHub token with pull-requests:write + issues:write (for relabel) and/or actions:write (for workflow_dispatch/repository_dispatch)."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  dispatched:
+    description: "true when a trusted knock matched a registered command and its target was dispatched."
+    value: ${{ steps.dispatch.outputs.dispatched }}
+  outcome:
+    description: "One of: dispatched | rejected | no-match | not-on-pull-request."
+    value: ${{ steps.dispatch.outputs.outcome }}
+  command:
+    description: "The matched command's name (dispatched/rejected only)."
+    value: ${{ steps.dispatch.outputs.command }}
+  args:
+    description: "Whitespace-captured arguments after the trigger, as a JSON array (dispatched only)."
+    value: ${{ steps.dispatch.outputs.args }}
+  commenter:
+    description: "The knock's author login (dispatched/rejected only)."
+    value: ${{ steps.dispatch.outputs.commenter }}
+  checkout-ref:
+    description: "The PR's head SHA (dispatched only)."
+    value: ${{ steps.dispatch.outputs.checkout-ref }}
+  branch-ref:
+    description: "refs/heads/<pr-head-ref> (dispatched only)."
+    value: ${{ steps.dispatch.outputs.branch-ref }}
+  base-ref:
+    description: "refs/heads/<pr-base-ref> (dispatched only)."
+    value: ${{ steps.dispatch.outputs.base-ref }}
+  pr-author:
+    description: "The PR's own author login (dispatched only)."
+    value: ${{ steps.dispatch.outputs.pr-author }}
+  is-develop:
+    description: "true when the PR's head branch is 'develop' (dispatched only)."
+    value: ${{ steps.dispatch.outputs.is-develop }}
+  target-kind:
+    description: "label | workflow-dispatch | repository-dispatch (dispatched only)."
+    value: ${{ steps.dispatch.outputs.target-kind }}
+  target-detail:
+    description: "The dispatched target's identifying value — the label name, workflow filename, or event_type (dispatched only)."
+    value: ${{ steps.dispatch.outputs.target-detail }}
+  reason:
+    description: "Human-readable reason (rejected/no-match only)."
+    value: ${{ steps.dispatch.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Install aldrava
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Asset-name convention mirrors pleme-io/tend's release shape
+        # (<tool>-<os>-<arch>); revisit once aldrava ships its first
+        # `nix run .#release` if the real names differ.
+        OS=$(uname -s)
+        ARCH=$(uname -m)
+        case "$OS-$ARCH" in
+          Linux-x86_64)  SUFFIX="linux-x86_64";;
+          Linux-aarch64) SUFFIX="linux-arm64";;
+          Darwin-arm64)  SUFFIX="darwin-arm64";;
+          Darwin-x86_64) SUFFIX="darwin-x86_64";;
+          *) echo "::error::aldrava-dispatch: unsupported runner $OS-$ARCH" >&2; exit 1;;
+        esac
+        curl -sL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
+        chmod +x /usr/local/bin/aldrava
+
+    - name: Resolve the knock and dispatch
+      id: dispatch
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CATALOG_PATH: ${{ inputs.catalog-path }}
+        COMMAND: ${{ inputs.command }}
+        TRIGGER: ${{ inputs.trigger }}
+        MIN_PERMISSION: ${{ inputs.min-permission }}
+        TRUST_PR_AUTHOR: ${{ inputs.trust-pr-author }}
+        ALLOWLIST: ${{ inputs.allowlist }}
+        TARGET_LABEL: ${{ inputs.target-label }}
+        TARGET_WORKFLOW: ${{ inputs.target-workflow }}
+        TARGET_WORKFLOW_REF: ${{ inputs.target-workflow-ref }}
+        TARGET_REPOSITORY_DISPATCH_EVENT: ${{ inputs.target-repository-dispatch-event }}
+        TARGET_REPOSITORY_DISPATCH_REPO: ${{ inputs.target-repository-dispatch-repo }}
+        ALDRAVA_REPO: ${{ inputs.repo }}
+        GITHUB_TOKEN: ${{ inputs.token }}

@@ -277,6 +277,58 @@ outputs:
   poms-algo:
     description: "Forwarded (key: poms-algo) — ferrite-check PoMS hash algorithm (blake3)"
     value: ${{ steps.exec.outputs.poms-algo }}
+  # aldrava — comment-command dispatch (aldrava-dispatch / aldrava-resolve).
+  dispatched:
+    description: "Forwarded (key: dispatched) — aldrava-dispatch trusted-knock-matched flag"
+    value: ${{ steps.exec.outputs.dispatched }}
+  outcome:
+    description: "Forwarded (key: outcome) — aldrava-dispatch dispatched|rejected|no-match|not-on-pull-request"
+    value: ${{ steps.exec.outputs.outcome }}
+  command:
+    description: "Forwarded (key: command) — aldrava-dispatch matched command name"
+    value: ${{ steps.exec.outputs.command }}
+  args:
+    description: "Forwarded (key: args) — aldrava-dispatch captured args, JSON array"
+    value: ${{ steps.exec.outputs.args }}
+  commenter:
+    description: "Forwarded (key: commenter) — aldrava-dispatch knock author login"
+    value: ${{ steps.exec.outputs.commenter }}
+  checkout-ref:
+    description: "Forwarded (key: checkout-ref) — aldrava-dispatch/aldrava-resolve resolved PR head SHA"
+    value: ${{ steps.exec.outputs.checkout-ref }}
+  branch-ref:
+    description: "Forwarded (key: branch-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<head>"
+    value: ${{ steps.exec.outputs.branch-ref }}
+  base-ref:
+    description: "Forwarded (key: base-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<base>"
+    value: ${{ steps.exec.outputs.base-ref }}
+  pr-author:
+    description: "Forwarded (key: pr-author) — aldrava-dispatch/aldrava-resolve PR author login"
+    value: ${{ steps.exec.outputs.pr-author }}
+  is-develop:
+    description: "Forwarded (key: is-develop) — aldrava-dispatch/aldrava-resolve head-branch-is-develop flag"
+    value: ${{ steps.exec.outputs.is-develop }}
+  target-kind:
+    description: "Forwarded (key: target-kind) — aldrava-dispatch label|workflow-dispatch|repository-dispatch"
+    value: ${{ steps.exec.outputs.target-kind }}
+  target-detail:
+    description: "Forwarded (key: target-detail) — aldrava-dispatch dispatched target's identifying value"
+    value: ${{ steps.exec.outputs.target-detail }}
+  reason:
+    description: "Forwarded (key: reason) — aldrava-dispatch/aldrava-resolve rejection/no-match/not-running reason"
+    value: ${{ steps.exec.outputs.reason }}
+  should-run:
+    description: "Forwarded (key: should-run) — aldrava-resolve run-context-resolved flag"
+    value: ${{ steps.exec.outputs.should-run }}
+  ok:
+    description: "Forwarded (key: ok) — aldrava-lint catalog-parsed-cleanly flag"
+    value: ${{ steps.exec.outputs.ok }}
+  commands:
+    description: "Forwarded (key: commands) — aldrava-lint registered command names, JSON array"
+    value: ${{ steps.exec.outputs.commands }}
+  error:
+    description: "Forwarded (key: error) — aldrava-lint syntax/semantic error"
+    value: ${{ steps.exec.outputs.error }}
 
 runs:
   using: composite
