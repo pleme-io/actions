@@ -157,6 +157,28 @@
             (:name "local-archive") (:name "result"))
   :behavior      (:runtime :tatara-script :run-tlisp "zot-pull-scan/run.tlisp")
   :semver-compat :minor
+  :attestation   :optional)
+
+;; ── node-local daemon-aware cache leg (Phase 3b GHA integration) ──────
+;; Unlike every other verb above, this one is NOT tatara-script — it is
+;; a cargo-installed Rust binary (`gha-entrypoint`, published as a bin of
+;; the `sui-dockerfile-wrapper` crate), matching the caixa-render /
+;; cargo-bump precedent for Rust-CLI-backed actions in this repo. The
+;; `:behavior` clause below is a second NOT-YET-MODELED shape (alongside
+;; the tatara-script one named in the file header) — arch-synthesizer's
+;; `ActionBehavior` also has no `rust-binary-crate-install` variant yet.
+
+(defaction "sui-dockerfile-node-cache"
+  :description "Daemon-aware sui-dockerfile-wrapper GHA integration point (supa-charge-akeyless-ci Phase 3b): probes the node-local sui-dockerfile-node-cache-daemon Unix socket, routes through DaemonAwareCacheClient when present, falls through cleanly to the direct-to-remote-tier Phase 2 wrapper when absent."
+  :inputs  ((:name "dockerfile-path"        :type :string :required t)
+            (:name "build-context"          :type :string :required nil :default ".")
+            (:name "image-tag"              :type :string :required t)
+            (:name "cache-backend-config"   :type :string :required t)
+            (:name "node-cache-socket-path" :type :string :required nil :default ""))
+  :outputs ((:name "daemon-used") (:name "outcome") (:name "cache-hit")
+            (:name "docker-ran") (:name "duration-ms"))
+  :behavior      (:runtime :rust-binary-crate-install :crate "sui-dockerfile-wrapper" :bin "gha-entrypoint")
+  :semver-compat :minor
   :attestation   :required)
 
 ;; ── private-Zot delivery + multi-arch manifest + FedRAMP attest leg ──
