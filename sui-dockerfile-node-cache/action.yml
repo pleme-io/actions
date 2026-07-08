@@ -71,8 +71,10 @@ runs:
         SUI_CACHE_BACKEND_CONFIG: ${{ inputs.cache-backend-config }}
         SUI_NODE_CACHE_SOCKET_PATH: ${{ inputs.node-cache-socket-path }}
       run: |
+        set +e
         receipt="$(gha-entrypoint)"
         status=$?
+        set -e
         echo "$receipt"
 
         resolved_socket="${SUI_NODE_CACHE_SOCKET_PATH:-/var/run/sui-dockerfile-cache/node-cache.sock}"
