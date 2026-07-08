@@ -59,7 +59,19 @@ runs:
 
     - name: Install sui-dockerfile-wrapper (gha-entrypoint)
       shell: bash
-      run: cargo install --locked sui-dockerfile-wrapper --quiet || true
+      # INTERIM: sui-dockerfile-wrapper has never been published to crates.io —
+      # pleme-io/sui has GitHub Actions disabled at the repo level, so its
+      # auto-release workflow has never run and never published the crate.
+      # Installing from a pinned git revision keeps this action reproducible
+      # (no float on sui's main) without depending on the missing publish.
+      # Revisit and switch back to `cargo install --locked sui-dockerfile-wrapper`
+      # once sui's repo-level Actions are re-enabled and auto-release is
+      # confirmed publishing (see supa-charge-akeyless-ci skill Phase 3b notes).
+      # This install is load-bearing for the action's behavior, so it is NOT
+      # wrapped in `|| true` — a failed install must fail the action loudly.
+      run: |
+        cargo install --git https://github.com/pleme-io/sui --rev b73ee3c \
+          sui-dockerfile-wrapper --locked --quiet
 
     - id: run
       shell: bash
