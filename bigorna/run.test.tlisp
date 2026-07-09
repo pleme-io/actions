@@ -1,0 +1,94 @@
+;; bigorna/run.test.tlisp — (deftest …) smoke for the pure helpers, run
+;; via tatara-script --test by the tlisp-test action. The runner prepends
+;; the stdlib + this action's run.tlisp (TLISP_TEST=1 gates main), then
+;; asserts on the defined helpers.
+
+(deftest "tokens splits a comma/space list into clean non-empty tokens"
+  (assert (equal? (tokens "linux/amd64,linux/arm64")
+                  (list "linux/amd64" "linux/arm64")) "comma split")
+  (assert (equal? (tokens "linux/amd64 linux/arm64")
+                  (list "linux/amd64" "linux/arm64")) "space split")
+  (assert (equal? (tokens "linux/amd64, linux/arm64  ")
+                  (list "linux/amd64" "linux/arm64")) "mixed + trailing")
+  (assert (equal? (tokens "") (list)) "empty is the empty list"))
+
+(deftest "platform-arch extracts the OCI arch half"
+  (assert (equal? (platform-arch "linux/amd64") "amd64") "os/arch")
+  (assert (equal? (platform-arch "linux/arm64/v8") "arm64") "os/arch/variant")
+  (assert (equal? (platform-arch "arm64") "arm64") "bare arch"))
+
+(deftest "normalize-arch maps uname tokens to the OCI arch token"
+  (assert (equal? (normalize-arch "x86_64") "amd64") "x86_64 => amd64")
+  (assert (equal? (normalize-arch "aarch64") "arm64") "aarch64 => arm64")
+  (assert (equal? (normalize-arch "amd64") "amd64") "already amd64")
+  (assert (equal? (normalize-arch "arm64") "arm64") "already arm64"))
+
+(deftest "parse-arch-endpoints builds an arch=endpoint alist, skips no-eq tokens"
+  (let ((ep (parse-arch-endpoints "arm64=arm64-ctx x86_64=amd64-ctx bogus")))
+    (assert (equal? (alist-lookup "arm64" ep) "arm64-ctx") "arm64 endpoint")
+    (assert (equal? (alist-lookup "amd64" ep) "amd64-ctx") "x86_64 key normalized to amd64")
+    (assert (equal? (alist-lookup "s390x" ep) "") "absent arch => empty")))
+
+(deftest "platform-native? is true for the host arch or a supplied endpoint"
+  (let ((ep (parse-arch-endpoints "arm64=arm64-ctx")))
+    ;; host amd64: amd64 native (own arch), arm64 native (endpoint), s390x not.
+    (assert (platform-native? "linux/amd64" "amd64" ep) "own arch native")
+    (assert (platform-native? "linux/arm64" "amd64" ep) "endpoint arch native")
+    (assert (not (platform-native? "linux/s390x" "amd64" ep)) "no endpoint => emulated"))
+  (let ((none (list)))
+    (assert (platform-native? "linux/arm64" "arm64" none) "own arch native, no endpoints")
+    (assert (not (platform-native? "linux/amd64" "arm64" none)) "foreign, no endpoint => emulated")))
+
+(deftest "native/emulated partition splits the requested set by policy"
+  (let* ((ep    (parse-arch-endpoints "arm64=arm64-ctx"))
+         (req   (tokens "linux/amd64,linux/arm64,linux/s390x")))
+    ;; host amd64 + arm64 endpoint => amd64,arm64 native; s390x emulated.
+    (assert (equal? (native-platforms req "amd64" ep)
+                    (list "linux/amd64" "linux/arm64")) "native set")
+    (assert (equal? (emulated-platforms req "amd64" ep)
+                    (list "linux/s390x")) "emulated set"))
+  (let* ((none (list))
+         (req  (tokens "linux/amd64,linux/arm64")))
+    ;; host amd64, no endpoints => only amd64 native, arm64 emulated.
+    (assert (equal? (native-platforms req "amd64" none) (list "linux/amd64")) "own-arch only native")
+    (assert (equal? (emulated-platforms req "amd64" none) (list "linux/arm64")) "foreign emulated")))
+
+(deftest "join-comma renders a comma-joined view of a token list"
+  (assert (equal? (join-comma (list "linux/amd64" "linux/arm64"))
+                  "linux/amd64,linux/arm64") "two")
+  (assert (equal? (join-comma (list "linux/amd64")) "linux/amd64") "one")
+  (assert (equal? (join-comma (list)) "") "none"))
+
+(deftest "cache-token mirrors CacheEndpoint::Registry Display (empty ref => no front)"
+  (assert (equal? (cache-token "ghcr.io/pleme-io/svc:buildcache" "max")
+                  "type=registry,ref=ghcr.io/pleme-io/svc:buildcache,mode=max") "max ref")
+  (assert (equal? (cache-token "ghcr.io/pleme-io/svc:buildcache" "min")
+                  "type=registry,ref=ghcr.io/pleme-io/svc:buildcache,mode=min") "min ref")
+  (assert (equal? (cache-token "ghcr.io/pleme-io/svc:buildcache" "garbage")
+                  "type=registry,ref=ghcr.io/pleme-io/svc:buildcache,mode=max") "unknown mode => max")
+  (assert (equal? (cache-token "" "max") "") "empty ref => no cache front"))
+
+(deftest "node-name is builder-prefixed and arch-normalized"
+  (assert (equal? (node-name "bigorna" "linux/arm64") "bigorna-arm64") "arm64")
+  (assert (equal? (node-name "bigorna" "linux/amd64/v2") "bigorna-amd64") "variant stripped, x-normalized"))
+
+(deftest "render-node emits the serde BigornaConfig node block (endpoint only for foreign)"
+  ;; Own-arch node: no endpoint line (the create node).
+  (assert (equal? (render-node "bigorna" "linux/amd64" "amd64" (list))
+                  "  - name: bigorna-amd64\n    platform: linux/amd64\n    host_arch: amd64\n")
+          "own-arch node has no endpoint")
+  ;; Foreign native node: carries its endpoint.
+  (let ((ep (parse-arch-endpoints "arm64=arm64-ctx")))
+    (assert (equal? (render-node "bigorna" "linux/arm64" "amd64" ep)
+                    "  - name: bigorna-arm64\n    platform: linux/arm64\n    host_arch: arm64\n    endpoint: arm64-ctx\n")
+            "foreign node carries endpoint")))
+
+(deftest "render-config emits a full BigornaConfig document with fixed serde fields"
+  (let ((doc (render-config "bigorna" "docker-container"
+                            (list "linux/amd64") "amd64" (list))))
+    (assert (string-contains? doc "builder_name: bigorna") "builder_name field")
+    (assert (string-contains? doc "driver: docker-container") "driver field")
+    (assert (string-contains? doc "bootstrap: true") "bootstrap default true")
+    (assert (string-contains? doc "use_as_default: true") "use_as_default default true")
+    (assert (string-contains? doc "nodes:") "nodes key")
+    (assert (string-contains? doc "  - name: bigorna-amd64") "the one native node")))

@@ -108,6 +108,34 @@
 
 ;; ── delivery leg (build a nix OCI image -> private ghcr -> zot faucet) ──
 
+;; bigorna is the CI ENTRY of the delivery leg: it sets up the buildx
+;; builder (native per-arch nodes, no QEMU) + a sui-store cache front that
+;; the nix-image / ghcr-publish verbs then use, in ONE step. A thin keyway
+;; front over the SHIPPED `bigorna setup` binary (sui-bigorna, 31 unit
+;; tests) — it RENDERS a typed BigornaConfig (YAML) from these inputs,
+;; hands it to `bigorna setup --config`, and forwards the JSON receipt.
+;; The emulated-node refusal + native-vs-QEMU guarantee live IN the binary.
+;; TIER-HONEST: single-runner native-multi-arch covers the runner's OWN
+;; arch for free; a FOREIGN arch is native only with an arch-endpoints
+;; entry (a native docker context / tcp:// remote) — else it is EMULATED,
+;; which fallthrough=error refuses (never a faked QEMU green) and
+;; fallthrough=native-subset excludes with a loud warning.
+(defaction "bigorna"
+  :description "CI ENTRY: set up a buildx builder with NATIVE per-arch nodes (no QEMU) + a sui-store cache front, in one step, so an unchanged `docker buildx build` afterward runs native-multi-arch + warm. Thin keyway front over the shipped `bigorna setup` binary (sui-bigorna): renders a typed BigornaConfig YAML from the inputs, hands it to `bigorna setup --config`, forwards the JSON receipt. Runner's own arch is native for free; a foreign arch is native only with an arch-endpoints entry, else emulated (refused under fallthrough=error, excluded under native-subset)."
+  :inputs  ((:name "platforms"       :type :string :required nil :default "linux/amd64")
+            (:name "cache"           :type :string :required nil :default "")
+            (:name "cache-mode"      :type (:enum (:options ("max" "min"))) :required nil :default "max")
+            (:name "arch-endpoints"  :type :string :required nil :default "")
+            (:name "fallthrough"     :type (:enum (:options ("error" "native-subset"))) :required nil :default "error")
+            (:name "builder-name"    :type :string :required nil :default "bigorna")
+            (:name "driver"          :type (:enum (:options ("docker-container" "kubernetes" "remote"))) :required nil :default "docker-container")
+            (:name "bigorna-version" :type :string :required nil :default "main"))
+  :outputs ((:name "builder") (:name "native-platforms") (:name "emulation")
+            (:name "cache-from") (:name "cache-to") (:name "ok") (:name "result"))
+  :behavior      (:runtime :tatara-script :run-tlisp "bigorna/run.tlisp")
+  :semver-compat :minor
+  :attestation   :optional)
+
 (defaction "nix-image"
   :description "Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and akeyless-nix-images (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO:super-cache-build); correct local nix build otherwise."
   :inputs  ((:name "image-attr"    :type :string :required nil :default "dockerImage")

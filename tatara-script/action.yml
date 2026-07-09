@@ -329,6 +329,21 @@ outputs:
   error:
     description: "Forwarded (key: error) — aldrava-lint syntax/semantic error"
     value: ${{ steps.exec.outputs.error }}
+  builder:
+    description: "Forwarded (key: builder) — bigorna the buildx builder name that was set up"
+    value: ${{ steps.exec.outputs.builder }}
+  native-platforms:
+    description: "Forwarded (key: native-platforms) — bigorna comma-joined platforms covered by a native node"
+    value: ${{ steps.exec.outputs.native-platforms }}
+  emulation:
+    description: "Forwarded (key: emulation) — bigorna native-for-all | needs-native-node"
+    value: ${{ steps.exec.outputs.emulation }}
+  cache-from:
+    description: "Forwarded (key: cache-from) — bigorna a --cache-from token fronting the sui store ('' when no cache front)"
+    value: ${{ steps.exec.outputs.cache-from }}
+  cache-to:
+    description: "Forwarded (key: cache-to) — bigorna a --cache-to token fronting the sui store ('' when no cache front)"
+    value: ${{ steps.exec.outputs.cache-to }}
 
 runs:
   using: composite
