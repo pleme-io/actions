@@ -1,0 +1,40 @@
+;; attestation-gate/run.test.tlisp — (deftest …) smoke for the pure
+;; decision helpers, run via tatara-script --test by the tlisp-test
+;; action. The full jq/b3sum content-address verification pipeline is
+;; exercised end-to-end against a real cartorio receipt by tests/test.yml.
+
+(deftest "gate:norm-bool normalizes to a plain bool string"
+  (assert (equal? (gate:norm-bool "true") "true") "true")
+  (assert (equal? (gate:norm-bool " true ") "true") "trimmed true")
+  (assert (equal? (gate:norm-bool "yes") "false") "non-true -> false")
+  (assert (equal? (gate:norm-bool "") "false") "empty -> false"))
+
+(deftest "gate:subject-or falls back to the repo slug"
+  (assert (equal? (gate:subject-or "explicit" "org/repo") "explicit") "explicit wins")
+  (assert (equal? (gate:subject-or "" "org/repo") "org/repo") "empty -> repo")
+  (assert (equal? (gate:subject-or "  " "org/repo") "org/repo") "blank -> repo"))
+
+(deftest "gate:decision passes only when no check failed (skips are benign)"
+  (let ((all-pass (list (gate:check "a" "pass") (gate:check "b" "skip") (gate:check "c" "pass")))
+        (has-fail (list (gate:check "a" "pass") (gate:check "b" "fail") (gate:check "c" "skip"))))
+    (assert (equal? (gate:decision all-pass) "pass") "pass+skip -> pass")
+    (assert (equal? (gate:decision has-fail) "fail") "any fail -> fail")
+    (assert (equal? (gate:any-fail? has-fail) #t) "any-fail? true")
+    (assert (equal? (gate:any-fail? all-pass) #f) "any-fail? false")))
+
+(deftest "gate:first-fail names the first failing check"
+  (let ((checks (list (gate:check "present" "pass")
+                      (gate:check "content_address" "fail")
+                      (gate:check "chain" "fail"))))
+    (assert (equal? (gate:first-fail checks) "content_address") "first fail")
+    (assert (equal? (gate:first-fail (list (gate:check "a" "pass"))) "") "no fail -> empty")))
+
+(deftest "gate:reason maps a decision to a stable reason string"
+  (let ((pass-checks (list (gate:check "a" "pass")))
+        (fail-checks (list (gate:check "a" "pass") (gate:check "content_address" "fail"))))
+    (assert (equal? (gate:reason "pass" pass-checks) "all-checks-passed") "pass reason")
+    (assert (equal? (gate:reason "fail" fail-checks) "failed:content_address") "fail reason names the check")))
+
+(deftest "gate:pillar-status skips cleanly when no pillar file is supplied"
+  (assert (equal? (gate:pillar-status "" "abc123") "skip") "no file -> skip")
+  (assert (equal? (gate:pillar-status "  " "abc123") "skip") "blank file -> skip"))

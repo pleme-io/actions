@@ -1,0 +1,41 @@
+;; pangea-grafana-converge/run.test.tlisp — (deftest …) smoke for the
+;; pure helpers, run via tatara-script --test by the tlisp-test action.
+;; The real Grafana health probe + nix-run converge are exercised by a
+;; live workspace out-of-band (they hit the network / nix).
+
+(deftest "pgc:norm-bool normalizes to a plain bool string"
+  (assert (equal? (pgc:norm-bool "true") "true") "true")
+  (assert (equal? (pgc:norm-bool " true ") "true") "trimmed true")
+  (assert (equal? (pgc:norm-bool "false") "false") "false")
+  (assert (equal? (pgc:norm-bool "") "false") "empty -> false"))
+
+(deftest "pgc:health-ok? recognizes a healthy Grafana /api/health body"
+  (assert (equal? (pgc:health-ok? "{\"commit\":\"a\",\"database\":\"ok\",\"version\":\"11\"}") #t)
+          "compact healthy body")
+  (assert (equal? (pgc:health-ok? "{ \"database\": \"ok\" }") #t)
+          "pretty-printed healthy body")
+  (assert (equal? (pgc:health-ok? "{\"database\":\"failing\"}") #f)
+          "failing db -> not ok")
+  (assert (equal? (pgc:health-ok? "") #f) "empty body -> not ok"))
+
+(deftest "pgc:default-argv composes the nix run flake-app invocation"
+  (assert (equal? (pgc:default-argv "github:pleme-io/pangea-architectures" "rio-observability-converge")
+                  (list "nix" "run" "github:pleme-io/pangea-architectures#rio-observability-converge" "--"))
+          "default argv"))
+
+(deftest "pgc:converge-argv: explicit override wins; else default + typed flags"
+  (assert (equal? (pgc:converge-argv "my runner --now" "ws" "app" "https://g" "grafana" "false")
+                  (list "my" "runner" "--now"))
+          "override wins (space-split)")
+  (assert (equal? (pgc:converge-argv "" "ws" "app" "https://g" "grafana" "false")
+                  (list "nix" "run" "ws#app" "--" "--provider" "grafana" "--url" "https://g"))
+          "default, no dry-run")
+  (assert (equal? (pgc:converge-argv "" "ws" "app" "https://g" "grafana" "true")
+                  (list "nix" "run" "ws#app" "--" "--provider" "grafana" "--url" "https://g" "--dry-run"))
+          "default + dry-run flag"))
+
+(deftest "pgc:runner-target-missing? matches nix missing-attribute signals"
+  (assert (equal? (pgc:runner-target-missing? "error: flake 'x' does not provide attribute 'apps.y'") #t)
+          "does not provide attribute")
+  (assert (equal? (pgc:runner-target-missing? "some other build error") #f)
+          "unrelated error -> not a missing target"))

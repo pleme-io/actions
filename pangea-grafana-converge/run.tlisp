@@ -1,0 +1,172 @@
+;; pangea-grafana-converge/run.tlisp — the MODEL-2 (remote-reconcile)
+;; executor of the FedRAMP observability delivery pipeline
+;; (theory/FEDRAMP-OBSERVABILITY-DELIVERY.md, step 8b).
+;;
+;; Model 2 keeps the control loop on OUR side: 2F exposes an
+;; INBOUND-ONLY Grafana REST endpoint + a scoped SA token, and this
+;; action drives the SHIPPED pangea rio-observability workspace (the
+;; `provider :grafana, url:, auth:` shape) + the deployment-agnostic
+;; `pangea-grafana` provider + the generic `magma` runner against that
+;; remote Grafana. Nothing of ours runs inside 2F's boundary; the same
+;; Pangea AST → the same CRs → the same provider code → the same
+;; fixpoint as Model 1 — only the executor's residency moves.
+;;
+;; ── What it does NOW (real, not asserted) ───────────────────────────
+;;   1. HEALTH PROBE — GET <grafana-url>/api/health with the Bearer
+;;      token; require database:ok (a real, verifiable Grafana check).
+;;      require-healthy=true ⇒ an unhealthy/unreachable endpoint is a
+;;      hard fail BEFORE any converge is attempted.
+;;   2. CONVERGE — invoke the shipped pangea workspace runner via
+;;      `nix run <workspace>#<app> -- …` with GRAFANA_URL + GRAFANA_TOKEN
+;;      + PANGEA_EXECUTOR in the environment, and report its REAL exit
+;;      status. On dry-run, the runner is asked to plan only.
+;;
+;; ── Tier-honest LiveTODOs (never rounded up) ────────────────────────
+;;   - The EXACT flake app attribute + CLI flag surface of the shipped
+;;     rio-observability workspace's remote-Grafana runner is NOT pinned
+;;     here — it is supplied by `workspace` + `app` (or a full
+;;     `converge-cmd` override). If the target does not resolve, the
+;;     action reports converged=false + reason=runner-target-unresolved
+;;     and WARNS; it NEVER fakes a convergence. [LiveTODO: pin the app
+;;     attr once the workspace's grafana-remote-apply flake app is
+;;     confirmed.]
+;;   - The doctrine flags the ALERT remote-apply leg as thinner than the
+;;     dashboard leg — this action reports whatever the runner did; it
+;;     does NOT claim dashboard/alert parity. Verify parity out-of-band
+;;     before asserting it.
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, stderr-of, config-resolve.
+;;
+;; Inputs (env, config-resolvable via [pangea-grafana-converge]):
+;;   GRAFANA_URL GRAFANA_TOKEN WORKSPACE APP CONVERGE_CMD PROVIDER
+;;   DRY_RUN REQUIRE_HEALTHY MODEL PANGEA_EXECUTOR
+;; Outputs (appended):
+;;   healthy converged reason dry-run model
+
+;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────
+
+(define (pgc:norm-bool s)
+  (if (equal? (string-trim s) "true") "true" "false"))
+
+;; Grafana /api/health returns e.g. {"commit":"..","database":"ok",..}.
+;; Strip whitespace so the substring check tolerates pretty-printing.
+(define (pgc:strip-ws s)
+  (string-replace (string-replace (string-replace s " " "") "\n" "") "\t" ""))
+
+(define (pgc:health-ok? body)
+  (string-contains? (pgc:strip-ws body) "\"database\":\"ok\""))
+
+;; Default runner argv when no full converge-cmd override is supplied:
+;;   nix run <workspace>#<app> --
+(define (pgc:default-argv workspace app)
+  (list "nix" "run" (string-append workspace "#" app) "--"))
+
+;; nix signals that the requested flake app/attribute does not exist —
+;; used only to pick an honest reason string (a non-zero status already
+;; reports converged=false regardless).
+(define (pgc:runner-target-missing? stderr)
+  (or (string-contains? stderr "does not provide attribute")
+      (string-contains? stderr "is not a valid flake output")
+      (string-contains? stderr "cannot find flake")
+      (string-contains? stderr "does not provide")))
+
+;; ── Side-effecting legs ──────────────────────────────────────────
+
+(define (pgc:probe-health url token)
+  (exec-capture "curl" "-sS" "-H"
+    (string-append "Authorization: Bearer " token)
+    (string-append url "/api/health")))
+
+;; Build the converge argv: an explicit converge-cmd override wins
+;; (space-split); else the default `nix run` argv + typed flags.
+(define (pgc:converge-argv converge-cmd workspace app url provider dry?)
+  (cond
+    ((not (equal? (string-trim converge-cmd) ""))
+     (string-split (string-trim converge-cmd) " "))
+    (else
+     (append
+       (pgc:default-argv workspace app)
+       (list "--provider" provider "--url" url)
+       (if (equal? dry? "true") (list "--dry-run") (list))))))
+
+;; ── Main ─────────────────────────────────────────────────────────
+
+(define (main)
+  (let* ((url (config-resolve "GRAFANA_URL" "pangea-grafana-converge" "grafana-url" ""))
+         (token (env-get "GRAFANA_TOKEN" ""))
+         (workspace (config-resolve "WORKSPACE" "pangea-grafana-converge" "workspace" "github:pleme-io/pangea-architectures"))
+         (app (config-resolve "APP" "pangea-grafana-converge" "app" "rio-observability-converge"))
+         (converge-cmd (config-resolve "CONVERGE_CMD" "pangea-grafana-converge" "converge-cmd" ""))
+         (provider (config-resolve "PROVIDER" "pangea-grafana-converge" "provider" "grafana"))
+         (dry? (pgc:norm-bool (config-resolve "DRY_RUN" "pangea-grafana-converge" "dry-run" "false")))
+         (require-healthy (pgc:norm-bool (config-resolve "REQUIRE_HEALTHY" "pangea-grafana-converge" "require-healthy" "true")))
+         (model (config-resolve "MODEL" "pangea-grafana-converge" "model" "2"))
+         (executor (config-resolve "PANGEA_EXECUTOR" "pangea-grafana-converge" "pangea-executor" "magma")))
+    (cond
+      ((equal? (string-trim url) "")
+       (log-error "pangea-grafana-converge: grafana-url is required")
+       (append-output "healthy=false")
+       (append-output "converged=false")
+       (append-output "reason=missing-grafana-url")
+       (append-output (string-append "dry-run=" dry?))
+       (append-output (string-append "model=" model))
+       (exit 1))
+      (else
+       (log-info (string-append "==> pangea-grafana-converge (model " model
+                  ", executor " executor "): remote Grafana " url))
+       ;; 1. HEALTH PROBE — a real Grafana /api/health check.
+       (let* ((hr (pgc:probe-health url token))
+              (healthy (and (= (status-of hr) 0) (pgc:health-ok? (stdout-of hr))))
+              (healthy-s (if healthy "true" "false")))
+         (append-output (string-append "healthy=" healthy-s))
+         (append-output (string-append "dry-run=" dry?))
+         (append-output (string-append "model=" model))
+         (log-info (string-append "grafana health: " healthy-s))
+         (cond
+           ((and (not healthy) (equal? require-healthy "true"))
+            (log-error "pangea-grafana-converge: remote Grafana is unhealthy/unreachable (database != ok) and require-healthy=true — refusing to converge")
+            (append-output "converged=false")
+            (append-output "reason=grafana-unhealthy")
+            (exit 1))
+           (else
+            (cond
+              ((not healthy)
+               (log-info "::warning::pangea-grafana-converge: Grafana health not confirmed but require-healthy=false — proceeding to converge"))
+              (else #t))
+            ;; 2. CONVERGE — drive the shipped pangea runner; report its
+            ;; REAL status (never fake). Token + URL go via env, not argv.
+            (env-set "GRAFANA_URL" url)
+            (env-set "GRAFANA_TOKEN" token)
+            (env-set "PANGEA_EXECUTOR" executor)
+            (let* ((argv (pgc:converge-argv converge-cmd workspace app url provider dry?))
+                   (r (apply exec-capture argv))
+                   (s (status-of r)))
+              (log-info (string-append "runner: " (string-join " " argv)))
+              (cond
+                ((= s 0)
+                 (log-info "pangea-grafana-converge: converged (runner exit 0)")
+                 (append-output "converged=true")
+                 (append-output (string-append "reason=" (if (equal? dry? "true") "planned" "converged")))
+                 (exit 0))
+                ((pgc:runner-target-missing? (stderr-of r))
+                 (log-info (stderr-of r))
+                 (log-info "::warning::pangea-grafana-converge: the pangea workspace runner target did not resolve — set `workspace`/`app` (or a full `converge-cmd`) to the shipped rio-observability grafana runner. [LiveTODO: pin the flake app attr]")
+                 (append-output "converged=false")
+                 (append-output "reason=runner-target-unresolved")
+                 (exit 1))
+                (else
+                 (log-info (stderr-of r))
+                 (log-error "pangea-grafana-converge: the pangea runner failed to converge the remote Grafana")
+                 (append-output "converged=false")
+                 (append-output "reason=runner-failed")
+                 (exit s)))))))))))
+
+;; Gated on TLISP_TEST so the tlisp-test harness loads the pure helpers
+;; (norm-bool / strip-ws / health-ok? / default-argv / converge-argv /
+;; runner-target-missing?) and drives them with fixtures, without hitting
+;; the network or invoking nix.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — pangea-grafana-converge helpers loaded; main skipped"))
+  (else (main)))
