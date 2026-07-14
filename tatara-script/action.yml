@@ -197,8 +197,14 @@ outputs:
     description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
     value: ${{ steps.exec.outputs.stale }}
   changed:
-    description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag"
+    description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag; also spec-watch's own upstream-sha-differs flag (same key, disjoint consumers)"
     value: ${{ steps.exec.outputs.changed }}
+  new-sha:
+    description: "Forwarded (key: new-sha) — spec-watch sha256 of the upstream spec fetched this run"
+    value: ${{ steps.exec.outputs.new-sha }}
+  cached-sha:
+    description: "Forwarded (key: cached-sha) — spec-watch sha256 previously stored in the cache file"
+    value: ${{ steps.exec.outputs.cached-sha }}
   # super-cache-ci warm + remote-execution leg: sui-warm-hydrate /
   # sui-remote-build. A composite forwards only DECLARED keys; these are
   # disjoint from the sets above. Added per this file's "add it here"
