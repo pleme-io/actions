@@ -1,0 +1,93 @@
+;; container-boot-check/run.tlisp — start a container, poll a health
+;; command until it succeeds or a bounded attempt count is exhausted.
+;; Generic: any image, any health command, no secrets, no
+;; camelot/akeyless-specific logic. Dumps container logs on timeout so
+;; a boot failure is never silent (the whole point of this gate).
+;;
+;; Real-world motivation: a Nix-rebuilt image can pass every CVE scan
+;; and still crash at process boot (an OTP-version mismatch crashed
+;; rabbitmq-server at Erlang VM startup while scanning clean) -- a
+;; CVE-clean image that never starts is worse than useless.
+
+(define image (env-required "IMAGE"))
+(define health-cmd (env-required "HEALTH_CMD"))
+(define container-env (env-get "CONTAINER_ENV" ""))
+(define container-name "boot-check-target")
+
+;; tatara-lisp has no string->number; bridge a numeric env string to an
+;; Int via json-parse (a bare integer is valid JSON) -- the proven
+;; nix-image/run.tlisp pattern.
+(define (parse-int s fallback)
+  (let ((t (string-trim s)))
+    (cond
+      ((equal? t "") fallback)
+      (else (json-parse t)))))
+
+(define max-attempts (parse-int (env-get "MAX_ATTEMPTS" "30") 30))
+(define poll-interval (string-trim (env-get "POLL_INTERVAL_SECONDS" "3")))
+
+(define (env-pairs)
+  (filter (lambda (l) (not (equal? l "")))
+          (string-split (string-trim container-env) "\n")))
+
+(define (env-flags pairs)
+  (cond
+    ((null? pairs) (list))
+    (else (append (list "-e" (car pairs)) (env-flags (cdr pairs))))))
+
+;; Best-effort cleanup of a stale container from a previous attempt in
+;; this same job -- ignored if none exists.
+(exec-capture "docker" "rm" "-f" container-name)
+
+(define run-args
+  (append (list "run" "-d" "--name" container-name)
+          (env-flags (env-pairs))
+          (list image)))
+
+(log-info (string-append "==> starting " image))
+(define start-result (apply exec-capture (cons "docker" run-args)))
+
+(define (cleanup)
+  (exec-capture "docker" "rm" "-f" container-name))
+
+(cond
+  ((not (= (status-of start-result) 0))
+   (log-error (string-append "docker run failed: " (stderr-of start-result)))
+   (append-output "healthy=false")
+   (exit 1))
+  (else 'started))
+
+;; Poll loop (recursion is tatara-lisp's loop construct -- no native
+;; while). Each miss sleeps poll-interval seconds via a single tiny
+;; `sh -c "sleep N"` exec, the same sanctioned side-effect idiom
+;; cargo-publish-each-member's real-sleep already uses.
+(define (poll attempt)
+  (cond
+    ((> attempt max-attempts) 'timeout)
+    (else
+     (let ((r (exec-capture "docker" "exec" container-name "sh" "-c" health-cmd)))
+       (cond
+         ((= (status-of r) 0) 'healthy)
+         (else
+          (exec-capture "sh" "-c" (string-append "sleep " poll-interval))
+          (poll (+ attempt 1))))))))
+
+(define result (poll 1))
+
+(cond
+  ((equal? result 'healthy)
+   (log-info (string-append image " booted and passed health check ("
+                             (string-format "{}" max-attempts) " attempts allowed)"))
+   (append-output "healthy=true")
+   (cleanup)
+   (exit 0))
+  (else
+   (log-error (string-append image " never became healthy after "
+                             (string-format "{}" max-attempts)
+                             " attempts -- container logs follow"))
+   (let ((logs (exec-capture "docker" "logs" container-name)))
+     (log-info (stdout-of logs))
+     (log-info (stderr-of logs)))
+   (append-output "healthy=false")
+   (cleanup)
+   (exit 1)))
