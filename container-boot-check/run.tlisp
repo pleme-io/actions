@@ -8,9 +8,18 @@
 ;; and still crash at process boot (an OTP-version mismatch crashed
 ;; rabbitmq-server at Erlang VM startup while scanning clean) -- a
 ;; CVE-clean image that never starts is worse than useless.
+;;
+;; HEALTH_CMD may be empty: a distroless/shell-less image (a static
+;; Go binary, a pure-Python app on a distroless-glibc base) has no `sh`
+;; for `docker exec` to invoke at all, so exec-based polling is
+;; structurally impossible -- not just inapplicable. In that case this
+;; falls back to a "still running after the wait window" check via
+;; `docker inspect .State.Running`, no exec into the container at all.
+;; A real crash (import error, syntax error, immediate exit) still
+;; fails this the same way it would fail a health-cmd poll.
 
 (define image (env-required "IMAGE"))
-(define health-cmd (env-required "HEALTH_CMD"))
+(define health-cmd (env-get "HEALTH_CMD" ""))
 (define container-env (env-get "CONTAINER_ENV" ""))
 (define container-name "boot-check-target")
 
@@ -60,7 +69,10 @@
 ;; Poll loop (recursion is tatara-lisp's loop construct -- no native
 ;; while). Each miss sleeps poll-interval seconds via a single tiny
 ;; `sh -c "sleep N"` exec, the same sanctioned side-effect idiom
-;; cargo-publish-each-member's real-sleep already uses.
+;; cargo-publish-each-member's real-sleep already uses. Runs on the
+;; RUNNER's own shell (always present), never inside the target
+;; container -- the exec-into-target only happens for the health-cmd
+;; branch below.
 (define (poll attempt)
   (cond
     ((> attempt max-attempts) 'timeout)
@@ -72,7 +84,18 @@
           (exec-capture "sh" "-c" (string-append "sleep " poll-interval))
           (poll (+ attempt 1))))))))
 
-(define result (poll 1))
+;; Shell-less fallback: wait the full window, then ask the DAEMON (not
+;; the container) whether it's still running. No exec into the target.
+(define wait-seconds (* max-attempts (parse-int poll-interval 3)))
+
+(define (still-running-after-wait)
+  (exec-capture "sh" "-c" (string-append "sleep " (string-format "{}" wait-seconds)))
+  (let ((r (exec-capture "docker" "inspect" "--format" "{{.State.Running}}" container-name)))
+    (if (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true"))
+      'healthy
+      'timeout)))
+
+(define result (if (equal? health-cmd "") (still-running-after-wait) (poll 1)))
 
 (cond
   ((equal? result 'healthy)
