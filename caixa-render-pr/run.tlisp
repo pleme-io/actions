@@ -76,9 +76,9 @@
 (configure-git-bot)
 (exec-capture "git" "checkout" "-b" pr-branch)
 (exec-check "git" "add" "-A")
-(exec-check "git" "commit" "-m"
-            "chore(caixa): re-render artifacts from typed source")
-(exec-capture "git" "push" "origin" pr-branch "--force-with-lease")
+(exec-or-die (list "git" "commit" "-m"
+                   "chore(caixa): re-render artifacts from typed source"))
+(exec-or-die (list "git" "push" "origin" pr-branch "--force-with-lease"))
 
 (let ((r (exec-capture "gh" "pr" "create"
             "--title" "chore(caixa): re-render artifacts from typed source"

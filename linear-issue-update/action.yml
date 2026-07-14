@@ -1,5 +1,5 @@
 name: 'pleme-io · linear-issue-update'
-description: 'Update a Linear issue's state/labels/etc.'
+description: "Update a Linear issue's state/labels/etc."
 branding: { icon: 'edit', color: 'purple' }
 
 inputs:

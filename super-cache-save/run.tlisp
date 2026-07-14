@@ -1,0 +1,208 @@
+;; super-cache-save/run.tlisp — persist a build's outputs to the durable
+;; super-cache tiers, WRITE-IF-ABSENT, content-addressed, NO lock.
+;; Canonical doctrine: theory/SUPER-CACHE-CI.md §II.3 (idempotent
+;; write-if-absent keyed by the content address — the
+;; eliminate-the-shared-cell pattern; concurrent-runner coherence is free).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info/log-error, path-exists?, write-file,
+;;   exec-capture, supercache:content-key, supercache:cache-dir,
+;;   supercache:local-entry-path.
+;;
+;; TIER-HONEST. The DESTINATION durable tiers are Postgres L2 (index +
+;; pointer) + object L3 (NAR bytes) with warm Redis L1 — a LiveTODO
+;; behind sui's SHIPPED Store / StorageBackend traits (rows 4/5/6). The
+;; NOW-path persists to a local content-addressed object tier
+;; (<cache-dir>/<key>.entry) — the same shape super-cache-restore reads.
+;; When no cache dir is configured, the save is an HONEST no-op, never a
+;; faked success.
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+(define (save-key key-in spec-path)
+  (cond
+    ((not (equal? key-in "")) key-in)
+    (else (supercache:content-key spec-path))))
+
+;; Write-if-absent into the local object tier. Returns a typed reason:
+;;   "already-present" — the key exists; idempotent skip (no lock)
+;;   "written"         — newly persisted
+;;   "write-failed"    — the write did not land
+(define (save-to-local dir key outputs)
+  (let ((entry (supercache:local-entry-path dir key)))
+    (cond
+      ((path-exists? entry) "already-present")
+      (else
+       (exec-capture "mkdir" "-p" dir)
+       (write-file entry (string-append outputs "\n"))
+       (cond
+         ((path-exists? entry) "written")
+         (else "write-failed"))))))
+
+;; ── sui endpoint push (the real durable write) ───────────────────
+;; When a sui ENDPOINT is present (the warm-workflow case: endpoint set, no
+;; local cache-dir), the durable write is a real `nix copy --to <endpoint>` of
+;; each built store path to the sui binary cache — whose TieredBackend persists
+;; the closure to Redis L1 + Postgres L2 (SHIPPED, store-and-serve). This is the
+;; write-back that populates the cache so the NEXT build substitutes it (warm),
+;; the inverse of super-cache-restore's read. Best-effort by design: a per-path
+;; copy failure is logged and skipped, never aborting the step or the fleet.
+
+;; Extract the "/nix/store/…" path from an output token, dropping any leading
+;; "arch:" the nix-image `tarballs` output carries. "" when the token names no
+;; store path. (string-split honors the multi-char "/nix/store/" delimiter.)
+(define (token->store-path tok)
+  (let ((parts (string-split tok "/nix/store/")))
+    (cond
+      ((null? parts) "")
+      ((null? (cdr parts)) "")
+      (else (string-append "/nix/store/" (car (cdr parts)))))))
+
+;; nix copy ONE store path to the sui endpoint. Returns 1 on success, 0 on a
+;; skip/failure (best-effort — never a hard fail).
+(define (push-one endpoint path)
+  (cond
+    ((equal? path "") 0)
+    (else
+     (let ((r (exec-capture "nix" "copy" "--to" endpoint path "--no-check-sigs")))
+       (cond
+         ((= (status-of r) 0)
+          (log-info (string-append "super-cache-save: pushed " path " -> " endpoint))
+          1)
+         (else
+          (log-error (string-append "super-cache-save: nix copy failed (best-effort, skipping) "
+                                    path ": " (string-trim (stderr-of r))))
+          0))))))
+
+;; Push every token in a whitespace-split segment; sum the successes.
+(define (push-tokens endpoint toks)
+  (cond
+    ((null? toks) 0)
+    (else (+ (push-one endpoint (token->store-path (car toks)))
+             (push-tokens endpoint (cdr toks))))))
+
+;; Push every path in `outputs`, which may be ';'-joined (nix-image tarballs)
+;; and/or ' '-joined (the local-tier entry format). Returns the count pushed.
+(define (push-outputs endpoint outputs)
+  (push-segments endpoint (string-split outputs ";")))
+(define (push-segments endpoint segs)
+  (cond
+    ((null? segs) 0)
+    (else (+ (push-tokens endpoint (string-split (car segs) " "))
+             (push-segments endpoint (cdr segs))))))
+
+;; ── flake-input SOURCE push (the WARM lever's push half) ─────────
+;; Besides the build OUTPUTS, push each named flake input's SOURCE FOD to
+;; the endpoint. A locked input's source is a content-addressed store path
+;; derivable purely from flake.lock's narHash (flakeinput:source-path), so
+;; a subsequent warm build can `nix copy --from <endpoint>` it
+;; (flake-input-preseed) INSTEAD of re-git-cloning the ~40s monorepo. Same
+;; push-one best-effort discipline: an unresolvable path or failed copy is
+;; logged + skipped, never a hard fail. Returns the count pushed.
+;; Parse a space/comma list of flake-input node names into clean tokens
+;; (recursion + append; no `map` — the dialect has none). Accepts
+;; "a b", "a,b", "a, b".
+(define (flake-inputs->list raw)
+  (fis-split-ws (string-split raw ",") (list)))
+(define (fis-split-ws segs acc)
+  (cond
+    ((null? segs) acc)
+    (else (fis-split-ws (cdr segs)
+            (append acc (fis-nonempty (string-split (car segs) " ")))))))
+(define (fis-nonempty toks)
+  (cond
+    ((null? toks) (list))
+    ((equal? (string-trim (car toks)) "") (fis-nonempty (cdr toks)))
+    (else (cons (string-trim (car toks)) (fis-nonempty (cdr toks))))))
+
+(define (push-flake-input endpoint flake-lock name)
+  (let ((src (flakeinput:source-path flake-lock name)))
+    (cond
+      ((equal? src "")
+       (log-error (string-append "super-cache-save: cannot resolve source path for flake input '"
+                                 name "' from " flake-lock " — skip (stays a clone next warm)"))
+       0)
+      (else (push-one endpoint src)))))
+
+(define (push-flake-inputs endpoint flake-lock names)
+  (cond
+    ((null? names) 0)
+    (else (+ (push-flake-input endpoint flake-lock (car names))
+             (push-flake-inputs endpoint flake-lock (cdr names))))))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (emit key saved skipped tier reason)
+  (append-output (string-append "key=" key))
+  (append-output (string-append "saved=" saved))
+  (append-output (string-append "skipped=" skipped))
+  (append-output (string-append "tier=" tier))
+  (append-output (string-append "reason=" reason)))
+
+(define (main)
+  (let* ((key-in      (env-get "KEY" ""))
+         (spec-path   (env-get "SPEC_PATH" ""))
+         (outputs     (env-get "OUTPUTS" ""))
+         (endpoint    (env-get "ENDPOINT" ""))
+         (flake-lock  (env-get "FLAKE_LOCK" ""))
+         (flake-inputs (env-get "FLAKE_INPUTS" ""))
+         (key         (save-key key-in spec-path))
+         (cache-dir   (supercache:cache-dir)))
+    (cond
+      ;; No key ⇒ nothing to address; honest no-op (not a faked save).
+      ((equal? key "")
+       (log-info "super-cache-save: no key resolvable (KEY empty and SPEC_PATH absent/empty) — nothing persisted")
+       (emit key "false" "false" "none" "no-key")
+       (append-output "inputs-pushed=0")
+       0)
+      ;; No local durable tier, but a sui ENDPOINT is present ⇒ the durable
+      ;; write is a real `nix copy --to <endpoint>` of the built store paths (the
+      ;; sui TieredBackend persists them to Redis L1 + Postgres L2). This is the
+      ;; write-back that populates the cache so the next build is warm. We ALSO
+      ;; push the named flake-input SOURCE FODs (the WARM lever's push half) so a
+      ;; subsequent warm build preseeds them instead of re-git-cloning.
+      ((and (equal? cache-dir "") (not (equal? endpoint "")) (not (equal? outputs "")))
+       (let ((pushed (push-outputs endpoint outputs))
+             (inputs-pushed (cond
+                              ((or (equal? flake-lock "") (equal? flake-inputs "")) 0)
+                              (else (push-flake-inputs endpoint flake-lock
+                                      (flake-inputs->list flake-inputs))))))
+         (append-output (string-append "inputs-pushed=" (string-format "{}" inputs-pushed)))
+         (cond
+           ((= pushed 0)
+            (log-error (string-append "super-cache-save: 0 store paths pushed to " endpoint
+                                      " (no /nix/store path in outputs, or every copy failed)"))
+            (emit key "false" "false" "none" "nothing-pushed")
+            0)
+           (else
+            (log-info (string-append "super-cache-save: wrote closure(s) + "
+                                     (string-format "{}" inputs-pushed)
+                                     " flake-input source(s) to the sui super-cache " endpoint))
+            (emit key "true" "false" "sui" "pushed")
+            0))))
+      ;; No local durable tier AND no endpoint ⇒ nothing to persist to; honest no-op.
+      ((equal? cache-dir "")
+       (log-info "super-cache-save: no cache-dir + no sui endpoint — nothing persisted")
+       (emit key "false" "false" "none" "no-durable-tier")
+       0)
+      (else
+       (let ((reason (save-to-local cache-dir key outputs)))
+         (cond
+           ((equal? reason "already-present")
+            (log-info (string-append "super-cache-save: key already present (idempotent skip) " key))
+            (emit key "false" "true" "object" reason)
+            0)
+           ((equal? reason "written")
+            (log-info (string-append "super-cache-save: persisted " key " -> "
+                                     (supercache:local-entry-path cache-dir key)))
+            (emit key "true" "false" "object" reason)
+            0)
+           (else
+            (log-error (string-append "super-cache-save: failed to write "
+                                      (supercache:local-entry-path cache-dir key)))
+            (emit key "false" "false" "none" reason)
+            1)))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — super-cache-save helpers loaded; main skipped"))
+  (else
+   (exit (main))))

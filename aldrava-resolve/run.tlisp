@@ -1,0 +1,45 @@
+;; aldrava-resolve/run.tlisp — uniform run-context resolution.
+;;
+;; The downstream half of the aldrava pair: a heavy pipeline
+;; (`pull_request: [labeled]`-gated, or reachable via workflow_dispatch /
+;; schedule / repository_dispatch) runs this FIRST to normalize its own
+;; trigger context regardless of which event fired it. Pure computation, no
+;; network call, no GitHub token needed — mirrors `aldrava dispatch`'s own
+;; event-resolution phase without the command-matching or trust decision
+;; (those already happened upstream in aldrava-dispatch).
+;;
+;; Uses _tlisp-stdlib helpers: append-output, exec-capture, status-of,
+;; stdout-of, stderr-of, json-read-field, write-file, log-error.
+;;
+;; Inputs (env): LABEL_NAME
+;; Outputs (appended): should-run checkout-ref branch-ref base-ref
+;;                      pr-author is-develop reason
+
+(define ar:result-path "/tmp/aldrava-resolve-result.json")
+
+(define (main)
+  (let* ((label-name (env-get "LABEL_NAME" ""))
+         (argv (append (list "aldrava" "resolve")
+                       (if (equal? label-name "") (list) (list "--label-name" label-name))))
+         (result (apply exec-capture argv)))
+    (cond
+      ((not (= (status-of result) 0))
+       (log-error (string-append "aldrava-resolve: aldrava exited "
+                                 (string-format "{}" (status-of result))
+                                 ": " (stderr-of result)))
+       (exit (status-of result)))
+      (else
+        (write-file ar:result-path (stdout-of result))
+        (append-output (string-append "should-run=" (json-read-field ar:result-path ".should_run")))
+        (append-output (string-append "checkout-ref=" (json-read-field ar:result-path ".checkout_ref")))
+        (append-output (string-append "branch-ref=" (json-read-field ar:result-path ".branch_ref")))
+        (append-output (string-append "base-ref=" (json-read-field ar:result-path ".base_ref")))
+        (append-output (string-append "pr-author=" (json-read-field ar:result-path ".pr_author")))
+        (append-output (string-append "is-develop=" (json-read-field ar:result-path ".is_develop")))
+        (append-output (string-append "reason=" (json-read-field ar:result-path ".reason")))
+        (log-info (string-append "aldrava-resolve: should-run=" (json-read-field ar:result-path ".should_run")))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — aldrava-resolve loaded; main skipped"))
+  (else (main)))

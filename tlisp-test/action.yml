@@ -1,0 +1,31 @@
+name: 'pleme-io · tlisp-test'
+description: "Discover + run every *.test.tlisp via tatara-script --test. Each test runs as the stdlib + the sibling unit (<base>.tlisp) + the test, with TLISP_TEST=1 so the unit defines its functions but skips its main. Fails if any (deftest ...) fails."
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+outputs:
+  test-files:
+    description: "Number of *.test.tlisp files discovered."
+    value: ${{ steps.run.outputs.test-files }}
+  failed-files:
+    description: "Number of test files with a failing (deftest ...)."
+    value: ${{ steps.run.outputs.failed-files }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}

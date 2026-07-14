@@ -1,0 +1,71 @@
+;; super-cache-restore/run.tlisp — probe the tiered super-cache for a
+;; build's outputs (the WARM path). Canonical doctrine:
+;; theory/SUPER-CACHE-CI.md §II.3 (the tiered resolver).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info, read-file, string-trim,
+;;   supercache:content-key, supercache:cache-dir,
+;;   supercache:cache-local-has?, supercache:local-entry-path,
+;;   supercache:classify-tier.
+;;
+;; TIER-HONEST. The DESTINATION tiered resolver is Redis L1 → Postgres L2
+;; → object L3 → re-derive, queried via the sui service. Those tiers are
+;; a LiveTODO behind sui's SHIPPED StorageBackend / Store traits
+;; (rows 4/5/6). The NOW-path resolves a local content-addressed object
+;; tier (<cache-dir>/<key>.entry) — the same shape super-cache-save
+;; writes — and reports an honest miss for everything else. A miss is a
+;; legitimate cold-cache result, NOT a failure.
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+;; Resolve the content-addressed lookup key: an explicit key wins, else
+;; sha256 the build-spec (supercache:content-key). An unresolvable key
+;; ⇒ "" ⇒ an honest miss downstream.
+(define (restore-key key-in spec-path)
+  (cond
+    ((not (equal? key-in "")) key-in)
+    (else (supercache:content-key spec-path))))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (main)
+  (let* ((key-in    (env-get "KEY" ""))
+         (spec-path (env-get "SPEC_PATH" ""))
+         (endpoint  (env-get "ENDPOINT" ""))
+         (key       (restore-key key-in spec-path))
+         (cache-dir (supercache:cache-dir)))
+    (cond
+      ((equal? key "")
+       (log-info "super-cache-restore: no key resolvable (KEY empty and SPEC_PATH absent/empty) — reporting miss")
+       (append-output "key=")
+       (append-output "cache-hit=false")
+       (append-output "hit-tier=miss")
+       (append-output "outputs=")
+       0)
+      (else
+       (let* ((local-hit (supercache:cache-local-has? cache-dir key))
+              (tier      (supercache:classify-tier local-hit)))
+         (append-output (string-append "key=" key))
+         (cond
+           (local-hit
+            (let ((outs (string-trim (read-file (supercache:local-entry-path cache-dir key)))))
+              (log-info (string-append "super-cache-restore: cache HIT (" tier ") " key))
+              (append-output "cache-hit=true")
+              (append-output (string-append "hit-tier=" tier))
+              (append-output (string-append "outputs=" outs))
+              0))
+           (else
+            ;; No local hit. The Redis L1 / Postgres L2 tiers reachable
+            ;; via the sui service endpoint are a LiveTODO — never faked.
+            (when (not (equal? endpoint ""))
+              (log-info (string-append "super-cache-restore: local miss for " key
+                                       "; pending-super-cache-ci rows 4,5,6 — Redis/Pg tiers via " endpoint " are a LiveTODO")))
+            (log-info (string-append "super-cache-restore: cache MISS " key))
+            (append-output "cache-hit=false")
+            (append-output "hit-tier=miss")
+            (append-output "outputs=")
+            0)))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — super-cache-restore helpers loaded; main skipped"))
+  (else
+   (exit (main))))

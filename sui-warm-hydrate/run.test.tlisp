@@ -1,0 +1,61 @@
+;; sui-warm-hydrate/run.test.tlisp — (deftest …) matrix for the pure
+;; warm-decision surface, run via tatara-script --test by the tlisp-test
+;; action. The runner prepends the stdlib + the sibling run.tlisp
+;; (TLISP_TEST=1 gates main), then asserts. No live sui service is needed
+;; to prove this contract — the decision is pure (that IS the point: the
+;; whole DEGRADED-UNTIL-STORE honesty is a typed decision, not a runtime
+;; check that could silently drift).
+;;
+;; The matrix covers every (tiered-shipped? × endpoint-alive? ×
+;; requested-count × require-warm) cell that changes the reason
+;; discriminant or the exit code — so a future keystone flip
+;; (swh:tiered-warm-shipped? #f -> #t) has its warm branch already
+;; proven green.
+
+(deftest "swh:split-nonempty / swh:count — comma list, drops empties"
+  (assert (= (swh:count "") 0) "empty string => 0 keys")
+  (assert (= (swh:count "a") 1) "one key")
+  (assert (= (swh:count "a,b,c") 3) "three keys")
+  (assert (= (swh:count "a,,b,") 2) "trailing/blank entries dropped")
+  (assert (= (swh:count " a , b ") 2) "whitespace-only entries dropped, real ones kept"))
+
+(deftest "swh:source-str — explicit KEYS win over SPEC_PATHS"
+  (assert (equal? (swh:source-str "k1,k2" "s1,s2,s3") "k1,k2") "keys win")
+  (assert (equal? (swh:source-str "" "s1,s2,s3") "s1,s2,s3") "fall back to spec-paths")
+  (assert (equal? (swh:source-str "  " "s1") "s1") "whitespace-only keys => fall back"))
+
+(deftest "swh:can-warm? — only tiered-shipped ∧ alive ∧ >0 keys"
+  (assert (not (swh:can-warm? #f #t 3)) "backend unshipped => cannot warm (TODAY)")
+  (assert (not (swh:can-warm? #t #f 3)) "endpoint down => cannot warm")
+  (assert (not (swh:can-warm? #t #t 0)) "no keys => cannot warm")
+  (assert (swh:can-warm? #t #t 1) "shipped + alive + keys => can warm (the destination)"))
+
+(deftest "swh:reason — the discriminant across the matrix"
+  ;; no-keys dominates regardless of backend/endpoint
+  (assert (equal? (swh:reason #f #f 0) "no-keys") "0 keys => no-keys")
+  (assert (equal? (swh:reason #t #t 0) "no-keys") "0 keys => no-keys even when able")
+  ;; TODAY: backend unshipped => store-absent-degraded (the honest degrade)
+  (assert (equal? (swh:reason #f #t 3) "store-absent-degraded") "unshipped backend => store-absent")
+  (assert (equal? (swh:reason #f #f 3) "store-absent-degraded") "unshipped backend dominates endpoint")
+  ;; DESTINATION: backend shipped, endpoint decides
+  (assert (equal? (swh:reason #t #f 3) "endpoint-unreachable-degraded") "shipped + down => endpoint degrade")
+  (assert (equal? (swh:reason #t #t 3) "warmed") "shipped + alive + keys => warmed"))
+
+(deftest "swh:exit-code — the keyway three-code contract"
+  (assert (= (swh:exit-code "warmed" "false") 0) "warmed => 0")
+  (assert (= (swh:exit-code "no-keys" "false") 0) "no-keys => 0 (benign)")
+  (assert (= (swh:exit-code "no-keys" "true") 0) "no-keys => 0 even with require-warm")
+  (assert (= (swh:exit-code "store-absent-degraded" "false") 2) "degrade + no-require => 2 (clean no)")
+  (assert (= (swh:exit-code "endpoint-unreachable-degraded" "false") 2) "degrade + no-require => 2")
+  (assert (= (swh:exit-code "store-absent-degraded" "true") 1) "degrade + require-warm => 1 (loud)"))
+
+(deftest "swh:warmed-count / swh:hit-tier — honest zero until a real warm"
+  (assert (= (swh:warmed-count "store-absent-degraded" 5) 0) "degrade => 0 warmed")
+  (assert (= (swh:warmed-count "no-keys" 0) 0) "no-keys => 0 warmed")
+  (assert (= (swh:warmed-count "warmed" 5) 5) "warmed => all requested (destination)")
+  (assert (equal? (swh:hit-tier "store-absent-degraded") "none") "degrade => no tier")
+  (assert (equal? (swh:hit-tier "warmed") "redis") "warmed => redis L1"))
+
+(deftest "swh:tiered-warm-shipped? — the honest keystone is OFF today"
+  (assert (not swh:tiered-warm-shipped?)
+          "the tiered warm keystone (TieredBackend + warm-set RPC) is a LiveTODO — MUST be #f until it ships"))

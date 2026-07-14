@@ -137,6 +137,48 @@
   (toml-read-field "Cargo.toml" "[package]" "name"))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Cargo.gen.lock D2 freshness gate
+;; ────────────────────────────────────────────────────────────────
+;; Delta-only repos commit Cargo.gen.lock, byte-tied to Cargo.lock via
+;; sha256 (the D2 gate in substrate's lockfile-delta.nix). Any bump
+;; pipeline that rewrites Cargo.lock MUST leave with the tie intact —
+;; else every consumer flake eval dies on "lockfile-delta:
+;; Cargo.gen.lock is STALE" (2026-06-03: 11 fleet repos at once).
+;; Shared between rust-workspace-bump + cargo-bump + future bumpers.
+;;
+;; Freshness-driven, not attempt-driven: an absent Cargo.gen.lock
+;; (non-delta repo) or an intact tie short-circuits; only a broken tie
+;; triggers `gen build`; a regen that cannot restore the tie should be
+;; treated as FATAL by the caller (pushing it bricks downstream evals).
+
+(define (gen-lock-committed-sha)
+  (json-read-field "Cargo.gen.lock" ".cargo_lock_sha256"))
+
+(define (cargo-lock-sha)
+  (let ((r (exec-capture "sha256sum" "Cargo.lock")))
+    (if (= (status-of r) 0)
+      (car (string-split (string-trim (stdout-of r)) " "))
+      "")))
+
+(define (gen-lock-fresh?)
+  (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
+
+(define (regen-gen-lock)
+  (exec-capture "nix" "run" "github:pleme-io/gen" "--" "build" "."))
+
+(define (ensure-gen-lock-fresh)
+  (cond
+    ((not (path-exists? "Cargo.gen.lock")) #t)
+    ((gen-lock-fresh?) #t)
+    (else
+      (regen-gen-lock)
+      (cond
+        ((gen-lock-fresh?)
+         (log-info "Cargo.gen.lock regenerated (D2 tie restored)")
+         #t)
+        (else #f)))))
+
+;; ────────────────────────────────────────────────────────────────
 ;; Cargo publish failure-mode detection — typed predicates
 ;; ────────────────────────────────────────────────────────────────
 ;; Shared between rust-workspace-publish + cargo-publish-each-member +
@@ -237,6 +279,50 @@
   ;; workspace owner; without safe.directory, git refuses every
   ;; mutation with "fatal: detected dubious ownership".
   (exec-capture "git" "config" "--global" "--add" "safe.directory" "*"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Fail-loud subprocess + git ref guards
+;;
+;; `exec-check` returns the child's exit code (Value::Int) and only
+;; RAISES when the command cannot be spawned at all — a non-zero
+;; child exit is returned, never raised
+;; (tatara-lisp-script/src/stdlib/process.rs:25-38). So a bare
+;; `(exec-check …)` whose success matters SILENTLY proceeds when the
+;; step fails. That is the root cause of the 2026-06-03 auto-release
+;; version-skew class: git-commit-tag ran `git commit` / `git tag`
+;; as bare statements, ignored their non-zero exits, and tagged an
+;; un-bumped HEAD.
+;;
+;;   (exec-or-die (list "git" "commit" "-m" msg))  ; abort on failure
+;;   (git-tag-exists? "v1.2.3")                     ; #t iff tag present
+;;
+;; Use `exec-or-die` for every step that MUST succeed; keep bare
+;; `exec-check` only where a non-zero exit is tolerable by design
+;; (e.g. per-path `git add` of optional files).
+;; ────────────────────────────────────────────────────────────────
+
+;; Run CMD-LIST (a list of strings) with inherited stdio. Returns 0
+;; on success; on any non-zero child exit, log the failing command +
+;; code and abort the whole action with that code.
+(define (exec-or-die cmd-list)
+  (let ((status (apply exec-check cmd-list)))
+    (cond
+      ((= status 0) 0)
+      (else
+        (log-error (string-append "exec-or-die: `"
+                                  (string-join " " cmd-list)
+                                  "` failed (exit "
+                                  (string-format "{}" status) ")"))
+        (exit status)))))
+
+;; #t iff TAG already exists as a local ref. `git rev-parse --verify
+;; --quiet refs/tags/<tag>` exits 0 when the tag resolves, non-zero
+;; otherwise. Guards against re-creating a tag on a new commit
+;; (version skew) — `git tag -a <existing>` fails, but exec-check
+;; returns that code rather than raising, so callers must guard.
+(define (git-tag-exists? tag)
+  (= 0 (status-of (exec-capture "git" "rev-parse" "--verify" "--quiet"
+                                (string-append "refs/tags/" tag)))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; Log scanning — match any line by predicate
@@ -376,3 +462,305 @@
     (cond
       ((not (equal? env-v "")) env-v)
       (else (release-config-field section field default-value)))))
+
+;; ────────────────────────────────────────────────────────────────
+;; super-cache-ci — sui service + tiered-cache helpers
+;; ────────────────────────────────────────────────────────────────
+;; Shared across sui-service-up / super-cache-restore / super-cache-save
+;; (the ≥2-consumer rule — Pillar 12). Canonical doctrine:
+;; theory/SUPER-CACHE-CI.md. TIER-HONEST: the daemon-connected tiered
+;; path (Redis L1 → Postgres L2, SUPER-CACHE-CI.md §II.2) is a LiveTODO
+;; behind sui's SHIPPED traits — `Store` (sui-store/src/traits.rs:236)
+;; and `StorageBackend` (sui-cache/src/storage/mod.rs:27). The now-path
+;; helpers below cover (a) service config resolution + endpoint health,
+;; and (b) a local content-addressed object tier for the cache verbs.
+;; A `Result::Err` / a miss is mitigation, never a faked hit — every
+;; helper degrades to an honest miss/`#f`, never a rounded-up success.
+
+;; The sui-daemon-graph default UDS (sui-daemon-graph/src/main.rs:
+;; SocketPath::for_app("sui-graph")).
+(define (supercache:default-uds)
+  (string-append (env-get "XDG_RUNTIME_DIR" "/run") "/sui-graph.sock"))
+
+;; Resolve the sui service endpoint: env SUI_ENDPOINT
+;;   > .pleme-io-release.toml [super-cache-ci] endpoint
+;;     > the daemon's default UDS.
+(define (supercache:endpoint-resolve)
+  (config-resolve "SUI_ENDPOINT" "super-cache-ci" "endpoint"
+                  (supercache:default-uds)))
+
+;; A UDS endpoint is a filesystem path (no host:port colon). A colon ⇒
+;; a host:port TCP endpoint (a cluster `.svc`).
+(define (supercache:endpoint-is-uds? endpoint)
+  (not (string-contains? endpoint ":")))
+
+;; Endpoint liveness. UDS ⇒ the socket file exists (the daemon bound
+;; it). TCP (`.svc:port`) liveness needs a client ping the daemon does
+;; not yet ship a CLI for — `sui-daemon-client` is a LIBRARY
+;; (`DaemonClient`), not a binary — so it is a LiveTODO and returns #f.
+(define (supercache:endpoint-alive? endpoint)
+  (cond
+    ((supercache:endpoint-is-uds? endpoint) (path-exists? endpoint))
+    (else #f)))
+
+;; The honest structural never-touch-DURABLE-disk predicate
+;; (SUPER-CACHE-CI.md §III): true ONLY when the store is Postgres AND the
+;; cache is Redis AND the sandbox is tmpfs. A COMPUTED predicate, never a
+;; claimed constant — ephemeral/graphstore/local/disk ⇒ #f. Tier-honesty
+;; is CI-caught here, not prose.
+(define (supercache:never-touch-disk? store cache sandbox)
+  (and (equal? store "postgres")
+       (equal? cache "redis")
+       (equal? sandbox "tmpfs")))
+
+;; Content-addressed client-side cache key: sha256 over the build-spec
+;; file. This is the RESTORE↔BUILD↔SAVE lookup key threaded across the
+;; verbs; the daemon's derivation-level BLAKE3 store address remains
+;; authoritative for store-level dedup. Returns "" when the spec is
+;; absent (an unresolvable key ⇒ an honest miss downstream).
+(define (supercache:content-key spec-path)
+  (cond
+    ((equal? spec-path "") "")
+    ((not (path-exists? spec-path)) "")
+    (else
+      (let ((r (exec-capture "sha256sum" spec-path)))
+        (if (= (status-of r) 0)
+          (car (string-split (string-trim (stdout-of r)) " "))
+          "")))))
+
+;; Local content-addressed object tier (the now-path). The Redis L1 /
+;; Postgres L2 tiers are LiveTODO behind sui-cache::StorageBackend /
+;; sui-store::Store. The entry lives at <cache-dir>/<key>.entry and holds
+;; the space-separated output list — write-if-absent, content-addressed,
+;; NO lock (the eliminate-the-shared-cell property: two runners saving the
+;; same key produce identical content, so a race is benign).
+(define (supercache:cache-dir)
+  (config-resolve "SUI_CACHE_DIR" "super-cache-ci" "cache-dir" ""))
+
+(define (supercache:local-entry-path dir key)
+  (string-append dir "/" key ".entry"))
+
+(define (supercache:cache-local-has? dir key)
+  (and (not (equal? dir ""))
+       (not (equal? key ""))
+       (path-exists? (supercache:local-entry-path dir key))))
+
+;; Classify a probe result into a tier string. The now-path resolves only
+;; the local object tier or a miss; redis|pg are LiveTODO (they never
+;; classify true until TieredBackend + RedisBackend land).
+(define (supercache:classify-tier local-hit?)
+  (cond
+    (local-hit? "object")
+    (else "miss")))
+
+;; ────────────────────────────────────────────────────────────────
+;; flakeinput: — flake-input SOURCE FOD store-path algebra (the WARM
+;; flake-input lever).
+;;
+;; A locked flake input's fetched source tree is a fixed-output
+;; (content-addressed) store path derived PURELY from the lock's
+;; narHash: /nix/store/<h>-source whose CA is fixed:r:sha256:<narHash>.
+;; So the path is KNOWABLE from flake.lock WITHOUT any git clone /
+;; tarball fetch — which lets us
+;;   (a) PUSH the fetched source to the super-cache (super-cache-save's
+;;       flake-inputs push), and
+;;   (b) PRE-SEED it back on a warm pod via `nix copy --from <endpoint>`
+;;       (flake-input-preseed) — an in-cluster substituter pull (~8s for
+;;       the akeyless-main-repo 450MiB→70MiB xz source, measured) that
+;;       REPLACES the eval-time git clone the git fetcher would otherwise
+;;       run (~21–40s, egress-bound).
+;;
+;; WHY the explicit copy is load-bearing: nix's git/tarball fetcher
+;; NEVER consults binary-cache substituters for a source tree — even a
+;; LOCKED input with the FOD already present in the substituter is
+;; re-cloned (measured: warm `nix flake prefetch` == cold clone). So
+;; `substituters=<sui>` alone does nothing for the source; the source
+;; must be copied into the local store explicitly. Once local, the
+;; in-flake locked eval reuses the CA path and skips the clone (measured:
+;; in-flake drvPath eval 21s→14s, zero akeyless-main-repo clone).
+;;
+;; Shared by super-cache-save (push, `nix copy --to`) + flake-input-preseed
+;; (pull, `nix copy --from`): the ≥2-consumer rule (Pillar 12).
+;; ────────────────────────────────────────────────────────────────
+
+;; Resolve a path to absolute (nix path literals need a leading "/"; a bare
+;; "flake.lock" is not one). readlink -f is on every runner + the nixos/nix
+;; image; on failure the input passes through unchanged (an already-absolute
+;; path is idempotent under readlink -f).
+(define (flakeinput:abs-path p)
+  (let ((r (exec-capture "readlink" "-f" p)))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) p)))
+
+;; The locked narHash of input <name> read straight from a flake.lock via
+;; pure-nix builtins.fromJSON (no jq). flake-lock may be relative — it is
+;; resolved to absolute here. "" on any failure (missing node, unreadable
+;; lock, nix error).
+(define (flakeinput:narhash flake-lock name)
+  (let ((r (exec-capture "nix" "eval" "--impure" "--raw" "--expr"
+             (string-append
+               "let l = builtins.fromJSON (builtins.readFile "
+               (flakeinput:abs-path flake-lock)
+               "); in l.nodes.\"" name "\".locked.narHash"))))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+;; nix32(base32)-encode an SRI/other-form sha256 narHash across nix
+;; versions: `nix hash convert` (nix 2.19+) first, else the older
+;; `nix hash to-base32`. "" iff neither is available/succeeds.
+(define (flakeinput:narhash->nix32 narhash)
+  (let ((c (exec-capture "nix" "hash" "convert" "--hash-algo" "sha256"
+                         "--to" "nix32" narhash)))
+    (cond
+      ((= (status-of c) 0) (string-trim (stdout-of c)))
+      (else
+       (let ((o (exec-capture "nix" "hash" "to-base32" narhash)))
+         (if (= (status-of o) 0) (string-trim (stdout-of o)) ""))))))
+
+;; The fixed-output SOURCE store path for a locked narHash (recursive
+;; sha256, tree name "source") — `nix-store --print-fixed-path` over the
+;; nix32-encoded hash. "" on any failure.
+(define (flakeinput:narhash->source-path narhash)
+  (cond
+    ((equal? narhash "") "")
+    (else
+     (let ((b32 (flakeinput:narhash->nix32 narhash)))
+       (cond
+         ((equal? b32 "") "")
+         (else
+          (let ((pr (exec-capture "nix-store" "--print-fixed-path"
+                                  "--recursive" "sha256" b32 "source")))
+            (if (= (status-of pr) 0) (string-trim (stdout-of pr)) ""))))))))
+
+;; The SOURCE store path for input <name> in <flake-lock> (absolute path).
+;; "" iff the node/narHash/path can't be resolved — the caller treats ""
+;; as an honest skip, NEVER a faked push/preseed.
+(define (flakeinput:source-path flake-lock name)
+  (flakeinput:narhash->source-path (flakeinput:narhash flake-lock name)))
+
+;; ────────────────────────────────────────────────────────────────
+;; OCI delivery — tag algebra + skopeo push/inspect (the
+;; super-cache-ci DELIVERY / MANIFEST leg). Shared across
+;; zot-push + manifest-list-join (the ≥2-consumer rule, Pillar 12).
+;;
+;; Namespaced `oci:` so these NEVER collide with an action's local
+;; defs. `ghcr-publish/run.tlisp` still carries its own bare
+;; `autobump-tag` / `image-base` / `target-ref` / `moving-tag` +
+;; `skopeo-copy-archive` / `skopeo-copy-remote`; converging it onto
+;; these `oci:` helpers is a NAMED LiveTODO (a follow-up refactor,
+;; kept out of this slice to avoid disturbing a shipped, tested file).
+;;
+;; `insecure?` threads the cluster-internal-Zot case: the in-cluster
+;; registry is plain-http / self-signed, so pushes/inspects add the
+;; skopeo `--*-tls-verify=false` flags. ghcr.io (public TLS) passes
+;; insecure?=#f.
+;; ────────────────────────────────────────────────────────────────
+
+;; The AUTOBUMP per-arch exact tag <arch>-r<run>-<sha> — sortable
+;; (r<run> = the numeric key a Flux ImagePolicy extracts), immutable,
+;; traceable (<sha>). NEVER a moving tag; NEVER a deploy `:latest`.
+(define (oci:autobump-tag arch run sha)
+  (string-append arch "-r" run "-" sha))
+
+;; The MULTI-ARCH index coordinate r<run>-<sha> (NO arch prefix — a
+;; manifest list spans arches). Its per-arch children carry
+;; oci:autobump-tag; the index tag is what an environment pins.
+(define (oci:index-tag run sha)
+  (string-append "r" run "-" sha))
+
+;; The moving human pointer <arch>-latest — a convenience pointer that
+;; is NEVER a deploy source (org ★★ AUTOBUMP law).
+(define (oci:moving-tag arch)
+  (string-append arch "-latest"))
+
+;; Image base: an explicit `repo` wins; else compose registry/image.
+(define (oci:image-base repo registry image)
+  (cond
+    ((not (equal? repo "")) repo)
+    (else (string-append registry "/" image))))
+
+;; Compose a target base with a service repo-shape. Precedence:
+;;   explicit `repo` > `registry/image` > `registry/<repo-prefix><svc>`.
+;; "" when no target is resolvable (an honest need-target error). Shared
+;; by zot-push + manifest-list-join (repo-prefix = "akeyless-" at the
+;; akeyless call sites).
+(define (oci:compose-base repo registry image repo-prefix svc)
+  (cond
+    ((not (equal? repo "")) repo)
+    ((not (equal? image "")) (string-append registry "/" image))
+    ((not (equal? svc ""))  (string-append registry "/" repo-prefix svc))
+    (else "")))
+
+;; Full ref = <base>:<tag>.
+(define (oci:target-ref base tag)
+  (string-append base ":" tag))
+
+;; A truthy string flag → bool.
+(define (oci:flag-true? s) (equal? (string-trim s) "true"))
+
+;; skopeo copy docker-archive:<tarball> -> docker://<dst-ref>. Auth is
+;; a pre-condition (docker login to the target registry). Returns the
+;; child status (0 = ok). insecure? ⇒ --dest-tls-verify=false.
+(define (oci:skopeo-push-archive tarball dst-ref insecure?)
+  (let ((tls (if insecure? (list "--dest-tls-verify=false") (list))))
+    (status-of (apply exec-capture
+      (append (list "skopeo" "--insecure-policy" "copy")
+              tls
+              (list (string-append "docker-archive:" tarball)
+                    (string-append "docker://" dst-ref)))))))
+
+;; skopeo copy docker://<src> -> docker://<dst> (moving-tag repush /
+;; cross-registry promote). Returns the child status (0 = ok).
+(define (oci:skopeo-copy-remote src-ref dst-ref insecure?)
+  (let ((tls (if insecure?
+               (list "--src-tls-verify=false" "--dest-tls-verify=false")
+               (list))))
+    (status-of (apply exec-capture
+      (append (list "skopeo" "--insecure-policy" "copy")
+              tls
+              (list (string-append "docker://" src-ref)
+                    (string-append "docker://" dst-ref)))))))
+
+;; The repository DIGEST of a pushed ref — the EXACT deploy coordinate
+;; (what a manifest-list joins + what an environment pins by digest).
+;; `skopeo inspect --format {{.Digest}}`. Returns "" on failure — the
+;; caller must treat "" as an honest miss, NEVER emit a faked digest.
+(define (oci:skopeo-remote-digest ref insecure?)
+  (let* ((tls (if insecure? (list "--tls-verify=false") (list)))
+         (r (apply exec-capture
+              (append (list "skopeo" "--insecure-policy" "inspect"
+                            "--format" "{{.Digest}}")
+                      tls
+                      (list (string-append "docker://" ref))))))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+;; ────────────────────────────────────────────────────────────────
+;; BLAKE3 content-addressing (the ATTEST leg). Shared across
+;; cartorio-attest + tameshi-attest (the ≥2-consumer rule). A real
+;; b3sum (on-PATH, baked into the runner image), else `nix run
+;; nixpkgs#b3sum`; "" iff NO BLAKE3 tool exists — callers FAIL rather
+;; than emit a receipt that lies about its algorithm.
+;;
+;; `tameshi-attest/run.tlisp` still carries its own `attest:blake3-file`
+;; / `attest:cmd-present?` / `attest:b3-first`; converging it onto
+;; these `hash:` helpers is a NAMED LiveTODO (same follow-up-refactor
+;; discipline as the oci: block above).
+;; ────────────────────────────────────────────────────────────────
+
+(define (hash:cmd-present? name)
+  (= 0 (status-of (exec-capture "sh" "-c"
+                    (string-append "command -v " name " >/dev/null 2>&1")))))
+
+;; First whitespace-delimited field of a b3sum result ("<hex>  <path>"),
+;; or "" when the command failed.
+(define (hash:b3-first result)
+  (if (= (status-of result) 0)
+    (car (string-split (string-trim (stdout-of result)) " "))
+    ""))
+
+;; BLAKE3 of a file: prefer on-PATH b3sum, fall back to nix. "" iff none.
+(define (hash:blake3-file path)
+  (cond
+    ((hash:cmd-present? "b3sum")
+     (hash:b3-first (exec-capture "b3sum" path)))
+    ((hash:cmd-present? "nix")
+     (hash:b3-first (exec-capture "nix" "run" "nixpkgs#b3sum" "--" path)))
+    (else "")))

@@ -1,0 +1,51 @@
+name: 'pleme-io · container-boot-check'
+description: 'Start a container and poll a health command until it responds or a bounded attempt count is exhausted. Generic — any image, any health command, no secrets. Dumps container logs on timeout so a boot failure is never silent.'
+branding: { icon: 'activity', color: 'green' }
+
+inputs:
+  image:
+    description: "Image ref to start (e.g. ghcr.io/pleme-io/rabbitmq:3.13.7-nix0)"
+    required: true
+  health-cmd:
+    description: "Shell command run inside the container via `docker exec` on each poll; success (exit 0) means healthy (e.g. \"rabbitmq-diagnostics -q ping\")"
+    required: true
+  env:
+    description: "Newline-separated KEY=VALUE pairs passed to `docker run -e`"
+    required: false
+    default: ""
+  max-attempts:
+    description: "Poll attempts before giving up"
+    required: false
+    default: "30"
+  poll-interval-seconds:
+    description: "Seconds to sleep between poll attempts"
+    required: false
+    default: "3"
+
+outputs:
+  healthy:
+    value: ${{ steps.run.outputs.healthy }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        HEALTH_CMD: ${{ inputs.health-cmd }}
+        CONTAINER_ENV: ${{ inputs.env }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}

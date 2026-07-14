@@ -1,0 +1,27 @@
+;; ghcr-publish/run.test.tlisp — (deftest …) smoke for the AUTOBUMP tag algebra
+;; + ref composition, run via tatara-script --test by the tlisp-test action.
+
+(deftest "autobump-tag is the sortable exact <arch>-r<run>-<sha>"
+  (assert (equal? (autobump-tag "amd64" "412" "9c1f2ab") "amd64-r412-9c1f2ab")
+          "amd64 exact tag")
+  (assert (equal? (autobump-tag "arm64" "7" "deadbeef") "arm64-r7-deadbeef")
+          "arm64 exact tag"))
+
+(deftest "moving-tag is the human <arch>-latest pointer (never a deploy source)"
+  (assert (equal? (moving-tag "amd64") "amd64-latest") "amd64 latest")
+  (assert (equal? (moving-tag "arm64") "arm64-latest") "arm64 latest"))
+
+(deftest "image-base prefers REPO, falls back to REGISTRY/IMAGE"
+  (assert (equal? (image-base "ghcr.io/pleme-io/svc" "ghcr.io" "x/y") "ghcr.io/pleme-io/svc")
+          "REPO wins when set")
+  (assert (equal? (image-base "" "ghcr.io" "pleme-io/svc") "ghcr.io/pleme-io/svc")
+          "fallback composes registry/image"))
+
+(deftest "target-ref appends :tag to the base"
+  (assert (equal? (target-ref "ghcr.io/pleme-io/svc" "amd64-r1-abc")
+                  "ghcr.io/pleme-io/svc:amd64-r1-abc")
+          "exact ref")
+  (assert (equal? (target-ref (image-base "" "ghcr.io" "pleme-io/svc")
+                              (autobump-tag "amd64" "99" "cafe"))
+                  "ghcr.io/pleme-io/svc:amd64-r99-cafe")
+          "composed end-to-end"))

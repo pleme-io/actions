@@ -1,5 +1,5 @@
 name: 'pleme-io · detect-repo-type'
-description: 'Auto-detect the repo type from manifest file presence at the root. Emits a typed identifier (rust-workspace / rust-single-crate / npm / python / helm / ansible-collection / ruby-gem / github-action / unknown) that downstream jobs route on.'
+description: 'Auto-detect the repo type from manifest file presence at the root. Emits a typed identifier (rust-workspace / rust-single-crate / go / npm / python / helm / ansible-collection / ruby-gem / github-action / unknown) that downstream jobs route on.'
 branding:
   icon: 'eye'
   color: 'blue'
@@ -9,7 +9,7 @@ branding:
 
 outputs:
   repo-type:
-    description: "One of: rust-workspace, rust-single-crate, npm, python, helm, ansible-collection, ruby-gem, github-action, unknown"
+    description: "One of: rust-workspace, rust-single-crate, go, npm, python, helm, ansible-collection, ruby-gem, github-action, unknown"
     value: ${{ steps.detect.outputs.repo-type }}
   manifest-path:
     description: "Path of the manifest that drove the detection (for diagnostics)"

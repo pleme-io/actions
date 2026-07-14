@@ -1,0 +1,54 @@
+name: 'pleme-io · darwin-zig-build'
+description: 'cargo zigbuild --release for an apple-darwin target (cross-compiles from Linux), stage binary + sha256 into ./dist'
+branding:
+  icon: 'box'
+  color: 'gray-dark'
+
+inputs:
+  binary-name:
+    description: "Cargo binary name (target/<triple>/release/<name> and the staged artifact basename)"
+    required: true
+  suffix:
+    description: "Artifact suffix appended to <binary-name> (e.g. macos-universal)"
+    required: true
+  target:
+    description: "apple-darwin target triple"
+    required: false
+    default: "universal2-apple-darwin"
+  package:
+    description: "Cargo package to build (workspace member); empty = whole workspace"
+    required: false
+    default: ""
+  features:
+    description: "Space-separated cargo features; empty = no --features flag"
+    required: false
+    default: ""
+  no-default-features:
+    description: "When 'true', pass --no-default-features"
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Load run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Zigbuild + stage
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BIN:         ${{ inputs.binary-name }}
+        SUFFIX:      ${{ inputs.suffix }}
+        TARGET:      ${{ inputs.target }}
+        PACKAGE:     ${{ inputs.package }}
+        FEATURES:    ${{ inputs.features }}
+        NO_DEFAULTS: ${{ inputs.no-default-features }}

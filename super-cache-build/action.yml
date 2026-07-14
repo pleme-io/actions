@@ -1,0 +1,108 @@
+name: 'pleme-io · super-cache-build'
+description: 'THE CORE super-cache-ci verb — build a derivation via the sui service against the tiered super-cache, keyed by the gen build-spec (RAM eval, tmpfs sandbox, DB store). Skips the derive on a restore cache hit. TIER-HONEST: the pure derive decision + the cache-hit short-circuit are shipped + unit-tested; the live derive (sui-graph build RPC/CLI) is a named LiveTODO — sui-daemon-client is a library not a binary — reported honestly, never a faked green (require-build=true fails loud).'
+branding:
+  icon: 'cpu'
+  color: 'green'
+
+inputs:
+  spec-path:
+    description: "Path to the typed gen build-spec (from gen-build-spec), e.g. Cargo.build-spec.json. Used to derive the key when key is empty."
+    required: false
+    default: ""
+  key:
+    description: "Content-addressed cache key (from super-cache-restore). Empty => computed as sha256 over spec-path."
+    required: false
+    default: ""
+  cache-hit:
+    description: "'true' when super-cache-restore reported a hit — short-circuits the derive."
+    required: false
+    default: "false"
+  restored-outputs:
+    description: "Store paths super-cache-restore already warmed (echoed on a hit)."
+    required: false
+    default: ""
+  force:
+    description: "Re-derive even when super-cache-restore reported a hit."
+    required: false
+    default: "false"
+  endpoint:
+    description: "The sui service endpoint (from sui-service-up). Falls back to the [super-cache-ci] endpoint config then the daemon's default UDS."
+    required: false
+    default: ""
+  sandbox:
+    description: "tmpfs | disk — the build sandbox (from sui-service-up). tmpfs is the never-touch-disk path."
+    required: false
+    default: "tmpfs"
+  store-backend:
+    description: "postgres | graphstore | local (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "graphstore"
+  cache-backend:
+    description: "redis | local | s3 (from sui-service-up). Feeds the honest never-touch-disk report."
+    required: false
+    default: "local"
+  require-build:
+    description: "'true' => a derive with no live sui build path (the LiveTODO) is a hard failure (exit 1) instead of an honest built=false. NEVER a faked green."
+    required: false
+    default: "false"
+
+outputs:
+  built:
+    description: "true if a derive ran, false on a cache-hit short-circuit or the derive LiveTODO."
+    value: ${{ steps.run.outputs.built }}
+  from-cache:
+    description: "true when the outputs came from the super-cache (no derive)."
+    value: ${{ steps.run.outputs.from-cache }}
+  outputs:
+    description: "Built (or restored) store paths (empty on the derive LiveTODO)."
+    value: ${{ steps.run.outputs.outputs }}
+  output-hashes:
+    description: "BLAKE3 hashes of the outputs (empty until the live derive ships)."
+    value: ${{ steps.run.outputs.output-hashes }}
+  eval-ms:
+    description: "RAM eval time in ms (empty until the live derive ships)."
+    value: ${{ steps.run.outputs.eval-ms }}
+  build-ms:
+    description: "Build time in ms (empty until the live derive ships)."
+    value: ${{ steps.run.outputs.build-ms }}
+  key:
+    description: "The resolved content-addressed key (threaded into super-cache-save)."
+    value: ${{ steps.run.outputs.key }}
+  never-touch-disk:
+    description: "true only when store=postgres AND cache=redis AND sandbox=tmpfs (a computed predicate, never a claim)."
+    value: ${{ steps.run.outputs.never-touch-disk }}
+  reason:
+    description: "cache-hit | derive-livetodo — why this run ended where it did."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run super-cache-build
+      id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        SPEC_PATH: ${{ inputs.spec-path }}
+        KEY: ${{ inputs.key }}
+        CACHE_HIT: ${{ inputs.cache-hit }}
+        RESTORED_OUTPUTS: ${{ inputs.restored-outputs }}
+        FORCE: ${{ inputs.force }}
+        ENDPOINT: ${{ inputs.endpoint }}
+        SANDBOX: ${{ inputs.sandbox }}
+        STORE_BACKEND: ${{ inputs.store-backend }}
+        CACHE_BACKEND: ${{ inputs.cache-backend }}
+        REQUIRE_BUILD: ${{ inputs.require-build }}

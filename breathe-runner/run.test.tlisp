@@ -1,0 +1,48 @@
+;; breathe-runner/run.test.tlisp — (deftest …) units for the pure
+;; posture logic, run by the tlisp-test action via `tatara-script
+;; --test`. The harness prepends the stdlib + the sibling run.tlisp
+;; (with TLISP_TEST=1, so its main is skipped) then this file, so the
+;; real br:* functions are driven directly — no runner env, no exit.
+
+(deftest "br:classify-capacity normalizes the karpenter capacity-type"
+  (assert (equal? (br:classify-capacity "spot") "spot") "spot -> spot")
+  (assert (equal? (br:classify-capacity "  spot ") "spot") "trimmed spot -> spot")
+  (assert (equal? (br:classify-capacity "on-demand") "on-demand") "on-demand -> on-demand")
+  (assert (equal? (br:classify-capacity "") "unknown") "empty -> unknown")
+  (assert (equal? (br:classify-capacity "reserved") "reserved") "unknown value passes through"))
+
+(deftest "br:spot-ok? only demands spot when required"
+  (assert (br:spot-ok? "spot" "true") "spot satisfies require-spot")
+  (assert (not (br:spot-ok? "on-demand" "true")) "on-demand fails require-spot")
+  (assert (not (br:spot-ok? "unknown" "true")) "unknown fails require-spot")
+  (assert (br:spot-ok? "on-demand" "false") "not required -> ok"))
+
+(deftest "br:taint-ok? demands a non-empty node group when required"
+  (assert (br:taint-ok? "camelot-spot" "true") "non-empty group satisfies")
+  (assert (not (br:taint-ok? "" "true")) "empty group fails require")
+  (assert (not (br:taint-ok? "   " "true")) "whitespace-only group fails require")
+  (assert (br:taint-ok? "" "false") "not required -> ok"))
+
+(deftest "br:scale-ok? demands min-runners==0 when required"
+  (assert (br:scale-ok? "0" "true") "0 satisfies scale-to-zero")
+  (assert (not (br:scale-ok? "1" "true")) "1 fails scale-to-zero")
+  (assert (not (br:scale-ok? "" "true")) "unknown fails scale-to-zero")
+  (assert (br:scale-ok? "2" "false") "not required -> ok"))
+
+(deftest "br:drain-armed? never claims armed without the handler present"
+  (assert (br:drain-armed? "true" "ready") "requested + present -> armed")
+  (assert (not (br:drain-armed? "true" "")) "requested but absent -> NOT armed")
+  (assert (not (br:drain-armed? "false" "ready")) "present but not requested -> NOT armed"))
+
+(deftest "br:scale-value maps min-runners to the tri-state output"
+  (assert (equal? (br:scale-value "0") "true") "0 -> true")
+  (assert (equal? (br:scale-value "") "unknown") "empty -> unknown")
+  (assert (equal? (br:scale-value "5") "false") "5 -> false"))
+
+(deftest "br:assess collects exactly the unmet requirements"
+  (assert (= (length (br:assess "spot" "camelot-spot" "0" "true" "true" "true")) 0)
+          "full posture -> no failures")
+  (assert (= (length (br:assess "on-demand" "" "3" "true" "true" "false")) 2)
+          "on-demand + empty group (s2z not required) -> 2 failures")
+  (assert (= (length (br:assess "unknown" "" "" "true" "true" "true")) 3)
+          "nothing satisfied, all required -> 3 failures"))

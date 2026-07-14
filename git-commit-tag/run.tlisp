@@ -4,7 +4,7 @@
 (define version (env-required "VERSION"))
 (define tag-prefix (env-get "TAG_PREFIX" "v"))
 (define template (env-get "COMMIT_MESSAGE_TEMPLATE" "release: workspace v{version}"))
-(define add-paths-str (env-get "ADD_PATHS" "Cargo.toml Cargo.lock Cargo.nix"))
+(define add-paths-str (env-get "ADD_PATHS" "Cargo.toml Cargo.lock Cargo.nix Cargo.gen.lock"))
 (define identity-name (env-get "IDENTITY_NAME" "github-actions[bot]"))
 (define identity-email (env-get "IDENTITY_EMAIL"
                         "41898282+github-actions[bot]@users.noreply.github.com"))
@@ -18,20 +18,47 @@
 (define commit-message (string-replace template "{version}" version))
 (define add-paths (string-split add-paths-str " "))
 
-;; Configure bot identity for this repo.
-(exec-check "git" "config" "user.name" identity-name)
-(exec-check "git" "config" "user.email" identity-email)
+;; Configure bot identity for this repo (must succeed — a missing
+;; identity makes the commit below fail in a more confusing way).
+(exec-or-die (list "git" "config" "user.name" identity-name))
+(exec-or-die (list "git" "config" "user.email" identity-email))
 
-;; Stage paths. We pass each path as a separate arg so globs that
-;; expand to nothing don't fail the whole stage step.
-(apply exec-check (append (list "git" "add") add-paths))
+;; Tag-collision guard — checked BEFORE any mutation (fail fast).
+;; `git tag -a <existing>` fails, but exec-check returns that non-zero
+;; code rather than raising, so the old bare call swallowed it and the
+;; stale, pre-existing tag got pushed (the 2026-06-03 version-skew
+;; bug). Refuse to release onto an existing tag; the operator must
+;; reconcile the workspace version against it first.
+(when (git-tag-exists? tag)
+  (log-error (string-append "tag " tag " already exists — refusing to "
+                            "release onto an existing tag (version-skew "
+                            "guard). Reconcile the workspace version "
+                            "against the existing tag before releasing."))
+  (exit 1))
 
-;; Commit. exec-check raises on non-zero exit so callers can see
-;; the failure mode via the runner log.
-(exec-check "git" "commit" "-m" commit-message)
+;; Stage each path SEPARATELY. `git add a b c` fails ATOMICALLY if ANY
+;; pathspec doesn't match an existing file — e.g. `Cargo.nix` in a repo
+;; that doesn't use crate2nix, or `Cargo.lock` in some layouts: git
+;; prints `fatal: pathspec '…' did not match any files`, exits 128, and
+;; stages NOTHING. That left rust-workspace-bump's version write
+;; unstaged → an empty commit (`git commit` → "nothing to commit") →
+;; the annotated tag landed on the UN-BUMPED HEAD and the published
+;; version never advanced (the 2026-06-03 never-advancing-version bug;
+;; root-caused via a faithful local repro). Per path, a missing optional
+;; file fails on its own — exec-check returns the status without raising
+;; — and the existing paths (Cargo.toml, Cargo.lock when present) still
+;; stage.
+(for-each (lambda (p) (exec-check "git" "add" p)) add-paths)
 
-;; Annotated tag.
-(exec-check "git" "tag" "-a" tag "-m" commit-message)
+;; Commit. exec-check RETURNS the exit code (it does NOT raise on a
+;; non-zero child), so a bare call would silently proceed to tagging
+;; even when the commit failed — e.g. an empty commit because nothing
+;; staged — landing the tag on an un-bumped HEAD (the 2026-06-03
+;; version-skew bug). exec-or-die aborts loudly instead.
+(exec-or-die (list "git" "commit" "-m" commit-message))
+
+;; Annotated tag — must succeed, else the release ships without its tag.
+(exec-or-die (list "git" "tag" "-a" tag "-m" commit-message))
 
 (append-output (string-append "tag=" tag))
 (log-info (string-append "committed + tagged " tag))

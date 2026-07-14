@@ -120,17 +120,44 @@
 
 (define error-count (lint-all files 0))
 
+;; ── Layer 3: semantic rule lint ────────────────────────────────
+;; Re-invoke this tatara-script binary's `lint` subcommand (the
+;; git-mutation-discard rule + any future rules in tatara-lisp-lint)
+;; over the repo. The binary is on PATH because the tatara-script@v1
+;; action that runs this script installed it there. Capability-probed
+;; via --help so it no-ops cleanly on a tatara-script that predates
+;; the `lint` subcommand (no shell — exec-capture is the typed
+;; subprocess surface).
+(define (semantic-rule-errors)
+  (let* ((help (exec-capture "tatara-script" "--help"))
+         (help-text (string-append (stdout-of help) (stderr-of help))))
+    (cond
+      ((not (string-contains? help-text "lint [path"))
+       (log-info "  semantic rule lint skipped (tatara-script has no lint subcommand yet)")
+       0)
+      (else
+       (let ((r (exec-capture "tatara-script" "lint" ".")))
+         (cond
+           ((= (status-of r) 0)
+            (log-info "  semantic rule lint: clean")
+            0)
+           (else
+            (log-error (string-trim (stdout-of r)))
+            1)))))))
+
+(define total-errors (+ error-count (semantic-rule-errors)))
+
 (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
-(append-output (string-append "errors-found=" (string-format "{}" error-count)))
+(append-output (string-append "errors-found=" (string-format "{}" total-errors)))
 
 (cond
-  ((= error-count 0)
+  ((= total-errors 0)
    (log-info (string-append "all " (string-format "{}" file-count) " files clean"))
    (exit 0))
   ((equal? fail-flag "true")
-   (log-error (string-append (string-format "{}" error-count) " file(s) failed lint"))
+   (log-error (string-append (string-format "{}" total-errors) " file(s) failed lint"))
    (exit 1))
   (else
-   (log-info (string-append (string-format "{}" error-count)
+   (log-info (string-append (string-format "{}" total-errors)
                             " file(s) failed lint — continuing (fail-on-unbalanced=false)"))
    (exit 0)))

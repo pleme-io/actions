@@ -55,8 +55,21 @@ jobs:
       - uses: actions/checkout@v4
       # Self-host the lint action from the same repo's path so PRs
       # can be tested against their own changes without first
-      # tagging a release.
+      # tagging a release. ./tlisp-lint runs three layers in tatara-lisp:
+      # paren/string/comment balance, a parser dry-run, and the semantic
+      # rule lint (git-mutation-discard et al. via `tatara-script lint`).
+      # No extra shell here — the orchestration lives in run.tlisp.
       - uses: ./tlisp-lint
+
+  tlisp-tests:
+    name: Run every *.test.tlisp via tatara-script --test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Discovers each <action>/run.test.tlisp, runs its (deftest ...) forms
+      # against the real run.tlisp (TLISP_TEST=1 gates the unit's main), and
+      # fails the gate on any failing assertion.
+      - uses: ./tlisp-test
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files

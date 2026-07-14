@@ -1,0 +1,80 @@
+name: test-cartorio-attest
+on:
+  push:
+    paths:
+      - 'cartorio-attest/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'cartorio-attest/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE — the action's row in the super-cache-ci CI matrix.
+# Builds a real Nix store path, derives the three-pillar receipt over its
+# closure, and asserts the DIRECT effect — the written SBOM / SLSA /
+# receipt FILES + a reproducible BLAKE3 receipt hash — not the forwarded
+# output VALUES (which reach a consumer only once tatara-script@v1 grows
+# the declared forwards; a named coordination LiveTODO). The output
+# plumbing is proven by run.test.tlisp + the files' own content.
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Nix provides both b3sum (the receipt hash) and a real store path
+      # + closure (the Nix-closure SBOM source).
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Build a real store path for the SBOM closure
+        id: build
+        run: |
+          set -euo pipefail
+          OUT=$(nix build nixpkgs#hello --no-link --print-out-paths)
+          echo "store-path=$OUT" >> "$GITHUB_OUTPUT"
+      - id: cartorio
+        uses: ./cartorio-attest
+        with:
+          subject: akeyless-auth
+          image-ref: zot.internal/akeyless-auth:r412-9c1f2ab
+          image-digest: sha256:deadbeefcafebabe
+          nix-store-path: ${{ steps.build.outputs.store-path }}
+          prev-receipt-hash: 00000000buildreceipt
+          sbom-path: ${{ github.workspace }}/sbom.cdx.json
+          slsa-path: ${{ github.workspace }}/slsa.json
+          receipt-path: ${{ github.workspace }}/receipt.json
+          sign: "true"   # exercises the honest signing LiveTODO warning path
+
+      - name: Assert the three pillars + reproduce the receipt BLAKE3
+        env:
+          RPATH: ${{ github.workspace }}/receipt.json
+          SPATH: ${{ github.workspace }}/sbom.cdx.json
+          LPATH: ${{ github.workspace }}/slsa.json
+        run: |
+          set -euo pipefail
+          test -f "$RPATH" || { echo "no receipt at $RPATH"; exit 1; }
+          test -f "$SPATH" || { echo "no SBOM at $SPATH"; exit 1; }
+          test -f "$LPATH" || { echo "no SLSA at $LPATH"; exit 1; }
+          # receipt shape + chain link + subject digest
+          jq -e '.schema == "pleme-io.cartorio.compliance-receipt/v1"' "$RPATH" >/dev/null
+          jq -e '.image.digest == "sha256:deadbeefcafebabe"' "$RPATH" >/dev/null
+          jq -e '.pillars.ledger.prev == "00000000buildreceipt"' "$RPATH" >/dev/null
+          jq -e '.pillars.provenance.predicate_type == "https://slsa.dev/provenance/v1"' "$RPATH" >/dev/null
+          # sign=true requested but signing is a LiveTODO — must be HONEST
+          jq -e '.attestation.signed == false and .attestation.signature == null' "$RPATH" >/dev/null
+          jq -e '.attestation.hash_algorithm == "blake3"' "$RPATH" >/dev/null
+          # SBOM: a real Nix-closure CycloneDX with >0 components (hello's closure)
+          jq -e '.bomFormat == "CycloneDX" and (.components | length) > 0' "$SPATH" >/dev/null
+          # SLSA: in-toto statement + provenance predicate + subject digest
+          jq -e '._type == "https://in-toto.io/Statement/v1"' "$LPATH" >/dev/null
+          jq -e '.subject[0].digest.sha256 == "deadbeefcafebabe"' "$LPATH" >/dev/null
+          jq -e '.predicate.buildDefinition.buildType | length > 0' "$LPATH" >/dev/null
+          # independently reproduce the receipt hash (proves a real, verifiable
+          # BLAKE3 content-address, not a decorative field).
+          STORED=$(jq -r '.attestation.receipt_hash' "$RPATH")
+          printf '%s' "$(jq -S -c '.attestation.receipt_hash = ""' "$RPATH")" > "$RUNNER_TEMP/canon.json"
+          RECOMPUTED=$(nix run nixpkgs#b3sum -- "$RUNNER_TEMP/canon.json" | cut -d' ' -f1)
+          [ -n "$STORED" ] || { echo "receipt_hash empty"; exit 1; }
+          [ "$RECOMPUTED" = "$STORED" ] \
+            || { echo "hash mismatch: stored=$STORED recomputed=$RECOMPUTED"; exit 1; }
+          echo "cartorio receipt verified — reproducible BLAKE3 = $STORED, SBOM components = $(jq '.components|length' "$SPATH")"
