@@ -30,6 +30,37 @@
   (assert (equal? (cartorio:norm-bool "yes") "false") "non-true -> false")
   (assert (equal? (cartorio:norm-bool "") "false") "empty -> false"))
 
+(deftest "cartorio:json-quote-join / paths->json-array quote-wraps + commas, no trailing comma"
+  (assert (equal? (cartorio:json-quote-join (list)) "") "empty list -> empty string")
+  (assert (equal? (cartorio:json-quote-join (list "/nix/store/a")) "\"/nix/store/a\"") "single, no comma")
+  (assert (equal? (cartorio:json-quote-join (list "/nix/store/a" "/nix/store/b"))
+                  "\"/nix/store/a\",\"/nix/store/b\"") "two, one comma")
+  (assert (equal? (cartorio:paths->json-array (list "/nix/store/a" "/nix/store/b"))
+                  "[\"/nix/store/a\",\"/nix/store/b\"]") "wrapped in brackets")
+  (assert (equal? (cartorio:paths->json-array (list)) "[]") "empty -> []"))
+
+(deftest "cartorio:read-closure-paths reads + trims a real store-paths file, drops blank lines"
+  (let ((dir (string-append (env-get "RUNNER_TEMP" "/tmp") "/cartorio-test-closure")))
+    (exec-capture "mkdir" "-p" dir)
+    (write-file (string-append dir "/store-paths")
+      "/nix/store/aaa-foo\n/nix/store/bbb-bar\n\n")
+    (assert (equal? (cartorio:read-closure-paths dir)
+                    (list "/nix/store/aaa-foo" "/nix/store/bbb-bar")) "parsed + blank dropped")
+    (assert (equal? (cartorio:read-closure-paths (string-append dir "-missing")) (list))
+            "missing dir -> ()")))
+
+(deftest "cartorio:read-closure-paths-all merges multiple closureInfo dirs in order"
+  (let* ((base (string-append (env-get "RUNNER_TEMP" "/tmp") "/cartorio-test-closure-multi"))
+         (d1 (string-append base "-1"))
+         (d2 (string-append base "-2")))
+    (exec-capture "mkdir" "-p" d1)
+    (exec-capture "mkdir" "-p" d2)
+    (write-file (string-append d1 "/store-paths") "/nix/store/aaa-foo\n")
+    (write-file (string-append d2 "/store-paths") "/nix/store/bbb-bar\n")
+    (assert (equal? (cartorio:read-closure-paths-all (list d1 d2))
+                    (list "/nix/store/aaa-foo" "/nix/store/bbb-bar")) "concatenated, order preserved")
+    (assert (equal? (cartorio:read-closure-paths-all (list)) (list)) "no dirs -> ()")))
+
 (deftest "hash:b3-first extracts the hex field of a b3sum-style result"
   (assert (equal? (hash:b3-first (list (cons "status" 0)
                                        (cons "stdout" "abcdef0123  file.json")
