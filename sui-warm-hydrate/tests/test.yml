@@ -1,0 +1,51 @@
+name: test-sui-warm-hydrate
+on:
+  push:
+    paths:
+      - 'sui-warm-hydrate/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'sui-warm-hydrate/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE (a fixture, not an auto-run gate — GitHub only executes
+# workflows under .github/workflows/). The authoritative gate for this
+# action is the repo-level `tlisp-tests` job (sui-warm-hydrate/run.test.tlisp)
+# + `lint-tlisp`, both of which run against run.tlisp itself and need no sui
+# service. This fixture demonstrates the two paths that are real + green
+# WITHOUT a live sui service:
+#   1. no-keys      -> exit 0 (nothing to warm; the action runs to completion)
+#   2. degraded     -> exit 2 (the honest store-absent no-op; a clean typed
+#                      "no", NOT a crash — asserted via continue-on-error +
+#                      an outcome check).
+#
+# It asserts STEP OUTCOME, not output VALUES: composite outputs forward
+# through pleme-io/actions/tatara-script@v1, whose declared forward set must
+# grow to include `warmed`/`warm-count` before a consumer can read them
+# (added in this action's commit; see tatara-script/action.yml).
+jobs:
+  no-keys-exits-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No keys/spec-paths => nothing to warm, exit 0 (no sui needed)
+        uses: ./sui-warm-hydrate
+        with:
+          require-warm: "false"
+
+  degraded-is-a-clean-no:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keys requested but backend unshipped => honest exit 2 (degrade)
+        id: warm
+        continue-on-error: true
+        uses: ./sui-warm-hydrate
+        with:
+          keys: "deadbeefcafe,0badf00d"
+          require-warm: "false"
+      - name: The degrade is a handled 'no' (exit 2 => step outcome=failure), never a faked warm
+        run: |
+          echo "sui-warm-hydrate degraded outcome: ${{ steps.warm.outcome }}"
+          [ "${{ steps.warm.outcome }}" = "failure" ] || { echo "expected the honest exit-2 degrade"; exit 1; }

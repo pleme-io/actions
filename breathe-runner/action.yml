@@ -1,0 +1,88 @@
+name: 'pleme-io · breathe-runner'
+description: 'Preflight posture gate for camelot breathable spot runners — assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner (never rio) and arm the retirada drain->checkpoint hook. First verb of a super-cache-ci build.'
+branding:
+  icon: 'wind'
+  color: 'green'
+
+inputs:
+  require-spot:
+    description: "Fail (enforce=true) unless the runner is on a spot / interruptible node."
+    required: false
+    default: "true"
+  require-camelot-taint:
+    description: "Fail (enforce=true) unless the runner is on a camelot-isolated node group (a non-empty node-group signal)."
+    required: false
+    default: "true"
+  require-scale-to-zero:
+    description: "Fail (enforce=true) unless the stream is scale-to-zero (min-runners == 0). Informational by default since the runner cannot fully verify the scale-set config from inside a job."
+    required: false
+    default: "false"
+  drain-handler:
+    description: "Arm the retirada spot-reclaim drain->checkpoint hook. drain-armed is true only when the retirada handler is actually present (CAMELOT_RETIRADA=ready); otherwise honestly false. [LiveTODO: retirada Spot::InterruptionHandler]"
+    required: false
+    default: "true"
+  enforce:
+    description: "When true, an unmet requirement fails the job. When false, unmet requirements are advisory warnings (use on hosted-runner dry-runs)."
+    required: false
+    default: "true"
+  capacity-type-env:
+    description: "Env var name carrying the node capacity-type (spot | on-demand), injected by the crunkrun Stream from the karpenter.sh/capacity-type node label."
+    required: false
+    default: "CAMELOT_CAPACITY_TYPE"
+  node-group-env:
+    description: "Env var name carrying the camelot node-group name (non-empty == taint-isolated)."
+    required: false
+    default: "CAMELOT_NODE_GROUP"
+  min-runners-env:
+    description: "Env var name carrying the stream's minRunners (0 == scale-to-zero)."
+    required: false
+    default: "CAMELOT_MIN_RUNNERS"
+
+outputs:
+  runner-ok:
+    description: "true when every required posture assertion is satisfied."
+    value: ${{ steps.preflight.outputs.runner-ok }}
+  capacity-type:
+    description: "Observed capacity type: spot | on-demand | unknown."
+    value: ${{ steps.preflight.outputs.capacity-type }}
+  node-group:
+    description: "Observed camelot node-group name (empty when not surfaced)."
+    value: ${{ steps.preflight.outputs.node-group }}
+  scale-to-zero:
+    description: "true | false | unknown — whether the stream is scale-to-zero."
+    value: ${{ steps.preflight.outputs.scale-to-zero }}
+  drain-armed:
+    description: "true when the retirada drain->checkpoint hook was armed."
+    value: ${{ steps.preflight.outputs.drain-armed }}
+
+runs:
+  using: composite
+  steps:
+    # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
+    # action's run.tlisp so the body can use every stdlib primitive.
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Assert camelot spot-runner posture
+      id: preflight
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REQUIRE_SPOT: ${{ inputs.require-spot }}
+        REQUIRE_CAMELOT_TAINT: ${{ inputs.require-camelot-taint }}
+        REQUIRE_SCALE_TO_ZERO: ${{ inputs.require-scale-to-zero }}
+        DRAIN_HANDLER: ${{ inputs.drain-handler }}
+        ENFORCE: ${{ inputs.enforce }}
+        CAPACITY_TYPE_ENV: ${{ inputs.capacity-type-env }}
+        NODE_GROUP_ENV: ${{ inputs.node-group-env }}
+        MIN_RUNNERS_ENV: ${{ inputs.min-runners-env }}

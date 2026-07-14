@@ -1,0 +1,155 @@
+;; nix-image/run.test.tlisp — (deftest …) smoke for the pure helpers, run via
+;; tatara-script --test by the tlisp-test action. The runner prepends the
+;; stdlib + the sibling run.tlisp (TLISP_TEST=1 gates main), then asserts.
+
+(deftest "arch->system maps every supported arch + rejects unknowns"
+  (assert (equal? (arch->system "amd64") "x86_64-linux") "amd64 -> x86_64-linux")
+  (assert (equal? (arch->system "x86_64") "x86_64-linux") "x86_64 -> x86_64-linux")
+  (assert (equal? (arch->system "arm64") "aarch64-linux") "arm64 -> aarch64-linux")
+  (assert (equal? (arch->system "aarch64") "aarch64-linux") "aarch64 -> aarch64-linux")
+  (assert (equal? (arch->system "sparc") "") "unknown -> empty"))
+
+(deftest "image-attr-for appends the arch to the base attr (default convention, over render-attr)"
+  (assert (equal? (image-attr-for "dockerImage" "amd64") "dockerImage-amd64") "amd64 attr")
+  (assert (equal? (image-attr-for "svcImage" "arm64") "svcImage-arm64") "arm64 attr"))
+
+;; The attr-template MATRIX — one row per flake-attr convention the verb
+;; targets. A new convention adds a row here + a template value at the call
+;; site; it never forks the resolver (TYPED EMISSION, generation-over-composition).
+(deftest "render-attr covers every flake-attr convention"
+  ;; {base}-{arch}            — substrate mkImageReleaseApp (default, single image)
+  (assert (equal? (render-attr "{base}-{arch}" "dockerImage" "amd64" "")
+                  "dockerImage-amd64") "dash-pair (mkImageReleaseApp)")
+  ;; {base}-{arch}-{svc}      — substrate mkGoDockerImage (multi-service, dash-triple)
+  (assert (equal? (render-attr "{base}-{arch}-{svc}" "dockerImage" "amd64" "auth")
+                  "dockerImage-amd64-auth") "dash-triple (mkGoDockerImage)")
+  (assert (equal? (render-attr "{base}-{arch}-{svc}" "dockerImage" "arm64" "gateway")
+                  "dockerImage-arm64-gateway") "dash-triple arm64")
+  ;; dockerImage:{arch}:{svc} — akeyless-nix-images (multi-service, colon-triple)
+  (assert (equal? (render-attr "dockerImage:{arch}:{svc}" "dockerImage" "arm64" "gateway")
+                  "dockerImage:arm64:gateway") "colon-triple (akeyless-nix-images)")
+  ;; dockerImage:{arch}       — substrate go service-flake (single-service, colon-pair)
+  (assert (equal? (render-attr "dockerImage:{arch}" "dockerImage" "amd64" "")
+                  "dockerImage:amd64") "colon-pair (go service-flake)"))
+
+(deftest "template-uses-svc? gates the ambiguous-attr keyway exit-1"
+  (assert (template-uses-svc? "{base}-{arch}-{svc}") "dash-triple names {svc}")
+  (assert (template-uses-svc? "dockerImage:{arch}:{svc}") "colon-triple names {svc}")
+  (assert (not (template-uses-svc? "{base}-{arch}")) "default has no {svc}")
+  (assert (not (template-uses-svc? "dockerImage:{arch}")) "colon-pair has no {svc}"))
+
+(deftest "native-arch? is true only for a matching machine class"
+  (assert (native-arch? "x86_64" "amd64") "x86_64 runner builds amd64 natively")
+  (assert (native-arch? "aarch64" "arm64") "aarch64 runner builds arm64 natively")
+  (assert (not (native-arch? "x86_64" "arm64")) "x86_64 runner cross-builds arm64")
+  (assert (not (native-arch? "aarch64" "amd64")) "aarch64 runner cross-builds amd64")
+  (assert (not (native-arch? "x86_64" "sparc")) "unknown arch is never native"))
+
+;; ni:parallel-flags renders --max-jobs/--cores; an empty value DROPS its flag
+;; (no `--max-jobs ` syntax error); an explicit value threads through verbatim.
+(deftest "ni:parallel-flags renders flags + drops empty + threads verbatim"
+  (assert (equal? (ni:parallel-flags "9" "10")
+                  (list "--max-jobs" "9" "--cores" "10")) "tuned partition -> both flags")
+  ;; a blank input drops that flag (nix uses its own default) — never `--cores `
+  (assert (equal? (ni:parallel-flags "auto" "")
+                  (list "--max-jobs" "auto")) "empty cores drops --cores")
+  (assert (equal? (ni:parallel-flags "" "0")
+                  (list "--cores" "0")) "empty max-jobs drops --max-jobs")
+  (assert (null? (ni:parallel-flags "" "")) "both empty -> no flags")
+  (assert (equal? (ni:parallel-flags "  16 " " 8 ")
+                  (list "--max-jobs" "16" "--cores" "8")) "trimmed + threaded"))
+
+;; ── THE DYNAMIC CORE-PARTITION TUNER — the free config squeeze ────
+;; The partition MATRIX: one row per (V,N,shape). A NARROW DAG (the akeyless
+;; monolithic buildGoModule fleet) partitions V across N: jobs=N, cores=V/N.
+;; The no-oversubscribe invariant (planned ≤ V) is asserted on EVERY row.
+(deftest "ni:tune-partition — narrow DAG partitions V across N (jobs=N, cores=floor(V/N))"
+  ;; the measured cases from the prompt
+  (assert (equal? (ni:tune-partition 96 9 "narrow")  (list 9 10)) "V=96,N=9 → jobs 9, cores 10 (90≤96)")
+  (assert (equal? (ni:tune-partition 192 9 "narrow") (list 9 21)) "V=192,N=9 → jobs 9, cores 21 (189≤192)")
+  (assert (equal? (ni:tune-partition 32 9 "narrow")  (list 9 3))  "V=32,N=9 → jobs 9, cores 3 (27≤32)")
+  (assert (equal? (ni:tune-partition 64 8 "narrow")  (list 8 8))  "V=64,N=8 → jobs 8, cores 8 (exact 64)"))
+
+(deftest "ni:tune-partition — edge cases N>V, V/N<1, N<=0, lone build"
+  ;; N > V: floor(V/N)=0 → max(1,0)=1 core (never 0-core builds); planned=N>V
+  ;; is honestly OVER by design here (more targets than cores), so the caller's
+  ;; invariant test (below) flags it — but a build with cores>=1 is always valid.
+  (assert (equal? (ni:tune-partition 4 9 "narrow") (list 9 1)) "N>V → cores clamps to 1 (never 0)")
+  (assert (equal? (ni:tune-partition 8 8 "narrow") (list 8 1)) "V=N → 1 core each (exact)")
+  ;; N<=0 degenerates to a lone build owning the whole box.
+  (assert (equal? (ni:tune-partition 96 0 "narrow")  (list 1 96)) "N=0 → lone build, all cores")
+  (assert (equal? (ni:tune-partition 96 -3 "narrow") (list 1 96)) "N<0 → lone build, all cores")
+  ;; V=0 (should never happen — discover falls back to 1) still yields cores>=1.
+  (assert (equal? (ni:tune-partition 1 1 "narrow") (list 1 1)) "V=1,N=1 → 1×1"))
+
+(deftest "ni:tune-partition — wide DAG fills the box with 1-core builds"
+  (assert (equal? (ni:tune-partition 96 9 "wide")  (list 96 1)) "wide V=96 → jobs 96, cores 1")
+  (assert (equal? (ni:tune-partition 32 200 "wide") (list 32 1)) "wide ignores N, jobs=V, cores=1"))
+
+;; THE SEALED INVARIANT: planned = jobs×cores ≤ V (no over-subscription) AND
+;; planned ≈ V (saturating; slack < N). Asserted mechanically over the whole
+;; realistic (V,N) grid — a partition that over-subscribes a valid V≥N box has
+;; no passing row.
+(deftest "ni:tune-partition — no-oversubscribe + saturate invariant over the V>=N grid"
+  ;; realistic builder sizes × the akeyless fleet size band
+  (for-each
+    (lambda (v)
+      (for-each
+        (lambda (n)
+          (let* ((p (ni:tune-partition v n "narrow"))
+                 (planned (ni:planned-concurrency p))
+                 (slack   (ni:slack p v)))
+            ;; V >= N here, so the partition MUST NOT over-subscribe …
+            (assert (ni:no-oversubscribe? p v)
+                    (string-append "planned " (string-format "{}" planned)
+                                   " <= V " (string-format "{}" v)
+                                   " (N=" (string-format "{}" n) ")"))
+            ;; … and MUST saturate: the only slack is the floor remainder < N.
+            (assert (< slack n)
+                    (string-append "slack " (string-format "{}" slack)
+                                   " < N " (string-format "{}" n)
+                                   " (V=" (string-format "{}" v) ")"))))
+        (list 4 6 8 9 12 16)))
+    (list 32 48 64 96 128 192)))
+
+;; ni:parse-int bridges a numeric string to an Int (json-parse), falls back
+;; on empty. (Feeds V=nproc and N=TARGETS into the pure partition.)
+(deftest "ni:parse-int bridges numeric strings + falls back on empty"
+  (assert (= (ni:parse-int "96" 1) 96) "\"96\" → 96")
+  (assert (= (ni:parse-int " 32 " 1) 32) "trims then parses")
+  (assert (= (ni:parse-int "" 7) 7) "empty → fallback")
+  (assert (= (floor (/ (ni:parse-int "96" 1) (ni:parse-int "9" 1))) 10) "parsed values divide"))
+
+;; ni:explicit-* — auto/0/"" are the tuner sentinels; anything else is a cap.
+(deftest "ni:explicit-* detect a hard cap vs the tuner sentinels"
+  (assert (not (ni:explicit-max-jobs? "auto")) "auto is a sentinel")
+  (assert (not (ni:explicit-max-jobs? ""))     "empty is a sentinel")
+  (assert (ni:explicit-max-jobs? "16")         "16 is a hard cap")
+  (assert (not (ni:explicit-cores? "0")) "cores 0 is a sentinel")
+  (assert (not (ni:explicit-cores? "")) "empty cores is a sentinel")
+  (assert (ni:explicit-cores? "8")      "cores 8 is a hard cap"))
+
+;; ni:resolve-flags — the decision: tune, or honor an explicit cap, or legacy
+;; passthrough. `discover` is injected (a constant here) to keep it pure.
+(deftest "ni:resolve-flags — tunes with sentinels, honors caps, passes through legacy"
+  (let ((v96 (lambda () 96)))
+    ;; auto-tune on + sentinels → the partition (V=96, N=9 → 9/10)
+    (assert (equal? (ni:resolve-flags "true" "auto" "0" 9 "narrow" v96)
+                    (list "9" "10")) "sentinels+auto-tune → tuned 9/10")
+    ;; an explicit cap wins over the tuner (a quota bound)
+    (assert (equal? (ni:resolve-flags "true" "16" "0" 9 "narrow" v96)
+                    (list "16" "0")) "explicit max-jobs cap wins verbatim")
+    (assert (equal? (ni:resolve-flags "true" "auto" "8" 9 "narrow" v96)
+                    (list "auto" "8")) "explicit cores cap wins verbatim")
+    ;; auto-tune off → raw passthrough (legacy)
+    (assert (equal? (ni:resolve-flags "false" "auto" "0" 9 "narrow" v96)
+                    (list "auto" "0")) "auto-tune off → legacy passthrough")))
+
+;; ni:go-parallelism-env — the LOAD-BEARING seam: a bounded cores value emits
+;; GOMAXPROCS + GOFLAGS=-p so the raw `go install` honors the partition; a
+;; sentinel (0/"") emits nothing (let Go use its default).
+(deftest "ni:go-parallelism-env bounds Go parallelism only for a real cores value"
+  (assert (equal? (ni:go-parallelism-env "10")
+                  (list "GOMAXPROCS=10" "GOFLAGS=-p=10")) "cores 10 → bound Go to 10")
+  (assert (null? (ni:go-parallelism-env "0")) "cores 0 → no Go bound (Go default)")
+  (assert (null? (ni:go-parallelism-env "")) "empty → no Go bound"))

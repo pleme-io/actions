@@ -3,3 +3,5 @@
 node_modules/
 result
 result-*
+# ferrite-check default PoMS output artifact (runtime-emitted, never committed)
+ferrite-poms.json

@@ -1,0 +1,378 @@
+;; bigorna/run.tlisp — the CI ENTRY verb for pleme-io's typed
+;; buildx-native-multi-arch primitive (sui-bigorna, the anvil).
+;;
+;; ONE step gives a consumer a `docker buildx` builder whose nodes are
+;; REAL, native per-architecture build nodes (no QEMU) PLUS a cache front
+;; that points at the shipped sui tiered content-addressed store — so an
+;; UNCHANGED `docker buildx build --platform linux/amd64,linux/arm64`
+;; afterwards dispatches each platform to native metal and answers seen
+;; layers warm. Native-multi-arch AND cache land through ONE integration
+;; point: this action.
+;;
+;; It owns NO build algebra. It is a thin keyway front over the shipped
+;; `bigorna setup` binary (sui-bigorna): it RENDERS a typed BigornaConfig
+;; (YAML) from the action inputs, hands it to `bigorna setup --config`,
+;; and forwards the binary's typed JSON receipt to GITHUB_OUTPUT. The
+;; emulated-node refusal, the native-vs-QEMU guarantee, and the cache
+;; endpoint bridge all live IN the binary (proven by its 31 unit tests) —
+;; this verb never re-implements them.
+;;
+;; ── the native model (tier-honest) ──────────────────────────────────
+;; A bigorna node is native by construction: it can only be registered
+;; when its host arch equals its target arch (an emulated node has no
+;; constructor — sui-bigorna/src/node.rs). So on ONE runner:
+;;   * the runner's OWN arch is the create-time native node (no endpoint);
+;;   * a FOREIGN target arch is a native node ONLY if the consumer supplies
+;;     a native endpoint for it (a docker context / tcp:// remote reached
+;;     via ARCH_ENDPOINTS, e.g. the camelot runs-on:[camelot,<arch>] fan);
+;;   * a foreign arch with NO endpoint would be EMULATED — which bigorna
+;;     refuses. FALLTHROUGH decides what happens then:
+;;       error         → the honest hard fail (default; exit 1)
+;;       native-subset → set up the native-covered platforms, warn about
+;;                       the rest, exit 0 (a loud, honest partial)
+;; Single-runner native-multi-arch therefore covers the runner's own arch
+;; for free; true cross-arch native needs an endpoint per foreign arch.
+;; This is stated, not hidden.
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info, log-error, path-exists?, write-file,
+;;   read-file, exec-capture / exec-ok?, status-of, stdout-of,
+;;   string-format, string-split, string-trim.
+;;
+;; Inputs (env):
+;;   PLATFORMS       comma/space OCI platform list (default "linux/amd64")
+;;   CACHE           registry cache ref fronting the sui store, e.g.
+;;                   ghcr.io/pleme-io/<svc>:buildcache. "" = no cache front.
+;;   CACHE_MODE      "max" (default) | "min"
+;;   ARCH_ENDPOINTS  space/comma list of arch=endpoint for FOREIGN native
+;;                   nodes (e.g. "arm64=arm64-ctx"). "" = own-arch only.
+;;   FALLTHROUGH     "error" (default) | "native-subset"
+;;   BUILDER_NAME    buildx builder name (default "bigorna")
+;;   DRIVER          "docker-container" (default) | "kubernetes" | "remote"
+;;   BIGORNA_VERSION sui ref for `nix run github:pleme-io/sui/<ref>#bigorna`
+;;                   (default "main"). Ignored when a `bigorna` is on PATH.
+;;
+;; Outputs (append-output → GITHUB_OUTPUT):
+;;   builder            the buildx builder name that was set up
+;;   native-platforms   comma-joined platforms with a native node (the
+;;                      builder's covered set)
+;;   emulation          "native-for-all" | "needs-native-node"
+;;   cache-from         a `--cache-from` token the consumer's build reuses
+;;                      ("" when no cache front)
+;;   cache-to           a `--cache-to` token ("" when no cache front)
+;;   ok                 "true" iff every requested platform got a native node
+;;                      AND every create step succeeded
+;;   result             generic catch-all == builder name (or "" on failure)
+;;
+;; Exit (keyway): 0 setup succeeded (or a native-subset partial); 1 a
+;; requested platform is emulated under FALLTHROUGH=error, or a buildx
+;; create step failed, or the binary could not be resolved. NEVER a faked
+;; green — an emulated request under error, or a failed create, is loud.
+
+;; ── pure helpers (unit-tested via run.test.tlisp; no side effects) ───
+
+;; Split a comma/space list into clean, non-empty tokens.
+(define (tokens raw)
+  (nonempty-tokens (flatten-split (string-split raw ",") " ")))
+
+;; Split each element of `parts` on `sep` and concatenate — a two-level
+;; split so "a, b  c" yields ("a" "b" "c").
+(define (flatten-split parts sep)
+  (cond
+    ((null? parts) (list))
+    (else (append (string-split (car parts) sep)
+                  (flatten-split (cdr parts) sep)))))
+
+(define (nonempty-tokens toks)
+  (cond
+    ((null? toks) (list))
+    ((equal? (string-trim (car toks)) "") (nonempty-tokens (cdr toks)))
+    (else (cons (string-trim (car toks)) (nonempty-tokens (cdr toks))))))
+
+;; The OCI arch half of a platform token ("linux/arm64/v8" -> "arm64").
+;; A bare "arm64" maps to itself so ARCH_ENDPOINTS keys and PLATFORMS
+;; entries meet on the same arch token.
+(define (platform-arch p)
+  (let ((parts (string-split (string-trim p) "/")))
+    (cond
+      ((null? parts) "")
+      ((null? (cdr parts)) (string-trim (car parts)))   ; bare arch
+      (else (string-trim (car (cdr parts)))))))          ; os/ARCH[/variant]
+
+;; The canonical host-arch token bigorna's Arch::host() derives from
+;; std::env::consts::ARCH. `uname -m` gives x86_64 / aarch64; normalize to
+;; the OCI token so host_arch == platform.arch can hold.
+(define (normalize-arch a)
+  (let ((t (string-trim a)))
+    (cond
+      ((equal? t "x86_64")  "amd64")
+      ((equal? t "amd64")   "amd64")
+      ((equal? t "aarch64") "arm64")
+      ((equal? t "arm64")   "arm64")
+      (else t))))
+
+;; Parse ARCH_ENDPOINTS ("arm64=arm64-ctx s390x=tcp://…") into an alist of
+;; (arch endpoint) 2-element lists — tatara-lisp's `cons` is not a dotted
+;; pair (`(cdr (cons k v))` is a LIST, not v), so each entry is a proper
+;; 2-list read with (car (cdr entry)). A token with no "=" is skipped.
+(define (parse-arch-endpoints raw)
+  (ae-fold (tokens raw) (list)))
+
+(define (ae-fold toks acc)
+  (cond
+    ((null? toks) acc)
+    (else
+     (let ((kv (string-split (car toks) "=")))
+       (cond
+         ((null? (cdr kv)) (ae-fold (cdr toks) acc))     ; no "=" → skip
+         (else (ae-fold (cdr toks)
+                        (cons (list (normalize-arch (string-trim (car kv)))
+                                    (string-trim (car (cdr kv))))
+                              acc))))))))
+
+(define (alist-lookup key alist)
+  (cond
+    ((null? alist) "")
+    ((equal? (car (car alist)) key) (car (cdr (car alist))))
+    (else (alist-lookup key (cdr alist)))))
+
+;; A platform gets a NATIVE node iff it targets the runner's own arch
+;; (the create node) OR the consumer supplied a native endpoint for its
+;; arch. Anything else would be emulated.
+(define (platform-native? p host-arch endpoints)
+  (let ((a (normalize-arch (platform-arch p))))
+    (or (equal? a host-arch)
+        (not (equal? (alist-lookup a endpoints) "")))))
+
+;; Partition the requested platforms into (native . emulated) by policy.
+(define (native-platforms plats host-arch endpoints)
+  (filter-platforms plats host-arch endpoints #t))
+(define (emulated-platforms plats host-arch endpoints)
+  (filter-platforms plats host-arch endpoints #f))
+(define (filter-platforms plats host-arch endpoints want-native)
+  (cond
+    ((null? plats) (list))
+    (else
+     (let ((keep (equal? (platform-native? (car plats) host-arch endpoints)
+                         want-native)))
+       (cond
+         (keep (cons (car plats)
+                     (filter-platforms (cdr plats) host-arch endpoints want-native)))
+         (else (filter-platforms (cdr plats) host-arch endpoints want-native)))))))
+
+;; Comma-join a token list for the receipt output (a plain view — the
+;; typed builder emits the real --platform flag).
+(define (join-comma toks)
+  (cond
+    ((null? toks) "")
+    ((null? (cdr toks)) (car toks))
+    (else (string-append (car toks) "," (join-comma (cdr toks))))))
+
+;; The registry cache endpoint token for a ref + mode (mirrors
+;; sui-bigorna CacheEndpoint::Registry Display: type=registry,ref=…,mode=…).
+;; Registry is symmetric — the same token is a valid --cache-from and
+;; --cache-to; only mode changes the export usefulness.
+(define (cache-token ref mode)
+  (cond
+    ((equal? (string-trim ref) "") "")
+    (else (string-append "type=registry,ref=" (string-trim ref)
+                         ",mode=" (normalize-cache-mode mode)))))
+
+(define (normalize-cache-mode m)
+  (let ((t (string-trim m)))
+    (cond ((equal? t "min") "min") (else "max"))))
+
+;; ── config rendering — one BigornaConfig node block per native platform.
+;; Emitted as YAML the shipped `bigorna setup --config` deserializes into
+;; BigornaConfig (serde). This is a mechanical projection of typed inputs,
+;; NOT freeform string composition of a foreign syntax: every field name
+;; is fixed by the Rust struct's serde contract (builder_name / driver /
+;; nodes[].{name,platform,host_arch,endpoint}).
+
+;; The node name for a platform ("bigorna-arm64").
+(define (node-name builder p)
+  (string-append builder "-" (normalize-arch (platform-arch p))))
+
+;; Render one node's YAML block. The runner's own-arch node is the
+;; create node (no endpoint); a foreign native node carries its endpoint.
+(define (render-node builder p host-arch endpoints)
+  (let* ((arch (normalize-arch (platform-arch p)))
+         (ep   (cond ((equal? arch host-arch) "")
+                     (else (alist-lookup arch endpoints)))))
+    (string-append
+      "  - name: " (node-name builder p) "\n"
+      "    platform: " (string-trim p) "\n"
+      "    host_arch: " arch "\n"
+      (cond
+        ((equal? ep "") "")
+        (else (string-append "    endpoint: " ep "\n"))))))
+
+(define (render-nodes builder plats host-arch endpoints)
+  (cond
+    ((null? plats) "")
+    (else (string-append
+            (render-node builder (car plats) host-arch endpoints)
+            (render-nodes builder (cdr plats) host-arch endpoints)))))
+
+;; The full BigornaConfig document. bootstrap + use_as_default default to
+;; true in the Rust struct (serde default) so the builder is usable and
+;; picked up by an unchanged `docker buildx build` the moment setup returns.
+(define (render-config builder driver plats host-arch endpoints)
+  (string-append
+    "builder_name: " builder "\n"
+    "driver: " driver "\n"
+    "bootstrap: true\n"
+    "use_as_default: true\n"
+    "nodes:\n"
+    (render-nodes builder plats host-arch endpoints)))
+
+;; ── side-effecting main (gated off under TLISP_TEST) ─────────────────
+
+;; Resolve a runnable `bigorna` argv. Prefer a bigorna already on PATH
+;; (baked into a pleme-io nix runner image — the native fast path, same
+;; short-circuit tatara-script uses), else `nix run github:pleme-io/sui`.
+(define (bigorna-argv version)
+  (cond
+    ((exec-ok? "sh" "-c" "command -v bigorna")
+     (list "bigorna"))
+    (else
+     (list "nix" "run"
+           (string-append "github:pleme-io/sui/" (string-trim version) "#bigorna")
+           "--"))))
+
+(define (run-setup argv config-path)
+  ;; argv already ends at the subcommand boundary ("--" for nix run, or
+  ;; nothing for a PATH bigorna); append the keyway subcommand + config.
+  (apply exec-capture (append argv (list "setup" "--config" config-path))))
+
+(define (main)
+  (let* ((plats-raw   (env-get "PLATFORMS" "linux/amd64"))
+         (cache-ref   (env-get "CACHE" ""))
+         (cache-mode  (env-get "CACHE_MODE" "max"))
+         (ae-raw      (env-get "ARCH_ENDPOINTS" ""))
+         (fallthrough (env-get "FALLTHROUGH" "error"))
+         (builder     (let ((b (string-trim (env-get "BUILDER_NAME" "bigorna"))))
+                        (cond ((equal? b "") "bigorna") (else b))))
+         (driver      (let ((d (string-trim (env-get "DRIVER" "docker-container"))))
+                        (cond ((equal? d "") "docker-container") (else d))))
+         (version     (env-get "BIGORNA_VERSION" "main"))
+         (host-arch   (normalize-arch (host-uname-arch)))
+         (endpoints   (parse-arch-endpoints ae-raw))
+         (requested   (tokens plats-raw))
+         (native      (native-platforms requested host-arch endpoints))
+         (emulated    (emulated-platforms requested host-arch endpoints)))
+
+    (log-info (string-append "bigorna: host arch " host-arch
+                             ", requested " (join-comma requested)))
+    (cond
+      ((not (null? endpoints))
+       (log-info (string-append "bigorna: foreign native endpoints supplied for "
+                                (join-comma (map (lambda (kv) (car kv)) endpoints)))))
+      (else #t))
+
+    ;; An emulated request under FALLTHROUGH=error is the honest hard fail
+    ;; BEFORE touching docker — never a faked green, never a QEMU node.
+    (cond
+      ((and (not (null? emulated)) (equal? fallthrough "error"))
+       (log-error
+         (string-append "bigorna: no native node for "
+                        (join-comma emulated)
+                        " and FALLTHROUGH=error — supply ARCH_ENDPOINTS="
+                        "<arch>=<endpoint> for each (a native docker context / "
+                        "tcp:// remote), or set FALLTHROUGH=native-subset to set "
+                        "up only the native-covered platforms."))
+       (append-output (string-append "builder=" builder))
+       (append-output "native-platforms=")
+       (append-output "emulation=needs-native-node")
+       (append-output "cache-from=")
+       (append-output "cache-to=")
+       (append-output "ok=false")
+       (append-output "result=")
+       1)
+
+      ((null? native)
+       ;; native-subset but nothing is native — an empty builder is useless.
+       (log-error "bigorna: no requested platform maps to a native node.")
+       (append-output (string-append "builder=" builder))
+       (append-output "native-platforms=")
+       (append-output "emulation=needs-native-node")
+       (append-output "cache-from=")
+       (append-output "cache-to=")
+       (append-output "ok=false")
+       (append-output "result=")
+       1)
+
+      (else
+       (cond
+         ((not (null? emulated))
+          (log-info
+            (string-append "::warning::bigorna FALLTHROUGH=native-subset — "
+                           (join-comma emulated)
+                           " has no native node and is EXCLUDED. The builder "
+                           "covers " (join-comma native) " natively.")))
+         (else #t))
+
+       ;; Render the typed BigornaConfig for the native set + hand it to
+       ;; the shipped binary. RUNNER_TEMP is the GHA scratch dir; fall back
+       ;; to the cwd so a local run works too.
+       (let* ((tmp    (env-get "RUNNER_TEMP" "."))
+              (cfg    (string-append tmp "/bigorna.config.yaml"))
+              (doc    (render-config builder driver native host-arch endpoints)))
+         (write-file cfg doc)
+         (log-info (string-append "bigorna: rendered " cfg " ("
+                                  (string-format "{}" (length native))
+                                  " native node(s)); running setup"))
+         (let* ((argv    (bigorna-argv version))
+                (r       (run-setup argv cfg))
+                (st      (status-of r))
+                (out     (stdout-of r))
+                ;; The binary emits a SetupReceipt JSON with `ok:true` iff
+                ;; every create step succeeded. Trust the exit code (0 = ok,
+                ;; 1 = a create step failed, 2 = config error) as the typed
+                ;; contract; surface the receipt tail for the log.
+                (from-t  (cache-token cache-ref cache-mode))
+                (to-t    (cache-token cache-ref cache-mode)))
+           (log-info out)
+           (cond
+             ((= st 0)
+              (append-output (string-append "builder=" builder))
+              (append-output (string-append "native-platforms=" (join-comma native)))
+              (append-output (string-append "emulation="
+                                            (cond ((null? emulated) "native-for-all")
+                                                  (else "needs-native-node"))))
+              (append-output (string-append "cache-from=" from-t))
+              (append-output (string-append "cache-to=" to-t))
+              ;; ok=true only when the full requested set is native.
+              (append-output (string-append "ok="
+                                            (cond ((null? emulated) "true")
+                                                  (else "false"))))
+              (append-output (string-append "result=" builder))
+              (log-info (string-append "bigorna: builder `" builder
+                                       "` ready — native for " (join-comma native)
+                                       (cond ((equal? from-t "") "")
+                                             (else (string-append "; cache front " from-t)))))
+              0)
+             (else
+              (log-error (string-append "bigorna: `bigorna setup` exited "
+                                        (string-format "{}" st)))
+              (append-output (string-append "builder=" builder))
+              (append-output "native-platforms=")
+              (append-output "emulation=needs-native-node")
+              (append-output "cache-from=")
+              (append-output "cache-to=")
+              (append-output "ok=false")
+              (append-output "result=")
+              st))))))))
+
+;; ── host-arch probe (isolated so main's helpers stay pure) ───────────
+(define (host-uname-arch)
+  (let ((r (exec-capture "uname" "-m")))
+    (cond ((= (status-of r) 0) (string-trim (stdout-of r)))
+          (else "x86_64"))))   ; sane default; normalize-arch maps it
+
+;; ── entrypoint / test gate ───────────────────────────────────────────
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — bigorna helpers loaded; main skipped"))
+  (else
+   (exit (main))))

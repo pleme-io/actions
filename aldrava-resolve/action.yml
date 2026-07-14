@@ -1,0 +1,73 @@
+name: 'pleme-io · aldrava-resolve'
+description: 'Resolve a uniform run context (checkout ref, branch ref, base ref, PR author, is-develop) from whatever event triggered this job — a label add, workflow_dispatch, schedule, or repository_dispatch — so a downstream pipeline behaves the same regardless of trigger source. No command matching, no trust decision: that already happened upstream in aldrava-dispatch.'
+branding:
+  icon: 'compass'
+  color: 'blue'
+
+inputs:
+  label-name:
+    description: "Restrict a pull_request: [labeled] event to this label. Leave empty to treat every pull_request action as eligible."
+    required: false
+    default: ""
+
+outputs:
+  should-run:
+    description: "true when this job should proceed given its trigger source."
+    value: ${{ steps.resolve.outputs.should-run }}
+  checkout-ref:
+    description: "The SHA to check out."
+    value: ${{ steps.resolve.outputs.checkout-ref }}
+  branch-ref:
+    description: "refs/heads/<branch>."
+    value: ${{ steps.resolve.outputs.branch-ref }}
+  base-ref:
+    description: "refs/heads/<base> (pull_request events only)."
+    value: ${{ steps.resolve.outputs.base-ref }}
+  pr-author:
+    description: "The PR's author login (pull_request events only)."
+    value: ${{ steps.resolve.outputs.pr-author }}
+  is-develop:
+    description: "true when branch-ref is refs/heads/develop."
+    value: ${{ steps.resolve.outputs.is-develop }}
+  reason:
+    description: "Human-readable reason, most useful when should-run is false."
+    value: ${{ steps.resolve.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Install aldrava
+      shell: bash
+      run: |
+        set -euo pipefail
+        OS=$(uname -s)
+        ARCH=$(uname -m)
+        case "$OS-$ARCH" in
+          Linux-x86_64)  SUFFIX="linux-x86_64";;
+          Linux-aarch64) SUFFIX="linux-arm64";;
+          Darwin-arm64)  SUFFIX="darwin-arm64";;
+          Darwin-x86_64) SUFFIX="darwin-x86_64";;
+          *) echo "::error::aldrava-resolve: unsupported runner $OS-$ARCH" >&2; exit 1;;
+        esac
+        curl -sL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
+        chmod +x /usr/local/bin/aldrava
+
+    - name: Resolve run context
+      id: resolve
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        LABEL_NAME: ${{ inputs.label-name }}

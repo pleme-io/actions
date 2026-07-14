@@ -1,0 +1,39 @@
+;; super-cache-save/run.test.tlisp — (deftest …) smoke for the pure
+;; helpers + the write-if-absent local object tier, run via
+;; tatara-script --test by the tlisp-test action (TLISP_TEST=1 gates main).
+
+(deftest "save-key prefers an explicit key over the spec-path"
+  (assert (equal? (save-key "explicit" "/nonexistent.json") "explicit") "explicit key wins")
+  (assert (equal? (save-key "" "/nonexistent.json") "") "no key + absent spec => empty")
+  (assert (equal? (save-key "" "") "") "no key + no spec => empty"))
+
+(deftest "save-to-local is write-if-absent: persists once, then idempotently skips"
+  (define dir "/tmp/scache-save-test")
+  (exec-capture "rm" "-rf" dir)
+  (exec-capture "mkdir" "-p" dir)
+  (assert (equal? (save-to-local dir "k1" "/nix/store/aaa /nix/store/bbb") "written") "first write => written")
+  (assert (path-exists? (supercache:local-entry-path dir "k1")) "entry landed on disk")
+  (assert (equal? (save-to-local dir "k1" "/nix/store/aaa /nix/store/bbb") "already-present") "second save => idempotent skip")
+  (assert (equal? (save-to-local dir "k1" "DIFFERENT") "already-present") "content-addressed skip does not overwrite"))
+
+(deftest "token->store-path extracts the /nix/store path, dropping any arch: prefix"
+  (assert (equal? (token->store-path "amd64:/nix/store/xyz-img.tar.gz") "/nix/store/xyz-img.tar.gz") "arch:path => path")
+  (assert (equal? (token->store-path "/nix/store/abc-hello") "/nix/store/abc-hello") "bare store path unchanged")
+  (assert (equal? (token->store-path "not-a-store-path") "") "non-store token => empty")
+  (assert (equal? (token->store-path "") "") "empty token => empty"))
+
+(deftest "the persisted entry round-trips the exact output list"
+  (define dir "/tmp/scache-save-roundtrip")
+  (exec-capture "rm" "-rf" dir)
+  (exec-capture "mkdir" "-p" dir)
+  (save-to-local dir "k2" "/nix/store/ccc")
+  (assert (equal? (string-trim (read-file (supercache:local-entry-path dir "k2"))) "/nix/store/ccc")
+          "restore reads back what save wrote"))
+
+(deftest "flake-inputs->list parses a space/comma node-name list, dropping empties (the WARM lever push half)"
+  (assert (equal? (flake-inputs->list "akeyless-main-repo") (list "akeyless-main-repo")) "single")
+  (assert (equal? (flake-inputs->list "akeyless-main-repo nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "space list")
+  (assert (equal? (flake-inputs->list "akeyless-main-repo,nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "comma list")
+  (assert (equal? (flake-inputs->list "akeyless-main-repo, nixpkgs") (list "akeyless-main-repo" "nixpkgs")) "comma+space")
+  (assert (null? (flake-inputs->list "  ")) "whitespace-only => empty")
+  (assert (null? (flake-inputs->list "")) "empty => empty"))

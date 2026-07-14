@@ -1,0 +1,419 @@
+;; ferrite-check/run.tlisp — the per-package MATERIALIZABILITY gate of the
+;; camelot image pipeline: for ONE package (a flake image attr), verify the
+;; package can be materialized (its attr resolves to a derivation) BEFORE the
+;; expensive derive, content-address its SOURCE, and emit a PoMS — a
+;; Proof-of-Materialization-Spec receipt — cached by that source hash so a
+;; re-run over unchanged source is a pure cache hit (no re-eval, no derive).
+;;
+;; ── Where it sits in the super-cache-ci pipeline ────────────────────
+;; theory/SUPER-CACHE-CI.md §X.2 reference pipeline:
+;;   breathe-runner → sui-service-up → gen-build-spec → super-cache-restore
+;;     → super-cache-build (THE CORE) → super-cache-save → nix-image
+;;     → ghcr-publish → zot-pull-scan → tameshi-attest
+;; ferrite-check is the CHEAP PRE-DERIVE GATE that runs per-package right
+;; after gen-build-spec / build-matrix (which say WHAT to build) and before
+;; super-cache-build / nix-image (which pay to build it). It answers, per
+;; (package, source): "is this materializable, and have we already proven so
+;; for exactly this source?" A miss ⇒ run the derive; a hit ⇒ the PoMS is the
+;; proof the derive can be skipped for this source.
+;;
+;; SINGLE-RESPONSIBILITY SIBLING of build-matrix + gen-build-spec (CLOSED-LOOP
+;; MASS-SYNTHESIS rule 2: small typed verbs over a monolith). build-matrix
+;; enumerates the (svc,arch) fan; gen-build-spec gates the build-spec's
+;; freshness; ferrite-check gates one fan cell's MATERIALIZABILITY + emits its
+;; PoMS. It owns neither the fan nor the spec-freshness gate.
+;;
+;; ── What "materializable" means (the honest verdict) ────────────────
+;; The gate is a `nix eval` of `<flake-ref>#<attr>.drvPath`. If the attr
+;; resolves to a store `.drv` path the package is MATERIALIZABLE (a derivation
+;; the daemon CAN realize); if the eval fails, it is NOT — a broken attr, a
+;; missing service def, an eval-time type error. This is the cheap gate: an
+;; eval (RAM, seconds), never a derive (minutes). It proves realizability,
+;; NOT that the realized output is bit-correct — that is super-cache-build's
+;; job + tameshi-attest's receipt. ferrite-check NEVER claims more.
+;;
+;; ── The PoMS (Proof-of-Materialization-Spec) ────────────────────────
+;; A typed, content-addressed receipt binding
+;;   (package, arch, attr, source-hash) → materializable verdict + drvPath
+;; whose attestation.receipt_hash is a REAL BLAKE3 over the canonical body.
+;; Sibling of tameshi-attest's BUILD receipt + cartorio-attest's DELIVERY
+;; receipt on ONE chain: ferrite carries chain.prev so PoMS → build → deliver
+;; chains, and SHARES the BLAKE3 core (_tlisp-stdlib `hash:*`) — never a fork.
+;; PoMS schema: pleme-io.ferrite.materialization-spec/v1.
+;;
+;; ── Cached by source hash (the cache key + hit skip) ────────────────
+;; The cache key is the package's SOURCE hash — a `nix eval` of the attr's
+;; `.outPath` (the derivation's output store path IS a content-address over
+;; every input: source, deps, build recipe). A committed PoMS at
+;; <poms-dir>/<source-hash>.poms.json means we ALREADY proved this exact
+;; source materializable ⇒ a HIT: re-emit the cached PoMS, skip the eval,
+;; report cached=true. Write-if-absent, content-addressed, NO lock (the
+;; eliminate-the-shared-cell property: two runners over the same source
+;; produce identical PoMS content, so a race is benign) — same discipline as
+;; super-cache-save's local object tier.
+;;
+;; ── TYPED EMISSION ──────────────────────────────────────────────────
+;; The PoMS JSON is composed by `jq` (the typed serializer), NEVER by hand
+;; string-concatenation — the tameshi-attest / cartorio-attest rule. The jq
+;; program carries NO double-quote characters (every literal is a --arg), so
+;; it embeds in a tlisp string with zero escaping. The BLAKE3 receipt hash is
+;; a real b3sum (stdlib hash:blake3-file); NO blake3 tool ⇒ the action FAILS
+;; rather than emit a receipt that lies about its algorithm.
+;;
+;; ── Tier: SHIPPABLE-NOW, with named LiveTODOs (never rounded up) ─────
+;;   - materializability eval (drvPath resolves)     → now (real nix eval)
+;;   - source-hash content-address (outPath)         → now (real nix eval)
+;;   - PoMS receipt + real BLAKE3 + chain.prev link   → now (jq + b3sum)
+;;   - local PoMS-by-source-hash cache hit/skip       → now (content-addressed
+;;                                                      file tier, no lock)
+;;   - tiered PoMS cache (sui Redis L1 → Pg L2)       → LiveTODO (behind sui's
+;;     SHIPPED Store/StorageBackend traits; the local tier is the now-path,
+;;     an honest miss when absent, NEVER a faked hit)
+;;   - DSSE/cosign SIGNING of the PoMS                → LiveTODO (signed=false)
+;;   - kensa OutcomeChain APPEND                      → LiveTODO (outcome-chain=false)
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   env-get, append-output, log-info, log-error,
+;;   exec-capture, status-of, stdout-of, stderr-of,
+;;   string-append, string-split, string-trim, string-replace, string-join,
+;;   string-format, path-exists?, read-file, write-file, config-resolve,
+;;   hash:blake3-file.
+;;
+;; Inputs (env, config-resolvable via [ferrite-check] section):
+;;   FLAKE_REF          flake ref to eval (default ".")
+;;   IMAGE_ATTR         attr base ({base}) (default "dockerImage")
+;;   ATTR_TEMPLATE      attr template over {base} {arch} {svc}
+;;                        (default "dockerImage:{arch}:{svc}" — the akeyless
+;;                         colon-triple; the same template grammar as nix-image)
+;;   SVC                service name ({svc}) — REQUIRED when the template names {svc}
+;;   ARCH               arch ({arch}) (default "amd64")
+;;   POMS_DIR           dir holding the <source-hash>.poms.json cache
+;;                        (default ""; empty ⇒ no cache lookup, always fresh eval)
+;;   PREV_RECEIPT_HASH  prior receipt hash to chain to (e.g. gen-build-spec's)
+;;   POMS_PATH          where to write the emitted PoMS (default ferrite-poms.json)
+;;   REQUIRE            "true" (default) ⇒ a not-materializable verdict is exit 1;
+;;                      "false" ⇒ a clean typed exit 2 the caller branches on
+;;   SIGN               "true" exercises the honest signing LiveTODO
+;;   EMIT_OUTCOME_CHAIN "true" exercises the honest OutcomeChain LiveTODO
+;;
+;; Outputs (append-output → GITHUB_OUTPUT):
+;;   materializable  "true" | "false"
+;;   cached          "true" iff the verdict came from a cached PoMS (skip-eval)
+;;   source-hash     the content-addressed source/cache key (outPath basename)
+;;   drv-path        the resolved .drv store path ("" when not materializable)
+;;   attr            the resolved flake attr
+;;   poms-path       path to the emitted PoMS JSON
+;;   poms-hash       the real BLAKE3 receipt hash of the PoMS
+;;   poms-algo       "blake3"
+;;   signed          "false" (LiveTODO)
+;;   outcome-chain   "false" (LiveTODO)
+;;   reason          ok | cached | not-materializable | ambiguous-attr
+;;                     | nix-absent | jq-fail | no-blake3-tool
+;;
+;; Exit (keyway three-code contract):
+;;   0  materializable (PoMS emitted; fresh eval OR cached hit)
+;;   2  eval OK but NOT materializable AND require=false (a clean typed "no")
+;;   1  not-materializable AND require=true, OR a config/tooling failure (loud)
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; Normalize a string flag to a canonical "true"|"false".
+(define (ferrite:norm-bool s)
+  (if (equal? (string-trim s) "true") "true" "false"))
+
+;; arch label → nix system double (shared shape with nix-image/arch->system
+;; + build-matrix/bm:arch->system). "" for an unknown arch.
+(define (ferrite:arch->system arch)
+  (cond
+    ((equal? arch "amd64")   "x86_64-linux")
+    ((equal? arch "x86_64")  "x86_64-linux")
+    ((equal? arch "arm64")   "aarch64-linux")
+    ((equal? arch "aarch64") "aarch64-linux")
+    (else "")))
+
+;; Render a flake-attr template. Placeholders {base} {arch} {svc} each
+;; substituted (all occurrences) — a typed template renderer, NOT string
+;; concatenation, so a new attr convention is a new template value not a fork.
+;; Same grammar + resolver shape as nix-image/render-attr (the ≥2-consumer
+;; trigger for a shared `attr:render` stdlib helper is now met; kept local
+;; here to match the sibling precedent + git-least-disturbance on shipped
+;; nix-image — queued as a named shared-helper refactor).
+(define (ferrite:render-attr template base arch svc)
+  (string-replace
+    (string-replace
+      (string-replace template "{base}" base)
+      "{arch}" arch)
+    "{svc}" svc))
+
+;; #t iff the template references {svc} (⇒ SVC must be non-empty, else the
+;; resolved attr is ambiguous — the keyway config gate).
+(define (ferrite:template-uses-svc? template)
+  (string-contains? template "{svc}"))
+
+;; The store-path basename (drop the /nix/store/ dir) — the sortable,
+;; content-addressed source key. "" stays "".
+(define (ferrite:store-basename p)
+  (let ((parts (string-split (string-trim p) "/")))
+    (cond
+      ((null? parts) "")
+      (else (ferrite:last-of parts)))))
+
+(define (ferrite:last-of lst)
+  (cond
+    ((null? lst) "")
+    ((null? (cdr lst)) (car lst))
+    (else (ferrite:last-of (cdr lst)))))
+
+;; The cached-PoMS path for a source hash under a cache dir. "" for an empty
+;; dir or empty key (⇒ no cache lookup possible — an honest always-miss).
+(define (ferrite:poms-cache-path dir source-hash)
+  (cond
+    ((equal? dir "") "")
+    ((equal? source-hash "") "")
+    (else (string-append dir "/" source-hash ".poms.json"))))
+
+;; #t iff a cached PoMS exists for (dir, source-hash).
+(define (ferrite:cache-has? dir source-hash)
+  (let ((p (ferrite:poms-cache-path dir source-hash)))
+    (and (not (equal? p "")) (path-exists? p))))
+
+;; Typed 2-slot result: (list ok? payload). Accessed via explicit accessors
+;; — NOT (cons ok payload)/(cdr …), because tatara-lisp `cons` wraps a
+;; non-list cdr into a 1-element list (the build-matrix precedent).
+(define (ferrite:ok? res) (car res))
+(define (ferrite:payload res) (car (cdr res)))
+
+;; ── the PoMS jq program — TYPED EMISSION, zero double-quote chars ────
+;; (every literal is passed as --arg, so the whole program embeds in a
+;; tlisp string with no escaping; the tameshi/cartorio precedent.)
+(define ferrite:poms-jq
+  "{ schema: $schema, subject: $subject, package: { svc: $svc, arch: $arch, system: $system, attr: $attr }, source: { hash: $srchash, algorithm: $srcalgo }, materialization: { materializable: $matable, drv_path: $drvpath }, git: { sha: $gitsha, ref: $gitref }, run: { id: $runid, number: $runnum, workflow: $workflow }, timestamp: $ts, chain: { chain_algorithm: $algo, prev: $prev }, attestation: { hash_algorithm: $algo, receipt_hash: $rhash, signed: $signed, signature: null, outcome_chain: $ochain } }")
+
+;; ── side-effecting: eval / serialize / emit ──────────────────────
+
+;; No-shell PATH probe (exec-capture RAISES on an absent binary, so a
+;; required tool's presence MUST be settled before it is invoked). Shared
+;; shape with build-matrix/bm:on-path? + gen-build-spec — the shared-helper
+;; extraction is a named LiveTODO across all three (git-least-disturbance).
+(define (ferrite:any-dir-has? dirs bin)
+  (cond
+    ((null? dirs) #f)
+    ((and (not (equal? (car dirs) ""))
+          (path-exists? (string-append (car dirs) "/" bin))) #t)
+    (else (ferrite:any-dir-has? (cdr dirs) bin))))
+
+(define (ferrite:on-path? bin)
+  (ferrite:any-dir-has? (string-split (env-get "PATH" "") ":") bin))
+
+;; nix eval `<flake-ref>#<attr>.<field>` --raw. Returns (list #t value) on a
+;; clean eval, (list #f stderr) on failure. Used for BOTH .drvPath
+;; (materializability) and .outPath (the source content-address). --raw so a
+;; string store path comes back bare (no JSON quoting).
+(define (ferrite:eval-field flake-ref attr field)
+  (let* ((target (string-append flake-ref "#" attr "." field))
+         (r (exec-capture "nix" "eval" "--raw" target)))
+    (if (= (status-of r) 0)
+      (list #t (string-trim (stdout-of r)))
+      (list #f (stderr-of r)))))
+
+;; Build the PoMS base (receipt_hash="") via jq. Returns the exec result.
+(define (ferrite:build-poms-base subject svc arch system attr src-hash matable
+                                 drv-path git-sha git-ref run-id run-num workflow
+                                 ts prev rhash)
+  (apply exec-capture
+    (list "jq" "-n" "-S"
+      "--arg" "schema" "pleme-io.ferrite.materialization-spec/v1"
+      "--arg" "subject" subject
+      "--arg" "svc" svc
+      "--arg" "arch" arch
+      "--arg" "system" system
+      "--arg" "attr" attr
+      "--arg" "srchash" src-hash
+      "--arg" "srcalgo" "nix-store-path"
+      "--arg" "drvpath" drv-path
+      "--arg" "gitsha" git-sha
+      "--arg" "gitref" git-ref
+      "--arg" "runid" run-id
+      "--arg" "runnum" run-num
+      "--arg" "workflow" workflow
+      "--arg" "ts" ts
+      "--arg" "algo" "blake3"
+      "--arg" "prev" prev
+      "--arg" "rhash" rhash
+      "--argjson" "matable" matable
+      "--argjson" "signed" "false"
+      "--argjson" "ochain" "false"
+      ferrite:poms-jq)))
+
+;; Canonicalize (sorted, compact) → real BLAKE3 → inject the hash → write the
+;; final PoMS. Returns (list #t rhash) on success, (list #f reason) on
+;; failure. The single receipt-writing path for both the fresh + (re-emitted)
+;; cache-write flows.
+(define (ferrite:finalize-poms base-json poms-path tmp-dir)
+  (let ((base-path (string-append tmp-dir "/ferrite-base.json"))
+        (canon-path (string-append tmp-dir "/ferrite-canon.json")))
+    (write-file base-path base-json)
+    (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+      (cond
+        ((not (= (status-of canon) 0)) (list #f "jq-fail"))
+        (else
+         (write-file canon-path (string-trim (stdout-of canon)))
+         (let ((rhash (hash:blake3-file canon-path)))
+           (cond
+             ((equal? rhash "") (list #f "no-blake3-tool"))
+             (else
+              (let ((final (exec-capture "jq" "-S" "--arg" "rhash" rhash
+                             ".attestation.receipt_hash = $rhash" base-path)))
+                (cond
+                  ((not (= (status-of final) 0)) (list #f "jq-fail"))
+                  (else
+                   (write-file poms-path (stdout-of final))
+                   (list #t rhash))))))))))))
+
+;; Emit the full typed output set + return the keyway exit code.
+(define (ferrite:emit matable cached src-hash drv-path attr poms-path poms-hash reason code)
+  (append-output (string-append "materializable=" matable))
+  (append-output (string-append "cached=" cached))
+  (append-output (string-append "source-hash=" src-hash))
+  (append-output (string-append "drv-path=" drv-path))
+  (append-output (string-append "attr=" attr))
+  (append-output (string-append "poms-path=" poms-path))
+  (append-output (string-append "poms-hash=" poms-hash))
+  (append-output (string-append "poms-algo=" (if (equal? poms-hash "") "" "blake3")))
+  (append-output "signed=false")
+  (append-output "outcome-chain=false")
+  (append-output (string-append "reason=" reason))
+  code)
+
+;; ── LiveTODO honesty for the unshipped signing / chain / tiered seams ──
+(define (ferrite:warn-livetodos sign-flag chain-flag)
+  (cond
+    ((equal? sign-flag "true")
+     (log-info "::warning::ferrite-check: sign=true but DSSE/cosign signing is NOT shipped — emitting attestation.signed=false [LiveTODO: cofre SecretRef + cosign attach]"))
+    (else #t))
+  (cond
+    ((equal? chain-flag "true")
+     (log-info "::warning::ferrite-check: emit-outcome-chain=true but kensa OutcomeChain append is NOT shipped — emitting attestation.outcome_chain=false [LiveTODO: kensa append]"))
+    (else #t)))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (main)
+  (let* ((flake-ref  (config-resolve "FLAKE_REF" "ferrite-check" "flake-ref" "."))
+         (image-attr (config-resolve "IMAGE_ATTR" "ferrite-check" "image-attr" "dockerImage"))
+         (template   (config-resolve "ATTR_TEMPLATE" "ferrite-check" "attr-template" "dockerImage:{arch}:{svc}"))
+         (svc        (config-resolve "SVC" "ferrite-check" "svc" ""))
+         (arch       (config-resolve "ARCH" "ferrite-check" "arch" "amd64"))
+         (poms-dir   (config-resolve "POMS_DIR" "ferrite-check" "poms-dir" ""))
+         (prev       (config-resolve "PREV_RECEIPT_HASH" "ferrite-check" "prev-receipt-hash" ""))
+         (poms-path  (config-resolve "POMS_PATH" "ferrite-check" "poms-path" "ferrite-poms.json"))
+         (require-m  (ferrite:norm-bool (config-resolve "REQUIRE" "ferrite-check" "require" "true")))
+         (sign-flag  (ferrite:norm-bool (config-resolve "SIGN" "ferrite-check" "sign" "false")))
+         (chain-flag (ferrite:norm-bool (config-resolve "EMIT_OUTCOME_CHAIN" "ferrite-check" "emit-outcome-chain" "false")))
+         (system     (ferrite:arch->system arch))
+         (attr       (ferrite:render-attr template image-attr arch svc)))
+    (ferrite:warn-livetodos sign-flag chain-flag)
+    (cond
+      ;; ── config gate: template names {svc} but SVC empty ⇒ ambiguous attr ──
+      ((and (ferrite:template-uses-svc? template) (equal? svc ""))
+       (log-error (string-append "ferrite-check: attr-template names {svc} (\""
+                    template "\") but the svc input is empty — refusing an ambiguous attr"))
+       (ferrite:emit "false" "false" "" "" "" "" "" "ambiguous-attr" 1))
+      ;; ── config gate: unknown arch ⇒ no system double ──
+      ((equal? system "")
+       (log-error (string-append "ferrite-check: unknown arch \"" arch "\" — no nix system double"))
+       (ferrite:emit "false" "false" "" "" attr "" "" "ambiguous-attr" 1))
+      ;; ── required tool absent (probe BEFORE invoking) ──
+      ((not (ferrite:on-path? "nix"))
+       (log-error "ferrite-check: `nix` not on PATH — cannot eval the package (the runner must bake nix)")
+       (ferrite:emit "false" "false" "" "" attr "" "" "nix-absent" 1))
+      (else
+       (ferrite:run flake-ref attr svc arch system poms-dir prev poms-path require-m)))))
+
+;; The eval → cache-probe → serialize → emit body, entered once nix is on PATH.
+(define (ferrite:run flake-ref attr svc arch system poms-dir prev poms-path require-m)
+  (let* ((repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
+         (subject (string-append (if (equal? svc "") repo svc) ":" arch))
+         (git-sha (env-get "GITHUB_SHA" ""))
+         (git-ref (env-get "GITHUB_REF" ""))
+         (run-id (env-get "GITHUB_RUN_ID" ""))
+         (run-num (env-get "GITHUB_RUN_NUMBER" ""))
+         (workflow (env-get "GITHUB_WORKFLOW" ""))
+         (tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
+         (ts (string-trim (stdout-of (exec-capture "date" "-u" "+%Y-%m-%dT%H:%M:%SZ"))))
+         ;; 1. content-address the SOURCE: nix eval .outPath. The output store
+         ;;    path is a content-address over every input (source+deps+recipe);
+         ;;    its basename is the cache key. This eval ALSO proves the package
+         ;;    is materializable (outPath resolving ⇒ the derivation exists).
+         (out-eval (ferrite:eval-field flake-ref attr "outPath")))
+    (log-info (string-append "==> ferrite-check: " subject " (attr " attr ", system " system ")"))
+    (cond
+      ;; ── NOT materializable: the attr does not resolve to a derivation ──
+      ((not (ferrite:ok? out-eval))
+       (log-info (ferrite:payload out-eval))
+       (cond
+         ((equal? require-m "true")
+          (log-error (string-append "ferrite-check: " attr " is NOT materializable "
+                       "(nix eval of .outPath failed) and require=true — failing"))
+          (ferrite:emit "false" "false" "" "" attr "" "" "not-materializable" 1))
+         (else
+          (log-info (string-append "ferrite-check: " attr " not materializable; "
+                     "require=false — clean typed no (exit 2)"))
+          (ferrite:emit "false" "false" "" "" attr "" "" "not-materializable" 2))))
+      (else
+       (let* ((out-path (ferrite:payload out-eval))
+              (src-hash (ferrite:store-basename out-path)))
+         (cond
+           ;; ── CACHE HIT: a PoMS already proves this exact source materializable ──
+           ((ferrite:cache-has? poms-dir src-hash)
+            (let ((cache-path (ferrite:poms-cache-path poms-dir src-hash)))
+              (log-info (string-append "ferrite-check: cache HIT for source " src-hash
+                         " -> " cache-path " (skipping re-eval + derive)"))
+              ;; re-emit the cached PoMS to the requested poms-path, unchanged
+              ;; (content-addressed ⇒ its receipt hash is stable + verifiable).
+              (write-file poms-path (read-file cache-path))
+              (let ((cached-hash (let ((h (json-read-field cache-path ".attestation.receipt_hash")))
+                                   (if (equal? h "") "" h)))
+                    (drv (let ((d (json-read-field cache-path ".materialization.drv_path")))
+                           (if (equal? d "") "" d))))
+                (ferrite:emit "true" "true" src-hash drv attr poms-path cached-hash "cached" 0))))
+           ;; ── CACHE MISS: fresh — resolve the drvPath + emit a new PoMS ──
+           (else
+            ;; the drvPath is a nice-to-have detail on the receipt; an outPath
+            ;; that resolved implies a drv exists, so a drvPath eval failure is
+            ;; NON-fatal (record "" rather than fail the materializable verdict).
+            (let* ((drv-eval (ferrite:eval-field flake-ref attr "drvPath"))
+                   (drv-path (if (ferrite:ok? drv-eval) (ferrite:payload drv-eval) ""))
+                   (base (ferrite:build-poms-base subject svc arch system attr src-hash
+                           "true" drv-path git-sha git-ref run-id run-num workflow ts prev "")))
+              (cond
+                ((not (= (status-of base) 0))
+                 (log-info (stderr-of base))
+                 (ferrite:emit "true" "false" src-hash drv-path attr "" "" "jq-fail" 1))
+                (else
+                 (let ((fin (ferrite:finalize-poms (stdout-of base) poms-path tmp-dir)))
+                   (cond
+                     ((not (ferrite:ok? fin))
+                      (log-error (string-append "ferrite-check: PoMS finalize failed ("
+                                   (ferrite:payload fin) ")"))
+                      (ferrite:emit "true" "false" src-hash drv-path attr "" "" (ferrite:payload fin) 1))
+                     (else
+                      (let ((rhash (ferrite:payload fin)))
+                        (log-info (string-append "PoMS -> " poms-path
+                                   "  (source=" src-hash ", chain.prev="
+                                   (if (equal? prev "") "<root>" prev) ")"))
+                        (log-info (string-append "blake3 poms-hash = " rhash))
+                        ;; write-if-absent into the cache dir (content-addressed,
+                        ;; no lock — two runners over the same source produce
+                        ;; identical bytes, so the race is benign).
+                        (let ((cache-path (ferrite:poms-cache-path poms-dir src-hash)))
+                          (when (and (not (equal? cache-path ""))
+                                     (not (path-exists? cache-path)))
+                            (write-file cache-path (read-file poms-path))
+                            (log-info (string-append "ferrite-check: cached PoMS -> " cache-path))))
+                        (ferrite:emit "true" "false" src-hash drv-path attr poms-path rhash "ok" 0)))))))))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — ferrite-check helpers loaded; main skipped"))
+  (else
+   (exit (main))))

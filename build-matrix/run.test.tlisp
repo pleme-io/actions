@@ -1,0 +1,100 @@
+;; build-matrix/run.test.tlisp — (deftest …) verification matrix for the
+;; pure helpers, run via tatara-script --test by the tlisp-test action
+;; (TLISP_TEST=1 gates the unit's main so no `nix eval` runs here).
+;;
+;; This IS the CLOSED-LOOP MASS-SYNTHESIS "verification matrix" for the
+;; image×arch enumerator: it exercises the attr grammar (accept/reject),
+;; the arch→system map, and every services/arches/exclude filter path
+;; against a realistic mixed attr set.
+
+;; ── test fixtures + a test-only readable membership key ──────────
+;; A realistic mixed attr set: bare-binary (default:*) + amd64 + arm64 image
+;; attrs, plus a non-image attr — every reject/accept path in one set.
+(define bm:test-names
+  (list "default:auth" "default:uam"
+        "dockerImage:amd64:auth" "dockerImage:amd64:uam" "dockerImage:amd64:gateway"
+        "dockerImage:arm64:auth"
+        "somethingElse"))
+
+;; "<arch>:<svc>" key per row, for readable membership assertions
+;; (mirrors the exclude key shape).
+(define (bm:rows->argkeys rows)
+  (cond
+    ((null? rows) (list))
+    (else (cons (string-append (bm:row-arch (car rows)) ":" (bm:row-image (car rows)))
+                (bm:rows->argkeys (cdr rows))))))
+
+;; ── the matrix ───────────────────────────────────────────────────
+
+(deftest "arch->system maps every known arch and rejects the unknown"
+  (assert (equal? (bm:arch->system "amd64")   "x86_64-linux")  "amd64")
+  (assert (equal? (bm:arch->system "x86_64")  "x86_64-linux")  "x86_64 alias")
+  (assert (equal? (bm:arch->system "arm64")   "aarch64-linux") "arm64")
+  (assert (equal? (bm:arch->system "aarch64") "aarch64-linux") "aarch64 alias")
+  (assert (equal? (bm:arch->system "riscv")   "") "unknown arch => empty"))
+
+(deftest "parse-attr accepts the colon-triple and rejects everything else"
+  (assert (equal? (bm:parse-attr "dockerImage" "dockerImage:amd64:auth")
+                  (list "auth" "amd64" "dockerImage:amd64:auth" "x86_64-linux"))
+          "valid <base>:<arch>:<svc> triple parses")
+  (assert (equal? (bm:parse-attr "dockerImage" "dockerImage:arm64:gateway")
+                  (list "gateway" "arm64" "dockerImage:arm64:gateway" "aarch64-linux"))
+          "arm64 gateway triple parses")
+  (assert (not (bm:parse-attr "dockerImage" "default:auth")) "default:<svc> (2 parts) rejected")
+  (assert (not (bm:parse-attr "dockerImage" "dockerImage-amd64")) "dash convention (1 part) rejected")
+  (assert (not (bm:parse-attr "dockerImage" "otherBase:amd64:auth")) "wrong base rejected")
+  (assert (not (bm:parse-attr "dockerImage" "dockerImage:riscv:auth")) "unknown arch rejected")
+  (assert (not (bm:parse-attr "dockerImage" "dockerImage:amd64:")) "empty service rejected"))
+
+(deftest "tokens splits space AND comma inputs and drops empties"
+  (assert (equal? (bm:tokens "auth uam")   (list "auth" "uam")) "space separated")
+  (assert (equal? (bm:tokens "auth,uam")   (list "auth" "uam")) "comma separated")
+  (assert (equal? (bm:tokens "auth, uam")  (list "auth" "uam")) "comma+space")
+  (assert (equal? (bm:tokens "")           (list)) "empty => empty list")
+  (assert (equal? (bm:tokens "  ")         (list)) "whitespace => empty list"))
+
+(deftest "selected? — an empty filter set selects everything"
+  (assert (bm:selected? (list) "auth") "empty set selects any candidate")
+  (assert (bm:selected? (list "auth" "uam") "uam") "member selected")
+  (assert (not (bm:selected? (list "auth" "uam") "kfm")) "non-member not selected"))
+
+(deftest "excluded? matches <arch>:<svc> and bare <svc>"
+  (assert (bm:excluded? (list "amd64:auth") "amd64" "auth") "arch:svc exclusion hits")
+  (assert (bm:excluded? (list "gator") "arm64" "gator") "bare svc exclusion hits all arches")
+  (assert (not (bm:excluded? (list "amd64:auth") "arm64" "auth")) "arch-scoped exclusion misses other arch")
+  (assert (not (bm:excluded? (list) "amd64" "auth")) "empty exclusion never hits"))
+
+(deftest "rows-from-names: no filters => every colon-triple, bare/non-image dropped"
+  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list) (list))))
+    (assert (= (length rows) 4) "4 image rows (2 default + 1 non-image dropped)")
+    (assert (bm:member? "amd64:auth"    (bm:rows->argkeys rows)) "amd64 auth present")
+    (assert (bm:member? "arm64:auth"    (bm:rows->argkeys rows)) "arm64 auth present")
+    (assert (bm:member? "amd64:gateway" (bm:rows->argkeys rows)) "amd64 gateway present")
+    (assert (not (bm:member? "amd64:somethingElse" (bm:rows->argkeys rows))) "non-image never a row")))
+
+(deftest "rows-from-names: services filter narrows to the allowlist"
+  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list "auth") (list) (list))))
+    (assert (= (length rows) 2) "only auth rows (amd64 + arm64)")
+    (assert (bm:member? "amd64:auth" (bm:rows->argkeys rows)) "amd64 auth kept")
+    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth kept")))
+
+(deftest "rows-from-names: arches filter is honest discovery (arm64 only where the attr exists)"
+  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list "arm64") (list))))
+    (assert (= (length rows) 1) "only the one arm64 attr that exists => 1 row, never a fabricated pair")
+    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth is the sole arm64 attr")))
+
+(deftest "rows-from-names: exclude drops the named (arch,svc)"
+  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list) (list "amd64:auth"))))
+    (assert (= (length rows) 3) "the excluded amd64:auth is gone")
+    (assert (not (bm:member? "amd64:auth" (bm:rows->argkeys rows))) "amd64 auth excluded")
+    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth (different arch) kept")))
+
+(deftest "row->arg serializes the pipe-joined jq positional, attr colons intact"
+  (let ((row (bm:parse-attr "dockerImage" "dockerImage:amd64:auth")))
+    (assert (equal? (bm:row->arg row)
+                    "auth|amd64|dockerImage:amd64:auth|x86_64-linux")
+            "image|arch|attr|system with the attr's own ':' preserved")))
+
+(deftest "distinct is order-preserving and dedups"
+  (assert (equal? (bm:distinct (list "amd64" "arm64" "amd64") (list))
+                  (list "amd64" "arm64")) "keeps first-seen order, drops repeats"))

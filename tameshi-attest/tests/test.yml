@@ -1,0 +1,70 @@
+name: test-tameshi-attest
+on:
+  push:
+    paths:
+      - 'tameshi-attest/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'tameshi-attest/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+
+# NOTE (tier-honest): this smoke asserts the action's DIRECT effect —
+# the written receipt FILE (at the receipt-path we pass in) and its
+# reproducible BLAKE3 hash — not the forwarded output VALUES. Forwarded
+# outputs (receipt-hash, attested, …) bubble up only once a tatara-script
+# @v1 re-release carries the declared forwards; until then reading the
+# file is the honest, green check. The output plumbing is proven by
+# run.test.tlisp + the receipt's own content.
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # BLAKE3 provider — the action resolves b3sum on PATH, else nix.
+      # On a hosted runner neither is preinstalled, so we install Nix and
+      # the action falls back to `nix run nixpkgs#b3sum`. (On a real
+      # super-cache-ci runner b3sum is baked; this is the smoke's stand-in.)
+      - uses: DeterminateSystems/nix-installer-action@main
+      - id: attest
+        uses: ./tameshi-attest
+        with:
+          subject: super-cache-ci-smoke
+          spec-hash: deadbeef
+          output-hashes: "h1,h2 h3"
+          cache-hit: "true"
+          hit-tier: redis
+          eval-ms: "120"
+          image-digests: "sha256:abc"
+          receipt-path: ${{ github.workspace }}/receipt.json
+          sign: "true"   # exercises the honest LiveTODO warning path
+
+      - name: Assert the receipt file + reproduce its BLAKE3 hash
+        env:
+          RPATH: ${{ github.workspace }}/receipt.json
+        run: |
+          set -euo pipefail
+          test -f "$RPATH" || { echo "no receipt written at $RPATH"; exit 1; }
+          # typed field checks
+          jq -e '.schema == "pleme-io.super-cache-ci.receipt/v1"' "$RPATH" >/dev/null
+          jq -e '.subject == "super-cache-ci-smoke"' "$RPATH" >/dev/null
+          jq -e '.cache.hit == true and .cache.tier == "redis"' "$RPATH" >/dev/null
+          jq -e '.outputs.hashes == ["h1","h2","h3"]' "$RPATH" >/dev/null
+          jq -e '.timings_ms.eval == 120 and .timings_ms.build == null' "$RPATH" >/dev/null
+          jq -e '.attestation.hash_algorithm == "blake3"' "$RPATH" >/dev/null
+          # sign=true was requested but signing is a LiveTODO — the receipt
+          # must be HONEST that it is unsigned.
+          jq -e '.attestation.signed == false and .attestation.signature == null' "$RPATH" >/dev/null
+          jq -e '.attestation.outcome_chain == false' "$RPATH" >/dev/null
+          # independently reproduce the receipt hash (proves it is a real,
+          # verifiable BLAKE3 content-address, not a decorative field).
+          STORED=$(jq -r '.attestation.receipt_hash' "$RPATH")
+          printf '%s' "$(jq -S -c '.attestation.receipt_hash = ""' "$RPATH")" > "$RUNNER_TEMP/canon.json"
+          RECOMPUTED=$(nix run nixpkgs#b3sum -- "$RUNNER_TEMP/canon.json" | cut -d' ' -f1)
+          [ -n "$STORED" ] || { echo "receipt_hash is empty"; exit 1; }
+          [ "$RECOMPUTED" = "$STORED" ] \
+            || { echo "hash mismatch: stored=$STORED recomputed=$RECOMPUTED"; exit 1; }
+          echo "receipt verified — reproducible BLAKE3 = $STORED"

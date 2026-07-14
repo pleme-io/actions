@@ -1,0 +1,104 @@
+name: 'pleme-io · attestation-gate'
+description: 'FedRAMP provenance GATE — verify a tameshi/cartorio attestation receipt (presence + blake3 algorithm + content-address tamper-evidence + optional chain/digest/SBOM/SLSA pillar checks) and REFUSE to promote an unattested or tampered artifact version. The verify/gate dual of tameshi-attest + cartorio-attest. Cryptographic signature verification is a named LiveTODO (require-signed=true fails honestly).'
+branding:
+  icon: 'lock'
+  color: 'green'
+
+inputs:
+  receipt-path:
+    description: "Path to the attestation receipt JSON to verify (a cartorio delivery receipt or a tameshi build receipt)."
+    required: false
+    default: "cartorio-receipt.json"
+  subject:
+    description: "The artifact / chart version being gated. Defaults to $GITHUB_REPOSITORY."
+    required: false
+    default: ""
+  expected-prev:
+    description: "When set, assert receipt.pillars.ledger.prev == this (delivery chains to the expected build receipt hash)."
+    required: false
+    default: ""
+  expected-digest:
+    description: "When set, assert receipt.image.digest == this (the receipt attests THIS image digest)."
+    required: false
+    default: ""
+  sbom-path:
+    description: "When set, re-hash this SBOM file and compare to receipt.pillars.sbom.hash."
+    required: false
+    default: ""
+  slsa-path:
+    description: "When set, re-hash this SLSA provenance file and compare to receipt.pillars.provenance.hash."
+    required: false
+    default: ""
+  require-chain:
+    description: "true ⇒ a receipt with no expected-prev supplied is a hard fail (chain linkage is mandatory)."
+    required: false
+    default: "false"
+  require-signed:
+    description: "true ⇒ demand a verified cryptographic signature. NOT shipped — fails the gate with a warning rather than passing a signature it cannot verify. [LiveTODO: cosign-verify impl + cofre public key]"
+    required: false
+    default: "false"
+  fail-on-gate:
+    description: "true ⇒ exit 1 when the gate fails (block the pipeline). false ⇒ advisory: emit passed=false but exit 0."
+    required: false
+    default: "true"
+  gate-receipt-path:
+    description: "Where to write the typed gate-decision receipt JSON."
+    required: false
+    default: "attestation-gate-receipt.json"
+
+outputs:
+  passed:
+    description: "true when every gate check passed."
+    value: ${{ steps.gate.outputs.passed }}
+  decision:
+    description: "pass | fail."
+    value: ${{ steps.gate.outputs.decision }}
+  reason:
+    description: "all-checks-passed, or failed:<first-failing-check>."
+    value: ${{ steps.gate.outputs.reason }}
+  receipt-hash:
+    description: "The declared (and, on pass, verified) BLAKE3 content address of the receipt."
+    value: ${{ steps.gate.outputs.receipt-hash }}
+  verified-algo:
+    description: "The receipt's declared hash algorithm (blake3 on a valid receipt)."
+    value: ${{ steps.gate.outputs.verified-algo }}
+  gate-receipt-path:
+    description: "Path of the written gate-decision receipt JSON."
+    value: ${{ steps.gate.outputs.gate-receipt-path }}
+  signed-verified:
+    description: "Whether a cryptographic signature was verified (false until the signing LiveTODO ships)."
+    value: ${{ steps.gate.outputs.signed-verified }}
+
+runs:
+  using: composite
+  steps:
+    # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
+    # action's run.tlisp so the body can use every stdlib primitive.
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Verify the attestation receipt + gate
+      id: gate
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        RECEIPT_PATH: ${{ inputs.receipt-path }}
+        SUBJECT: ${{ inputs.subject }}
+        EXPECTED_PREV: ${{ inputs.expected-prev }}
+        EXPECTED_DIGEST: ${{ inputs.expected-digest }}
+        SBOM_PATH: ${{ inputs.sbom-path }}
+        SLSA_PATH: ${{ inputs.slsa-path }}
+        REQUIRE_CHAIN: ${{ inputs.require-chain }}
+        REQUIRE_SIGNED: ${{ inputs.require-signed }}
+        FAIL_ON_GATE: ${{ inputs.fail-on-gate }}
+        GATE_RECEIPT_PATH: ${{ inputs.gate-receipt-path }}

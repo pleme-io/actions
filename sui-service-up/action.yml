@@ -1,0 +1,82 @@
+name: 'pleme-io · sui-service-up'
+description: 'Resolve, health-check, and export the sui service (sui-daemon-graph) endpoint + selected store/cache/sandbox tiers for a super-cache-ci build. Does not own daemon lifecycle — the daemon is an external rio cluster app or a job-scoped sidecar. TIER-HONEST: the live Postgres/Redis (never-touch-disk) connect is a named LiveTODO.'
+branding:
+  icon: 'server'
+  color: 'purple'
+
+inputs:
+  mode:
+    description: "connect | ephemeral — picks the DEFAULT backend profile the action reports. ephemeral => graphstore/local/disk (now(disk)); connect => postgres/redis/tmpfs (never-touch-disk destination, rows 4/5/7 LiveTODO). Explicit store/cache/sandbox inputs override."
+    required: false
+    default: ephemeral
+  endpoint:
+    description: "Service endpoint. A UDS path (default: $XDG_RUNTIME_DIR/sui-graph.sock) or a host:port .svc. Empty => resolved from config/default."
+    required: false
+    default: ""
+  store-backend:
+    description: "Override the durable store tier (postgres | graphstore | local). Empty => the mode profile."
+    required: false
+    default: ""
+  cache-backend:
+    description: "Override the hot cache tier (redis | local | s3). Empty => the mode profile."
+    required: false
+    default: ""
+  sandbox:
+    description: "Override the build sandbox (tmpfs | disk). Empty => the mode profile."
+    required: false
+    default: ""
+  require-up:
+    description: "Fail the step when the endpoint cannot be confirmed reachable. Default false — an unreachable endpoint reports up=false and the config resolution/export is the increment (the live service is a LiveTODO)."
+    required: false
+    default: "false"
+
+outputs:
+  endpoint:
+    description: "The resolved service endpoint (threaded into super-cache-restore/build/save)."
+    value: ${{ steps.run.outputs.endpoint }}
+  store-backend:
+    description: "The selected durable store tier."
+    value: ${{ steps.run.outputs.store-backend }}
+  cache-backend:
+    description: "The selected hot cache tier."
+    value: ${{ steps.run.outputs.cache-backend }}
+  sandbox:
+    description: "The selected build sandbox."
+    value: ${{ steps.run.outputs.sandbox }}
+  never-touch-disk:
+    description: "Computed structural predicate: true only when store=postgres AND cache=redis AND sandbox=tmpfs."
+    value: ${{ steps.run.outputs.never-touch-disk }}
+  up:
+    description: "true if the endpoint was confirmed reachable, else false."
+    value: ${{ steps.run.outputs.up }}
+  reason:
+    description: "ok | endpoint-not-reachable | tcp-liveness-livetodo — why up is what it is."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run sui-service-up
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        MODE: ${{ inputs.mode }}
+        ENDPOINT: ${{ inputs.endpoint }}
+        STORE_BACKEND: ${{ inputs.store-backend }}
+        CACHE_BACKEND: ${{ inputs.cache-backend }}
+        SANDBOX: ${{ inputs.sandbox }}
+        REQUIRE_UP: ${{ inputs.require-up }}

@@ -26,9 +26,20 @@
 (define (do-bump)
   (status-of (exec-capture "cargo" "set-version" "--bump" bump-type)))
 
+;; PINNED, not master: the regenerated Cargo.nix's embedded runtime template
+;; must match what the fleet's builders consume. An unpinned regen silently
+;; tracked crate2nix master past the 0.15.0 tag (new template + dev-dep
+;; folding) and produced Cargo.nix files whose nix builds fail fleet-wide
+;; with E0463 can't-find-crate while cargo/CI stayed green (mado v0.1.49,
+;; 2026-07-02). This rev is the fleet flake pin; bumping it is a deliberate
+;; PR that re-verifies `nix build` on a consumer, never an ambient drift.
+(define crate2nix-pinned-rev "c994c83963b42b26f127e9cc50a8c86852db67d0")
+
 (define (do-regen)
   (status-of
-    (exec-capture "nix" "run" "github:nix-community/crate2nix" "--" "generate")))
+    (exec-capture "nix" "run"
+      (string-append "github:nix-community/crate2nix/" crate2nix-pinned-rev)
+      "--" "generate")))
 
 (define (emit-skip msg old-v)
   (log-info msg)

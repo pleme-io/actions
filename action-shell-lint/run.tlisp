@@ -48,15 +48,52 @@
    (exit 0)))
 
 (log-error "shell-bodied actions exceeding threshold:")
-(let loop ((lines (string-split out "\n")) (n 0))
+
+;; A checked-in, named, tracked exception list -- the same discipline as
+;; a .trivyignore. This check was SILENTLY CRASHING (a named-let syntax
+;; error tatara-script doesn't support) until just now, so it never
+;; actually enforced anything; turning it on for real immediately
+;; surfaces every violation that accumulated while it was broken. Hard-
+;; failing on that pre-existing debt would block every future PR on
+;; files it doesn't even touch. Baseline entries are reported as tracked
+;; debt (never silent); anything NOT in the baseline is a real, new
+;; violation and still fails the build.
+(define baseline-path "action-shell-lint/baseline.txt")
+(define baseline-lines
+  (if (path-exists? baseline-path)
+    (filter (lambda (l) (not (equal? l "")))
+            (string-split (read-file baseline-path) "\n"))
+    (list)))
+
+(define (list-contains? lst item)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) item) #t)
+    (else (list-contains? (cdr lst) item))))
+
+;; tatara-script's `let` has no named-let form (bindings must be a
+;; plain list) -- a top-level `define` is the portable recursive-loop
+;; idiom used everywhere else in this repo (see e.g.
+;; cargo-publish-each-member/run.tlisp's resolve-member).
+(define (report-violations lines new-n baseline-n)
   (cond
     ((null? lines)
-     (append-output (string-append "violations=" (string-format "{}" n)))
+     (append-output (string-append "violations=" (string-format "{}" new-n)))
+     (append-output (string-append "baseline-violations=" (string-format "{}" baseline-n)))
      (append-output (string-append "files-scanned=" files))
      (cond
-       ((equal? fail-on "true") (exit 1))
+       ((and (equal? fail-on "true") (> new-n 0)) (exit 1))
        (else (exit 0))))
-    ((equal? (car lines) "") (loop (cdr lines) n))
+    ((equal? (car lines) "") (report-violations (cdr lines) new-n baseline-n))
     (else
-      (log-error (string-append "  " (car lines)))
-      (loop (cdr lines) (+ n 1)))))
+      (let* ((parts (string-split (car lines) "\t"))
+             (offending-file (car parts)))
+        (cond
+          ((list-contains? baseline-lines offending-file)
+           (log-info (string-append "  (baseline, tracked debt) " (car lines)))
+           (report-violations (cdr lines) new-n (+ baseline-n 1)))
+          (else
+           (log-error (string-append "  " (car lines)))
+           (report-violations (cdr lines) (+ new-n 1) baseline-n)))))))
+
+(report-violations (string-split out "\n") 0 0)

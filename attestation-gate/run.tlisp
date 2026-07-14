@@ -1,0 +1,284 @@
+;; attestation-gate/run.tlisp — the FedRAMP PROVENANCE GATE. Consumes a
+;; shipped attestation receipt (tameshi BUILD receipt or cartorio
+;; DELIVERY/COMPLIANCE receipt) and REFUSES to let an unattested or
+;; tampered artifact version be promoted. It is the verify/gate DUAL of
+;; the tameshi-attest / cartorio-attest producers.
+;;
+;; ── What it verifies NOW (real, not asserted) ───────────────────────
+;;   1. PRESENCE      — the receipt file exists and parses as JSON.
+;;   2. ALGORITHM     — attestation.hash_algorithm == "blake3" (refuse
+;;                      any receipt that claims a different algorithm).
+;;   3. CONTENT-ADDRESS (the load-bearing check) — RE-CANONICALIZE the
+;;      receipt with attestation.receipt_hash blanked, RE-HASH it with a
+;;      real BLAKE3 (b3sum on PATH, else `nix run nixpkgs#b3sum`), and
+;;      compare against the declared receipt_hash. This is the exact
+;;      inverse of how tameshi/cartorio produced the hash, so a match
+;;      PROVES the receipt body has not been altered since it was
+;;      attested (tamper-evidence). No BLAKE3 tool ⇒ the gate FAILS —
+;;      it never passes a check it cannot perform.
+;;   4. CHAIN (opt.)  — when EXPECTED_PREV is given, assert
+;;      pillars.ledger.prev == EXPECTED_PREV (delivery chains to the
+;;      expected build receipt). REQUIRE_CHAIN=true with no EXPECTED_PREV
+;;      is a hard fail.
+;;   5. DIGEST (opt.) — when EXPECTED_DIGEST is given, assert
+;;      image.digest == EXPECTED_DIGEST (the receipt attests THIS image).
+;;   6. SBOM/SLSA PILLARS (opt.) — when SBOM_PATH / SLSA_PATH are given,
+;;      re-hash the pillar file and compare against pillars.sbom.hash /
+;;      pillars.provenance.hash in the receipt.
+;;
+;; ── Tier-honest LiveTODO (never rounded up) ─────────────────────────
+;;   - CRYPTOGRAPHIC SIGNATURE verification (cosign/DSSE/Ed25519) is NOT
+;;     shipped (the cosign-verify action is a stub; tameshi/cartorio emit
+;;     signed=false). REQUIRE_SIGNED=true therefore FAILS the gate with a
+;;     loud warning — the gate refuses to attest a signature it cannot
+;;     verify. Default REQUIRE_SIGNED=false skips the signature leg and
+;;     emits signed-verified=false. [LiveTODO: cosign-verify impl + cofre
+;;     public key → flip the signature check to a real verify.]
+;;
+;; TYPED EMISSION: the gate-decision receipt is built by `jq` (the typed
+;; serializer), never string-concatenation; every jq program embeds in a
+;; tlisp string with zero double-quote chars (each literal is a --arg).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, stderr-of, config-resolve,
+;;   json-read-field, hash:blake3-file.
+;;
+;; Inputs (env, all config-resolvable via [attestation-gate] section):
+;;   RECEIPT_PATH EXPECTED_PREV EXPECTED_DIGEST SBOM_PATH SLSA_PATH
+;;   SUBJECT REQUIRE_SIGNED REQUIRE_CHAIN FAIL_ON_GATE GATE_RECEIPT_PATH
+;; Outputs (appended):
+;;   passed decision reason receipt-hash verified-algo gate-receipt-path
+;;   signed-verified
+
+;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────
+
+(define (gate:norm-bool s)
+  (if (equal? (string-trim s) "true") "true" "false"))
+
+;; A check is a (name status) 2-list; status ∈ {"pass" "fail" "skip"}.
+;; (cons a b) in tatara-lisp is a list cell — `(cdr (cons a b))` is `(b)`,
+;; not `b` — so a 2-list + car/cadr accessors is the unambiguous shape.
+(define (gate:check name status) (list name status))
+(define (gate:name ck) (car ck))
+(define (gate:status ck) (car (cdr ck)))
+
+(define (gate:any-fail? checks)
+  (cond
+    ((null? checks) #f)
+    ((equal? (gate:status (car checks)) "fail") #t)
+    (else (gate:any-fail? (cdr checks)))))
+
+;; Name of the first failing check, or "" when none fail.
+(define (gate:first-fail checks)
+  (cond
+    ((null? checks) "")
+    ((equal? (gate:status (car checks)) "fail") (gate:name (car checks)))
+    (else (gate:first-fail (cdr checks)))))
+
+;; A gate passes iff no check failed (skips are benign).
+(define (gate:decision checks)
+  (if (gate:any-fail? checks) "fail" "pass"))
+
+(define (gate:reason decision checks)
+  (if (equal? decision "pass")
+    "all-checks-passed"
+    (string-append "failed:" (gate:first-fail checks))))
+
+;; Subject defaults to the repo slug when the caller passes none.
+(define (gate:subject-or raw repo)
+  (if (equal? (string-trim raw) "") repo raw))
+
+;; ── Side-effecting verifiers ─────────────────────────────────────
+
+;; #t iff `jq -e .` succeeds — the file parses as JSON.
+(define (gate:json-valid? path)
+  (= 0 (status-of (exec-capture "jq" "-e" "." path))))
+
+;; Re-canonicalize the receipt with receipt_hash blanked, then BLAKE3 it
+;; — the inverse of the producer's hashing. "" on jq failure or when no
+;; BLAKE3 tool exists (caller treats "" as a hard FAIL, never a pass).
+(define (gate:recompute-hash receipt-path tmp-dir)
+  (let* ((base-path (string-append tmp-dir "/gate-base.json"))
+         (canon-path (string-append tmp-dir "/gate-canon.json"))
+         (base (exec-capture "jq" "-S" "--arg" "e" ""
+                 ".attestation.receipt_hash = $e" receipt-path)))
+    (cond
+      ((not (= (status-of base) 0)) "")
+      (else
+       (write-file base-path (stdout-of base))
+       (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+         (cond
+           ((not (= (status-of canon) 0)) "")
+           (else
+            (write-file canon-path (string-trim (stdout-of canon)))
+            (hash:blake3-file canon-path))))))))
+
+;; Optional pillar file check: "" file ⇒ skip; missing file ⇒ fail;
+;; empty declared-hash ⇒ fail; else re-hash + compare.
+(define (gate:pillar-status file declared-hash)
+  (cond
+    ((equal? (string-trim file) "") "skip")
+    ((not (path-exists? file)) "fail")
+    ((equal? declared-hash "") "fail")
+    ((equal? (hash:blake3-file file) declared-hash) "pass")
+    (else "fail")))
+
+;; ── Gate-decision receipt — jq is the typed serializer ───────────
+;; Zero double-quote chars: every literal is passed as a --arg.
+
+(define gate:decision-jq
+  "{ schema: $schema, subject: $subject, receipt: { path: $rpath, hash: $rhash, algorithm: $algo }, checks: { present: $c_present, algorithm: $c_algo, content_address: $c_ca, chain: $c_chain, digest: $c_digest, sbom_pillar: $c_sbom, slsa_pillar: $c_slsa, signature: $c_sig }, decision: $decision, reason: $reason, git: { sha: $gitsha, ref: $gitref }, run: { id: $runid, number: $runnum, workflow: $workflow }, timestamp: $ts }")
+
+(define (gate:emit-decision path subject rpath rhash algo
+                            c-present c-algo c-ca c-chain c-digest
+                            c-sbom c-slsa c-sig decision reason
+                            gitsha gitref runid runnum workflow ts)
+  (let ((r (apply exec-capture
+             (list "jq" "-n" "-S"
+               "--arg" "schema" "pleme-io.attestation-gate.decision/v1"
+               "--arg" "subject" subject
+               "--arg" "rpath" rpath
+               "--arg" "rhash" rhash
+               "--arg" "algo" algo
+               "--arg" "c_present" c-present
+               "--arg" "c_algo" c-algo
+               "--arg" "c_ca" c-ca
+               "--arg" "c_chain" c-chain
+               "--arg" "c_digest" c-digest
+               "--arg" "c_sbom" c-sbom
+               "--arg" "c_slsa" c-slsa
+               "--arg" "c_sig" c-sig
+               "--arg" "decision" decision
+               "--arg" "reason" reason
+               "--arg" "gitsha" gitsha
+               "--arg" "gitref" gitref
+               "--arg" "runid" runid
+               "--arg" "runnum" runnum
+               "--arg" "workflow" workflow
+               "--arg" "ts" ts
+               gate:decision-jq))))
+    (cond
+      ((= (status-of r) 0) (write-file path (stdout-of r)) 0)
+      (else (log-info (stderr-of r)) 1))))
+
+;; ── Main ─────────────────────────────────────────────────────────
+
+(define (gate:emit-missing receipt-path gate-receipt-path reason)
+  (log-error (string-append "attestation-gate: " reason))
+  (append-output "passed=false")
+  (append-output "decision=fail")
+  (append-output (string-append "reason=" reason))
+  (append-output "receipt-hash=")
+  (append-output "verified-algo=")
+  (append-output (string-append "gate-receipt-path=" gate-receipt-path))
+  (append-output "signed-verified=false"))
+
+(define (main)
+  (let* ((receipt-path (config-resolve "RECEIPT_PATH" "attestation-gate" "receipt-path" "cartorio-receipt.json"))
+         (repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
+         (subject (gate:subject-or (config-resolve "SUBJECT" "attestation-gate" "subject" "") repo))
+         (expected-prev (config-resolve "EXPECTED_PREV" "attestation-gate" "expected-prev" ""))
+         (expected-digest (config-resolve "EXPECTED_DIGEST" "attestation-gate" "expected-digest" ""))
+         (sbom-path (config-resolve "SBOM_PATH" "attestation-gate" "sbom-path" ""))
+         (slsa-path (config-resolve "SLSA_PATH" "attestation-gate" "slsa-path" ""))
+         (require-signed (gate:norm-bool (config-resolve "REQUIRE_SIGNED" "attestation-gate" "require-signed" "false")))
+         (require-chain (gate:norm-bool (config-resolve "REQUIRE_CHAIN" "attestation-gate" "require-chain" "false")))
+         (fail-on-gate (gate:norm-bool (config-resolve "FAIL_ON_GATE" "attestation-gate" "fail-on-gate" "true")))
+         (gate-receipt-path (config-resolve "GATE_RECEIPT_PATH" "attestation-gate" "gate-receipt-path" "attestation-gate-receipt.json"))
+         (git-sha (env-get "GITHUB_SHA" ""))
+         (git-ref (env-get "GITHUB_REF" ""))
+         (run-id (env-get "GITHUB_RUN_ID" ""))
+         (run-num (env-get "GITHUB_RUN_NUMBER" ""))
+         (workflow (env-get "GITHUB_WORKFLOW" ""))
+         (tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
+         (ts (string-trim (stdout-of (exec-capture "date" "-u" "+%Y-%m-%dT%H:%M:%SZ")))))
+    (log-info (string-append "==> attestation-gate: verifying receipt " receipt-path " for " subject))
+    ;; PRESENCE — short-circuit; a missing/unparseable receipt is a hard,
+    ;; early fail (every downstream field read would be "").
+    (cond
+      ((not (and (path-exists? receipt-path) (gate:json-valid? receipt-path)))
+       (gate:emit-missing receipt-path gate-receipt-path "receipt-missing-or-invalid-json")
+       (cond ((equal? fail-on-gate "true") (exit 1)) (else (exit 0))))
+      (else
+       (let* ((algo (json-read-field receipt-path ".attestation.hash_algorithm"))
+              (declared (json-read-field receipt-path ".attestation.receipt_hash"))
+              (recomputed (gate:recompute-hash receipt-path tmp-dir))
+              (ledger-prev (json-read-field receipt-path ".pillars.ledger.prev"))
+              (img-digest (json-read-field receipt-path ".image.digest"))
+              (present-status "pass")
+              (algo-status (if (equal? algo "blake3") "pass" "fail"))
+              (ca-status
+                (cond
+                  ((equal? recomputed "") "fail")
+                  ((equal? declared "") "fail")
+                  ((equal? recomputed declared) "pass")
+                  (else "fail")))
+              (chain-status
+                (cond
+                  ((not (equal? expected-prev "")) (if (equal? ledger-prev expected-prev) "pass" "fail"))
+                  ((equal? require-chain "true") "fail")
+                  (else "skip")))
+              (digest-status
+                (cond
+                  ((equal? expected-digest "") "skip")
+                  ((equal? img-digest expected-digest) "pass")
+                  (else "fail")))
+              (sbom-status (gate:pillar-status sbom-path (json-read-field receipt-path ".pillars.sbom.hash")))
+              (slsa-status (gate:pillar-status slsa-path (json-read-field receipt-path ".pillars.provenance.hash")))
+              (signed-status
+                (cond
+                  ((equal? require-signed "true")
+                   (log-info "::warning::attestation-gate: require-signed=true but cryptographic signature verification (cosign/DSSE/Ed25519) is NOT shipped — the gate cannot attest a signature it cannot verify, so it FAILS honestly [LiveTODO: cosign-verify impl + cofre public key]")
+                   "fail")
+                  (else "skip")))
+              (checks (list
+                        (gate:check "present" present-status)
+                        (gate:check "algorithm" algo-status)
+                        (gate:check "content_address" ca-status)
+                        (gate:check "chain" chain-status)
+                        (gate:check "digest" digest-status)
+                        (gate:check "sbom_pillar" sbom-status)
+                        (gate:check "slsa_pillar" slsa-status)
+                        (gate:check "signature" signed-status)))
+              (decision (gate:decision checks))
+              (reason (gate:reason decision checks)))
+         (log-info (string-append "  algorithm=" algo-status
+                    " content_address=" ca-status
+                    " chain=" chain-status
+                    " digest=" digest-status
+                    " sbom=" sbom-status
+                    " slsa=" slsa-status
+                    " signature=" signed-status))
+         (cond
+           ((equal? ca-status "fail")
+            (cond
+              ((equal? recomputed "")
+               (log-error "attestation-gate: no BLAKE3 tool (b3sum / nix) — cannot verify the content address; refusing to pass a check it cannot perform"))
+              (else
+               (log-error (string-append "attestation-gate: content-address MISMATCH — declared=" declared " recomputed=" recomputed " (receipt body was altered after attestation)")))))
+           (else #t))
+         (gate:emit-decision gate-receipt-path subject receipt-path declared algo
+                             present-status algo-status ca-status chain-status
+                             digest-status sbom-status slsa-status signed-status
+                             decision reason git-sha git-ref run-id run-num workflow ts)
+         (append-output (string-append "passed=" (if (equal? decision "pass") "true" "false")))
+         (append-output (string-append "decision=" decision))
+         (append-output (string-append "reason=" reason))
+         (append-output (string-append "receipt-hash=" declared))
+         (append-output (string-append "verified-algo=" algo))
+         (append-output (string-append "gate-receipt-path=" gate-receipt-path))
+         (append-output "signed-verified=false")
+         (log-info (string-append "gate DECISION=" decision " (" reason ") -> " gate-receipt-path))
+         (cond
+           ((equal? decision "pass") (log-info "attestation-gate: PASSED") (exit 0))
+           ((equal? fail-on-gate "true") (log-error "attestation-gate: FAILED — refusing promotion of an unattested/tampered artifact") (exit 1))
+           (else (log-info "attestation-gate: FAILED (advisory; fail-on-gate=false) — emitting passed=false, not blocking") (exit 0))))))))
+
+;; Gated on TLISP_TEST so the tlisp-test harness loads the pure helpers
+;; (norm-bool / check / any-fail? / first-fail / decision / reason /
+;; subject-or / pillar-status skip-branch) and drives them with fixtures,
+;; without running the real jq / b3sum pipeline.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — attestation-gate helpers loaded; main skipped"))
+  (else (main)))
