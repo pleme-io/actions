@@ -18,7 +18,11 @@ inputs:
     required: false
     default: ""
   nix-store-path:
-    description: "Comma/space list of built image out-paths — the Nix-closure SBOM source"
+    description: "Comma/space list of built image out-paths — the Nix-closure SBOM source. WARNING for dockerTools images: a gzip-compressed image tarball's own Nix-registered references are near-empty (Nix's reference scanner finds store-path hash substrings by scanning output BYTES, and compression destroys them) — pointing this at a compressed image out-path yields a near-empty SBOM. Prefer `nix-closure-info-path` for any dockerTools/OCI-image consumer; use this input directly only for uncompressed package derivations."
+    required: false
+    default: ""
+  nix-closure-info-path:
+    description: "Comma/space list of `pkgs.closureInfo { rootPaths = [...]; }` output directories (each containing a `store-paths` text file) — the ROBUST Nix-closure SBOM source for compressed dockerTools/OCI images. closureInfo's own output is an uncompressed plain-text listing, so its Nix-registered references (and this action's direct read of its `store-paths` file) are always correct, sidestepping the compression blind-spot `nix-store-path` has on a compressed image tarball. Takes precedence over `nix-store-path` when both are set."
     required: false
     default: ""
   prev-receipt-hash:
@@ -112,6 +116,7 @@ runs:
         IMAGE_REF: ${{ inputs.image-ref }}
         IMAGE_DIGEST: ${{ inputs.image-digest }}
         NIX_STORE_PATH: ${{ inputs.nix-store-path }}
+        NIX_CLOSURE_INFO_PATH: ${{ inputs.nix-closure-info-path }}
         PREV_RECEIPT_HASH: ${{ inputs.prev-receipt-hash }}
         BUILDER_ID: ${{ inputs.builder-id }}
         SBOM_PATH: ${{ inputs.sbom-path }}
