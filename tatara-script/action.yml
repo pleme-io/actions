@@ -146,7 +146,7 @@ outputs:
     description: "Forwarded (key: up) — sui-service-up endpoint-reachable flag"
     value: ${{ steps.exec.outputs.up }}
   reason:
-    description: "Forwarded (key: reason) — service/cache/spec verbs' typed why-string"
+    description: "Forwarded (key: reason) — a shared typed why-string key, consumers disjoint: service/cache/spec verbs' outcome reason, OR aldrava-dispatch/aldrava-resolve's rejection/no-match/not-running reason"
     value: ${{ steps.exec.outputs.reason }}
   cache-hit:
     description: "Forwarded (key: cache-hit) — super-cache-restore warm-path hit flag"
@@ -320,9 +320,6 @@ outputs:
   target-detail:
     description: "Forwarded (key: target-detail) — aldrava-dispatch dispatched target's identifying value"
     value: ${{ steps.exec.outputs.target-detail }}
-  reason:
-    description: "Forwarded (key: reason) — aldrava-dispatch/aldrava-resolve rejection/no-match/not-running reason"
-    value: ${{ steps.exec.outputs.reason }}
   should-run:
     description: "Forwarded (key: should-run) — aldrava-resolve run-context-resolved flag"
     value: ${{ steps.exec.outputs.should-run }}
