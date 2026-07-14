@@ -1,0 +1,18 @@
+# Tracked NO-SHELL debt -- action.yml files whose shell body exceeds the
+# threshold, predating action-shell-lint actually working (it silently
+# crashed on a named-let syntax error until this file's own commit, so
+# it never enforced anything and this debt accumulated unseen). Each
+# entry here is real, tracked debt, not a silent exception -- the goal
+# is an empty file, not a permanently-growing one. Remove an entry only
+# by actually fixing that action's shell body (route it through tlisp),
+# never by raising the threshold to make it fit.
+./aldrava-dispatch/action.yml
+./caixa-render/action.yml
+./email-notify/action.yml
+./aldrava-resolve/action.yml
+./sui-dockerfile-node-cache/action.yml
+./aldrava-lint/action.yml
+./gh-team-sync/action.yml
+./tatara-script/action.yml
+./caixa-publish/action.yml
+./wasm-build/action.yml
