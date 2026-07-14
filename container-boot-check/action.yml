@@ -7,8 +7,9 @@ inputs:
     description: "Image ref to start (e.g. ghcr.io/pleme-io/rabbitmq:3.13.7-nix0)"
     required: true
   health-cmd:
-    description: "Shell command run inside the container via `docker exec` on each poll; success (exit 0) means healthy (e.g. \"rabbitmq-diagnostics -q ping\")"
-    required: true
+    description: "Shell command run inside the container via `docker exec` on each poll; success (exit 0) means healthy (e.g. \"rabbitmq-diagnostics -q ping\"). Leave empty for a shell-less/distroless image with nothing to exec into — falls back to a 'still running after max-attempts*poll-interval-seconds' check via `docker inspect`, no exec into the container."
+    required: false
+    default: ""
   env:
     description: "Newline-separated KEY=VALUE pairs passed to `docker run -e`"
     required: false
