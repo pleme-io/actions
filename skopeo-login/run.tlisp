@@ -1,0 +1,83 @@
+;; skopeo-login/run.tlisp — real `skopeo login`, ECR-aware.
+;;
+;; Ported from the proven akeyless_services/release/skopeo-login.sh
+;; shape (push-to-harbor.yml's own working Harbor-login mechanism):
+;; ECR registries resolve a short-lived password via
+;; `aws ecr(-public) get-login-password`, using USERNAME/PASSWORD as
+;; AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; every other registry logs
+;; in directly with the given username/password.
+;;
+;; This exists as its own primitive (not folded into skopeo-copy /
+;; oci-image-push) because it is the auth PRECONDITION those two share —
+;; `docker/login-action` is the wrong tool upstream of either: it
+;; authenticates the Docker CLI's config (~/.docker/config.json), while
+;; skopeo's default credential lookup is its OWN auth file
+;; (${XDG_RUNTIME_DIR}/containers/auth.json or
+;; $HOME/.config/containers/auth.json) — a real, silent mismatch a
+;; docker/login-action step can look like it "worked" while skopeo
+;; never actually sees the credential.
+;;
+;; Inputs (env): REGISTRY, USERNAME, PASSWORD
+;; Outputs: logged-in=true|false
+
+(define (skopeo:list-ref lst i)
+  (cond
+    ((= i 0) (car lst))
+    (else (skopeo:list-ref (cdr lst) (- i 1)))))
+
+(define (skopeo:ecr-public? r) (equal? r "public.ecr.aws"))
+(define (skopeo:ecr-private? r) (string-contains? r "dkr.ecr"))
+
+;; <account>.dkr.ecr.<region>.amazonaws.com -- region is 3rd-from-last
+;; of the dot-split parts; any registry not shaped like this yields "".
+(define (skopeo:ecr-region r)
+  (let* ((parts (string-split r "."))
+         (n (length parts)))
+    (if (< n 6) "" (skopeo:list-ref parts (- n 3)))))
+
+(define (skopeo:ecr-password username password region public?)
+  (env-set "AWS_ACCESS_KEY_ID" username)
+  (env-set "AWS_SECRET_ACCESS_KEY" password)
+  (let ((r (if public?
+             (exec-capture "aws" "ecr-public" "get-login-password" "--region" "us-east-1")
+             (exec-capture "aws" "ecr" "get-login-password" "--region" region))))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+(define (skopeo:fail reason)
+  (log-error (string-append "skopeo-login: " reason))
+  (append-output "logged-in=false")
+  (exit 1))
+
+(define (main)
+  (let* ((registry (env-required "REGISTRY"))
+         (username (env-required "USERNAME"))
+         (password (env-required "PASSWORD"))
+         (public? (skopeo:ecr-public? registry))
+         (private? (skopeo:ecr-private? registry))
+         (ecr? (or public? private?))
+         (region (if private? (skopeo:ecr-region registry) "us-east-1")))
+    (cond
+      ((and private? (equal? region ""))
+       (skopeo:fail (string-append "could not extract a region from ECR registry '" registry "'")))
+      (else
+       (let* ((login-user (if ecr? "AWS" username))
+              (login-pass (if ecr? (skopeo:ecr-password username password region public?) password)))
+         (cond
+           ((and ecr? (equal? login-pass ""))
+            (skopeo:fail "aws ecr get-login-password failed — see the log above"))
+           (else
+            (log-info (string-append "==> skopeo login " registry
+                       (if ecr? " (ECR — resolved a short-lived token)" "")))
+            (let ((r (exec-check "skopeo" "login" "--username" login-user
+                                  "--password" login-pass registry)))
+              (cond
+                ((= r 0)
+                 (append-output "logged-in=true")
+                 (exit 0))
+                (else
+                 (skopeo:fail (string-append "skopeo login failed (exit " (string-format "{}" r) ")"))))))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — skopeo-login helpers loaded; main skipped"))
+  (else (main)))

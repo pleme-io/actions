@@ -1,0 +1,42 @@
+name: 'pleme-io · skopeo-login'
+description: 'Log skopeo into a registry (ECR-aware) — the real auth precondition for skopeo-copy / oci-image-push. Writes to skopeo''s own auth file, not ~/.docker/config.json (docker/login-action authenticates a different client).'
+branding:
+  icon: 'log-in'
+  color: 'blue'
+
+inputs:
+  registry:
+    description: "Registry host (e.g. registry.secondfront.com, ghcr.io, <acct>.dkr.ecr.<region>.amazonaws.com, public.ecr.aws)"
+    required: true
+  username:
+    description: "Username — or AWS_ACCESS_KEY_ID for an ECR registry"
+    required: true
+  password:
+    description: "Password — or AWS_SECRET_ACCESS_KEY for an ECR registry"
+    required: true
+
+outputs:
+  logged-in:
+    value: ${{ steps.run.outputs.logged-in }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        USERNAME: ${{ inputs.username }}
+        PASSWORD: ${{ inputs.password }}

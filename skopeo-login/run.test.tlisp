@@ -1,0 +1,19 @@
+;; skopeo-login/run.test.tlisp — (deftest …) smoke for the pure ECR
+;; detection/region-extraction helpers. The real `skopeo login` / `aws
+;; ecr get-login-password` calls are exercised live by tests/test.yml.
+
+(deftest "skopeo:list-ref indexes a list like nth"
+  (assert (equal? (skopeo:list-ref (list "a" "b" "c") 0) "a") "index 0")
+  (assert (equal? (skopeo:list-ref (list "a" "b" "c") 2) "c") "index 2"))
+
+(deftest "skopeo:ecr-public? / ecr-private? classify registries correctly"
+  (assert (equal? (skopeo:ecr-public? "public.ecr.aws") #t) "public ECR")
+  (assert (equal? (skopeo:ecr-public? "registry.secondfront.com") #f) "not public ECR")
+  (assert (equal? (skopeo:ecr-private? "123456789012.dkr.ecr.us-east-2.amazonaws.com") #t) "private ECR")
+  (assert (equal? (skopeo:ecr-private? "ghcr.io") #f) "not private ECR")
+  (assert (equal? (skopeo:ecr-private? "registry.secondfront.com") #f) "harbor is not ECR"))
+
+(deftest "skopeo:ecr-region extracts the region from a private-ECR host"
+  (assert (equal? (skopeo:ecr-region "123456789012.dkr.ecr.us-east-2.amazonaws.com") "us-east-2") "us-east-2")
+  (assert (equal? (skopeo:ecr-region "999999999999.dkr.ecr.eu-west-1.amazonaws.com") "eu-west-1") "eu-west-1")
+  (assert (equal? (skopeo:ecr-region "registry.secondfront.com") "") "non-ECR -> empty"))
