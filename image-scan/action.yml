@@ -9,13 +9,17 @@ inputs:
     description: "Image to scan (e.g. ghcr.io/pleme-io/foo:latest)"
     required: true
   fail-on-severity:
-    description: "Lowest severity that fails the build: LOW | MEDIUM | HIGH | CRITICAL | none"
+    description: "Lowest severity that fails the build: UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL | none"
     required: false
     default: "HIGH"
   ignore-unfixed:
     description: "Skip vulns without an available fix"
     required: false
     default: "false"
+  ignore-file:
+    description: "Path to a .trivyignore-format file of named, tracked exceptions (never a blanket severity loosening — each entry should carry its own justification). Empty = none."
+    required: false
+    default: ""
 
 outputs:
   severity:
@@ -52,3 +56,4 @@ runs:
         IMAGE_REF: ${{ inputs.image-ref }}
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
+        IGNORE_FILE: ${{ inputs.ignore-file }}

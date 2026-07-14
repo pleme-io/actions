@@ -1,28 +1,37 @@
 ;; image-scan/run.tlisp — Trivy container-image scan.
+;;
+;; UNKNOWN is a real, distinct rank ABOVE "no finding" -- Trivy emits it
+;; for advisories with no assigned severity, and a zero-tolerance
+;; consumer (fail-on-severity=UNKNOWN) needs it to actually gate, not
+;; silently pass alongside a clean scan.
 
 (define image (env-required "IMAGE_REF"))
 (define fail-on (env-get "FAIL_ON_SEVERITY" "HIGH"))
 (define ignore-unfixed (env-get "IGNORE_UNFIXED" "false"))
+;; Path to a .trivyignore-format file -- named, tracked exceptions
+;; (never a blanket severity loosening). Empty = no ignorefile passed.
+(define ignore-file (env-get "IGNORE_FILE" ""))
 
 (define (severity-rank s)
   (cond
-    ((equal? s "CRITICAL") 4)
-    ((equal? s "HIGH") 3)
-    ((equal? s "MEDIUM") 2)
-    ((equal? s "LOW") 1)
+    ((equal? s "CRITICAL") 5)
+    ((equal? s "HIGH") 4)
+    ((equal? s "MEDIUM") 3)
+    ((equal? s "LOW") 2)
+    ((equal? s "UNKNOWN") 1)
     (else 0)))
 
 (define fail-rank (severity-rank fail-on))
 
 (log-info (string-append "==> trivy image " image))
 
+;; `trivy image [flags...] <target>` -- the subcommand comes first, every
+;; flag before the positional image-ref.
+(define unfixed-flag (if (equal? ignore-unfixed "true") (list "--ignore-unfixed") (list)))
+(define ignorefile-flag (if (equal? ignore-file "") (list) (list "--ignorefile" ignore-file)))
 (define args
-  (let* ((base (list "image" "--format" "json" "--quiet" image))
-         (with-unfixed
-           (if (equal? ignore-unfixed "true")
-             (append (list "image" "--ignore-unfixed" "--format" "json" "--quiet" image) (list))
-             base)))
-    with-unfixed))
+  (append (list "image") unfixed-flag ignorefile-flag
+          (list "--format" "json" "--quiet" image)))
 
 (define r (apply exec-capture (cons "trivy" args)))
 (define out (stdout-of r))
@@ -35,6 +44,7 @@
     ((log-contains? out "\"Severity\":\"HIGH\"") "HIGH")
     ((log-contains? out "\"Severity\":\"MEDIUM\"") "MEDIUM")
     ((log-contains? out "\"Severity\":\"LOW\"") "LOW")
+    ((log-contains? out "\"Severity\":\"UNKNOWN\"") "UNKNOWN")
     (else "none")))
 
 ;; Count occurrences of "Severity" — coarse but useful.
