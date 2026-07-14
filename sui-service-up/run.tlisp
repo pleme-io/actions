@@ -1,0 +1,94 @@
+;; sui-service-up/run.tlisp — resolve, health-check, and export the sui
+;; service (sui-daemon-graph) endpoint + selected backend tiers for a
+;; super-cache-ci build. Canonical doctrine: theory/SUPER-CACHE-CI.md.
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   config-resolve, append-output, log-info/log-error,
+;;   supercache:endpoint-resolve, supercache:endpoint-alive?,
+;;   supercache:endpoint-is-uds?, supercache:never-touch-disk?.
+;;
+;; TIER-HONEST. This verb does NOT launch or own daemon lifecycle — the
+;; daemon is an external service (a rio cluster app or a job-scoped
+;; sidecar, SUPER-CACHE-CI.md §VII). It RESOLVES the endpoint + backend
+;; profile, HEALTH-CHECKS the endpoint, and EXPORTS both. Two modes pick
+;; the DEFAULT backend profile the action reports (explicit inputs
+;; override):
+;;   ephemeral  → graphstore / local / disk   (the now(disk) profile —
+;;                SUPER-CACHE-CI.md M0; never-touch-disk = false)
+;;   connect    → postgres  / redis / tmpfs   (the never-touch-disk
+;;                destination — rows 4/5/7 are LiveTODO: PgStore +
+;;                RedisBackend unwritten; a live Pg/Redis connect is not
+;;                confirmable until a sui-graph client CLI ships, since
+;;                sui-daemon-client is a library not a binary).
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+(define (profile-store mode)
+  (cond ((equal? mode "connect") "postgres") (else "graphstore")))
+(define (profile-cache mode)
+  (cond ((equal? mode "connect") "redis") (else "local")))
+(define (profile-sandbox mode)
+  (cond ((equal? mode "connect") "tmpfs") (else "disk")))
+
+;; An explicit override wins over the mode profile.
+(define (pick override profile-value)
+  (cond ((not (equal? override "")) override) (else profile-value)))
+
+;; Why up is what it is. A reachable endpoint ⇒ ok; else a UDS that isn't
+;; there ⇒ endpoint-not-reachable; else a TCP endpoint whose liveness we
+;; cannot yet ping ⇒ tcp-liveness-livetodo.
+(define (up-reason alive uds?)
+  (cond
+    (alive "ok")
+    (uds? "endpoint-not-reachable")
+    (else "tcp-liveness-livetodo")))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (main)
+  (let* ((mode         (config-resolve "MODE" "super-cache-ci" "mode" "ephemeral"))
+         (store-ovr    (config-resolve "STORE_BACKEND" "super-cache-ci" "store-backend" ""))
+         (cache-ovr    (config-resolve "CACHE_BACKEND" "super-cache-ci" "cache-backend" ""))
+         (sandbox-ovr  (config-resolve "SANDBOX" "super-cache-ci" "sandbox" ""))
+         (endpoint-ovr (env-get "ENDPOINT" ""))
+         (require-up   (config-resolve "REQUIRE_UP" "super-cache-ci" "require-up" "false"))
+         (store    (pick store-ovr   (profile-store mode)))
+         (cache    (pick cache-ovr   (profile-cache mode)))
+         (sandbox  (pick sandbox-ovr (profile-sandbox mode)))
+         (endpoint (cond ((not (equal? endpoint-ovr "")) endpoint-ovr)
+                         (else (supercache:endpoint-resolve))))
+         (ntd   (supercache:never-touch-disk? store cache sandbox))
+         (alive (supercache:endpoint-alive? endpoint))
+         (uds?  (supercache:endpoint-is-uds? endpoint))
+         (reason (up-reason alive uds?)))
+    (log-info (string-append "sui-service-up: mode=" mode
+                             " endpoint=" endpoint
+                             " store=" store " cache=" cache " sandbox=" sandbox))
+    (when (equal? mode "connect")
+      (log-info "  pending-super-cache-ci: rows 4,5,7 — live Pg/Redis connect + never-touch-disk is a LiveTODO (PgStore/RedisBackend unwritten; no sui-graph client CLI to ping a .svc:port yet)"))
+    (append-output (string-append "endpoint=" endpoint))
+    (append-output (string-append "store-backend=" store))
+    (append-output (string-append "cache-backend=" cache))
+    (append-output (string-append "sandbox=" sandbox))
+    (append-output (string-append "never-touch-disk=" (if ntd "true" "false")))
+    (append-output (string-append "up=" (if alive "true" "false")))
+    (append-output (string-append "reason=" reason))
+    ;; require-up=true fails loud when the endpoint can't be confirmed —
+    ;; NEVER a faked green. require-up=false (default) treats an
+    ;; unreachable endpoint as an honest, non-fatal up=false.
+    (cond
+      (alive
+       (log-info (string-append "sui-service-up: service reachable at " endpoint))
+       0)
+      ((equal? require-up "true")
+       (log-error (string-append "sui-service-up: endpoint not confirmed reachable (" reason
+                                 ") and require-up=true"))
+       1)
+      (else
+       (log-info (string-append "sui-service-up: endpoint not confirmed (" reason
+                                ") — require-up=false, reporting up=false"))
+       0))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — sui-service-up helpers loaded; main skipped"))
+  (else
+   (exit (main))))

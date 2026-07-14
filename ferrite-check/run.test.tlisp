@@ -1,0 +1,88 @@
+;; ferrite-check/run.test.tlisp — (deftest …) verification matrix for the
+;; pure helpers, run via tatara-script --test by the tlisp-test action
+;; (TLISP_TEST=1 gates the unit's main so no `nix eval` runs here).
+;;
+;; This IS the CLOSED-LOOP MASS-SYNTHESIS "verification matrix" for the
+;; per-package materializability gate: it exercises the bool normalizer, the
+;; arch→system map, the typed attr-template renderer + its {svc}-ambiguity
+;; predicate, the source-hash (store-basename) extractor, and the PoMS-by-
+;; source-hash cache-path algebra — every pure decision the gate makes before
+;; it touches nix/jq/b3sum.
+
+;; ── norm-bool ─────────────────────────────────────────────────────
+(deftest "norm-bool canonicalizes only exact true"
+  (assert (equal? (ferrite:norm-bool "true")  "true")  "true => true")
+  (assert (equal? (ferrite:norm-bool " true ") "true") "whitespace-trimmed true => true")
+  (assert (equal? (ferrite:norm-bool "false") "false") "false => false")
+  (assert (equal? (ferrite:norm-bool "")      "false") "empty => false")
+  (assert (equal? (ferrite:norm-bool "True")  "false") "case-sensitive: True is not true"))
+
+;; ── arch->system ──────────────────────────────────────────────────
+(deftest "arch->system maps every known arch and rejects the unknown"
+  (assert (equal? (ferrite:arch->system "amd64")   "x86_64-linux")  "amd64")
+  (assert (equal? (ferrite:arch->system "x86_64")  "x86_64-linux")  "x86_64 alias")
+  (assert (equal? (ferrite:arch->system "arm64")   "aarch64-linux") "arm64")
+  (assert (equal? (ferrite:arch->system "aarch64") "aarch64-linux") "aarch64 alias")
+  (assert (equal? (ferrite:arch->system "riscv")   "") "unknown arch => empty"))
+
+;; ── render-attr (the typed template renderer) ─────────────────────
+(deftest "render-attr substitutes {base} {arch} {svc} across every convention"
+  (assert (equal? (ferrite:render-attr "dockerImage:{arch}:{svc}" "dockerImage" "amd64" "auth")
+                  "dockerImage:amd64:auth")
+          "akeyless colon-triple")
+  (assert (equal? (ferrite:render-attr "{base}-{arch}-{svc}" "dockerImage" "arm64" "uam")
+                  "dockerImage-arm64-uam")
+          "substrate mkGoDockerImage dash-triple")
+  (assert (equal? (ferrite:render-attr "{base}-{arch}" "dockerImage" "amd64" "")
+                  "dockerImage-amd64")
+          "substrate single-image dash-pair (no svc)")
+  (assert (equal? (ferrite:render-attr "dockerImage:{arch}" "dockerImage" "amd64" "")
+                  "dockerImage:amd64")
+          "go service-flake colon-pair (no svc)"))
+
+;; ── template-uses-svc? (the ambiguity gate predicate) ─────────────
+(deftest "template-uses-svc? detects a {svc} placeholder"
+  (assert (ferrite:template-uses-svc? "dockerImage:{arch}:{svc}") "colon-triple uses {svc}")
+  (assert (ferrite:template-uses-svc? "{base}-{arch}-{svc}") "dash-triple uses {svc}")
+  (assert (not (ferrite:template-uses-svc? "{base}-{arch}")) "dash-pair does not")
+  (assert (not (ferrite:template-uses-svc? "dockerImage:{arch}")) "colon-pair does not"))
+
+;; ── store-basename (the source content-address extractor) ─────────
+(deftest "store-basename extracts the content-addressed store hash-name"
+  (assert (equal? (ferrite:store-basename "/nix/store/7p5zhwc7r3ji6m5p7cbj5rxw965yzm23-akeyless-uam.tar.gz")
+                  "7p5zhwc7r3ji6m5p7cbj5rxw965yzm23-akeyless-uam.tar.gz")
+          "full /nix/store path => basename")
+  (assert (equal? (ferrite:store-basename "  /nix/store/abc-x  ") "abc-x")
+          "leading/trailing whitespace trimmed before split")
+  (assert (equal? (ferrite:store-basename "bare-name") "bare-name")
+          "a bare name (no slash) is its own basename")
+  (assert (equal? (ferrite:store-basename "") "") "empty => empty"))
+
+;; ── last-of (basename's tail primitive) ───────────────────────────
+(deftest "last-of returns the final list element, handles singleton + empty"
+  (assert (equal? (ferrite:last-of (list "a" "b" "c")) "c") "final of a 3-list")
+  (assert (equal? (ferrite:last-of (list "only")) "only") "singleton")
+  (assert (equal? (ferrite:last-of (list)) "") "empty => empty"))
+
+;; ── poms-cache-path (the by-source-hash cache key algebra) ────────
+(deftest "poms-cache-path composes dir + hash, empty when unresolvable"
+  (assert (equal? (ferrite:poms-cache-path "/poms" "abc-uam")
+                  "/poms/abc-uam.poms.json")
+          "dir + source-hash => <dir>/<hash>.poms.json")
+  (assert (equal? (ferrite:poms-cache-path "" "abc-uam") "")
+          "empty dir => no cache path (always-miss)")
+  (assert (equal? (ferrite:poms-cache-path "/poms" "") "")
+          "empty source-hash => no cache path (unresolvable key)"))
+
+;; ── the typed result accessors ────────────────────────────────────
+(deftest "ok?/payload read the 2-slot result uniformly for string + list payloads"
+  (assert (ferrite:ok? (list #t "value")) "ok? reads the truthy first slot")
+  (assert (not (ferrite:ok? (list #f "err"))) "ok? reads the falsy first slot")
+  (assert (equal? (ferrite:payload (list #t "value")) "value") "payload reads a string second slot")
+  (assert (equal? (ferrite:payload (list #f (list "a" "b"))) (list "a" "b"))
+          "payload reads a list second slot without cons-wrapping"))
+
+;; ── on-path? membership over a PATH-shaped dir list ───────────────
+(deftest "any-dir-has? is #f over an empty dir list + skips empty dirs"
+  (assert (not (ferrite:any-dir-has? (list) "nix")) "empty dir list => never found")
+  (assert (not (ferrite:any-dir-has? (list "") "nix")) "an empty dir entry is skipped, not matched"))

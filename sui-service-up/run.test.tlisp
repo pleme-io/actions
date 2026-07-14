@@ -1,0 +1,32 @@
+;; sui-service-up/run.test.tlisp — (deftest …) smoke for the pure helpers,
+;; run via tatara-script --test by the tlisp-test action. The runner
+;; prepends the stdlib + this action's run.tlisp (TLISP_TEST=1 gates main),
+;; then asserts on the defined helpers.
+
+(deftest "mode selects the backend profile (connect => never-touch-disk tiers)"
+  (assert (equal? (profile-store "connect") "postgres") "connect store")
+  (assert (equal? (profile-store "ephemeral") "graphstore") "ephemeral store")
+  (assert (equal? (profile-cache "connect") "redis") "connect cache")
+  (assert (equal? (profile-cache "ephemeral") "local") "ephemeral cache")
+  (assert (equal? (profile-sandbox "connect") "tmpfs") "connect sandbox")
+  (assert (equal? (profile-sandbox "ephemeral") "disk") "ephemeral sandbox"))
+
+(deftest "pick prefers an explicit override over the mode profile"
+  (assert (equal? (pick "redis" "local") "redis") "override wins")
+  (assert (equal? (pick "" "local") "local") "empty override falls through"))
+
+(deftest "up-reason classifies the health-check outcome"
+  (assert (equal? (up-reason #t #t) "ok") "reachable => ok")
+  (assert (equal? (up-reason #t #f) "ok") "reachable tcp => ok")
+  (assert (equal? (up-reason #f #t) "endpoint-not-reachable") "dead uds => not-reachable")
+  (assert (equal? (up-reason #f #f) "tcp-liveness-livetodo") "dead tcp => livetodo"))
+
+(deftest "never-touch-disk is the honest structural predicate"
+  (assert (supercache:never-touch-disk? "postgres" "redis" "tmpfs") "pg+redis+tmpfs => true")
+  (assert (not (supercache:never-touch-disk? "graphstore" "local" "disk")) "disk profile => false")
+  (assert (not (supercache:never-touch-disk? "postgres" "redis" "disk")) "disk sandbox => false")
+  (assert (not (supercache:never-touch-disk? "postgres" "local" "tmpfs")) "local cache => false"))
+
+(deftest "endpoint-is-uds? distinguishes a UDS path from a host:port"
+  (assert (supercache:endpoint-is-uds? "/run/sui-graph.sock") "path => uds")
+  (assert (not (supercache:endpoint-is-uds? "sui.rio.svc:6379")) "host:port => tcp"))

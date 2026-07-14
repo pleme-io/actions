@@ -1,0 +1,132 @@
+;; super-cache-build/run.tlisp — THE CORE super-cache-ci verb: build a
+;; derivation via the sui service against the tiered super-cache, keyed
+;; by the gen build-spec. Canonical doctrine: theory/SUPER-CACHE-CI.md
+;; (§II.4 gen -> sui, §III never-touch-disk, ledger rows 1/8/9).
+;;
+;; Composes the sibling verbs at the workflow layer:
+;;   sui-service-up (ENDPOINT + store/cache/sandbox profile)
+;;     -> gen-build-spec (SPEC_PATH)
+;;       -> super-cache-restore (KEY + CACHE_HIT + RESTORED_OUTPUTS)
+;;         -> THIS (derive on a miss; short-circuit on a hit)
+;;           -> super-cache-save (persist the outputs)
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info/log-error, config-resolve,
+;;   supercache:content-key, supercache:endpoint-resolve,
+;;   supercache:endpoint-alive?, supercache:never-touch-disk?.
+;;
+;; ── TIER-HONEST (never round up) ────────────────────────────────
+;; SHIPPED + unit-tested (run.test.tlisp): the pure DERIVE DECISION
+;; (scb:outcome — a restore HIT short-circuits; FORCE overrides; a miss
+;; derives) and the cache-hit short-circuit path (emit from-cache, touch
+;; nothing). LiveTODO at the ACTION layer: the actual derive (feed the
+;; build-spec to the daemon -> RAM eval -> sandbox -> store). There is
+;; NO shipped sui-graph build CLI/RPC — `sui-daemon-client` is a LIBRARY,
+;; not a binary — matching sui-service-up's honesty. Default
+;; (require-build=false) reports the LiveTODO WITHOUT faking a green
+;; (built=false, from-cache=false, a pending-super-cache-ci log);
+;; require-build=true fails loud (exit 1). The never-touch-disk
+;; destination (tmpfs + Pg + Redis) is ledger rows 4/5/7.
+;;
+;; Inputs (env):
+;;   SPEC_PATH        typed gen build-spec (from gen-build-spec)
+;;   KEY              content-address (from super-cache-restore); derived if ""
+;;   CACHE_HIT        "true" when super-cache-restore reported a hit
+;;   RESTORED_OUTPUTS store paths restore already warmed (echoed on a hit)
+;;   FORCE            "true" re-derives even on a hit
+;;   ENDPOINT         sui daemon endpoint (from sui-service-up)
+;;   SANDBOX          tmpfs|disk (from sui-service-up)
+;;   STORE_BACKEND    postgres|graphstore|local (from sui-service-up)
+;;   CACHE_BACKEND    redis|local|s3 (from sui-service-up)
+;;   REQUIRE_BUILD    "true" => a derive-LiveTODO is a hard failure (exit 1)
+;;
+;; Outputs (append-output -> GITHUB_OUTPUT):
+;;   built  from-cache  outputs  output-hashes  eval-ms  build-ms
+;;   key  never-touch-disk  reason
+;;
+;; Exit: 0 hit / honest-LiveTODO derive · 1 require-build with no live derive
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; Rebuild only on a miss OR an explicit force. A restore HIT with
+;; force != "true" short-circuits — no re-derive. THE core invariant.
+(define (scb:should-derive? cache-hit force)
+  (cond
+    ((equal? force "true") #t)
+    ((equal? cache-hit "true") #f)
+    (else #t)))
+
+;; The build outcome as a decision string: "hit" => short-circuit (emit
+;; from-cache, skip the daemon); "derive" => go to the sui service.
+(define (scb:outcome cache-hit force)
+  (if (scb:should-derive? cache-hit force) "derive" "hit"))
+
+;; ── impure: config + key/endpoint resolution ─────────────────────
+
+;; Explicit KEY wins; else sha256 the build-spec (content-addressed).
+;; "" (unresolvable) is honest — downstream reports built=false.
+(define (scb:resolve-key)
+  (let ((key-in (env-get "KEY" "")))
+    (cond
+      ((not (equal? key-in "")) key-in)
+      (else (supercache:content-key (env-get "SPEC_PATH" ""))))))
+
+(define (scb:resolve-endpoint)
+  (let ((e (env-get "ENDPOINT" "")))
+    (cond
+      ((not (equal? e "")) e)
+      (else (supercache:endpoint-resolve)))))
+
+;; ── emit helpers (stable output set on BOTH paths) ───────────────
+
+(define (scb:emit key built from-cache outputs ntd reason)
+  (append-output (string-append "key=" key))
+  (append-output (string-append "built=" built))
+  (append-output (string-append "from-cache=" from-cache))
+  (append-output (string-append "outputs=" outputs))
+  (append-output "output-hashes=")
+  (append-output "eval-ms=")
+  (append-output "build-ms=")
+  (append-output (string-append "never-touch-disk=" (if ntd "true" "false")))
+  (append-output (string-append "reason=" reason)))
+
+;; ── main ─────────────────────────────────────────────────────────
+(define (scb:main)
+  (let* ((cache-hit     (env-get "CACHE_HIT" "false"))
+         (force         (env-get "FORCE" "false"))
+         (sandbox       (config-resolve "SANDBOX" "super-cache-ci" "sandbox" "tmpfs"))
+         (store         (config-resolve "STORE_BACKEND" "super-cache-ci" "store-backend" "graphstore"))
+         (cache         (config-resolve "CACHE_BACKEND" "super-cache-ci" "cache-backend" "local"))
+         (require-build (config-resolve "REQUIRE_BUILD" "super-cache-ci" "require-build" "false"))
+         (ntd           (supercache:never-touch-disk? store cache sandbox))
+         (key           (scb:resolve-key))
+         (endpoint      (scb:resolve-endpoint)))
+    (cond
+      ;; 1 — restore HIT + no force: short-circuit, no daemon touch.
+      ((equal? (scb:outcome cache-hit force) "hit")
+       (log-info (string-append "super-cache-build: cache HIT " key " — skipping derive"))
+       (scb:emit key "false" "true" (env-get "RESTORED_OUTPUTS" "") ntd "cache-hit")
+       (exit 0))
+      ;; 2 — derive. The sui-graph build RPC/CLI is a LiveTODO
+      ;;     (sui-daemon-client is a library, not a binary). Report
+      ;;     honestly; require-build=true fails loud.
+      (else
+       (log-info (string-append "super-cache-build: derive " key " via " endpoint
+                                " (sandbox=" sandbox " store=" store " cache=" cache ")"))
+       (log-info (string-append "  endpoint-alive=" (if (supercache:endpoint-alive? endpoint) "true" "false")))
+       (log-info "  pending-super-cache-ci: rows 1,9 — the sui-graph build RPC/CLI is a LiveTODO (sui-daemon-client is a library; no build binary to invoke). never-touch-disk destination = rows 4,5,7.")
+       (cond
+         ((equal? require-build "true")
+          (log-error "super-cache-build: require-build=true but no live sui build path (LiveTODO) — failing loud")
+          (scb:emit key "false" "false" "" ntd "derive-livetodo")
+          (exit 1))
+         (else
+          (log-info "super-cache-build: require-build=false — reporting built=false (honest LiveTODO, no faked green)")
+          (scb:emit key "false" "false" "" ntd "derive-livetodo")
+          (exit 0)))))))
+
+;; TLISP_TEST=1 (tlisp-test harness): define the helpers, skip main.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — super-cache-build helpers loaded; main skipped"))
+  (else (scb:main)))

@@ -1,25 +1,83 @@
 name: 'pleme-io · release-promote'
-description: 'Promote a built artifact between environments (dev → staging → prod). Re-tags an existing image/version rather than rebuilding — ensures bit-identical artifact at each stage.'
+description: 'Promote a built artifact between environments (dev → staging → prod) without rebuilding. kind=image-retag re-tags an existing OCI image (bit-identical artifact per stage); kind=helm-chart-version writes the exact chart/image version into the next environment''s committed values file as a GitOps commit (the AUTOBUMP/eclusa FedRAMP chart-version-promotion leg).'
 branding: { icon: 'arrow-right-circle', color: 'green' }
 
 inputs:
-  source-tag:
-    description: "Source tag (e.g. dev, staging, v0.1.4)"
-    required: true
-  target-tag:
-    description: "Target tag (e.g. staging, prod)"
-    required: true
+  kind:
+    description: "Promotion mode: image-retag (default) | helm-chart-version"
+    required: false
+    default: "image-retag"
+  # ── image-retag mode ──
   image:
-    description: "OCI image ref (e.g. ghcr.io/pleme-io/myapp)"
-    required: true
+    description: "OCI image ref (e.g. ghcr.io/pleme-io/myapp). Required for kind=image-retag."
+    required: false
+    default: ""
+  source-tag:
+    description: "Source tag (e.g. dev, staging, v0.1.4). Required for image-retag; the version fallback for helm-chart-version."
+    required: false
+    default: ""
+  target-tag:
+    description: "Target tag (e.g. staging, prod). Required for image-retag; the target-env fallback for helm-chart-version."
+    required: false
+    default: ""
+  # ── helm-chart-version mode ──
+  values-file:
+    description: "Target environment's committed values file to pin (e.g. environments/fedramp/staging/values.yaml). Required for kind=helm-chart-version."
+    required: false
+    default: ""
+  yaml-path:
+    description: "yq path to set in values-file (e.g. .version, .spec.values.image.tag)."
+    required: false
+    default: ".version"
+  version:
+    description: "Exact version/tag to pin. Empty ⇒ falls back to source-tag."
+    required: false
+    default: ""
+  target-env:
+    description: "Environment name for the commit message (e.g. staging). Empty ⇒ falls back to target-tag."
+    required: false
+    default: ""
+  commit:
+    description: "helm-chart-version: commit the GitOps change (true) or leave it in the working tree (false)."
+    required: false
+    default: "true"
+  push:
+    description: "helm-chart-version: also `git push origin <branch>` (simple same-token path). For the rebase-safe token-rearmed push, chain git-push-with-token instead (push=false here)."
+    required: false
+    default: "false"
+  branch:
+    description: "Branch to push when push=true."
+    required: false
+    default: "main"
 
 outputs:
   promoted:
+    description: "true when the promotion succeeded."
     value: ${{ steps.run.outputs.promoted }}
+  kind:
+    description: "The promotion mode that ran."
+    value: ${{ steps.run.outputs.kind }}
+  committed:
+    description: "helm-chart-version: whether a GitOps commit was made."
+    value: ${{ steps.run.outputs.committed }}
+  pushed:
+    description: "helm-chart-version: whether the commit was pushed."
+    value: ${{ steps.run.outputs.pushed }}
+  version:
+    description: "The version/tag promoted."
+    value: ${{ steps.run.outputs.version }}
+  values-file:
+    description: "helm-chart-version: the values file that was pinned."
+    value: ${{ steps.run.outputs.values-file }}
+  reason:
+    description: "image-retagged | committed | already-at-version | written-not-committed | <failure-reason>."
+    value: ${{ steps.run.outputs.reason }}
 
 runs:
   using: composite
   steps:
+    # docker login is only needed for kind=image-retag; harmless (ghcr
+    # via github.token) for helm-chart-version.
     - uses: docker/login-action@v3
       with:
         registry: ghcr.io
@@ -40,6 +98,14 @@ runs:
       with:
         script: ${{ steps.src.outputs.script }}
       env:
+        KIND: ${{ inputs.kind }}
+        IMAGE: ${{ inputs.image }}
         SOURCE_TAG: ${{ inputs.source-tag }}
         TARGET_TAG: ${{ inputs.target-tag }}
-        IMAGE: ${{ inputs.image }}
+        VALUES_FILE: ${{ inputs.values-file }}
+        YAML_PATH: ${{ inputs.yaml-path }}
+        VERSION: ${{ inputs.version }}
+        TARGET_ENV: ${{ inputs.target-env }}
+        COMMIT: ${{ inputs.commit }}
+        PUSH: ${{ inputs.push }}
+        BRANCH: ${{ inputs.branch }}

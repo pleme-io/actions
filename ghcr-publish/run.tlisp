@@ -1,0 +1,105 @@
+;; ghcr-publish/run.tlisp — push a nix OCI image tarball to a private
+;; registry (ghcr.io/pleme-io/<svc>) under the ★ AUTOBUMP exact tag.
+;;
+;; AUTOBUMP (org directive ★★ AUTO-RELEASE → "never :latest"): every push
+;; emits a SORTABLE, EXACT, IMMUTABLE tag `<arch>-r<run>-<sha>` — r<run> is
+;; the numeric sort key a Flux ImagePolicy extracts (^<arch>-r(?P<n>\d+)-),
+;; <sha> is the trace. A moving `<arch>-latest` MAY also be pushed as a HUMAN
+;; pointer, but is NEVER a deploy source.
+;;
+;; Wrapper over skopeo (baked into the tatara-script base image). Auth is a
+;; PRE-CONDITION: docker/login-action must have authenticated the target
+;; registry first (skopeo reads ~/.docker/config.json).
+;;
+;; Tier-honest: the tag algebra + ref composition are pure + unit-tested (now);
+;; a real PRIVATE-ghcr push needs registry creds supplied by the workflow
+;; (LiveTODO on the credential wiring, not on this action's logic).
+;;
+;; Uses stdlib helpers: append-output, status-of.
+;;
+;; Inputs (env):
+;;   REPO          full image base "ghcr.io/pleme-io/<svc>" (no tag)
+;;                 (fallback: REGISTRY + IMAGE)
+;;   REGISTRY      default "ghcr.io"      (used iff REPO empty)
+;;   IMAGE         path "pleme-io/<svc>"  (used iff REPO empty)
+;;   ARCH          default "amd64"
+;;   RUN_NUMBER    github.run_number      (numeric sort key)
+;;   SHA           github.sha             (trace)
+;;   TARBALL       docker-archive path    (default "./result")
+;;   MOVING_LATEST "true"|"false"         (default "true") — also push <arch>-latest
+;;
+;; Outputs:
+;;   tag / ref / ref-amd64 / ref-arm64 / pushed / result
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+(define (autobump-tag arch run sha)
+  (string-append arch "-r" run "-" sha))
+
+(define (moving-tag arch)
+  (string-append arch "-latest"))
+
+(define (image-base repo registry image)
+  (cond
+    ((not (equal? repo "")) repo)
+    (else (string-append registry "/" image))))
+
+(define (target-ref base tag)
+  (string-append base ":" tag))
+
+;; ── skopeo wrappers ──────────────────────────────────────────────
+(define (skopeo-copy-archive tarball dst-ref)
+  (status-of (exec-capture "skopeo" "--insecure-policy" "copy"
+                           (string-append "docker-archive:" tarball)
+                           (string-append "docker://" dst-ref))))
+
+(define (skopeo-copy-remote src-ref dst-ref)
+  (status-of (exec-capture "skopeo" "--insecure-policy" "copy"
+                           (string-append "docker://" src-ref)
+                           (string-append "docker://" dst-ref))))
+
+(define (main)
+  (let* ((repo (env-get "REPO" ""))
+         (registry (env-get "REGISTRY" "ghcr.io"))
+         (image (env-get "IMAGE" ""))
+         (arch (env-get "ARCH" "amd64"))
+         (run (env-required "RUN_NUMBER"))
+         (sha (env-required "SHA"))
+         (tarball (env-get "TARBALL" "./result"))
+         (moving (env-get "MOVING_LATEST" "true"))
+         (base (image-base repo registry image)))
+    (cond
+      ((and (equal? repo "") (equal? image ""))
+       (log-error "ghcr-publish: need REPO or REGISTRY+IMAGE")
+       (append-output "pushed=false")
+       1)
+      (else
+       (let* ((tag (autobump-tag arch run sha))
+              (ref (target-ref base tag)))
+         (log-info (string-append "==> ghcr-publish " tarball " -> docker://" ref))
+         (let ((s (skopeo-copy-archive tarball ref)))
+           (cond
+             ((not (= s 0))
+              (log-error (string-append "ghcr-publish: skopeo push failed (exit "
+                          (string-format "{}" s) ") for " ref))
+              (append-output "pushed=false")
+              s)
+             (else
+              (append-output (string-append "tag=" tag))
+              (append-output (string-append "ref=" ref))
+              (append-output (string-append "ref-" arch "=" ref))
+              (append-output (string-append "result=" ref))
+              ;; moving human pointer — NEVER a deploy source
+              (when (equal? moving "true")
+                (let ((ms (skopeo-copy-remote ref (target-ref base (moving-tag arch)))))
+                  (when (not (= ms 0))
+                    (log-info (string-append "::warning::ghcr-publish: moving "
+                               (moving-tag arch) " pointer push failed (non-fatal)")))))
+              (append-output "pushed=true")
+              (log-info (string-append "pushed exact " ref))
+              0))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — ghcr-publish helpers loaded; main skipped"))
+  (else
+   (exit (main))))

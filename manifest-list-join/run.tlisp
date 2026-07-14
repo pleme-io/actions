@@ -1,0 +1,224 @@
+;; manifest-list-join/run.tlisp — compose separately-pushed per-arch
+;; images into ONE multi-arch OCI image index (manifest list) and push
+;; it under the multi-arch deploy coordinate r<run>-<sha>. Reports the
+;; index DIGEST — the single exact coordinate an environment pins.
+;;
+;; Part of the super-cache-ci MANIFEST leg (job 3). skopeo *copies*
+;; single images; it does NOT *compose* an index from separately-pushed
+;; per-arch digests — so this action drives a real manifest tool
+;; (buildah|podman `manifest create/add/push`, `docker manifest`, or
+;; `regctl index create`), auto-detected. It consumes the per-arch refs
+;; that zot-push produced (amd64=<ref>,arm64=<ref>) and is attested by
+;; cartorio-attest.
+;;
+;; Tier: SHIPPABLE-NOW. Index composition is deterministic; the tag/base
+;; algebra + arch/ref parsing are pure + unit-tested. The ONE runtime
+;; dependency is a manifest tool on PATH — if none is present the action
+;; FAILS loudly (never fakes an index digest). Today the akeyless build
+;; is amd64-only, so a 1-arch join is a DEGENERATE (but honest) index;
+;; it becomes load-bearing the moment arm64-native lands (reason emits
+;; `single-arch` vs `joined`).
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, oci:compose-base,
+;;   oci:target-ref, oci:index-tag, oci:flag-true?, oci:skopeo-remote-digest.
+;;
+;; Inputs (env):
+;;   REGISTRY    cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
+;;   REPO        full base override "<host>/<repo>" (no tag); wins when set
+;;   IMAGE       repo path override "<repo>" (with REGISTRY when REPO empty)
+;;   SVC         akeyless service name; composes "akeyless-<svc>"
+;;   ARCH_REFS   per-arch refs to join: "amd64=<ref>,arm64=<ref>"  (required)
+;;   TAG         explicit index tag; else composed r<run>-<sha>
+;;   RUN_NUMBER  github.run_number (for the composed index tag)
+;;   SHA         github.sha        (for the composed index tag)
+;;   INSECURE    cluster-internal Zot is http/self-signed (default "true")
+;;   TOOL        auto|buildah|podman|docker|regctl (default "auto")
+;;
+;; Outputs (append-output → GITHUB_OUTPUT):
+;;   index-ref / index-digest / arches / joined / reason
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+;; Split one "arch=ref" segment into (arch . ref). A segment with no
+;; "=" is treated as a bare ref with an unknown ("") arch.
+(define (mlj:split-pair s)
+  (let ((parts (string-split s "=")))
+    (cond
+      ((>= (length parts) 2)
+       (cons (string-trim (car parts)) (string-trim (car (cdr parts)))))
+      (else (cons "" (string-trim s))))))
+
+;; Parse a comma-separated "amd64=r1,arm64=r2" list into (arch . ref)
+;; pairs, dropping empty segments.
+(define (mlj:parse-pairs segs)
+  (cond
+    ((null? segs) (list))
+    ((equal? (string-trim (car segs)) "") (mlj:parse-pairs (cdr segs)))
+    (else (cons (mlj:split-pair (car segs)) (mlj:parse-pairs (cdr segs))))))
+
+;; The refs (2nd element of each (arch ref) pair) in order. NOTE:
+;; tatara-lisp `(cons a b)` on atoms yields the 2-element list `(a b)`,
+;; so the ref is `(car (cdr pair))`, not `(cdr pair)`.
+(define (mlj:refs-of pairs)
+  (cond
+    ((null? pairs) (list))
+    (else (cons (car (cdr (car pairs))) (mlj:refs-of (cdr pairs))))))
+
+;; The known arches (non-empty cars), space-joined ("amd64 arm64").
+(define (mlj:arches-list pairs)
+  (cond
+    ((null? pairs) (list))
+    ((equal? (car (car pairs)) "") (mlj:arches-list (cdr pairs)))
+    (else (cons (car (car pairs)) (mlj:arches-list (cdr pairs))))))
+
+(define (mlj:arches-of pairs)
+  (string-join " " (mlj:arches-list pairs)))
+
+;; The multi-arch index tag: explicit TAG > composed r<run>-<sha> > "".
+(define (mlj:resolve-tag tag-in run sha)
+  (cond
+    ((not (equal? (string-trim tag-in) "")) (string-trim tag-in))
+    ((and (not (equal? run "")) (not (equal? sha ""))) (oci:index-tag run sha))
+    (else "")))
+
+;; ── tool detection ────────────────────────────────────────────────
+(define (mlj:has? name)
+  (= 0 (status-of (exec-capture "sh" "-c"
+                    (string-append "command -v " name " >/dev/null 2>&1")))))
+
+;; auto → first present of buildah|podman|docker|regctl; else the
+;; requested tool verbatim; "" when auto finds nothing.
+(define (mlj:select-tool requested)
+  (cond
+    ((not (equal? requested "auto")) requested)
+    ((mlj:has? "buildah") "buildah")
+    ((mlj:has? "podman")  "podman")
+    ((mlj:has? "docker")  "docker")
+    ((mlj:has? "regctl")  "regctl")
+    (else "")))
+
+;; ── per-tool index composition (returns child status; 0 = ok) ─────
+
+;; buildah & podman share identical `manifest create/add/push` syntax.
+(define (mlj:oci-tool-add tool local-name refs insecure?)
+  (cond
+    ((null? refs) 0)
+    (else
+     (let ((s (status-of (apply exec-capture
+                (append (list tool "manifest" "add")
+                        (if insecure? (list "--tls-verify=false") (list))
+                        (list local-name (string-append "docker://" (car refs))))))))
+       (if (= s 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure?) s)))))
+
+(define (mlj:oci-tool-join tool local-name refs index-ref insecure?)
+  ;; best-effort clean of a stale local manifest (ignore result)
+  (exec-check tool "manifest" "rm" local-name)
+  (let ((c (status-of (exec-capture tool "manifest" "create" local-name))))
+    (cond
+      ((not (= c 0)) c)
+      (else
+       (let ((a (mlj:oci-tool-add tool local-name refs insecure?)))
+         (cond
+           ((not (= a 0)) a)
+           (else
+            (status-of (apply exec-capture
+              (append (list tool "manifest" "push" "--all")
+                      (if insecure? (list "--tls-verify=false") (list))
+                      (list local-name (string-append "docker://" index-ref))))))))))))
+
+;; docker manifest create/push (--insecure for a plain-http registry).
+(define (mlj:docker-join refs index-ref insecure?)
+  (let* ((ins (if insecure? (list "--insecure") (list)))
+         (c (status-of (apply exec-capture
+              (append (list "docker" "manifest" "create") ins
+                      (list index-ref) refs)))))
+    (cond
+      ((not (= c 0)) c)
+      (else
+       (status-of (apply exec-capture
+         (append (list "docker" "manifest" "push") ins (list index-ref))))))))
+
+;; regctl index create <index-ref> --ref <r1> --ref <r2> …
+(define (mlj:regctl-ref-flags refs)
+  (cond
+    ((null? refs) (list))
+    (else (append (list "--ref" (car refs)) (mlj:regctl-ref-flags (cdr refs))))))
+
+(define (mlj:regctl-join refs index-ref)
+  (status-of (apply exec-capture
+    (append (list "regctl" "index" "create" index-ref)
+            (mlj:regctl-ref-flags refs)))))
+
+(define (mlj:join tool refs index-ref insecure?)
+  (cond
+    ((equal? tool "buildah") (mlj:oci-tool-join "buildah" "mlj-index" refs index-ref insecure?))
+    ((equal? tool "podman")  (mlj:oci-tool-join "podman"  "mlj-index" refs index-ref insecure?))
+    ((equal? tool "docker")  (mlj:docker-join refs index-ref insecure?))
+    ((equal? tool "regctl")  (mlj:regctl-join refs index-ref))
+    (else 127)))
+
+;; ── main ──────────────────────────────────────────────────────────
+(define (mlj:emit-fail reason)
+  (append-output "joined=false")
+  (append-output "index-ref=")
+  (append-output "index-digest=")
+  (append-output "arches=")
+  (append-output (string-append "reason=" reason)))
+
+(define (main)
+  (let* ((registry (env-get "REGISTRY" "zot.zot-system.svc.cluster.local:5000"))
+         (repo (env-get "REPO" ""))
+         (image (env-get "IMAGE" ""))
+         (svc (env-get "SVC" ""))
+         (arch-refs (env-get "ARCH_REFS" ""))
+         (run (env-get "RUN_NUMBER" ""))
+         (sha (env-get "SHA" ""))
+         (tag-in (env-get "TAG" ""))
+         (insecure (oci:flag-true? (env-get "INSECURE" "true")))
+         (tool-req (env-get "TOOL" "auto"))
+         (pairs (mlj:parse-pairs (string-split arch-refs ",")))
+         (refs (mlj:refs-of pairs))
+         (arches (mlj:arches-of pairs))
+         (base (oci:compose-base repo registry image "akeyless-" svc))
+         (tag (mlj:resolve-tag tag-in run sha)))
+    (cond
+      ((null? refs) (log-error "manifest-list-join: ARCH_REFS is empty (need amd64=<ref>[,arm64=<ref>])") (mlj:emit-fail "no-refs") 1)
+      ((equal? base "") (log-error "manifest-list-join: need REPO, or IMAGE, or SVC to resolve the index repository") (mlj:emit-fail "need-target") 1)
+      ((equal? tag "") (log-error "manifest-list-join: need TAG, or RUN_NUMBER+SHA to compose r<run>-<sha>") (mlj:emit-fail "need-tag") 1)
+      (else
+       (let* ((index-ref (oci:target-ref base tag))
+              (tool (mlj:select-tool tool-req)))
+         (cond
+           ((equal? tool "")
+            (log-error "manifest-list-join: no manifest tool on PATH (buildah|podman|docker|regctl) — refusing to fake an index")
+            (mlj:emit-fail "no-tool") 1)
+           (else
+            (log-info (string-append "==> manifest-list-join [" tool "] "
+                       (string-format "{}" (length refs)) " arch(es) {" arches
+                       "} -> docker://" index-ref (if insecure " (insecure)" "")))
+            (when (< (length refs) 2)
+              (log-info "::warning::manifest-list-join: fewer than 2 arches — emitting a DEGENERATE single-arch index (load-bearing once arm64-native lands)"))
+            (let ((s (mlj:join tool refs index-ref insecure)))
+              (cond
+                ((not (= s 0))
+                 (log-error (string-append "manifest-list-join: index create/push failed (exit "
+                             (string-format "{}" s) ")"))
+                 (mlj:emit-fail "join-fail") s)
+                (else
+                 (let ((digest (oci:skopeo-remote-digest index-ref insecure)))
+                   (when (equal? digest "")
+                     (log-info "::warning::manifest-list-join: could not resolve index digest (skopeo inspect failed) — index-digest= (honest empty); the push itself succeeded"))
+                   (append-output (string-append "index-ref=" index-ref))
+                   (append-output (string-append "index-digest=" digest))
+                   (append-output (string-append "arches=" arches))
+                   (append-output "joined=true")
+                   (append-output (string-append "reason=" (if (< (length refs) 2) "single-arch" "joined")))
+                   (log-info (string-append "joined multi-arch index " index-ref
+                              (if (equal? digest "") "" (string-append " @ " digest))))
+                   0)))))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — manifest-list-join helpers loaded; main skipped"))
+  (else
+   (exit (main))))

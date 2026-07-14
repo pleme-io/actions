@@ -1,0 +1,306 @@
+;; build-matrix/run.tlisp — enumerate a flake's colon-triple image attrs
+;; (dockerImage:<arch>:<svc>) and emit the GitHub Actions image×arch build
+;; matrix. Step 2 of the super-cache-ci graph job (theory/SUPER-CACHE-CI.md):
+;; gen-build-spec gates spec freshness, build-matrix fans the fresh spec out
+;; across every (service, arch) the flake actually exposes.
+;;
+;; SINGLE-RESPONSIBILITY SIBLING of gen-build-spec — NOT an overload of it
+;; (CLOSED-LOOP MASS-SYNTHESIS rule 2: small typed verbs over a monolith).
+;; gen-build-spec has no `matrix` output by design; this verb owns the fan.
+;;
+;; TIER: SHIPPABLE-NOW. Deterministic enumeration over `nix eval` of the
+;; flake's real attr set — honest per-service arch discovery, never a
+;; hard-coded (amd64,arm64) pair. An arm64 row appears iff the flake
+;; exposes dockerImage:arm64:<svc>; today amd64 is the confirmed-built path,
+;; so a request for arm64 against an amd64-only flake yields amd64 rows only
+;; (honest), and the require-nonempty gate turns a surprise-empty into a
+;; loud failure rather than an empty matrix a downstream job can't run.
+;;
+;; TYPED EMISSION: the matrix JSON is composed by `jq` (the typed
+;; serializer), NEVER by hand string-concatenation — same rule the
+;; tameshi-attest receipt obeys. The jq program contains NO double-quote
+;; characters (the row separator is passed as a --arg), so it embeds in a
+;; tlisp string with zero escaping.
+;;
+;; Uses stdlib helpers (prepended by action.yml's loader step):
+;;   env-get, append-output, log-info, log-error,
+;;   exec-capture, status-of, stdout-of, stderr-of,
+;;   string-append, string-split, string-trim, string-replace,
+;;   string-join, string-format, write-file.
+;;
+;; Inputs (env):
+;;   FLAKE_REF        flake ref to enumerate (default ".")
+;;   EVAL_SYSTEM      packages.<system> to read attrNames from (default
+;;                    "x86_64-linux" — the colon-triple attrs live under the
+;;                    linux eval-system; the <arch> in the attr, not the
+;;                    eval-system, selects the image target arch)
+;;   IMAGE_BASE       attr base prefix; only <base>:<arch>:<svc> attrs become
+;;                    rows (default "dockerImage"). `default:<svc>` bare-binary
+;;                    attrs and the substrate `<base>-<arch>` dash convention
+;;                    are rejected.
+;;   SERVICES         space/comma allowlist of services; empty = all discovered
+;;   ARCHES           space/comma allowlist of arches; empty = all discovered
+;;   EXCLUDE          space/comma exclusions, each "<arch>:<svc>" or bare "<svc>"
+;;   REQUIRE_NONEMPTY "true" (default) => 0 rows is a hard exit 1; "false" =>
+;;                    0 rows is a clean typed exit 2 (caller decides in YAML)
+;;
+;; Outputs (append-output -> GITHUB_OUTPUT):
+;;   matrix   GHA matrix JSON: {"include":[{image,arch,attr,system},...]} —
+;;            consume as strategy.matrix: ${{ fromJSON(...outputs.matrix) }}
+;;   count    number of rows in the matrix (integer)
+;;   reason   ok | empty-matrix | nix-eval-failed | jq-failed
+;;
+;; Exit (keyway three-code contract):
+;;   0  >=1 matrix row emitted
+;;   2  eval OK but 0 rows matched AND require-nonempty=false (a clean "no")
+;;   1  nix eval failed, jq failed, OR 0 rows AND require-nonempty=true (loud)
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; arch label -> nix system double. Shared shape with nix-image/arch->system;
+;; "" for an unknown arch (a row whose arch has no system is rejected).
+(define (bm:arch->system arch)
+  (cond
+    ((equal? arch "amd64")   "x86_64-linux")
+    ((equal? arch "x86_64")  "x86_64-linux")
+    ((equal? arch "arm64")   "aarch64-linux")
+    ((equal? arch "aarch64") "aarch64-linux")
+    (else "")))
+
+;; Normalize a list-shaped input (space- OR comma-separated) into a cleaned
+;; token list: collapse commas to spaces, split, drop the empties.
+(define (bm:tokens s)
+  (filter (lambda (t) (not (equal? t "")))
+          (string-split (string-trim (string-replace s "," " ")) " ")))
+
+;; Split newline-delimited text into a cleaned non-empty token list.
+(define (bm:tokens-nl s)
+  (filter (lambda (t) (not (equal? (string-trim t) "")))
+          (string-split s "\n")))
+
+;; No-shell PATH lookup (exec-capture RAISES on an absent binary, so a
+;; required tool's presence MUST be settled before it is ever invoked).
+;; EXTRACTION TRIGGER NOW MET: gen-build-spec ships an identical
+;; gbs:on-path? / gbs:any-dir-has? pair — the ≥2-consumer trigger for
+;; promoting on-path? into _tlisp-stdlib/stdlib.tlisp is satisfied; queued
+;; as a dedicated shared-helper refactor across both consumers (kept local
+;; here to match the sibling precedent + git-least-disturbance on shipped
+;; gen-build-spec).
+(define (bm:any-dir-has? dirs bin)
+  (cond
+    ((null? dirs) #f)
+    ((and (not (equal? (car dirs) ""))
+          (path-exists? (string-append (car dirs) "/" bin))) #t)
+    (else (bm:any-dir-has? (cdr dirs) bin))))
+
+(define (bm:on-path? bin)
+  (bm:any-dir-has? (string-split (env-get "PATH" "") ":") bin))
+
+;; A typed matrix row is the 4-list (image arch attr system).
+(define (bm:row-image r) (car r))
+(define (bm:row-arch  r) (car (cdr r)))
+(define (bm:row-attr  r) (car (cdr (cdr r))))
+(define (bm:row-sys   r) (car (cdr (cdr (cdr r)))))
+
+;; Parse a flake attr name into a typed row when it matches
+;; <base>:<arch>:<svc>, else #f. `default:<svc>` (2 parts) and the substrate
+;; `<base>-<arch>` dash convention (1 part) are rejected; an unknown arch or
+;; an empty service is rejected.
+(define (bm:parse-attr base attr)
+  (let ((parts (string-split attr ":")))
+    (cond
+      ((not (= (length parts) 3)) #f)
+      ((not (equal? (car parts) base)) #f)
+      (else
+        (let* ((arch (car (cdr parts)))
+               (svc  (car (cdr (cdr parts))))
+               (sys  (bm:arch->system arch)))
+          (cond
+            ((equal? sys "") #f)
+            ((equal? svc "") #f)
+            (else (list svc arch attr sys))))))))
+
+;; Ordered membership test.
+(define (bm:member? x lst)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) x) #t)
+    (else (bm:member? x (cdr lst)))))
+
+;; A filter set selects a candidate: an empty set selects everything.
+(define (bm:selected? sel cand)
+  (or (null? sel) (bm:member? cand sel)))
+
+;; An exclusion set drops a row: matches "<arch>:<svc>" OR bare "<svc>".
+(define (bm:excluded? excl arch svc)
+  (or (bm:member? (string-append arch ":" svc) excl)
+      (bm:member? svc excl)))
+
+;; Parse + filter all attr names into the selected rows (order preserved).
+(define (bm:rows-from-names names base services arches excl)
+  (cond
+    ((null? names) (list))
+    (else
+      (let ((rest (bm:rows-from-names (cdr names) base services arches excl))
+            (row  (bm:parse-attr base (string-trim (car names)))))
+        (cond
+          ((not row) rest)
+          ((not (bm:selected? services (bm:row-image row))) rest)
+          ((not (bm:selected? arches   (bm:row-arch  row))) rest)
+          ((bm:excluded? excl (bm:row-arch row) (bm:row-image row)) rest)
+          (else (cons row rest)))))))
+
+;; A row -> the pipe-joined jq positional string "image|arch|attr|system".
+;; (The attr keeps its own ":" — the row separator is "|", disjoint.)
+(define (bm:row->arg r)
+  (string-join "|" (list (bm:row-image r) (bm:row-arch r)
+                         (bm:row-attr r) (bm:row-sys r))))
+
+;; Rows -> positional-arg list for jq (order preserved).
+(define (bm:rows->args rows)
+  (cond
+    ((null? rows) (list))
+    (else (cons (bm:row->arg (car rows)) (bm:rows->args (cdr rows))))))
+
+;; Order-preserving distinct (for the discovered services/arches log line).
+(define (bm:distinct lst seen)
+  (cond
+    ((null? lst) (list))
+    ((bm:member? (car lst) seen) (bm:distinct (cdr lst) seen))
+    (else (cons (car lst) (bm:distinct (cdr lst) (cons (car lst) seen))))))
+
+(define (bm:rows->services rows)
+  (bm:distinct (bm:map-image rows) (list)))
+(define (bm:rows->arches rows)
+  (bm:distinct (bm:map-arch rows) (list)))
+(define (bm:map-image rows)
+  (cond ((null? rows) (list))
+        (else (cons (bm:row-image (car rows)) (bm:map-image (cdr rows))))))
+(define (bm:map-arch rows)
+  (cond ((null? rows) (list))
+        (else (cons (bm:row-arch (car rows)) (bm:map-arch (cdr rows))))))
+
+;; The typed matrix serializer program (jq; NO double-quotes — the row
+;; separator is a --arg per the tameshi-attest TYPED-EMISSION rule).
+(define bm:matrix-jq-program
+  "{include: [$ARGS.positional[] | split($sep) | {image: .[0], arch: .[1], attr: .[2], system: .[3]}]}")
+
+;; ── side-effecting: discover / serialize / emit ──────────────────
+
+;; Typed 2-slot result: (list ok? payload). Accessed via explicit
+;; accessors — NOT (cons ok payload)/(cdr …), because tatara-lisp `cons`
+;; wraps a non-list cdr into a 1-element list, so (cdr (cons #t "x")) is
+;; ("x") not "x". (list …)+(car (cdr …)) is uniform for string AND list
+;; payloads.
+(define (bm:ok? res) (car res))
+(define (bm:payload res) (car (cdr res)))
+
+;; Discover the flake's packages.<eval-system> attr names.
+;; Returns (list #t names-list) on success, (list #f err-string) on failure.
+(define (bm:discover flake-ref eval-system tmp-dir)
+  (let* ((target (string-append flake-ref "#packages." eval-system))
+         (r (exec-capture "nix" "eval" "--json" target "--apply" "builtins.attrNames")))
+    (cond
+      ((not (= (status-of r) 0)) (list #f (stderr-of r)))
+      (else
+        (let ((jf (string-append tmp-dir "/build-matrix-attrs.json")))
+          (write-file jf (stdout-of r))
+          (let ((jr (exec-capture "jq" "-r" ".[]" jf)))
+            (if (= (status-of jr) 0)
+              (list #t (bm:tokens-nl (stdout-of jr)))
+              (list #f (stderr-of jr)))))))))
+
+;; Serialize the rows to the GHA matrix JSON via jq (valid for [] too).
+;; Returns (list #t json-string) | (list #f err-string).
+(define (bm:serialize rows)
+  (let* ((argv (append (list "jq" "-c" "-n" "--arg" "sep" "|"
+                             bm:matrix-jq-program "--args")
+                       (bm:rows->args rows)))
+         (r (apply exec-capture argv)))
+    (if (= (status-of r) 0)
+      (list #t (string-trim (stdout-of r)))
+      (list #f (stderr-of r)))))
+
+(define (bm:emit matrix count reason)
+  (append-output (string-append "matrix=" matrix))
+  (append-output (string-append "count=" count))
+  (append-output (string-append "reason=" reason)))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (main)
+  (let* ((flake-ref   (env-get "FLAKE_REF" "."))
+         (eval-system (env-get "EVAL_SYSTEM" "x86_64-linux"))
+         (image-base  (env-get "IMAGE_BASE" "dockerImage"))
+         (services    (bm:tokens (env-get "SERVICES" "")))
+         (arches      (bm:tokens (env-get "ARCHES" "")))
+         (excl        (bm:tokens (env-get "EXCLUDE" "")))
+         (require-ne  (env-get "REQUIRE_NONEMPTY" "true"))
+         (tmp-dir     (env-get "RUNNER_TEMP" "/tmp")))
+    (cond
+      ;; ── required tools absent (probe BEFORE invoking; exec-capture
+      ;;    raises on an absent binary) — an honest typed reason, not a crash ──
+      ((not (bm:on-path? "nix"))
+       (log-error "build-matrix: `nix` not on PATH — cannot enumerate the flake (the runner must bake nix)")
+       (bm:emit "" "0" "nix-absent")
+       1)
+      ((not (bm:on-path? "jq"))
+       (log-error "build-matrix: `jq` not on PATH — cannot serialize the matrix (the runner must bake jq)")
+       (bm:emit "" "0" "jq-absent")
+       1)
+      (else
+       (bm:run flake-ref eval-system image-base services arches excl require-ne tmp-dir)))))
+
+;; The enumerate → filter → serialize → emit body, entered only once nix + jq
+;; are confirmed on PATH.
+(define (bm:run flake-ref eval-system image-base services arches excl require-ne tmp-dir)
+  (let ((disc (bm:discover flake-ref eval-system tmp-dir)))
+    (cond
+      ;; ── nix eval failed (infra) ──
+      ((not (bm:ok? disc))
+       (log-error (string-append "build-matrix: `nix eval` of " flake-ref
+                    "#packages." eval-system " failed"))
+       (log-info (bm:payload disc))
+       (let ((ser (bm:serialize (list))))
+         (bm:emit (if (bm:ok? ser) (bm:payload ser) "") "0" "nix-eval-failed"))
+       1)
+      (else
+       (let* ((names (bm:payload disc))
+              (rows  (bm:rows-from-names names image-base services arches excl))
+              (n     (length rows))
+              (ser   (bm:serialize rows)))
+         (log-info (string-append "build-matrix: "
+                    (string-format "{}" (length names)) " attrs under packages."
+                    eval-system " -> " (string-format "{}" n)
+                    " rows (base=" image-base
+                    ", services=[" (string-join " " (bm:rows->services rows))
+                    "], arches=[" (string-join " " (bm:rows->arches rows)) "])"))
+         (cond
+           ;; ── jq serialization failed (should not happen if jq present) ──
+           ((not (bm:ok? ser))
+            (log-error "build-matrix: jq failed to serialize the matrix")
+            (log-info (bm:payload ser))
+            (bm:emit "" "0" "jq-failed")
+            1)
+           ;; ── 0 rows: loud (require) or clean typed no (exit 2) ──
+           ((= n 0)
+            (cond
+              ((equal? require-ne "true")
+               (log-error (string-append "build-matrix: 0 rows matched (base="
+                            image-base ", services/arches/exclude filters) and "
+                            "require-nonempty=true — failing (no silent empty matrix)"))
+               (bm:emit (bm:payload ser) "0" "empty-matrix")
+               1)
+              (else
+               (log-info "build-matrix: 0 rows matched; require-nonempty=false — clean empty (exit 2)")
+               (bm:emit (bm:payload ser) "0" "empty-matrix")
+               2)))
+           ;; ── the matrix ──
+           (else
+            (bm:emit (bm:payload ser) (string-format "{}" n) "ok")
+            0)))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — build-matrix helpers loaded; main skipped"))
+  (else
+   (exit (main))))

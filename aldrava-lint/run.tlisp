@@ -1,0 +1,37 @@
+;; aldrava-lint/run.tlisp — validate a (defcommentcommand ...) catalog file.
+;;
+;; `aldrava lint <path>` prints its JSON result to stdout on success (exit 0)
+;; and to stderr on failure (exit 1) — this wrapper reads whichever stream
+;; matches the exit status, so a malformed catalog fails the CI step with
+;; the offending form named in the log, not a bare non-zero exit.
+;;
+;; Uses _tlisp-stdlib helpers: append-output, exec-capture, status-of,
+;; stdout-of, stderr-of, json-read-field, write-file, log-error, log-info.
+;;
+;; Inputs (env, config-resolvable via [aldrava-lint]): CATALOG_PATH
+;; Outputs (appended): ok commands (ok=true) | error (ok=false)
+
+(define al:result-path "/tmp/aldrava-lint-result.json")
+
+(define (main)
+  (let* ((catalog-path (config-resolve "CATALOG_PATH" "aldrava-lint" "catalog-path" ".github/aldrava.lisp"))
+         (result (exec-capture "aldrava" "lint" catalog-path)))
+    (cond
+      ((= (status-of result) 0)
+       (write-file al:result-path (stdout-of result))
+       (append-output "ok=true")
+       (append-output (string-append "commands=" (json-read-field al:result-path ".commands")))
+       (log-info (string-append "aldrava-lint: " catalog-path " OK ("
+                                (json-read-field al:result-path ".commands") ")")))
+      (else
+       (write-file al:result-path (stderr-of result))
+       (append-output "ok=false")
+       (append-output (string-append "error=" (json-read-field al:result-path ".error")))
+       (log-error (string-append "aldrava-lint: " catalog-path ": "
+                                 (json-read-field al:result-path ".error")))
+       (exit 1)))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — aldrava-lint loaded; main skipped"))
+  (else (main)))

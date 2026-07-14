@@ -1,0 +1,91 @@
+name: 'pleme-io · bigorna'
+description: 'CI ENTRY: set up a buildx builder with NATIVE per-arch nodes (no QEMU) + a sui-store cache front, in one step. An unchanged `docker buildx build` afterward runs native-multi-arch + warm.'
+branding:
+  icon: 'box'
+  color: 'orange'
+
+inputs:
+  platforms:
+    description: "Comma/space OCI platform list to cover natively (e.g. linux/amd64,linux/arm64)."
+    required: false
+    default: "linux/amd64"
+  cache:
+    description: "Registry cache ref fronting the sui tiered store (e.g. ghcr.io/pleme-io/<svc>:buildcache). Empty = no cache front. Surfaced as the cache-from/cache-to outputs."
+    required: false
+    default: ""
+  cache-mode:
+    description: "Cache export mode: max (intermediate layers too, default) | min."
+    required: false
+    default: "max"
+  arch-endpoints:
+    description: "Space/comma list of <arch>=<endpoint> for FOREIGN native nodes (a docker context or tcp:// remote), e.g. 'arm64=arm64-ctx'. The runner's own arch is always the create node."
+    required: false
+    default: ""
+  fallthrough:
+    description: "When a requested platform has no native node: 'error' (default — hard fail) | 'native-subset' (set up the native-covered platforms, warn, proceed)."
+    required: false
+    default: "error"
+  builder-name:
+    description: "buildx builder name."
+    required: false
+    default: "bigorna"
+  driver:
+    description: "buildx driver: docker-container (default) | kubernetes | remote."
+    required: false
+    default: "docker-container"
+  bigorna-version:
+    description: "sui ref for `nix run github:pleme-io/sui/<ref>#bigorna` when a bigorna binary is not already on PATH."
+    required: false
+    default: "main"
+
+outputs:
+  builder:
+    description: "The buildx builder name that was set up (`--use`d, so an unchanged `docker buildx build` picks it up)."
+    value: ${{ steps.run.outputs.builder }}
+  native-platforms:
+    description: "Comma-joined platforms covered by a native node (the builder's covered set)."
+    value: ${{ steps.run.outputs.native-platforms }}
+  emulation:
+    description: "native-for-all (every requested platform is native) | needs-native-node."
+    value: ${{ steps.run.outputs.emulation }}
+  cache-from:
+    description: "A `--cache-from` token the consumer's own `docker buildx build` reuses ('' when no cache front)."
+    value: ${{ steps.run.outputs.cache-from }}
+  cache-to:
+    description: "A `--cache-to` token the consumer's own `docker buildx build` reuses ('' when no cache front)."
+    value: ${{ steps.run.outputs.cache-to }}
+  ok:
+    description: "'true' iff every requested platform got a native node and every create step succeeded."
+    value: ${{ steps.run.outputs.ok }}
+  result:
+    description: "Generic catch-all == builder name (or '' on failure)."
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    # bigorna drives `docker buildx`; ensure buildx is present on the runner.
+    - uses: docker/setup-buildx-action@v3
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PLATFORMS: ${{ inputs.platforms }}
+        CACHE: ${{ inputs.cache }}
+        CACHE_MODE: ${{ inputs.cache-mode }}
+        ARCH_ENDPOINTS: ${{ inputs.arch-endpoints }}
+        FALLTHROUGH: ${{ inputs.fallthrough }}
+        BUILDER_NAME: ${{ inputs.builder-name }}
+        DRIVER: ${{ inputs.driver }}
+        BIGORNA_VERSION: ${{ inputs.bigorna-version }}

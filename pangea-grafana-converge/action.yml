@@ -1,0 +1,91 @@
+name: 'pleme-io · pangea-grafana-converge'
+description: 'MODEL-2 (remote-reconcile) FedRAMP observability executor — health-probe a remote Grafana REST endpoint (inbound-only + scoped SA token) then drive the shipped pangea rio-observability workspace + deployment-agnostic pangea-grafana provider + magma runner against it, converging 2F Grafana from our side. Reports the runner''s real status; the exact flake app attr is a named LiveTODO, never faked.'
+branding:
+  icon: 'bar-chart-2'
+  color: 'orange'
+
+inputs:
+  grafana-url:
+    description: "Remote Grafana base URL (inbound-only, no trailing slash), e.g. https://grafana.2f.example"
+    required: true
+  grafana-token:
+    description: "Scoped Grafana service-account token (least-privilege, inbound-only). Passed via env, never argv."
+    required: true
+  workspace:
+    description: "Flake ref / path to the pangea rio-observability workspace."
+    required: false
+    default: "github:pleme-io/pangea-architectures"
+  app:
+    description: "Flake app attribute of the remote-Grafana runner within the workspace. [LiveTODO: pin once confirmed against the shipped workspace.]"
+    required: false
+    default: "rio-observability-converge"
+  converge-cmd:
+    description: "Full space-separated converge command override. When set, replaces the default `nix run <workspace>#<app> -- --provider <provider> --url <url>` invocation."
+    required: false
+    default: ""
+  provider:
+    description: "Pangea provider to converge (deployment-agnostic)."
+    required: false
+    default: "grafana"
+  dry-run:
+    description: "true ⇒ ask the runner to plan only (no remote mutation)."
+    required: false
+    default: "false"
+  require-healthy:
+    description: "true ⇒ an unhealthy/unreachable Grafana (database != ok) is a hard fail before any converge is attempted."
+    required: false
+    default: "true"
+  model:
+    description: "Delivery model selector (informational — 2 = remote-reconcile). Mirrors the pipeline's model:1|2 flag."
+    required: false
+    default: "2"
+
+outputs:
+  healthy:
+    description: "true when the remote Grafana /api/health reported database:ok."
+    value: ${{ steps.converge.outputs.healthy }}
+  converged:
+    description: "true when the pangea runner converged the remote Grafana (or planned, on dry-run)."
+    value: ${{ steps.converge.outputs.converged }}
+  reason:
+    description: "converged | planned | grafana-unhealthy | runner-target-unresolved | runner-failed | missing-grafana-url."
+    value: ${{ steps.converge.outputs.reason }}
+  dry-run:
+    description: "Echo of the dry-run flag."
+    value: ${{ steps.converge.outputs.dry-run }}
+  model:
+    description: "Echo of the delivery model (2)."
+    value: ${{ steps.converge.outputs.model }}
+
+runs:
+  using: composite
+  steps:
+    # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
+    # action's run.tlisp so the body can use every stdlib primitive.
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Health-probe + converge the remote Grafana
+      id: converge
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        GRAFANA_URL: ${{ inputs.grafana-url }}
+        GRAFANA_TOKEN: ${{ inputs.grafana-token }}
+        WORKSPACE: ${{ inputs.workspace }}
+        APP: ${{ inputs.app }}
+        CONVERGE_CMD: ${{ inputs.converge-cmd }}
+        PROVIDER: ${{ inputs.provider }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        REQUIRE_HEALTHY: ${{ inputs.require-healthy }}
+        MODEL: ${{ inputs.model }}

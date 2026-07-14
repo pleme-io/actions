@@ -1,0 +1,27 @@
+;; super-cache-restore/run.test.tlisp — (deftest …) smoke for the pure
+;; helpers + the local object tier, run via tatara-script --test by the
+;; tlisp-test action (TLISP_TEST=1 gates the unit's main).
+
+(deftest "restore-key prefers an explicit key over the spec-path"
+  (assert (equal? (restore-key "explicit" "/nonexistent.json") "explicit") "explicit key wins")
+  (assert (equal? (restore-key "" "/nonexistent.json") "") "no key + absent spec => empty")
+  (assert (equal? (restore-key "" "") "") "no key + no spec => empty"))
+
+(deftest "classify-tier maps a local hit to object, a miss to miss"
+  (assert (equal? (supercache:classify-tier #t) "object") "hit => object")
+  (assert (equal? (supercache:classify-tier #f) "miss") "miss => miss"))
+
+(deftest "the local object tier round-trips a content-addressed entry"
+  (define dir "/tmp/scache-restore-test")
+  (exec-capture "rm" "-rf" dir)
+  (exec-capture "mkdir" "-p" dir)
+  (assert (not (supercache:cache-local-has? dir "k1")) "absent before write")
+  (assert (equal? (supercache:local-entry-path dir "k1") (string-append dir "/k1.entry")) "entry path shape")
+  (write-file (supercache:local-entry-path dir "k1") "/nix/store/aaa /nix/store/bbb\n")
+  (assert (supercache:cache-local-has? dir "k1") "present after write")
+  (assert (equal? (string-trim (read-file (supercache:local-entry-path dir "k1")))
+                  "/nix/store/aaa /nix/store/bbb") "reads back the persisted outputs"))
+
+(deftest "an empty cache-dir never reports a hit"
+  (assert (not (supercache:cache-local-has? "" "k1")) "empty dir => no hit")
+  (assert (not (supercache:cache-local-has? "/tmp/scache-restore-test" "")) "empty key => no hit"))

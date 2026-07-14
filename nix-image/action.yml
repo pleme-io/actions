@@ -1,0 +1,105 @@
+name: 'pleme-io · nix-image'
+description: 'Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and akeyless-nix-images (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO); correct local nix build otherwise.'
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  image-attr:
+    description: "Flake output attr base (the {base} placeholder)"
+    required: false
+    default: "dockerImage"
+  attr-template:
+    description: "Flake-attr template over {base} {arch} {svc}. Default '{base}-{arch}' (mkImageReleaseApp). Multi-service mkGoDockerImage: '{base}-{arch}-{svc}'. akeyless-nix-images: 'dockerImage:{arch}:{svc}'."
+    required: false
+    default: "{base}-{arch}"
+  svc:
+    description: "Service name substituted for {svc} (multi-service flakes, e.g. mkGoDockerImage). Empty for single-image flakes; required when attr-template names {svc}."
+    required: false
+    default: ""
+  arches:
+    description: "Space-separated arch list to build (e.g. 'amd64 arm64'). For a NATIVE build, pass one arch matching the runner (runs-on:[camelot,<arch>])."
+    required: false
+    default: "amd64"
+  flake-ref:
+    description: "Flake ref to build from"
+    required: false
+    default: "."
+  endpoint:
+    description: "sui super-cache service endpoint. Set => warm-layer routing (LiveTODO:super-cache-build); empty => local build."
+    required: false
+    default: ""
+  targets:
+    description: "N: parallel build targets sharing this node (the matrix row count). The tuner partitions V=nproc across N so total planned concurrency ~= V without oversubscribing (max-jobs N, cores floor(V/N) for a narrow DAG). Default '1' = a lone build gets the whole box."
+    required: false
+    default: "1"
+  dag-shape:
+    description: "'narrow' (monolithic buildGoModule fleet — jobs=N, cores=V/N; default) | 'wide' (per-package/gen-gomod — jobs=V, cores=1)."
+    required: false
+    default: "narrow"
+  auto-tune:
+    description: "'true' (default) — discover V=nproc + partition over targets/dag-shape. 'false' — pass max-jobs/cores through raw (legacy)."
+    required: false
+    default: "true"
+  max-jobs:
+    description: "nix --max-jobs OVERRIDE. Non-empty + non-'auto' ⇒ a HARD CAP (a quota bound) that WINS over the tuner. 'auto'/'' ⇒ the tuner computes it. Never a fixed integer unless a quota bounds it."
+    required: false
+    default: "auto"
+  cores:
+    description: "nix --cores OVERRIDE. Non-empty + non-'0' ⇒ a HARD CAP that WINS over the tuner. '0'/'' ⇒ the tuner computes it. The tuner also bounds Go's own -p/GOMAXPROCS to this value."
+    required: false
+    default: "0"
+
+outputs:
+  tarball-amd64:
+    description: "amd64 docker-archive out-path (empty if not requested / failed)"
+    value: ${{ steps.run.outputs.tarball-amd64 }}
+  tarball-arm64:
+    description: "arm64 docker-archive out-path (empty if not requested / failed)"
+    value: ${{ steps.run.outputs.tarball-arm64 }}
+  tarballs:
+    description: "Semicolon-joined 'arch:path' list of every built tarball"
+    value: ${{ steps.run.outputs.tarballs }}
+  via-service:
+    description: "'true' iff a build was served by sui (today always 'false' — LiveTODO)"
+    value: ${{ steps.run.outputs.via-service }}
+  built:
+    description: "'true' iff every requested arch built"
+    value: ${{ steps.run.outputs.built }}
+  result:
+    description: "Generic catch-all: the first successful tarball (or empty on failure)"
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE_ATTR: ${{ inputs.image-attr }}
+        ATTR_TEMPLATE: ${{ inputs.attr-template }}
+        SVC: ${{ inputs.svc }}
+        ARCHES: ${{ inputs.arches }}
+        FLAKE_REF: ${{ inputs.flake-ref }}
+        SUI_ENDPOINT: ${{ inputs.endpoint }}
+        TARGETS: ${{ inputs.targets }}
+        DAG_SHAPE: ${{ inputs.dag-shape }}
+        AUTO_TUNE: ${{ inputs.auto-tune }}
+        NIX_MAX_JOBS: ${{ inputs.max-jobs }}
+        NIX_CORES: ${{ inputs.cores }}

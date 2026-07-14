@@ -1,0 +1,57 @@
+name: 'pleme-io · cosign-sign'
+description: >-
+  Sign an OCI image BY DIGEST with sigstore/cosign. Keyless (Fulcio + Rekor
+  via ambient OIDC) by default; supply key-ref for a cofre/ESO/KMS-held key
+  (DoD-PKI keyless / HSM at IL5). The signature is attached to the registry
+  and the transparency entry is written to Rekor. This is the L-sign layer
+  of the super-cache-ci per-derivation security stack.
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  image-ref:
+    description: "OCI image to sign, BY DIGEST (registry/repo@sha256:...). Never a floating tag."
+    required: true
+  key-ref:
+    description: >-
+      cosign key reference (file path, KMS URI, or k8s://ns/secret from
+      cofre/ESO). Empty = keyless Fulcio+Rekor (requires id-token: write).
+    required: false
+    default: ""
+  recursive:
+    description: "Sign every manifest in a multi-arch image index (true|false)."
+    required: false
+    default: "false"
+
+outputs:
+  signed:
+    description: "true when the image was signed"
+    value: ${{ steps.sign.outputs.signed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: sign
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        KEY_REF: ${{ inputs.key-ref }}
+        RECURSIVE: ${{ inputs.recursive }}
