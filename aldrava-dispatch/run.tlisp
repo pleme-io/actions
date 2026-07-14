@@ -1,0 +1,89 @@
+;; aldrava-dispatch/run.tlisp — the typed knock.
+;;
+;; Wraps the `aldrava` binary (installed by action.yml's install step) via
+;; exec-capture — every decision (command match, trust resolution, target
+;; dispatch) lives in aldrava's own typed interpreter
+;; (github.com/pleme-io/aldrava), tested with zero network access against a
+;; mock Environment. This file is orchestration only: build the argv from
+;; config-resolved inputs, run the binary, forward its JSON result to
+;; $GITHUB_OUTPUT.
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   config-resolve, append-output, exec-capture, status-of, stdout-of,
+;;   stderr-of, json-read-field, write-file, log-error, log-info.
+;;
+;; Inputs (env, config-resolvable via the [aldrava-dispatch] section):
+;;   CATALOG_PATH COMMAND TRIGGER MIN_PERMISSION TRUST_PR_AUTHOR ALLOWLIST
+;;   TARGET_LABEL TARGET_WORKFLOW TARGET_WORKFLOW_REF
+;;   TARGET_REPOSITORY_DISPATCH_EVENT TARGET_REPOSITORY_DISPATCH_REPO
+;;   ALDRAVA_REPO GITHUB_TOKEN
+;; Outputs (appended, mirroring aldrava's own JSON result shape):
+;;   dispatched outcome command args commenter checkout-ref branch-ref
+;;   base-ref pr-author is-develop target-kind target-detail reason
+
+(define ad:result-path "/tmp/aldrava-dispatch-result.json")
+
+;; A [flag value] pair as a list, or the empty list when value is unset —
+;; so callers `append` it straight into the growing argv list without a
+;; conditional at every call site.
+(define (ad:flag-if name value)
+  (cond
+    ((equal? value "") (list))
+    (else (list name value))))
+
+(define (main)
+  (let* ((catalog        (config-resolve "CATALOG_PATH" "aldrava-dispatch" "catalog-path" ""))
+         (command        (config-resolve "COMMAND" "aldrava-dispatch" "command" ""))
+         (trigger        (config-resolve "TRIGGER" "aldrava-dispatch" "trigger" ""))
+         (min-permission (config-resolve "MIN_PERMISSION" "aldrava-dispatch" "min-permission" "write"))
+         (trust-author   (config-resolve "TRUST_PR_AUTHOR" "aldrava-dispatch" "trust-pr-author" "true"))
+         (allowlist      (config-resolve "ALLOWLIST" "aldrava-dispatch" "allowlist" ""))
+         (target-label   (config-resolve "TARGET_LABEL" "aldrava-dispatch" "target-label" ""))
+         (target-wf      (config-resolve "TARGET_WORKFLOW" "aldrava-dispatch" "target-workflow" ""))
+         (target-wf-ref  (config-resolve "TARGET_WORKFLOW_REF" "aldrava-dispatch" "target-workflow-ref" ""))
+         (target-rd-evt  (config-resolve "TARGET_REPOSITORY_DISPATCH_EVENT" "aldrava-dispatch" "target-repository-dispatch-event" ""))
+         (target-rd-repo (config-resolve "TARGET_REPOSITORY_DISPATCH_REPO" "aldrava-dispatch" "target-repository-dispatch-repo" ""))
+         (repo           (env-get "ALDRAVA_REPO" ""))
+         (argv (append
+                 (list "aldrava" "dispatch" "--repo" repo
+                       "--trust-pr-author" trust-author)
+                 (ad:flag-if "--catalog" catalog)
+                 (ad:flag-if "--command" command)
+                 (ad:flag-if "--trigger" trigger)
+                 (ad:flag-if "--min-permission" min-permission)
+                 (ad:flag-if "--allowlist" allowlist)
+                 (ad:flag-if "--target-label" target-label)
+                 (ad:flag-if "--target-workflow" target-wf)
+                 (ad:flag-if "--target-workflow-ref" target-wf-ref)
+                 (ad:flag-if "--target-repository-dispatch-event" target-rd-evt)
+                 (ad:flag-if "--target-repository-dispatch-repo" target-rd-repo)))
+         (result (apply exec-capture argv)))
+    (cond
+      ((not (= (status-of result) 0))
+       (log-error (string-append "aldrava-dispatch: aldrava exited "
+                                 (string-format "{}" (status-of result))
+                                 ": " (stderr-of result)))
+       (exit (status-of result)))
+      (else
+        (write-file ad:result-path (stdout-of result))
+        (append-output (string-append "dispatched=" (json-read-field ad:result-path ".dispatched")))
+        (append-output (string-append "outcome=" (json-read-field ad:result-path ".outcome")))
+        (append-output (string-append "command=" (json-read-field ad:result-path ".command")))
+        (append-output (string-append "args=" (json-read-field ad:result-path ".args")))
+        (append-output (string-append "commenter=" (json-read-field ad:result-path ".commenter")))
+        (append-output (string-append "checkout-ref=" (json-read-field ad:result-path ".checkout_ref")))
+        (append-output (string-append "branch-ref=" (json-read-field ad:result-path ".branch_ref")))
+        (append-output (string-append "base-ref=" (json-read-field ad:result-path ".base_ref")))
+        (append-output (string-append "pr-author=" (json-read-field ad:result-path ".pr_author")))
+        (append-output (string-append "is-develop=" (json-read-field ad:result-path ".is_develop")))
+        (append-output (string-append "target-kind=" (json-read-field ad:result-path ".target_kind")))
+        (append-output (string-append "target-detail=" (json-read-field ad:result-path ".target_detail")))
+        (append-output (string-append "reason=" (json-read-field ad:result-path ".reason")))
+        (log-info (string-append "aldrava-dispatch: outcome=" (json-read-field ad:result-path ".outcome")))))))
+
+;; Gated on TLISP_TEST so the tlisp-test harness loads ad:flag-if without
+;; needing the aldrava binary on PATH or a real GitHub event.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — aldrava-dispatch helpers loaded; main skipped"))
+  (else (main)))

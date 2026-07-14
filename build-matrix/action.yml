@@ -1,0 +1,75 @@
+name: 'pleme-io · build-matrix'
+description: 'Enumerate a flake''s colon-triple image attrs (dockerImage:<arch>:<svc>) and emit the GitHub Actions image×arch build matrix. Step 2 of the super-cache-ci graph job — the single-responsibility sibling of gen-build-spec (which gates spec freshness; this fans the fresh spec across every (service, arch) the flake actually exposes). TIER: SHIPPABLE-NOW — deterministic `nix eval` enumeration, honest per-service arch discovery (an arm64 row appears iff the flake exposes dockerImage:arm64:<svc>), never a hard-coded arch pair. TYPED EMISSION: the matrix JSON is composed by jq, never hand-concatenated.'
+branding:
+  icon: 'grid'
+  color: 'green'
+
+inputs:
+  flake-ref:
+    description: "Flake ref to enumerate (e.g. . or github:akeylesslabs/akeyless-nix-images)."
+    required: false
+    default: "."
+  eval-system:
+    description: "packages.<system> to read attrNames from. The colon-triple attrs live under the linux eval-system; the <arch> IN the attr (not this) selects the image target arch."
+    required: false
+    default: "x86_64-linux"
+  image-base:
+    description: "Attr base prefix; only <base>:<arch>:<svc> attrs become matrix rows. `default:<svc>` bare-binary attrs and the substrate `<base>-<arch>` dash convention are rejected."
+    required: false
+    default: "dockerImage"
+  services:
+    description: "Space/comma allowlist of services to include; empty = all discovered."
+    required: false
+    default: ""
+  arches:
+    description: "Space/comma allowlist of arches to include; empty = all discovered. Never fabricates a row — an arch only appears if the flake exposes its attr."
+    required: false
+    default: ""
+  exclude:
+    description: "Space/comma exclusions, each `<arch>:<svc>` or bare `<svc>`."
+    required: false
+    default: ""
+  require-nonempty:
+    description: "When true (default), a 0-row matrix is a hard exit 1 (a surprise-empty matrix is a mis-config, and an empty include breaks the downstream job). Set false to allow a clean typed exit 2 the caller branches on."
+    required: false
+    default: "true"
+
+outputs:
+  matrix:
+    description: "GHA matrix JSON: {\"include\":[{image,arch,attr,system},...]}. Consume as strategy.matrix fromJSON of this step's matrix output."
+    value: ${{ steps.run.outputs.matrix }}
+  count:
+    description: "Number of rows in the matrix (integer)."
+    value: ${{ steps.run.outputs.count }}
+  reason:
+    description: "ok | empty-matrix | nix-eval-failed | jq-failed."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Run build-matrix
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        FLAKE_REF: ${{ inputs.flake-ref }}
+        EVAL_SYSTEM: ${{ inputs.eval-system }}
+        IMAGE_BASE: ${{ inputs.image-base }}
+        SERVICES: ${{ inputs.services }}
+        ARCHES: ${{ inputs.arches }}
+        EXCLUDE: ${{ inputs.exclude }}
+        REQUIRE_NONEMPTY: ${{ inputs.require-nonempty }}

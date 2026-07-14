@@ -64,15 +64,74 @@
 (when (not (= set-url-status 0))
   (log-error "git remote set-url failed") (exit set-url-status))
 
-(define push-branch-status (exec-check "git" "push" "origin" branch))
-(when (not (= push-branch-status 0))
-  (log-error (string-append "git push origin " branch " failed"))
-  (exit push-branch-status))
+;; Push the branch and (optionally) every tag in ONE transaction.
+;; `--atomic` makes the remote accept all refs or none, so the branch +
+;; its release tag are indivisible (no land-tag-without-commit skew).
+;; This is a Docker action (no stdlib), so helpers stay inline.
+(define (capture-out cap) (string-trim (alist-get cap :stdout)))
+(define (rev-parse ref) (capture-out (exec-capture "git" "rev-parse" ref)))
+(define (tags-at commit)
+  (let ((out (capture-out (exec-capture "git" "tag" "--points-at" commit))))
+    (if (equal? out "") (list) (string-split out "\n"))))
 
-(when ptags?
-  (define push-tags-status (exec-check "git" "push" "origin" "--tags"))
-  (when (not (= push-tags-status 0))
-    (log-error "git push origin --tags failed")
-    (exit push-tags-status)))
+(define (do-push)
+  (if ptags?
+      (exec-check "git" "push" "--atomic" "origin" branch "--tags")
+      (exec-check "git" "push" "origin" branch)))
 
-(log-info (string-append "pushed " branch (if ptags? " + tags" "")))
+;; Re-point each tag to new-head (force). Lightweight is fine: the
+;; release workflow fires on the tag REF regardless of annotation, and
+;; `git describe --tags` (the bump's last-tag) honours lightweight tags.
+(define (move-tags tags new-head)
+  (for-each (lambda (t) (exec-check "git" "tag" "-f" t new-head)) tags))
+
+;; Resilient push: a non-fast-forward rejection means ANOTHER writer
+;; (an operator flake.lock push, a concurrent workflow) advanced <branch>
+;; between this job's checkout and this push — stranding the bump commit
+;; + its release tag so the whole release fails (a green bump that never
+;; ships; observed 2026-06-03 on tatara-lisp v0.2.4). Recover by fetching
+;; the new tip, REBASING our local commits onto it (the bump touches
+;; Cargo.* while the common racer touches flake.lock — disjoint, so the
+;; replay is conflict-free), re-pointing any tags that rode the rebased
+;; commits, and retrying. Bounded; a genuine content conflict aborts the
+;; rebase + surfaces (no worse than the pre-fix single-shot push). The
+;; `-c user.*` keeps the rebase replay's committer identity self-contained
+;; (the container may not inherit the job's git config).
+(define (push-with-retry attempts)
+  (let ((s (do-push)))
+    (cond
+      ((= s 0) 0)
+      ((<= attempts 0)
+       (log-error "git push still rejected after rebase retries") s)
+      (else
+        (log-info "push rejected (non-ff?) — fetch + rebase onto latest, then retry")
+        (let ((old-head (rev-parse "HEAD"))
+              (fetch-s (exec-check "git" "fetch" "origin" branch)))
+          (cond
+            ((not (= fetch-s 0)) (log-error "git fetch failed during push retry") fetch-s)
+            (else
+              (let* ((onto (string-append "origin/" branch))
+                     (saved-tags (tags-at old-head))
+                     (rebase-s (exec-check "git"
+                                 "-c" "user.email=github-actions[bot]@users.noreply.github.com"
+                                 "-c" "user.name=github-actions[bot]"
+                                 "rebase" onto)))
+                (cond
+                  ((not (= rebase-s 0))
+                   ;; lint:allow git-mutation-discard — abort-cleanup; we return rebase-s
+                   (exec-check "git" "rebase" "--abort")
+                   (log-error "rebase onto latest conflicted — manual resolution needed (push not retried)")
+                   rebase-s)
+                  (else
+                    (move-tags saved-tags (rev-parse "HEAD"))
+                    (push-with-retry (- attempts 1))))))))))))
+
+(define push-status (push-with-retry 3))
+(when (not (= push-status 0))
+  (log-error (string-append "git push"
+                            (if ptags? " --atomic" "")
+                            " origin " branch
+                            (if ptags? " --tags" "") " failed"))
+  (exit push-status))
+
+(log-info (string-append "pushed " branch (if ptags? " + tags (atomic)" "")))

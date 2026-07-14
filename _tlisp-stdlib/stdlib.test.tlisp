@@ -1,0 +1,39 @@
+;; _tlisp-stdlib/stdlib.test.tlisp — (deftest …) tests for the shared stdlib's
+;; TOML helpers, run by the tlisp-test action via tatara-script --test. The
+;; stdlib IS the unit-under-test; it is pure (no main), so no TLISP_TEST gate
+;; is needed. These lock in the array-field-as-section + rust-version-substring
+;; bugfix that now underpins rust-workspace-bump + rust-workspace-publish +
+;; cargo-publish-each-member (all read versions through cargo-workspace-version
+;; / toml-read-field).
+
+(deftest "line-is-section-header?: a bracket with no '=' — array fields are NOT headers"
+  (assert (line-is-section-header? "[workspace.package]") "real section header")
+  (assert (line-is-section-header? "  [package]  ") "trimmed section header")
+  (assert (not (line-is-section-header? "keywords = [\"a\", \"b\"]")) "array-valued field is NOT a header")
+  (assert (not (line-is-section-header? "version = \"1.0\"")) "plain field is not a header"))
+
+(deftest "line-assigns-field?: exact field name, not a substring"
+  (assert (line-assigns-field? "version = \"1.0\"" "version") "version assigns version")
+  (assert (line-assigns-field? "  version=\"1.0\"" "version") "tight/trimmed still assigns version")
+  (assert (not (line-assigns-field? "rust-version = \"1.89\"" "version")) "rust-version is NOT version"))
+
+(deftest "line-is-named-section?: exact, not subsection or array value"
+  (assert (line-is-named-section? "[package]" "[package]") "exact section matches")
+  (assert (not (line-is-named-section? "[package.metadata.docs.rs]" "[package]")) "subsection is not [package]")
+  (assert (not (line-is-named-section? "keywords = [\"package\"]" "[package]")) "array value is not a section"))
+
+(deftest "extract-quoted-value: double + single quotes"
+  (assert (equal? (extract-quoted-value "version = \"1.2.3\"") "1.2.3") "double-quoted value")
+  (assert (equal? (extract-quoted-value "name = 'foo'") "foo") "single-quoted value"))
+
+(deftest "toml-read-field reads version past an array field + a rust-version trap"
+  (let ((p "/tmp/stdlib-test-cargo.toml"))
+    (write-file p "[workspace.package]\nkeywords = [\"x\", \"y\"]\nversion = \"4.5.6\"\nrust-version = \"1.89.0\"\n")
+    (assert (equal? (toml-read-field p "[workspace.package]" "version") "4.5.6")
+            "reads 4.5.6 despite array field above + rust-version below")))
+
+(deftest "toml-read-field stops at the next section (does not leak across)"
+  (let ((p "/tmp/stdlib-test-cargo2.toml"))
+    (write-file p "[package]\nname = \"a\"\n\n[dependencies]\nversion = \"9.9.9\"\n")
+    (assert (equal? (toml-read-field p "[package]" "version") "")
+            "no version in [package] — must not read [dependencies].version")))

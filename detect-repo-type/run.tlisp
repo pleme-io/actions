@@ -2,6 +2,7 @@
 ;;
 ;;   rust-workspace      — Cargo.toml with [workspace] section
 ;;   rust-single-crate   — Cargo.toml with [package] section (no [workspace])
+;;   go                  — go.mod
 ;;   npm                 — package.json
 ;;   python              — pyproject.toml
 ;;   helm                — Chart.yaml
@@ -11,7 +12,7 @@
 ;;   unknown             — none of the above
 ;;
 ;; Precedence (when multiple manifests coexist):
-;;   rust > ansible > helm > python > npm > ruby > action > unknown
+;;   rust > go > ansible > helm > python > npm > ruby > action > unknown
 ;;
 ;; Outputs (appended):
 ;;   repo-type       the typed identifier
@@ -57,6 +58,10 @@
   ((cargo-has-section? "[package]")
    (emit "rust-single-crate" "Cargo.toml"))
 
+  ;; Go — go.mod (pull-model module: tag-only delivery, FSM-MODULE)
+  ((path-exists? "go.mod")
+   (emit "go" "go.mod"))
+
   ;; Ansible
   ((path-exists? "galaxy.yml")
    (emit "ansible-collection" "galaxy.yml"))
@@ -83,9 +88,14 @@
   ((path-exists? "action.yaml")
    (emit "github-action" "action.yaml"))
 
-  ;; Nothing matched
+  ;; Nothing matched. A detector REPORTS its answer (including
+  ;; "unknown") and succeeds — exiting non-zero here fails the detect
+  ;; job, which in the polymorphic auto-release workflow cascades to
+  ;; skip+red every dispatch job for a repo that simply has no
+  ;; packageable artifact (and should no-op green per the AUTO-RELEASE
+  ;; exemption). Callers branch on `repo-type=unknown` via job `if:`.
   (else
-    (log-error "detect-repo-type: no recognized manifest at repo root")
+    (log-info "detect-repo-type: no recognized manifest at repo root (unknown)")
     (append-output "repo-type=unknown")
     (append-output "manifest-path=")
-    (exit 1)))
+    (exit 0)))

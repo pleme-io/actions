@@ -1,0 +1,62 @@
+name: test-manifest-list-join
+on:
+  push:
+    paths:
+      - 'manifest-list-join/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'manifest-list-join/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE — the action's row in the super-cache-ci CI matrix.
+# Pushes two per-arch images (amd64 + arm64) to a throwaway insecure
+# registry:2, joins them into a multi-arch index via the action, then
+# INDEPENDENTLY re-inspects the index to prove it is a real OCI image
+# index carrying both platforms — no cluster Zot needed, no dependency
+# on the tatara-script@v1 output-forward set (index-ref/index-digest
+# reach a consumer only once the shared forwarder grows them — a named
+# coordination LiveTODO).
+jobs:
+  join-two-arches:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure skopeo + buildah + jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo buildah jq
+      - name: Push per-arch images (amd64 + arm64) to the local registry
+        run: |
+          set -euo pipefail
+          skopeo --insecure-policy copy --override-arch amd64 --override-os linux \
+            docker://busybox:latest docker://localhost:5000/akeyless-auth:amd64-r412-9c1f2ab --dest-tls-verify=false
+          skopeo --insecure-policy copy --override-arch arm64 --override-os linux \
+            docker://busybox:latest docker://localhost:5000/akeyless-auth:arm64-r412-9c1f2ab --dest-tls-verify=false
+      - id: join
+        uses: ./manifest-list-join
+        with:
+          registry: localhost:5000
+          svc: auth
+          arch-refs: "amd64=localhost:5000/akeyless-auth:amd64-r412-9c1f2ab,arm64=localhost:5000/akeyless-auth:arm64-r412-9c1f2ab"
+          run-number: "412"
+          sha: 9c1f2ab
+          insecure: "true"
+          tool: buildah
+      - name: Independently prove the index is a real multi-arch manifest list
+        run: |
+          set -euo pipefail
+          IDX="localhost:5000/akeyless-auth:r412-9c1f2ab"
+          RAW=$(skopeo --insecure-policy inspect --tls-verify=false --raw "docker://$IDX")
+          echo "$RAW" | jq -e '.manifests | length >= 2' >/dev/null \
+            || { echo "index has fewer than 2 platform manifests"; echo "$RAW"; exit 1; }
+          echo "$RAW" | jq -e '[.manifests[].platform.architecture] | (index("amd64") != null and index("arm64") != null)' >/dev/null \
+            || { echo "index missing amd64/arm64 platform entry"; echo "$RAW"; exit 1; }
+          echo "manifest-list-join verified — $IDX is a real amd64+arm64 index"

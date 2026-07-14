@@ -1,0 +1,171 @@
+;; sui-warm-hydrate/run.tlisp — GRAPH-job warm verb. Pre-load the sui
+;; daemon's tiered super-cache with the fan-out's content keys BEFORE the
+;; build matrix explodes, so every parallel build job starts warm.
+;; Canonical doctrine: theory/SUPER-CACHE-CI.md (§II.2 tiered store,
+;; §II.3 the warm resolver).
+;;
+;; Where it sits in the pipeline (graph job):
+;;   gen-build-spec (SPEC_PATHS) -> build-matrix (image x arch)
+;;     -> THIS (warm the daemon for every fan-out key)
+;;       -> [build job fan-out] super-cache-restore hits warm
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info/log-error, config-resolve, string-split,
+;;   supercache:endpoint-resolve, supercache:endpoint-alive?,
+;;   supercache:content-key, supercache:never-touch-disk?.
+;;
+;; ── TIER-HONEST (never round up) · DEGRADED-UNTIL-STORE ─────────────
+;; SHIPPED + unit-tested (run.test.tlisp): the pure decision surface —
+;; key resolution/counting (swh:split-nonempty / swh:count),
+;; can-we-warm? (swh:can-warm?), the reason discriminant (swh:reason),
+;; and the exit-code contract (swh:exit-code). LiveTODO at the ACTION
+;; layer: the actual warm — a daemon warm-set RPC pre-loading Redis L1 /
+;; Postgres L2 for the requested keys. There is NO shipped warm-set RPC:
+;; `sui-daemon-client` is a LIBRARY (`DaemonClient`), not a binary, and
+;; the tiered backend (`TieredBackend = RedisBackend→PgStore→S3Storage`
+;; behind sui's SHIPPED `Store`/`StorageBackend` traits) is unwritten.
+;; So `swh:tiered-warm-shipped?` is the honest keystone constant #f;
+;; when the backend + RPC land, flip it to #t and this verb lights up
+;; with ZERO other change (the whole decision is pure + already tested
+;; for the warm branch). Default (require-warm=false) reports the honest
+;; degrade WITHOUT faking a warm (warmed=false, warm-count=0, a
+;; pending-super-cache-ci log); require-warm=true fails loud (exit 1).
+;;
+;; Inputs (env):
+;;   ENDPOINT       sui daemon endpoint (from sui-service-up); resolved if ""
+;;   SPEC_PATHS     comma-separated typed build-spec paths (each -> a key)
+;;   KEYS           comma-separated explicit content keys (wins over SPEC_PATHS)
+;;   TIERS          comma-separated tiers to warm (redis,pg,object)
+;;   STORE_BACKEND  postgres|graphstore|local (feeds never-touch-disk)
+;;   CACHE_BACKEND  redis|local|s3 (feeds never-touch-disk)
+;;   SANDBOX        tmpfs|disk (feeds never-touch-disk)
+;;   REQUIRE_WARM   "true" => a store-absent degrade is a hard failure (exit 1)
+;;
+;; Outputs (append-output -> GITHUB_OUTPUT):
+;;   warmed  warm-count  hit-tier  never-touch-disk  reason
+;;
+;; Exit (the keyway three-code contract; exit 2 formalized per the
+;; design's A2 — a clean typed "no", distinct from a crash):
+;;   0  warmed OR nothing-to-warm (no-keys)
+;;   2  store-absent / endpoint-unreachable degrade under require-warm=false
+;;   1  the same degrade under require-warm=true (a loud, honest failure)
+
+;; ── the honest keystone constant ─────────────────────────────────
+;; The single flag that promotes this verb from DEGRADED to
+;; fleet-wide-fast. #f until BOTH land: (a) the tiered backend
+;; (TieredBackend = RedisBackend(L1)→PgStore(L2)→S3Storage(L3) behind
+;; sui's SHIPPED Store/StorageBackend traits), and (b) a daemon warm-set
+;; RPC (sui-daemon-client is a library today, no binary/RPC to invoke).
+;; Flip to #t when both ship — nothing else in this file changes.
+(define swh:tiered-warm-shipped? #f)
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; Split a comma-separated list, dropping empties (trailing commas,
+;; blank entries). Pure — the key/spec counter.
+(define (swh:split-nonempty s)
+  (filter (lambda (x) (not (equal? (string-trim x) "")))
+          (string-split s ",")))
+
+;; Count the non-empty entries of a comma-separated list.
+(define (swh:count s) (length (swh:split-nonempty s)))
+
+;; Explicit KEYS win over SPEC_PATHS (both comma-separated). Returns the
+;; raw source string; the caller derives content keys from spec paths.
+(define (swh:source-str keys-in spec-paths)
+  (cond ((not (equal? (string-trim keys-in) "")) keys-in)
+        (else spec-paths)))
+
+;; Can we actually warm? Only when the tiered backend + warm RPC are
+;; shipped AND the endpoint is reachable AND there is >0 key to warm.
+(define (swh:can-warm? tiered-shipped? endpoint-alive? requested-count)
+  (and tiered-shipped? endpoint-alive? (> requested-count 0)))
+
+;; The reason discriminant — WHY this run ended where it did.
+;;   no-keys                       nothing requested (a benign no-op)
+;;   store-absent-degraded         the tiered backend/warm RPC is unshipped
+;;   endpoint-unreachable-degraded backend shipped but the daemon isn't reachable
+;;   warmed                        keys pre-loaded into the tiers
+(define (swh:reason tiered-shipped? endpoint-alive? requested-count)
+  (cond
+    ((<= requested-count 0) "no-keys")
+    ((not tiered-shipped?)  "store-absent-degraded")
+    ((not endpoint-alive?)  "endpoint-unreachable-degraded")
+    (else                   "warmed")))
+
+;; The keyway exit-code contract over the reason + the require gate.
+(define (swh:exit-code reason require-warm)
+  (cond
+    ((equal? reason "warmed")  0)
+    ((equal? reason "no-keys") 0)
+    ((equal? require-warm "true") 1)   ;; a degrade the caller demanded not happen
+    (else 2)))                          ;; a clean typed "no" — handled in YAML
+
+;; The count of keys actually warmed. Today always 0 (the warm RPC is a
+;; LiveTODO); becomes `requested-count` on a real warm once the keystone
+;; flips. Pure so the warm branch is provable before the RPC exists.
+(define (swh:warmed-count reason requested-count)
+  (cond ((equal? reason "warmed") requested-count) (else 0)))
+
+;; The warmest tier reached. "none" until a real warm loads a tier.
+(define (swh:hit-tier reason)
+  (cond ((equal? reason "warmed") "redis") (else "none")))
+
+;; ── emit (stable output set on EVERY path) ───────────────────────
+(define (swh:emit warmed warm-count hit-tier ntd reason)
+  (append-output (string-append "warmed=" warmed))
+  (append-output (string-append "warm-count=" (string-format "{}" warm-count)))
+  (append-output (string-append "hit-tier=" hit-tier))
+  (append-output (string-append "never-touch-disk=" (if ntd "true" "false")))
+  (append-output (string-append "reason=" reason)))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (main)
+  (let* ((keys-in    (env-get "KEYS" ""))
+         (spec-paths (env-get "SPEC_PATHS" ""))
+         (tiers      (config-resolve "TIERS" "super-cache-ci" "tiers" "redis,pg,object"))
+         (store      (config-resolve "STORE_BACKEND" "super-cache-ci" "store-backend" "graphstore"))
+         (cache      (config-resolve "CACHE_BACKEND" "super-cache-ci" "cache-backend" "local"))
+         (sandbox    (config-resolve "SANDBOX" "super-cache-ci" "sandbox" "tmpfs"))
+         (require-warm (config-resolve "REQUIRE_WARM" "super-cache-ci" "require-warm" "false"))
+         (endpoint   (let ((e (env-get "ENDPOINT" "")))
+                       (cond ((not (equal? e "")) e)
+                             (else (supercache:endpoint-resolve)))))
+         (source     (swh:source-str keys-in spec-paths))
+         (requested  (swh:count source))
+         (ntd        (supercache:never-touch-disk? store cache sandbox))
+         (alive      (supercache:endpoint-alive? endpoint))
+         (reason     (swh:reason swh:tiered-warm-shipped? alive requested))
+         (warm-count (swh:warmed-count reason requested))
+         (hit-tier   (swh:hit-tier reason))
+         (code       (swh:exit-code reason require-warm)))
+    (log-info (string-append "sui-warm-hydrate: endpoint=" endpoint
+                             " requested=" (string-format "{}" requested)
+                             " tiers=" tiers
+                             " store=" store " cache=" cache " sandbox=" sandbox))
+    (when (not swh:tiered-warm-shipped?)
+      (log-info (string-append "  pending-super-cache-ci: the tiered warm path is a LiveTODO — "
+                               "TieredBackend (RedisBackend→PgStore→S3Storage behind sui's SHIPPED "
+                               "Store/StorageBackend traits) + a daemon warm-set RPC are unwritten "
+                               "(sui-daemon-client is a library, no binary/RPC). Reporting an HONEST "
+                               "no-op warm (warmed=false); never a faked warm hit.")))
+    (cond
+      ((equal? reason "no-keys")
+       (log-info "sui-warm-hydrate: no keys/spec-paths requested — nothing to warm (exit 0)"))
+      ((equal? reason "warmed")
+       (log-info (string-append "sui-warm-hydrate: warmed " (string-format "{}" warm-count)
+                                " keys into the tiered cache")))
+      ((equal? require-warm "true")
+       (log-error (string-append "sui-warm-hydrate: " reason
+                                 " and require-warm=true — failing loud (exit 1)")))
+      (else
+       (log-info (string-append "sui-warm-hydrate: " reason
+                                " — require-warm=false, honest degrade (exit 2, handle in YAML)"))))
+    (swh:emit (if (equal? reason "warmed") "true" "false") warm-count hit-tier ntd reason)
+    code))
+
+;; TLISP_TEST=1 (tlisp-test harness): define the helpers, skip main.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — sui-warm-hydrate helpers loaded; main skipped"))
+  (else (exit (main))))

@@ -1,0 +1,37 @@
+;; tameshi-attest/run.test.tlisp — (deftest …) units for the pure
+;; receipt-assembly helpers, run by the tlisp-test action via
+;; `tatara-script --test`. The harness prepends the stdlib + the
+;; sibling run.tlisp (TLISP_TEST=1 → main skipped) then this file, so
+;; the real attest:* functions are driven directly — no jq, no b3sum,
+;; no network.
+
+(deftest "attest:norm-bool yields a strict JSON bool literal"
+  (assert (equal? (attest:norm-bool "true") "true") "true -> true")
+  (assert (equal? (attest:norm-bool "  true ") "true") "trimmed true -> true")
+  (assert (equal? (attest:norm-bool "false") "false") "false -> false")
+  (assert (equal? (attest:norm-bool "yes") "false") "non-true -> false")
+  (assert (equal? (attest:norm-bool "") "false") "empty -> false"))
+
+(deftest "attest:normalize-list collapses commas to spaces"
+  (assert (equal? (attest:normalize-list "a,b,c") "a b c") "commas -> spaces")
+  (assert (equal? (attest:normalize-list "a b c") "a b c") "spaces unchanged")
+  (assert (equal? (attest:normalize-list "a,b c") "a b c") "mixed -> spaces")
+  (assert (equal? (attest:normalize-list "") "") "empty -> empty"))
+
+(deftest "attest:normalize-subject defaults to the repo slug"
+  (assert (equal? (attest:normalize-subject "" "pleme-io/actions") "pleme-io/actions")
+          "empty -> repo")
+  (assert (equal? (attest:normalize-subject "   " "pleme-io/actions") "pleme-io/actions")
+          "whitespace -> repo")
+  (assert (equal? (attest:normalize-subject "akeyless-auth" "pleme-io/actions") "akeyless-auth")
+          "explicit subject wins"))
+
+(deftest "attest:b3-first extracts the hash field or '' on failure"
+  (assert (equal? (attest:b3-first (list (cons "status" 0)
+                                         (cons "stdout" "cafef00d  file.json\n")))
+                  "cafef00d")
+          "status 0 -> first field")
+  (assert (equal? (attest:b3-first (list (cons "status" 1)
+                                         (cons "stdout" "")))
+                  "")
+          "non-zero status -> empty"))

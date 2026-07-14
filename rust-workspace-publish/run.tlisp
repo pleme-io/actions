@@ -8,6 +8,25 @@
 (define max-retries 20)
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
+;; publish-mode: "full" (default) = bump+ship on push, with a bounded
+;; in-job ride of crates.io's new-crate rate limit; "drip" = a cron tick
+;; that publishes only what current capacity allows and never sleeps
+;; in-job — it hands the remainder to the next tick. The two compose:
+;; "full" drains the first batch immediately on the push that triggered
+;; the bootstrap; "drip" rides the refill across ticks until convergence.
+(define publish-mode (env-get "PUBLISH_MODE" "full"))
+
+;; In-job ride budget. A push (full mode) drains the burst immediately
+;; and rides a few precise refill windows so the triggering push makes
+;; real progress — but capped at 30 min so it never hogs a runner (or
+;; approaches GitHub's 6h wall). Any refill landing beyond the cap
+;; converts to a cron deferral instead of an in-job sleep, and the */15
+;; drip finishes the long tail cheaply. (now) is unix seconds;
+;; budget-deadline is the absolute epoch past which 429s defer to cron.
+(define budget-secs 1800) ;; 30m
+(define job-start (now))
+(define budget-deadline (+ job-start budget-secs))
+
 (define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
@@ -23,27 +42,14 @@
 ;; them, then publish per-crate so we can skip / rename / retry
 ;; individually instead of all-or-nothing.
 
-(define (workspace-version)
-  ;; Pull the workspace.package.version from Cargo.toml via the same
-  ;; section walker rust-workspace-bump uses.
-  (define (extract-quoted line)
-    (let ((parts (string-split line "\"")))
-      (if (>= (length parts) 2) (car (cdr parts)) "")))
-  (define (walk lines in-section)
-    (cond
-      ((null? lines) "")
-      ((string-contains? (car lines) "[workspace.package]")
-       (walk (cdr lines) #t))
-      ((and in-section
-            (string-contains? (car lines) "[")
-            (not (string-contains? (car lines) "[workspace.package]")))
-       "")
-      ((and in-section
-            (string-contains? (car lines) "version")
-            (string-contains? (car lines) "="))
-       (extract-quoted (car lines)))
-      (else (walk (cdr lines) in-section))))
-  (walk (string-split (read-file "Cargo.toml") "\n") #f))
+;; workspace.package.version is read via the stdlib's hardened
+;; `cargo-workspace-version`. The previous local walker exited the
+;; [workspace.package] section on ANY line containing `[` (so an array
+;; field like `keywords = ["a","b"]` above `version` ended the section →
+;; empty version → publish failed) and matched `version` as a substring
+;; (so `rust-version` could win). The stdlib's `line-is-section-header?`
+;; (bracket AND no `=`) + `line-assigns-field?` (exact field) fix both —
+;; solve once, in one place.
 
 (define (workspace-members)
   ;; `cargo metadata --no-deps --format-version 1` returns JSON with
@@ -126,6 +132,37 @@
 (define (dep-missing? log) (any-line-matches? (string-split log "\n") dep-missing-on-line?))
 
 ;; -------------------------------------------------------------- ;;
+;; Rate-limit riding                                               ;;
+;; -------------------------------------------------------------- ;;
+;; crates.io throttles NEW-crate publishes; its 429 body carries
+;; "Please try again after <HTTP-date>". We ride that refill precisely.
+;; All date math + the sleep live inside ONE `sh -c` blob (the runtime
+;; has no string->number, so numbers never cross back into tlisp), and
+;; the cargo log is handed off via a temp FILE so its multiline stderr
+;; is never interpolated into the command string. LC_ALL=C forces
+;; English date parsing regardless of the runner locale (crates.io
+;; always emits English month/day names). Returns one of:
+;;   "rode" — slept the precise window in-job; retry the crate
+;;   "wait" — drip tick, OR refill beyond the job budget, OR no parseable
+;;            timestamp: re-queue for the next cron tick (exit green)
+(define rl-log-path "/tmp/rust-workspace-publish-429.log")
+(define (rate-limit-decision log)
+  (write-file rl-log-path log)
+  (let ((r (exec-capture "sh" "-c"
+             (string-append
+               "LOG='" rl-log-path "'; MODE='" publish-mode
+               "'; DEADLINE=" (string-format "{}" budget-deadline) "; "
+               "d=$(grep -oiE 'try again after [A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT' \"$LOG\" 2>/dev/null | head -1 | sed -E 's/^[Tt]ry again after //'); "
+               "now=$(LC_ALL=C date -u +%s); resume=''; "
+               "if [ -n \"$d\" ]; then resume=$(LC_ALL=C date -u -d \"$d\" +%s 2>/dev/null); fi; "
+               "[ -z \"$resume\" ] && resume=$((now + 600)); "
+               "if [ \"$MODE\" = drip ]; then echo wait; exit 0; fi; "
+               "if [ \"$resume\" -gt \"$DEADLINE\" ]; then echo wait; exit 0; fi; "
+               "w=$((resume - now + 10)); [ \"$w\" -lt 1 ] && w=1; "
+               "echo \"riding rate limit ${w}s\" >&2; sleep \"$w\"; echo rode"))))
+    (string-trim (stdout-of r))))
+
+;; -------------------------------------------------------------- ;;
 ;; Rename on conflict                                              ;;
 ;; -------------------------------------------------------------- ;;
 
@@ -144,7 +181,7 @@
         (replace-once-in-file crate-toml
           (string-append "name = \"" original "\"")
           (string-append "name = \"" new-name "\""))
-        (let* ((ver (workspace-version))
+        (let* ((ver (cargo-workspace-version))
                (old-line (string-append original
                           " = { path = \"" original
                           "\", version = \"" ver "\" }"))
@@ -164,18 +201,22 @@
 
 (define (commit-and-push original)
   (let ((new-name (string-append rename-prefix original)))
-    (exec-check "git" "add"
-                (string-append original "/Cargo.toml") "Cargo.toml")
-    (exec-check "git" "commit" "-m"
-                (string-append "rename: " original " -> " new-name
-                               " (registry name conflict)"))
-    (exec-capture "git" "push" "origin" "HEAD:main")))
+    ;; Per-path add (a missing pathspec must not abort the whole stage),
+    ;; then commit + push via exec-or-die: a silently-ignored push here
+    ;; left the rename UNPUSHED while the loop treated it as done → the
+    ;; conflicting name was re-published every pass.
+    (for-each (lambda (p) (exec-check "git" "add" p))
+              (list (string-append original "/Cargo.toml") "Cargo.toml"))
+    (exec-or-die (list "git" "commit" "-m"
+                       (string-append "rename: " original " -> " new-name
+                                      " (registry name conflict)")))
+    (exec-or-die (list "git" "push" "origin" "HEAD:main"))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Per-crate publish loop with retry                               ;;
 ;; -------------------------------------------------------------- ;;
 
-(define version (workspace-version))
+(define version (cargo-workspace-version))
 
 ;; Returns one of:
 ;;   ("done" . <final-name>) — successfully published (or skipped)
@@ -206,9 +247,21 @@
            (log-info (string-append "deferring '" name "' — dep not on registry yet"))
            (list "defer" name))
           ((rate-limit? log)
-           (log-info "crates.io rate limit hit — sleeping 600s")
-           (exec-capture "sleep" "600")
-           (publish-one name (+ attempt 1)))
+           (let ((decision (rate-limit-decision log)))
+             (cond
+               ((string-contains? decision "rode")
+                ;; Rode the precise refill in-job. Retry the SAME crate
+                ;; WITHOUT advancing attempt — the job budget (not
+                ;; max-retries) bounds rate-limit riding, so a heavily
+                ;; throttled bootstrap can never exhaust retries → fail.
+                (log-info (string-append "rode rate-limit refill — retrying '" name "'"))
+                (publish-one name attempt))
+               (else
+                ;; Capacity exhausted (or a drip tick): re-queue this
+                ;; crate for the next cron tick and keep the pass going.
+                ;; A rate-limited bootstrap is NOT a failed run.
+                (log-info (string-append "capacity exhausted — re-queueing '" name "' for next tick"))
+                (list "wait" name)))))
           ((conflict? log)
            (log-info (string-append "name conflict on '" name "', renaming"))
            (cond
@@ -232,11 +285,28 @@
 (define members (workspace-members))
 (log-info (string-append "workspace v" version " — " (string-format "{}" (length members)) " members"))
 
-;; One pass over `names`; emits (shipped, renamed, deferred, failed).
-(define (publish-pass names shipped renamed deferred)
+;; Single terminal-output point (drive-passes returns exactly once, so
+;; every terminal cond arm calls this). `pending` is the comma-joined
+;; remainder left for the next cron tick; `complete?` is true iff nothing
+;; remains. GitHub takes the last write for a duplicated key, so even an
+;; accidental double-emit is benign — but routing all four lines through
+;; here keeps them in lockstep.
+(define (emit-outputs shipped renamed pending complete?)
+  (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
+  (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+  (append-output (string-append "pending-crates=" (if (null? pending) "" (string-join "," pending))))
+  (append-output (string-append "bootstrap-complete=" (if complete? "true" "false"))))
+
+;; One pass over `names` → (shipped renamed deferred waited).
+;;   shipped  — published (or skipped as already-on-registry)
+;;   renamed  — published under a conflict-renamed name
+;;   deferred — dep not yet on registry; retry next PASS (this tick)
+;;   waited   — rate-limit capacity exhausted; retry next TICK (cron)
+;; Only a "fail" (unrecognized error / rename failure) exits the run red.
+(define (publish-pass names shipped renamed deferred waited)
   (cond
     ((null? names)
-     (list shipped renamed deferred))
+     (list shipped renamed deferred waited))
     (else
       (let* ((name (car names))
              (result (publish-one name 1))
@@ -244,60 +314,79 @@
              (final (car (cdr result))))
         (cond
           ((equal? kind "fail")
-           (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
-           (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+           (emit-outputs shipped renamed (append deferred waited) #f)
            (log-error (string-append "permanent failure on '" final "'"))
            (exit 1))
+          ((equal? kind "wait")
+           (publish-pass (cdr names) shipped renamed deferred
+                         (append waited (list final))))
           ((equal? kind "defer")
            (publish-pass (cdr names) shipped renamed
-                         (append deferred (list final))))
+                         (append deferred (list final)) waited))
           ((equal? final name)
            (publish-pass (cdr names) (append shipped (list final))
-                         renamed deferred))
+                         renamed deferred waited))
           (else
             (publish-pass (cdr names) (append shipped (list final))
                           (append renamed (list name))
-                          deferred)))))))
+                          deferred waited)))))))
 
-;; Multi-pass driver: each pass publishes what it can; deferred crates
-;; (those whose deps weren't on the registry at attempt time) retry in
-;; the next pass. Stop when (a) all members done OR (b) a pass makes
-;; no progress (deferred set unchanged) OR (c) too many passes.
+;; Multi-pass driver. Each pass publishes what it can; dep-deferred crates
+;; retry in the next pass (this tick), rate-limited crates are parked in
+;; `waited` for the next cron tick. Terminal cases — all GREEN except a
+;; genuine no-progress stall:
+;;   (a) pending empty           → done; remaining = waited; green
+;;   (b) pass budget reached     → green; remainder deferred to next tick
+;;   (c) no shipped, no waited,
+;;       deferred == pending     → RED: real circular dep / stuck index
+;;   (d) no shipped but parked    → green; capacity-blocked, cron resumes
+;;   (e) otherwise               → progress; next pass over `deferred`
 (define max-passes 8)
 
-(define (drive-passes pending shipped renamed pass-n)
+(define (drive-passes pending shipped renamed waited pass-n)
   (cond
     ((null? pending)
-     (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
-     (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
-     (log-info (string-append "all " (string-format "{}" (length shipped))
-                              " members shipped"))
+     (emit-outputs shipped renamed waited (null? waited))
+     (if (null? waited)
+       (log-info (string-append "all " (string-format "{}" (length shipped)) " members shipped"))
+       (log-info (string-append "shipped " (string-format "{}" (length shipped)) "; "
+                                (string-format "{}" (length waited))
+                                " deferred to next capacity window (green)")))
      0)
     ((>= pass-n max-passes)
-     (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
-     (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
-     (log-error (string-append "exceeded " (string-format "{}" max-passes)
-                               " passes; " (string-format "{}" (length pending))
-                               " members still deferred"))
-     1)
+     (emit-outputs shipped renamed (append pending waited) #f)
+     (log-info (string-append "pass budget reached; "
+                              (string-format "{}" (+ (length pending) (length waited)))
+                              " members deferred to next tick (green)"))
+     0)
     (else
       (log-info (string-append "==> pass " (string-format "{}" pass-n)
                                " — " (string-format "{}" (length pending))
                                " members to attempt"))
-      (let* ((out (publish-pass pending (list) (list) (list)))
+      (let* ((out (publish-pass pending (list) (list) (list) (list)))
              (newly-shipped (car out))
              (newly-renamed (car (cdr out)))
-             (deferred (car (cdr (cdr out)))))
+             (deferred (car (cdr (cdr out))))
+             (newly-waited (car (cdr (cdr (cdr out)))))
+             (all-waited (append waited newly-waited)))
         (cond
-          ((and (null? newly-shipped) (= (length deferred) (length pending)))
-           (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
-           (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+          ((and (null? newly-shipped)
+                (null? newly-waited)
+                (= (length deferred) (length pending)))
+           (emit-outputs shipped renamed (append deferred all-waited) #f)
            (log-error "no progress this pass; aborting (likely circular dep or stuck registry index)")
            1)
+          ((null? newly-shipped)
+           (emit-outputs shipped renamed (append deferred all-waited) #f)
+           (log-info (string-append "capacity-blocked; "
+                                    (string-format "{}" (+ (length deferred) (length all-waited)))
+                                    " members deferred to next tick (green)"))
+           0)
           (else
             (drive-passes deferred
                           (append shipped newly-shipped)
                           (append renamed newly-renamed)
+                          all-waited
                           (+ pass-n 1))))))))
 
-(exit (drive-passes members (list) (list) 1))
+(exit (drive-passes members (list) (list) (list) 1))

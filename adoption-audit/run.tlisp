@@ -90,11 +90,11 @@
 (cond
   ((equal? open-issue "true")
    (log-info "==> opening tracking issue")
-   (exec-capture "gh" "issue" "create"
+   (exec-or-die (list "gh" "issue" "create"
      "--repo" (string-append org "/actions")
      "--title" (string-append "Adoption audit: " (string-format "{}" gaps)
                               " repos missing auto-release.yml")
      "--body-file" "/tmp/adoption-audit.md"
-     "--label" "adoption-audit")))
+     "--label" "adoption-audit"))))
 
 (exit 0)

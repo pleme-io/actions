@@ -1,0 +1,28 @@
+;; release-promote/run.test.tlisp — (deftest …) smoke for the pure
+;; helpers, run via tatara-script --test by the tlisp-test action. The
+;; docker imagetools / yq / git side effects are exercised out-of-band.
+
+(deftest "promote:norm-bool normalizes to a plain bool string"
+  (assert (equal? (promote:norm-bool "true") "true") "true")
+  (assert (equal? (promote:norm-bool " true ") "true") "trimmed true")
+  (assert (equal? (promote:norm-bool "false") "false") "false")
+  (assert (equal? (promote:norm-bool "") "false") "empty -> false"))
+
+(deftest "promote:ref composes an image:tag ref"
+  (assert (equal? (promote:ref "ghcr.io/pleme-io/app" "staging") "ghcr.io/pleme-io/app:staging") "ref"))
+
+(deftest "promote:version-or prefers an explicit version, else source-tag"
+  (assert (equal? (promote:version-or "1.2.3" "dev") "1.2.3") "explicit version wins")
+  (assert (equal? (promote:version-or "" "v0.1.4") "v0.1.4") "empty -> source-tag")
+  (assert (equal? (promote:version-or "  " "v0.1.4") "v0.1.4") "blank -> source-tag"))
+
+(deftest "promote:yq-set-expr builds a typed scalar assignment"
+  (assert (equal? (promote:yq-set-expr ".version" "1.2.3") ".version = \"1.2.3\"") "version path")
+  (assert (equal? (promote:yq-set-expr ".spec.values.image.tag" "amd64-r5-abc")
+                  ".spec.values.image.tag = \"amd64-r5-abc\"") "nested path"))
+
+(deftest "promote:commit-msg names the file, version, and (optional) env"
+  (assert (equal? (promote:commit-msg "env/staging/values.yaml" "1.2.3" "staging")
+                  "promote: pin env/staging/values.yaml -> 1.2.3 (staging)") "with env")
+  (assert (equal? (promote:commit-msg "values.yaml" "1.2.3" "")
+                  "promote: pin values.yaml -> 1.2.3") "no env"))

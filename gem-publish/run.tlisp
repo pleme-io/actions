@@ -25,13 +25,33 @@
 
 ;; ---------- version.rb parse ---------- ;;
 
+(define (slice-between line open close)
+  ;; Substring after the first `open` token up to the next `close` token.
+  ;; "" when either delimiter is absent. Used for Ruby's percent-literal
+  ;; string form where the quote character isn't " or '.
+  (let ((a (string-split line open)))
+    (if (< (length a) 2) ""
+      (let ((b (string-split (car (cdr a)) close)))
+        (if (< (length b) 2) "" (car b))))))
+
 (define (extract-quoted-value line)
-  ;; Take the substring between the first matched pair of " or '.
-  (let* ((dq (string-split line "\""))
-         (sq (string-split line "'")))
+  ;; Extract a Ruby string literal's value from a `VERSION = …` line.
+  ;; Handles the three forms that appear across the pleme-io gem fleet:
+  ;;   VERSION = "0.1.0"      double-quote
+  ;;   VERSION = '0.1.0'      single-quote
+  ;;   VERSION = %(0.1.0)     percent-literal — the pleme-io house style
+  ;;                          (also %q(…) / %Q(…))
+  ;; The percent forms are checked before the plain quotes only matter
+  ;; when no " or ' is present; an ordinary quoted line never contains
+  ;; "%(" so the quote branches stay authoritative for it.
+  (let ((dq (string-split line "\""))
+        (sq (string-split line "'")))
     (cond
       ((>= (length dq) 2) (car (cdr dq)))
       ((>= (length sq) 2) (car (cdr sq)))
+      ((string-contains? line "%q(") (slice-between line "%q(" ")"))
+      ((string-contains? line "%Q(") (slice-between line "%Q(" ")"))
+      ((string-contains? line "%(")  (slice-between line "%("  ")"))
       (else ""))))
 
 (define (first-version-line ls)

@@ -1,0 +1,166 @@
+;; sui-remote-build/run.tlisp — BUILD-job remote-execution verb. Dispatch
+;; a derivation to a REAPI (Remote Execution API) spot worker over the sui
+;; daemon; on no worker, fall back to the correct local daemon-node build.
+;; Canonical doctrine: theory/SUPER-CACHE-CI.md (§II.4 gen -> sui,
+;; §III never-touch-disk, ledger rows 1/7).
+;;
+;; Where it sits in the pipeline (build job):
+;;   sui-service-up -> gen-build-spec -> super-cache-restore
+;;     -> THIS (remote-derive on a spot worker; local fallback on none)
+;;       -> super-cache-save -> zot-push
+;;
+;; Relation to super-cache-build: super-cache-build is the LOCAL derive
+;; core (daemon-node, in-process). sui-remote-build is the REMOTE variant
+;; that DISPATCHES the derive to a REAPI worker and, on no worker,
+;; delegates to exactly that local core. Both report `built=false` today
+;; (the derive itself is a shared LiveTODO — no sui-graph build CLI);
+;; sui-remote-build additionally reports `worker` (reapi|local) so the
+;; caller sees which execution plane ran.
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
+;;   append-output, log-info/log-error, config-resolve,
+;;   supercache:content-key, supercache:endpoint-resolve,
+;;   supercache:endpoint-alive?, supercache:never-touch-disk?.
+;;
+;; ── TIER-HONEST (never round up) · DEGRADED-UNTIL-STORE ─────────────
+;; SHIPPED + unit-tested (run.test.tlisp): the pure decision surface —
+;; worker selection (srb:select-worker), the reason discriminant
+;; (srb:reason), and the exit-code contract (srb:exit-code). LiveTODO at
+;; the ACTION layer, DOUBLY gated:
+;;   (a) the REAPI worker binary is UNWIRED — there is no remote-exec
+;;       worker to dispatch to;
+;;   (b) the remote plane rides the keystone `TieredBackend =
+;;       RedisBackend(L1)→PgStore(L2)→S3Storage(L3)` behind sui's SHIPPED
+;;       Store/StorageBackend traits, and the local core's derive
+;;       (sui-graph build RPC/CLI) is itself a LiveTODO
+;;       (sui-daemon-client is a library, not a binary).
+;; So `srb:reapi-worker-shipped?` is the honest keystone constant #f;
+;; worker is ALWAYS "local" today, and the local fallback reports
+;; built=false honestly. Default (require-build=false) reports the honest
+;; degrade WITHOUT faking a build; require-build=true fails loud (exit 1).
+;; When the REAPI worker binary + TieredBackend land, flip the constant to
+;; #t and the remote branch (already tested green) lights up.
+;;
+;; Inputs (env):
+;;   ENDPOINT       sui daemon endpoint (from sui-service-up); resolved if ""
+;;   SPEC_PATH      typed gen build-spec (from gen-build-spec)
+;;   KEY            content-address (from super-cache-restore); derived if ""
+;;   ARCH           target arch (amd64|arm64) — reported, feeds the worker pool
+;;   SANDBOX        tmpfs|disk (from sui-service-up)
+;;   STORE_BACKEND  postgres|graphstore|local (from sui-service-up)
+;;   CACHE_BACKEND  redis|local|s3 (from sui-service-up)
+;;   REQUIRE_BUILD  "true" => a derive-LiveTODO is a hard failure (exit 1)
+;;
+;; Outputs (append-output -> GITHUB_OUTPUT):
+;;   built  from-cache  outputs  output-hashes  eval-ms  build-ms
+;;   worker  never-touch-disk  reason
+;;
+;; Exit (the keyway three-code contract; exit 2 formalized per the
+;; design's A2 — a clean typed "no", distinct from a crash):
+;;   0  remote-built on a REAPI worker (worker=reapi)
+;;   2  local-fallback derive-livetodo under require-build=false
+;;   1  the same fallback LiveTODO under require-build=true (loud, honest)
+
+;; ── the honest keystone constant ─────────────────────────────────
+;; The single flag that promotes this verb from DEGRADED (local
+;; fallback) to remote-execution. #f until BOTH land: (a) the REAPI
+;; worker binary (a remote-exec worker to dispatch to), and (b) the
+;; keystone TieredBackend + a sui-graph build RPC/CLI (sui-daemon-client
+;; is a library today). Flip to #t when both ship — the remote branch is
+;; already proven green in run.test.tlisp.
+(define srb:reapi-worker-shipped? #f)
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; Select the execution plane. "reapi" ONLY when the worker binary is
+;; shipped AND the daemon endpoint is reachable; else the correct local
+;; fallback. Today (worker unshipped) this is ALWAYS "local".
+(define (srb:select-worker reapi-shipped? endpoint-alive?)
+  (cond ((and reapi-shipped? endpoint-alive?) "reapi")
+        (else "local")))
+
+;; The reason discriminant — WHY this run ended where it did.
+;;   remote-built                    dispatched + built on a REAPI worker
+;;   local-fallback-derive-livetodo  no worker => local core, itself a LiveTODO
+(define (srb:reason worker)
+  (cond ((equal? worker "reapi") "remote-built")
+        (else "local-fallback-derive-livetodo")))
+
+;; Did a real build run? Only on the remote plane today (the local
+;; fallback derive is a LiveTODO — super-cache-build's core is unshipped).
+(define (srb:built? worker)
+  (equal? worker "reapi"))
+
+;; The keyway exit-code contract over the worker + the require gate.
+(define (srb:exit-code worker require-build)
+  (cond
+    ((equal? worker "reapi") 0)          ;; a real remote build
+    ((equal? require-build "true") 1)    ;; a fallback the caller demanded not happen
+    (else 2)))                            ;; a clean typed "no" — handled in YAML
+
+;; ── impure: key + endpoint resolution ────────────────────────────
+;; Explicit KEY wins; else sha256 the build-spec (content-addressed).
+(define (srb:resolve-key)
+  (let ((key-in (env-get "KEY" "")))
+    (cond ((not (equal? key-in "")) key-in)
+          (else (supercache:content-key (env-get "SPEC_PATH" ""))))))
+
+(define (srb:resolve-endpoint)
+  (let ((e (env-get "ENDPOINT" "")))
+    (cond ((not (equal? e "")) e)
+          (else (supercache:endpoint-resolve)))))
+
+;; ── emit (stable output set on EVERY path) ───────────────────────
+(define (srb:emit built from-cache outputs worker ntd reason)
+  (append-output (string-append "built=" built))
+  (append-output (string-append "from-cache=" from-cache))
+  (append-output (string-append "outputs=" outputs))
+  (append-output "output-hashes=")
+  (append-output "eval-ms=")
+  (append-output "build-ms=")
+  (append-output (string-append "worker=" worker))
+  (append-output (string-append "never-touch-disk=" (if ntd "true" "false")))
+  (append-output (string-append "reason=" reason)))
+
+;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
+(define (main)
+  (let* ((arch          (env-get "ARCH" "amd64"))
+         (sandbox       (config-resolve "SANDBOX" "super-cache-ci" "sandbox" "tmpfs"))
+         (store         (config-resolve "STORE_BACKEND" "super-cache-ci" "store-backend" "graphstore"))
+         (cache         (config-resolve "CACHE_BACKEND" "super-cache-ci" "cache-backend" "local"))
+         (require-build (config-resolve "REQUIRE_BUILD" "super-cache-ci" "require-build" "false"))
+         (key           (srb:resolve-key))
+         (endpoint      (srb:resolve-endpoint))
+         (ntd           (supercache:never-touch-disk? store cache sandbox))
+         (alive         (supercache:endpoint-alive? endpoint))
+         (worker        (srb:select-worker srb:reapi-worker-shipped? alive))
+         (reason        (srb:reason worker))
+         (built?        (srb:built? worker))
+         (code          (srb:exit-code worker require-build)))
+    (log-info (string-append "sui-remote-build: key=" key " arch=" arch
+                             " endpoint=" endpoint " worker=" worker
+                             " (sandbox=" sandbox " store=" store " cache=" cache ")"))
+    (when (not srb:reapi-worker-shipped?)
+      (log-info (string-append "  pending-super-cache-ci: the REAPI remote-exec plane is a LiveTODO — "
+                               "the REAPI worker binary is UNWIRED and rides the keystone TieredBackend "
+                               "(RedisBackend→PgStore→S3Storage behind sui's SHIPPED Store/StorageBackend "
+                               "traits). Falling back to the LOCAL daemon-node build (worker=local), whose "
+                               "derive core is itself a LiveTODO (no sui-graph build CLI; sui-daemon-client "
+                               "is a library). Reporting built=false HONESTLY; never a faked build.")))
+    (cond
+      (built?
+       (log-info (string-append "sui-remote-build: remote-built " key " on a REAPI worker")))
+      ((equal? require-build "true")
+       (log-error (string-append "sui-remote-build: no REAPI worker and the local derive is a LiveTODO ("
+                                 reason ") and require-build=true — failing loud (exit 1)")))
+      (else
+       (log-info (string-append "sui-remote-build: " reason
+                                " — require-build=false, honest degrade (exit 2, handle in YAML)"))))
+    (srb:emit (if built? "true" "false") "false" "" worker ntd reason)
+    code))
+
+;; TLISP_TEST=1 (tlisp-test harness): define the helpers, skip main.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — sui-remote-build helpers loaded; main skipped"))
+  (else (exit (main))))

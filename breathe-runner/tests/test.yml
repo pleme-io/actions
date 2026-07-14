@@ -1,0 +1,75 @@
+name: test-breathe-runner
+on:
+  push:
+    paths:
+      - 'breathe-runner/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'breathe-runner/**'
+      - 'tatara-script/**'
+      - '_tlisp-stdlib/**'
+
+# NOTE (tier-honest): these smokes assert the gate's real contract —
+# the STEP OUTCOME (exit code) — not the forwarded output VALUES.
+# Forwarded outputs (runner-ok, capacity-type, …) bubble up only once
+# a tatara-script @v1 re-release carries the declared forwards; until
+# then cross-verb output threading via the reusable workflow is a
+# LiveTODO. The output VALUES are proven by run.test.tlisp instead.
+
+jobs:
+  # Simulated camelot spot posture (signals injected at job env) —
+  # every requirement met -> the gate exits 0.
+  posture-ok:
+    runs-on: ubuntu-latest
+    env:
+      CAMELOT_CAPACITY_TYPE: spot
+      CAMELOT_NODE_GROUP: camelot-spot
+      CAMELOT_MIN_RUNNERS: "0"
+      CAMELOT_RETIRADA: ready
+    steps:
+      - uses: actions/checkout@v4
+      - id: preflight
+        uses: ./breathe-runner
+        with:
+          require-scale-to-zero: "true"
+      - name: Assert the gate passed on a full posture
+        run: |
+          set -euo pipefail
+          [ "${{ steps.preflight.outcome }}" = "success" ] \
+            || { echo "expected success, got ${{ steps.preflight.outcome }}"; exit 1; }
+          echo "green posture -> gate passed"
+
+  # No signals + enforce=false -> advisory pass (exit 0).
+  advisory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: pre
+        uses: ./breathe-runner
+        with:
+          enforce: "false"
+      - name: Assert advisory pass
+        run: |
+          set -euo pipefail
+          [ "${{ steps.pre.outcome }}" = "success" ] \
+            || { echo "expected advisory success, got ${{ steps.pre.outcome }}"; exit 1; }
+          echo "advisory mode -> gate passed despite unmet posture"
+
+  # No signals + enforce=true -> the gate MUST fail the step.
+  enforce-fails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: pre
+        continue-on-error: true
+        uses: ./breathe-runner
+        with:
+          enforce: "true"
+      - name: Assert the gate failed
+        run: |
+          set -euo pipefail
+          [ "${{ steps.pre.outcome }}" = "failure" ] \
+            || { echo "expected the gate to FAIL, got ${{ steps.pre.outcome }}"; exit 1; }
+          echo "enforce gate correctly failed on unmet posture"

@@ -1,0 +1,55 @@
+;; cargo-publish-each-member/run.test.tlisp — (deftest …) unit tests for the
+;; publish driver, run via tatara-script's canonical --test mode by the
+;; tlisp-test action. The driver's side effects (publish / sleep / commit-tag)
+;; are injected as an `ops` alist, so these tests drive the REAL functions from
+;; run.tlisp with mocks — no cargo, no git, no network.
+;;
+;; The tlisp-test runner prepends the stdlib + the sibling run.tlisp and sets
+;; TLISP_TEST=1 (so run.tlisp defines the driver but skips its main), then runs
+;; `tatara-script --test`. Each (assert COND MSG) raises on failure → the
+;; enclosing deftest reports ✘.
+
+(define (in-list? x xs)
+  (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (in-list? x (cdr xs)))))
+
+(deftest "member-disposition: rate-limited/dep-missing are NOT counted as ship"
+  (assert (equal? (member-disposition 'published) 'ship) "published -> ship")
+  (assert (equal? (member-disposition 'already-uploaded) 'ship) "already-uploaded -> ship")
+  (assert (equal? (member-disposition 'conflict) 'skip) "conflict -> skip")
+  (assert (equal? (member-disposition 'rate-limited) 'retry) "rate-limited -> retry")
+  (assert (equal? (member-disposition 'dep-missing) 'defer) "dep-missing -> defer")
+  (assert (equal? (member-disposition 'failed) 'fail) "failed -> fail"))
+
+(deftest "resolve-member rides a 429 inline (rate-limited x2) then ships"
+  (let ((calls 0) (sleeps 0))
+    (let ((ops (list (cons "publish" (lambda (dir) (set! calls (+ calls 1))
+                                       (if (< calls 3) 'rate-limited 'published)))
+                     (cons "sleep" (lambda () (set! sleeps (+ sleeps 1)))))))
+      (assert (equal? (resolve-member ops "d" 1) 'ship) "ships after retries")
+      (assert (= sleeps 2) "slept exactly twice"))))
+
+(deftest "drive-publish buckets correctly + commit-tags ONLY real ships"
+  (let ((tagged (list)))
+    (let ((ops (list (cons "publish" (lambda (dir) (if (equal? dir "b") 'conflict 'published)))
+                     (cons "sleep" (lambda () #t))
+                     (cons "commit-tag" (lambda (name ver dir) (set! tagged (cons name tagged)))))))
+      (let ((r (drive-publish ops
+                              (list (list "A" "a" "1.0") (list "B" "b" "1.0") (list "C" "c" "1.0"))
+                              (list) (list) 1)))
+        (assert (= (length (car r)) 2) "2 shipped (A,C)")
+        (assert (= (length (car (cdr r))) 1) "1 skipped (B conflict)")
+        (assert (= (length tagged) 2) "commit-tag fired only for the 2 ships")
+        (assert (not (in-list? "B" tagged)) "B (conflict) was NOT tagged")))))
+
+(deftest "drive-publish multi-pass: dep-missing pass 1, ships pass 2"
+  (let ((calls 0))
+    (let ((ops (list (cons "publish" (lambda (dir)
+                                       (cond ((equal? dir "dep") (set! calls (+ calls 1))
+                                              (if (< calls 2) 'dep-missing 'published))
+                                             (else 'published))))
+                     (cons "sleep" (lambda () #t))
+                     (cons "commit-tag" (lambda (name ver dir) #t)))))
+      (let ((r (drive-publish ops
+                              (list (list "DEP" "dep" "1.0") (list "X" "x" "1.0"))
+                              (list) (list) 1)))
+        (assert (= (length (car r)) 2) "both eventually shipped across passes")))))

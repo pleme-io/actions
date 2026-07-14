@@ -1,0 +1,61 @@
+;; rust-workspace-bump/run.test.tlisp — (deftest …) for the PURE bump
+;; arithmetic + the version-skew guard, run via tatara-script's canonical
+;; --test mode by the tlisp-test action: stdlib + run.tlisp (TLISP_TEST=1,
+;; so it defines the fns but skips main) + this file. No awk, no git —
+;; bump-semver is pure tatara-lisp and next-free-version takes an injected
+;; tag-exists? predicate, so these tests drive the REAL run.tlisp functions
+;; with a mock tag set.
+
+(define (in-list? x xs)
+  (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (in-list? x (cdr xs)))))
+
+(deftest "bump-semver: pure patch/minor/major — no awk, no subprocess"
+  (assert (equal? (bump-semver "0.2.3" "patch") "0.2.4") "patch increments the last segment")
+  (assert (equal? (bump-semver "0.2.9" "patch") "0.2.10") "patch crosses into two digits")
+  (assert (equal? (bump-semver "1.4.7" "minor") "1.5.0") "minor bumps + resets patch")
+  (assert (equal? (bump-semver "1.4.7" "major") "2.0.0") "major bumps + resets minor and patch")
+  (assert (equal? (bump-semver "0.0.0" "patch") "0.0.1") "from all-zero")
+  (assert (equal? (bump-semver "10.20.30" "minor") "10.21.0") "multi-digit segments"))
+
+(deftest "next-free-version: free slot is taken as the naive bump"
+  (assert (equal? (next-free-version "0.2.3" "patch" (lambda (v) #f)) "0.2.4")
+          "no tags exist -> naive 0.2.4"))
+
+(deftest "next-free-version: skips one existing tag (the skew class)"
+  ;; Cargo.toml lagged at 0.2.2 while v0.2.3 was already cut. The naive
+  ;; patch bump = 0.2.3 would collide; the guard advances to 0.2.4.
+  (let ((existing (list "0.2.3")))
+    (assert (equal? (next-free-version "0.2.2" "patch" (lambda (v) (in-list? v existing)))
+                    "0.2.4")
+            "advances past the colliding 0.2.3")))
+
+(deftest "next-free-version: skips a RUN of existing tags"
+  (let ((existing (list "0.2.3" "0.2.4" "0.2.5")))
+    (assert (equal? (next-free-version "0.2.2" "patch" (lambda (v) (in-list? v existing)))
+                    "0.2.6")
+            "walks forward to the first free patch slot")))
+
+(deftest "next-free-version: stays on the minor line — no cross-minor jump"
+  ;; The real tatara-lisp scenario: orphan v0.3.x tags on an abandoned
+  ;; line must NOT pull a 0.2.x patch bump up to 0.3.x (that would break
+  ;; intra-workspace ^0.2.x caret dep pins). We only advance on the patch
+  ;; axis from the candidate.
+  (let ((existing (list "0.3.0" "0.3.1")))
+    (assert (equal? (next-free-version "0.2.3" "patch" (lambda (v) (in-list? v existing)))
+                    "0.2.4")
+            "0.3.x orphans are irrelevant to a 0.2.x patch bump")))
+
+(deftest "next-free-version: minor bump lands in the chosen minor line"
+  ;; A minor bump intends 0.3.x; if 0.3.0 already exists it advances on
+  ;; the patch axis WITHIN 0.3.x (the correct minor line) -> 0.3.1.
+  (let ((existing (list "0.3.0")))
+    (assert (equal? (next-free-version "0.2.7" "minor" (lambda (v) (in-list? v existing)))
+                    "0.3.1")
+            "minor candidate 0.3.0 collides -> 0.3.1, staying in 0.3.x")))
+
+(deftest "ensure-gen-lock-fresh: non-delta repo (no Cargo.gen.lock) passes"
+  ;; The D2 gate is freshness-driven and only engages for delta-only
+  ;; repos. The test harness cwd has no Cargo.gen.lock, so this
+  ;; exercises the not-delta short-circuit — no exec, no regen.
+  (assert (ensure-gen-lock-fresh)
+          "absent Cargo.gen.lock means the gate is a no-op"))

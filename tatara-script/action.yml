@@ -34,6 +34,322 @@ outputs:
   result:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
     value: ${{ steps.exec.outputs.result }}
+  matrix:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: matrix) — the build-matrix image×arch GHA matrix JSON"
+    value: ${{ steps.exec.outputs.matrix }}
+  count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: count) — a row/item count (e.g. build-matrix rows)"
+    value: ${{ steps.exec.outputs.count }}
+  # Delivery-leg keys (super-cache-ci): nix-image / ghcr-publish / zot-pull-scan
+  # (+ image-scan's severity/vuln-count). A composite action forwards only
+  # DECLARED keys, so these must live here for the scripts' outputs to reach
+  # a consumer workflow. Added per this file's own "add it here" convention.
+  tarball-amd64:
+    description: "Forwarded (key: tarball-amd64) — nix-image amd64 tarball path"
+    value: ${{ steps.exec.outputs.tarball-amd64 }}
+  tarball-arm64:
+    description: "Forwarded (key: tarball-arm64) — nix-image arm64 tarball path"
+    value: ${{ steps.exec.outputs.tarball-arm64 }}
+  tarballs:
+    description: "Forwarded (key: tarballs) — nix-image 'arch:path' list"
+    value: ${{ steps.exec.outputs.tarballs }}
+  via-service:
+    description: "Forwarded (key: via-service) — nix-image sui-served flag"
+    value: ${{ steps.exec.outputs.via-service }}
+  built:
+    description: "Forwarded (key: built) — nix-image all-arches-built flag"
+    value: ${{ steps.exec.outputs.built }}
+  tag:
+    description: "Forwarded (key: tag) — ghcr-publish exact AUTOBUMP tag"
+    value: ${{ steps.exec.outputs.tag }}
+  ref:
+    description: "Forwarded (key: ref) — ghcr-publish full pushed ref"
+    value: ${{ steps.exec.outputs.ref }}
+  ref-amd64:
+    description: "Forwarded (key: ref-amd64) — ghcr-publish amd64 ref"
+    value: ${{ steps.exec.outputs.ref-amd64 }}
+  ref-arm64:
+    description: "Forwarded (key: ref-arm64) — ghcr-publish arm64 ref"
+    value: ${{ steps.exec.outputs.ref-arm64 }}
+  pushed:
+    description: "Forwarded (key: pushed) — ghcr-publish push-success flag"
+    value: ${{ steps.exec.outputs.pushed }}
+  admitted:
+    description: "Forwarded (key: admitted) — zot-pull-scan faucet admission flag"
+    value: ${{ steps.exec.outputs.admitted }}
+  severity:
+    description: "Forwarded (key: severity) — image-scan / zot-pull-scan highest severity"
+    value: ${{ steps.exec.outputs.severity }}
+  vuln-count:
+    description: "Forwarded (key: vuln-count) — image-scan / zot-pull-scan vuln count"
+    value: ${{ steps.exec.outputs.vuln-count }}
+  local-archive:
+    description: "Forwarded (key: local-archive) — zot-pull-scan pulled archive path"
+    value: ${{ steps.exec.outputs.local-archive }}
+  # super-cache-ci preflight/attest keys: breathe-runner + tameshi-attest.
+  runner-ok:
+    description: "Forwarded (key: runner-ok) — breathe-runner posture-ok flag"
+    value: ${{ steps.exec.outputs.runner-ok }}
+  capacity-type:
+    description: "Forwarded (key: capacity-type) — breathe-runner spot|on-demand|unknown"
+    value: ${{ steps.exec.outputs.capacity-type }}
+  node-group:
+    description: "Forwarded (key: node-group) — breathe-runner camelot node-group"
+    value: ${{ steps.exec.outputs.node-group }}
+  scale-to-zero:
+    description: "Forwarded (key: scale-to-zero) — breathe-runner scale-to-zero tri-state"
+    value: ${{ steps.exec.outputs.scale-to-zero }}
+  drain-armed:
+    description: "Forwarded (key: drain-armed) — breathe-runner retirada drain-armed flag"
+    value: ${{ steps.exec.outputs.drain-armed }}
+  attested:
+    description: "Forwarded (key: attested) — tameshi-attest receipt-assembled flag"
+    value: ${{ steps.exec.outputs.attested }}
+  receipt-path:
+    description: "Forwarded (key: receipt-path) — tameshi-attest receipt JSON path"
+    value: ${{ steps.exec.outputs.receipt-path }}
+  receipt-hash:
+    description: "Forwarded (key: receipt-hash) — tameshi-attest BLAKE3 receipt hash"
+    value: ${{ steps.exec.outputs.receipt-hash }}
+  receipt-algo:
+    description: "Forwarded (key: receipt-algo) — tameshi-attest hash algorithm (blake3)"
+    value: ${{ steps.exec.outputs.receipt-algo }}
+  signed:
+    description: "Forwarded (key: signed) — tameshi-attest Ed25519-signed flag"
+    value: ${{ steps.exec.outputs.signed }}
+  outcome-chain:
+    description: "Forwarded (key: outcome-chain) — tameshi-attest kensa OutcomeChain flag"
+    value: ${{ steps.exec.outputs.outcome-chain }}
+  # super-cache-ci service + cache + spec keys: sui-service-up /
+  # super-cache-restore / super-cache-build / super-cache-save /
+  # gen-build-spec. A composite forwards only DECLARED keys, so the
+  # reference pipeline's step-to-step output threading (endpoint -> restore
+  # -> build -> save -> attest) is always-empty until these live here.
+  # Added per this file's own "add it here" convention (additive; the keys
+  # are disjoint from the delivery-leg + preflight/attest sets above).
+  endpoint:
+    description: "Forwarded (key: endpoint) — sui-service-up resolved service endpoint"
+    value: ${{ steps.exec.outputs.endpoint }}
+  store-backend:
+    description: "Forwarded (key: store-backend) — sui-service-up durable store tier"
+    value: ${{ steps.exec.outputs.store-backend }}
+  cache-backend:
+    description: "Forwarded (key: cache-backend) — sui-service-up hot cache tier"
+    value: ${{ steps.exec.outputs.cache-backend }}
+  sandbox:
+    description: "Forwarded (key: sandbox) — sui-service-up build sandbox (tmpfs|disk)"
+    value: ${{ steps.exec.outputs.sandbox }}
+  never-touch-disk:
+    description: "Forwarded (key: never-touch-disk) — computed postgres∧redis∧tmpfs predicate"
+    value: ${{ steps.exec.outputs.never-touch-disk }}
+  up:
+    description: "Forwarded (key: up) — sui-service-up endpoint-reachable flag"
+    value: ${{ steps.exec.outputs.up }}
+  reason:
+    description: "Forwarded (key: reason) — service/cache/spec verbs' typed why-string"
+    value: ${{ steps.exec.outputs.reason }}
+  cache-hit:
+    description: "Forwarded (key: cache-hit) — super-cache-restore warm-path hit flag"
+    value: ${{ steps.exec.outputs.cache-hit }}
+  hit-tier:
+    description: "Forwarded (key: hit-tier) — super-cache-restore tier (redis|pg|object|miss)"
+    value: ${{ steps.exec.outputs.hit-tier }}
+  key:
+    description: "Forwarded (key: key) — content-addressed super-cache key threaded restore->build->save"
+    value: ${{ steps.exec.outputs.key }}
+  outputs:
+    description: "Forwarded (key: outputs) — restored/built store-path list"
+    value: ${{ steps.exec.outputs.outputs }}
+  from-cache:
+    description: "Forwarded (key: from-cache) — super-cache-build served-from-cache flag"
+    value: ${{ steps.exec.outputs.from-cache }}
+  output-hashes:
+    description: "Forwarded (key: output-hashes) — super-cache-build BLAKE3 output hashes"
+    value: ${{ steps.exec.outputs.output-hashes }}
+  eval-ms:
+    description: "Forwarded (key: eval-ms) — super-cache-build RAM eval time"
+    value: ${{ steps.exec.outputs.eval-ms }}
+  build-ms:
+    description: "Forwarded (key: build-ms) — super-cache-build derive time"
+    value: ${{ steps.exec.outputs.build-ms }}
+  saved:
+    description: "Forwarded (key: saved) — super-cache-save newly-persisted flag"
+    value: ${{ steps.exec.outputs.saved }}
+  skipped:
+    description: "Forwarded (key: skipped) — super-cache-save write-if-absent idempotent skip"
+    value: ${{ steps.exec.outputs.skipped }}
+  tier:
+    description: "Forwarded (key: tier) — super-cache-save durable tier that accepted the write"
+    value: ${{ steps.exec.outputs.tier }}
+  lang:
+    description: "Forwarded (key: lang) — gen-build-spec resolved language"
+    value: ${{ steps.exec.outputs.lang }}
+  spec-path:
+    description: "Forwarded (key: spec-path) — gen-build-spec typed build-spec path"
+    value: ${{ steps.exec.outputs.spec-path }}
+  spec-hash:
+    description: "Forwarded (key: spec-hash) — gen-build-spec build-spec content-address"
+    value: ${{ steps.exec.outputs.spec-hash }}
+  regenerated:
+    description: "Forwarded (key: regenerated) — gen-build-spec did-gen-run flag"
+    value: ${{ steps.exec.outputs.regenerated }}
+  stale:
+    description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
+    value: ${{ steps.exec.outputs.stale }}
+  changed:
+    description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag; also spec-watch's own upstream-sha-differs flag (same key, disjoint consumers)"
+    value: ${{ steps.exec.outputs.changed }}
+  new-sha:
+    description: "Forwarded (key: new-sha) — spec-watch sha256 of the upstream spec fetched this run"
+    value: ${{ steps.exec.outputs.new-sha }}
+  cached-sha:
+    description: "Forwarded (key: cached-sha) — spec-watch sha256 previously stored in the cache file"
+    value: ${{ steps.exec.outputs.cached-sha }}
+  # super-cache-ci warm + remote-execution leg: sui-warm-hydrate /
+  # sui-remote-build. A composite forwards only DECLARED keys; these are
+  # disjoint from the sets above. Added per this file's "add it here"
+  # convention. (endpoint / never-touch-disk / hit-tier / reason / built /
+  # from-cache / outputs / output-hashes / eval-ms / build-ms already live
+  # above.)
+  warmed:
+    description: "Forwarded (key: warmed) — sui-warm-hydrate real-warm flag (false until TieredBackend + warm-set RPC)"
+    value: ${{ steps.exec.outputs.warmed }}
+  warm-count:
+    description: "Forwarded (key: warm-count) — sui-warm-hydrate count of keys actually warmed"
+    value: ${{ steps.exec.outputs.warm-count }}
+  worker:
+    description: "Forwarded (key: worker) — sui-remote-build execution plane (reapi|local; local until the REAPI worker ships)"
+    value: ${{ steps.exec.outputs.worker }}
+  # super-cache-ci delivery/manifest/attest leg: zot-push +
+  # manifest-list-join + cartorio-attest. A composite forwards only
+  # DECLARED keys; these are disjoint from the sets above (tag / ref* /
+  # pushed / reason and attested / receipt-* / signed / outcome-chain
+  # already live above). Added per this file's "add it here" convention.
+  digest:
+    description: "Forwarded (key: digest) — zot-push pushed repository digest (exact deploy coord)"
+    value: ${{ steps.exec.outputs.digest }}
+  index-ref:
+    description: "Forwarded (key: index-ref) — manifest-list-join multi-arch index ref"
+    value: ${{ steps.exec.outputs.index-ref }}
+  index-digest:
+    description: "Forwarded (key: index-digest) — manifest-list-join index digest (exact multi-arch coord)"
+    value: ${{ steps.exec.outputs.index-digest }}
+  arches:
+    description: "Forwarded (key: arches) — manifest-list-join arches folded into the index"
+    value: ${{ steps.exec.outputs.arches }}
+  joined:
+    description: "Forwarded (key: joined) — manifest-list-join index-composed flag"
+    value: ${{ steps.exec.outputs.joined }}
+  sbom-path:
+    description: "Forwarded (key: sbom-path) — cartorio-attest CycloneDX SBOM path"
+    value: ${{ steps.exec.outputs.sbom-path }}
+  sbom-format:
+    description: "Forwarded (key: sbom-format) — cartorio-attest SBOM format (CycloneDX-1.5)"
+    value: ${{ steps.exec.outputs.sbom-format }}
+  sbom-components:
+    description: "Forwarded (key: sbom-components) — cartorio-attest Nix-closure component count"
+    value: ${{ steps.exec.outputs.sbom-components }}
+  slsa-path:
+    description: "Forwarded (key: slsa-path) — cartorio-attest SLSA provenance predicate path"
+    value: ${{ steps.exec.outputs.slsa-path }}
+  slsa-predicate-type:
+    description: "Forwarded (key: slsa-predicate-type) — cartorio-attest SLSA predicate type"
+    value: ${{ steps.exec.outputs.slsa-predicate-type }}
+  # super-cache-ci per-package materializability gate: ferrite-check. A
+  # composite forwards only DECLARED keys; these are disjoint from the sets
+  # above (signed / outcome-chain / reason already live above; attr is
+  # ferrite-specific). Added per this file's "add it here" convention.
+  materializable:
+    description: "Forwarded (key: materializable) — ferrite-check package-materializable verdict"
+    value: ${{ steps.exec.outputs.materializable }}
+  cached:
+    description: "Forwarded (key: cached) — ferrite-check by-source-hash PoMS cache-hit flag (derive skippable)"
+    value: ${{ steps.exec.outputs.cached }}
+  source-hash:
+    description: "Forwarded (key: source-hash) — ferrite-check content-addressed source/cache key"
+    value: ${{ steps.exec.outputs.source-hash }}
+  drv-path:
+    description: "Forwarded (key: drv-path) — ferrite-check resolved .drv store path"
+    value: ${{ steps.exec.outputs.drv-path }}
+  attr:
+    description: "Forwarded (key: attr) — ferrite-check resolved flake attr (template rendered)"
+    value: ${{ steps.exec.outputs.attr }}
+  poms-path:
+    description: "Forwarded (key: poms-path) — ferrite-check emitted PoMS JSON path"
+    value: ${{ steps.exec.outputs.poms-path }}
+  poms-hash:
+    description: "Forwarded (key: poms-hash) — ferrite-check real BLAKE3 PoMS receipt hash"
+    value: ${{ steps.exec.outputs.poms-hash }}
+  poms-algo:
+    description: "Forwarded (key: poms-algo) — ferrite-check PoMS hash algorithm (blake3)"
+    value: ${{ steps.exec.outputs.poms-algo }}
+  # aldrava — comment-command dispatch (aldrava-dispatch / aldrava-resolve).
+  dispatched:
+    description: "Forwarded (key: dispatched) — aldrava-dispatch trusted-knock-matched flag"
+    value: ${{ steps.exec.outputs.dispatched }}
+  outcome:
+    description: "Forwarded (key: outcome) — aldrava-dispatch dispatched|rejected|no-match|not-on-pull-request"
+    value: ${{ steps.exec.outputs.outcome }}
+  command:
+    description: "Forwarded (key: command) — aldrava-dispatch matched command name"
+    value: ${{ steps.exec.outputs.command }}
+  args:
+    description: "Forwarded (key: args) — aldrava-dispatch captured args, JSON array"
+    value: ${{ steps.exec.outputs.args }}
+  commenter:
+    description: "Forwarded (key: commenter) — aldrava-dispatch knock author login"
+    value: ${{ steps.exec.outputs.commenter }}
+  checkout-ref:
+    description: "Forwarded (key: checkout-ref) — aldrava-dispatch/aldrava-resolve resolved PR head SHA"
+    value: ${{ steps.exec.outputs.checkout-ref }}
+  branch-ref:
+    description: "Forwarded (key: branch-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<head>"
+    value: ${{ steps.exec.outputs.branch-ref }}
+  base-ref:
+    description: "Forwarded (key: base-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<base>"
+    value: ${{ steps.exec.outputs.base-ref }}
+  pr-author:
+    description: "Forwarded (key: pr-author) — aldrava-dispatch/aldrava-resolve PR author login"
+    value: ${{ steps.exec.outputs.pr-author }}
+  is-develop:
+    description: "Forwarded (key: is-develop) — aldrava-dispatch/aldrava-resolve head-branch-is-develop flag"
+    value: ${{ steps.exec.outputs.is-develop }}
+  target-kind:
+    description: "Forwarded (key: target-kind) — aldrava-dispatch label|workflow-dispatch|repository-dispatch"
+    value: ${{ steps.exec.outputs.target-kind }}
+  target-detail:
+    description: "Forwarded (key: target-detail) — aldrava-dispatch dispatched target's identifying value"
+    value: ${{ steps.exec.outputs.target-detail }}
+  reason:
+    description: "Forwarded (key: reason) — aldrava-dispatch/aldrava-resolve rejection/no-match/not-running reason"
+    value: ${{ steps.exec.outputs.reason }}
+  should-run:
+    description: "Forwarded (key: should-run) — aldrava-resolve run-context-resolved flag"
+    value: ${{ steps.exec.outputs.should-run }}
+  ok:
+    description: "Forwarded (key: ok) — aldrava-lint catalog-parsed-cleanly flag"
+    value: ${{ steps.exec.outputs.ok }}
+  commands:
+    description: "Forwarded (key: commands) — aldrava-lint registered command names, JSON array"
+    value: ${{ steps.exec.outputs.commands }}
+  error:
+    description: "Forwarded (key: error) — aldrava-lint syntax/semantic error"
+    value: ${{ steps.exec.outputs.error }}
+  builder:
+    description: "Forwarded (key: builder) — bigorna the buildx builder name that was set up"
+    value: ${{ steps.exec.outputs.builder }}
+  native-platforms:
+    description: "Forwarded (key: native-platforms) — bigorna comma-joined platforms covered by a native node"
+    value: ${{ steps.exec.outputs.native-platforms }}
+  emulation:
+    description: "Forwarded (key: emulation) — bigorna native-for-all | needs-native-node"
+    value: ${{ steps.exec.outputs.emulation }}
+  cache-from:
+    description: "Forwarded (key: cache-from) — bigorna a --cache-from token fronting the sui store ('' when no cache front)"
+    value: ${{ steps.exec.outputs.cache-from }}
+  cache-to:
+    description: "Forwarded (key: cache-to) — bigorna a --cache-to token fronting the sui store ('' when no cache front)"
+    value: ${{ steps.exec.outputs.cache-to }}
 
 runs:
   using: composite
@@ -51,6 +367,19 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
+
+        # Prefer a tatara-script already on PATH (baked into the runner image,
+        # e.g. the nix-built pleme-io/arc-runner). Only resolve a tag + download
+        # / cargo-build when none is present. This is what lets pleme-io
+        # tatara-lisp actions run NATIVELY on a pure-nix runner: the baked binary
+        # short-circuits the FHS release download a nix image can't execve, and
+        # skips the api.github.com/releases/latest call entirely.
+        if command -v tatara-script >/dev/null 2>&1; then
+          echo "Using pre-installed tatara-script: $(command -v tatara-script)"
+          echo "bin-dir=$(dirname "$(command -v tatara-script)")" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         OS=$(uname -s)
         ARCH=$(uname -m)
         case "$OS-$ARCH" in

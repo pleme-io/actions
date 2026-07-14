@@ -1,0 +1,41 @@
+;; gen-build-spec/run.test.tlisp — (deftest …) smoke for the pure helpers,
+;; run via tatara-script --test by the tlisp-test action (TLISP_TEST=1
+;; gates the unit's main so no `gen build .` runs here).
+
+(deftest "lang-from-flags: explicit lang wins over auto-detection"
+  (assert (equal? (gbs:lang-from-flags "npm" #t #f #f #f) "npm") "explicit npm wins even with Cargo.toml present")
+  (assert (equal? (gbs:lang-from-flags "cargo" #f #f #f #f) "cargo") "explicit cargo passes through"))
+
+(deftest "lang-from-flags: auto resolves by manifest precedence rust>go>node>python"
+  (assert (equal? (gbs:lang-from-flags "auto" #t #t #t #t) "cargo") "cargo wins the precedence")
+  (assert (equal? (gbs:lang-from-flags "auto" #f #t #t #t) "gomod") "go beats node+python")
+  (assert (equal? (gbs:lang-from-flags "auto" #f #f #t #t) "npm")   "node beats python")
+  (assert (equal? (gbs:lang-from-flags "auto" #f #f #f #t) "pip")   "python last")
+  (assert (equal? (gbs:lang-from-flags "auto" #f #f #f #f) "unknown") "no manifest => unknown"))
+
+(deftest "spec-path-for maps each language to its build-spec filename"
+  (assert (equal? (gbs:spec-path-for "cargo") "Cargo.build-spec.json") "cargo spec name")
+  (assert (equal? (gbs:spec-path-for "npm")   "npm.build-spec.json") "npm spec name")
+  (assert (equal? (gbs:spec-path-for "pip")   "pip.build-spec.json") "pip spec name")
+  (assert (equal? (gbs:spec-path-for "gomod") "gomod.build-spec.json") "gomod spec name")
+  (assert (equal? (gbs:spec-path-for "unknown") "") "unknown => empty"))
+
+(deftest "cargo-now? is true only for cargo (the only shipped interpreter)"
+  (assert (gbs:cargo-now? "cargo") "cargo is now")
+  (assert (not (gbs:cargo-now? "npm")) "npm is not now")
+  (assert (not (gbs:cargo-now? "gomod")) "gomod is not now"))
+
+(deftest "stale? is true only when a non-empty before-hash changed"
+  (assert (gbs:stale? "aaa" "bbb") "changed committed spec => stale")
+  (assert (not (gbs:stale? "aaa" "aaa")) "unchanged => not stale")
+  (assert (not (gbs:stale? "" "bbb")) "no prior spec (first gen) => not stale")
+  (assert (not (gbs:stale? "aaa" "")) "regen produced nothing => not stale (a separate no-spec failure)"))
+
+(deftest "on-path? finds a real dir entry and misses an absent one (no-shell PATH scan)"
+  (define dir "/tmp/gbs-path-test")
+  (exec-capture "rm" "-rf" dir)
+  (exec-capture "mkdir" "-p" dir)
+  (write-file (string-append dir "/fakebin") "x")
+  (assert (gbs:any-dir-has? (list "/nonexistent" dir) "fakebin") "found under a listed dir")
+  (assert (not (gbs:any-dir-has? (list "/nonexistent" dir) "absentbin")) "no match => #f")
+  (assert (not (gbs:any-dir-has? (list "") "fakebin")) "empty dir entry never matches"))

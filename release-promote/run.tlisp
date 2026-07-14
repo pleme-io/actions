@@ -1,14 +1,200 @@
-;; release-promote/run.tlisp — auto-migrated from shell to tlisp+stdlib
+;; release-promote/run.tlisp — promote a built artifact between
+;; environments (dev → staging → prod) WITHOUT rebuilding.
+;;
+;; Two typed modes (KIND), selected by the `kind` input:
+;;
+;;   1. image-retag   (default) — re-tag an existing OCI image so the
+;;      bit-identical artifact carries the next environment's tag
+;;      (`docker buildx imagetools create`). Backward-compatible with
+;;      every existing release-promote consumer.
+;;
+;;   2. helm-chart-version — the FedRAMP chart-version promotion leg
+;;      (theory/FEDRAMP-OBSERVABILITY-DELIVERY.md, the ENHANCE): write the
+;;      EXACT chart/image version into the NEXT environment's committed
+;;      values file (a GitOps commit — the AUTOBUMP/eclusa pattern). The
+;;      environment then SUBSCRIBES to that committed exact version; we
+;;      never deploy from a moving tag. Reuses the stdlib git-bot identity
+;;      + fail-loud commit; the WRITE is a typed `yq` set (never a
+;;      hand-rolled sed). Push defaults OFF — chain
+;;      `pleme-io/actions/git-push-with-token` for the token-rearmed,
+;;      rebase-safe, downstream-firing atomic push (do not re-fork it
+;;      here); a plain `git push` is offered as the simple same-token
+;;      path.
+;;
+;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
+;;   append-output, status-of, stdout-of, stderr-of, config-resolve,
+;;   yaml-read-field, configure-git-bot, exec-or-die.
+;;
+;; Inputs (env):
+;;   KIND IMAGE SOURCE_TAG TARGET_TAG                (image-retag)
+;;   VALUES_FILE YAML_PATH VERSION TARGET_ENV        (helm-chart-version)
+;;   COMMIT PUSH BRANCH PUSH_TOKEN                    (helm-chart-version)
+;; Outputs (appended):
+;;   promoted kind committed pushed version values-file reason
 
-(define img (env-required "IMAGE"))
-(define src (env-required "SOURCE_TAG"))
-(define tgt (env-required "TARGET_TAG"))
-(define src-ref (string-append img ":" src))
-(define tgt-ref (string-append img ":" tgt))
-(log-info (string-append "==> docker buildx imagetools create " tgt-ref " from " src-ref))
-(define r (exec-capture "docker" "buildx" "imagetools" "create" "-t" tgt-ref src-ref))
+;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────
+
+(define (promote:norm-bool s)
+  (if (equal? (string-trim s) "true") "true" "false"))
+
+(define (promote:ref img tag) (string-append img ":" tag))
+
+;; The version to write: an explicit VERSION wins; else fall back to
+;; SOURCE_TAG (the artifact coordinate being promoted).
+(define (promote:version-or version source-tag)
+  (if (equal? (string-trim version) "") source-tag version))
+
+;; The yq set-expression for a scalar string assignment (TYPED write —
+;; no sed). e.g. (".version" "1.2.3") -> `.version = "1.2.3"`.
+(define (promote:yq-set-expr yaml-path version)
+  (string-append yaml-path " = \"" version "\""))
+
+(define (promote:commit-msg values-file version target-env)
+  (string-append "promote: pin " values-file " -> " version
+                 (if (equal? (string-trim target-env) "") "" (string-append " (" target-env ")"))))
+
+;; ── Mode 1: image-retag (the original behavior) ──────────────────
+
+(define (promote:image-retag)
+  (let* ((img (env-required "IMAGE"))
+         (src (env-required "SOURCE_TAG"))
+         (tgt (env-required "TARGET_TAG"))
+         (src-ref (promote:ref img src))
+         (tgt-ref (promote:ref img tgt)))
+    (log-info (string-append "==> docker buildx imagetools create " tgt-ref " from " src-ref))
+    (let ((r (exec-capture "docker" "buildx" "imagetools" "create" "-t" tgt-ref src-ref)))
+      (cond
+        ((= (status-of r) 0)
+         (log-info (string-append "promoted " src-ref " -> " tgt-ref))
+         (append-output "promoted=true")
+         (append-output "kind=image-retag")
+         (append-output "committed=false")
+         (append-output "pushed=false")
+         (append-output (string-append "version=" tgt))
+         (append-output "values-file=")
+         (append-output "reason=image-retagged")
+         (exit 0))
+        (else
+         (log-info (stderr-of r))
+         (append-output "promoted=false")
+         (append-output "kind=image-retag")
+         (append-output "reason=imagetools-failed")
+         (exit 1))))))
+
+;; ── Mode 2: helm-chart-version (GitOps commit of the exact version) ──
+
+;; Simple same-token push (default OFF). The robust token-rearmed,
+;; rebase-safe, downstream-firing path is `git-push-with-token` — chain
+;; it (push=false here) rather than re-forking its logic.
+(define (promote:git-push branch)
+  (status-of (exec-capture "git" "push" "origin" branch)))
+
+(define (promote:emit-fail reason)
+  (append-output "promoted=false")
+  (append-output "kind=helm-chart-version")
+  (append-output "committed=false")
+  (append-output "pushed=false")
+  (append-output (string-append "reason=" reason)))
+
+(define (promote:helm-chart-version)
+  (let* ((values-file (config-resolve "VALUES_FILE" "release-promote" "values-file" ""))
+         (yaml-path (config-resolve "YAML_PATH" "release-promote" "yaml-path" ".version"))
+         (version (promote:version-or
+                    (config-resolve "VERSION" "release-promote" "version" "")
+                    (env-get "SOURCE_TAG" "")))
+         (target-env (env-get "TARGET_ENV" (env-get "TARGET_TAG" "")))
+         (do-commit (promote:norm-bool (config-resolve "COMMIT" "release-promote" "commit" "true")))
+         (do-push (promote:norm-bool (config-resolve "PUSH" "release-promote" "push" "false")))
+         (branch (config-resolve "BRANCH" "release-promote" "branch" "main")))
+    (cond
+      ((equal? (string-trim values-file) "")
+       (log-error "release-promote(helm-chart-version): values-file is required")
+       (promote:emit-fail "missing-values-file") (exit 1))
+      ((not (path-exists? values-file))
+       (log-error (string-append "release-promote(helm-chart-version): values-file not found: " values-file))
+       (promote:emit-fail "values-file-not-found") (exit 1))
+      ((equal? (string-trim version) "")
+       (log-error "release-promote(helm-chart-version): version (or source-tag) is required")
+       (promote:emit-fail "missing-version") (exit 1))
+      (else
+       (log-info (string-append "==> release-promote(helm-chart-version): pin " yaml-path
+                  " = " version " in " values-file
+                  (if (equal? (string-trim target-env) "") "" (string-append " for " target-env))))
+       (let ((current (yaml-read-field values-file yaml-path)))
+         (cond
+           ;; Idempotent: already at the target version — nothing to do.
+           ((equal? current version)
+            (log-info "already at target version — no commit needed (idempotent)")
+            (append-output "promoted=true")
+            (append-output "kind=helm-chart-version")
+            (append-output "committed=false")
+            (append-output "pushed=false")
+            (append-output (string-append "version=" version))
+            (append-output (string-append "values-file=" values-file))
+            (append-output "reason=already-at-version")
+            (exit 0))
+           (else
+            ;; TYPED write via yq (never sed).
+            (let ((w (exec-capture "yq" "-i" (promote:yq-set-expr yaml-path version) values-file)))
+              (cond
+                ((not (= (status-of w) 0))
+                 (log-info (stderr-of w))
+                 (log-error "release-promote(helm-chart-version): yq write failed")
+                 (promote:emit-fail "yq-write-failed") (exit 1))
+                ;; Verify the write took.
+                ((not (equal? (yaml-read-field values-file yaml-path) version))
+                 (log-error "release-promote(helm-chart-version): post-write verify mismatch")
+                 (promote:emit-fail "write-verify-mismatch") (exit 1))
+                (else
+                 (log-info (string-append "wrote " yaml-path " = " version " -> " values-file))
+                 (cond
+                   ((not (equal? do-commit "true"))
+                    (append-output "promoted=true")
+                    (append-output "kind=helm-chart-version")
+                    (append-output "committed=false")
+                    (append-output "pushed=false")
+                    (append-output (string-append "version=" version))
+                    (append-output (string-append "values-file=" values-file))
+                    (append-output "reason=written-not-committed")
+                    (exit 0))
+                   (else
+                    ;; Commit the GitOps change (fail-loud identity + commit).
+                    (configure-git-bot)
+                    (exec-or-die (list "git" "add" values-file))
+                    (exec-or-die (list "git" "commit" "-m"
+                                       (promote:commit-msg values-file version target-env)))
+                    (log-info (string-append "committed " values-file " @ " version))
+                    (let ((pushed
+                            (cond
+                              ((not (equal? do-push "true")) "false")
+                              (else
+                               (let ((ps (promote:git-push branch)))
+                                 (cond
+                                   ((= ps 0) (log-info (string-append "pushed " branch)) "true")
+                                   (else
+                                    (log-error "release-promote(helm-chart-version): git push failed — chain git-push-with-token for the rebase-safe token-rearmed path")
+                                    (promote:emit-fail "push-failed") (exit ps))))))))
+                      (append-output "promoted=true")
+                      (append-output "kind=helm-chart-version")
+                      (append-output "committed=true")
+                      (append-output (string-append "pushed=" pushed))
+                      (append-output (string-append "version=" version))
+                      (append-output (string-append "values-file=" values-file))
+                      (append-output "reason=committed")
+                      (exit 0))))))))))))))
+
+;; ── Dispatch ─────────────────────────────────────────────────────
+
+(define (main)
+  (let ((kind (config-resolve "KIND" "release-promote" "kind" "image-retag")))
+    (cond
+      ((equal? kind "helm-chart-version") (promote:helm-chart-version))
+      (else (promote:image-retag)))))
+
+;; Gated on TLISP_TEST so the tlisp-test harness loads the pure helpers
+;; (norm-bool / ref / version-or / yq-set-expr / commit-msg) and drives
+;; them with fixtures, without running docker / yq / git.
 (cond
-  ((= (status-of r) 0)
-   (log-info (string-append "promoted " src-ref " -> " tgt-ref))
-   (append-output "promoted=true") (exit 0))
-  (else (append-output "promoted=false") (exit 1)))
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — release-promote helpers loaded; main skipped"))
+  (else (main)))

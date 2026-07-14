@@ -1,0 +1,41 @@
+name: test-sui-remote-build
+on:
+  push:
+    paths:
+      - 'sui-remote-build/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'sui-remote-build/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE (a fixture, not an auto-run gate — GitHub only executes
+# workflows under .github/workflows/). The authoritative gate for this
+# action is the repo-level `tlisp-tests` job (sui-remote-build/run.test.tlisp)
+# + `lint-tlisp`, both of which run against run.tlisp itself and need no sui
+# service / REAPI worker. This fixture demonstrates the one path that is real
+# WITHOUT a live sui service: the honest LOCAL-FALLBACK degrade (worker=local,
+# built=false, exit 2 — a clean typed "no", NOT a crash), asserted via
+# continue-on-error + an outcome check.
+#
+# It asserts STEP OUTCOME, not output VALUES: composite outputs forward
+# through pleme-io/actions/tatara-script@v1, whose declared forward set must
+# grow to include `worker` before a consumer can read it (added in this
+# action's commit; see tatara-script/action.yml).
+jobs:
+  local-fallback-is-a-clean-no:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No REAPI worker => honest local fallback, built=false, exit 2
+        id: build
+        continue-on-error: true
+        uses: ./sui-remote-build
+        with:
+          key: deadbeefcafe
+          arch: amd64
+          require-build: "false"
+      - name: The fallback is a handled 'no' (exit 2 => step outcome=failure), never a faked build
+        run: |
+          echo "sui-remote-build fallback outcome: ${{ steps.build.outcome }}"
+          [ "${{ steps.build.outcome }}" = "failure" ] || { echo "expected the honest exit-2 local-fallback degrade"; exit 1; }

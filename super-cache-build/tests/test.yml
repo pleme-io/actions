@@ -1,0 +1,35 @@
+name: test-super-cache-build
+on:
+  push:
+    paths:
+      - 'super-cache-build/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'super-cache-build/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE (a fixture, not an auto-run gate — GitHub only executes
+# workflows under .github/workflows/). The authoritative gate for this
+# action is the repo-level `tlisp-tests` job (super-cache-build/run.test.tlisp)
+# + `lint-tlisp`, both of which run against the run.tlisp itself and need no
+# sui service. This fixture demonstrates the one path that is real + green
+# WITHOUT a live sui service: the cache-hit short-circuit (the action runs to
+# completion and exits 0, deriving nothing).
+#
+# It asserts STEP SUCCESS only, not output VALUES: composite outputs forward
+# through pleme-io/actions/tatara-script@v1, whose declared forward set must
+# grow to include this action's non-`built` keys before a consumer can read
+# them (a named coordination LiveTODO on the shared tatara-script forwarder).
+jobs:
+  cache-hit-short-circuits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache-hit short-circuit runs to completion (no sui needed)
+        uses: ./super-cache-build
+        with:
+          spec-path: Cargo.build-spec.json
+          key: deadbeefcafe
+          cache-hit: "true"
+          restored-outputs: "/nix/store/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-demo"

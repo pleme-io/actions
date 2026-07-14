@@ -1,0 +1,33 @@
+name: test-gen-build-spec
+on:
+  push:
+    paths:
+      - 'gen-build-spec/**'
+      - '_tlisp-stdlib/**'
+  pull_request:
+    paths:
+      - 'gen-build-spec/**'
+      - '_tlisp-stdlib/**'
+
+# CO-LOCATED SMOKE (a fixture, not an auto-run gate — GitHub only executes
+# workflows under .github/workflows/). The authoritative gate for this action
+# is the repo-level `tlisp-tests` job (gen-build-spec/run.test.tlisp) +
+# `lint-tlisp`, both of which run against run.tlisp itself and need no `gen`.
+#
+# This fixture demonstrates the one path that is real + green WITHOUT `gen`
+# baked on a hosted runner: the lang-livetodo branch (lang=npm). The action
+# runs to completion, reports regenerated=false / reason=lang-livetodo, exits 0
+# — an honest LiveTODO report, never a faked green. The cargo NOW path (a real
+# `gen build .` + the stale gate) is green on a runner that bakes `gen`
+# (the camelot arc-runner); it is proven locally via run.test.tlisp + a real
+# gen-cargo round-trip and is not exercised here to keep the fixture
+# gen-independent.
+jobs:
+  lang-livetodo-is-honest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Non-cargo language reports an honest LiveTODO, exits 0
+        uses: ./gen-build-spec
+        with:
+          lang: npm

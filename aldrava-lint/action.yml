@@ -1,0 +1,61 @@
+name: 'pleme-io · aldrava-lint'
+description: 'Validate a (defcommentcommand ...) catalog file — catches a typo or malformed command definition at PR time instead of at the next real knock.'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  catalog-path:
+    description: "Path to the catalog file to validate."
+    required: false
+    default: ".github/aldrava.lisp"
+
+outputs:
+  ok:
+    description: "true when the catalog parses cleanly."
+    value: ${{ steps.lint.outputs.ok }}
+  commands:
+    description: "The registered command names, as a JSON array (ok=true only)."
+    value: ${{ steps.lint.outputs.commands }}
+  error:
+    description: "The syntax/semantic error, naming the offending form (ok=false only)."
+    value: ${{ steps.lint.outputs.error }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Install aldrava
+      shell: bash
+      run: |
+        set -euo pipefail
+        OS=$(uname -s)
+        ARCH=$(uname -m)
+        case "$OS-$ARCH" in
+          Linux-x86_64)  SUFFIX="linux-x86_64";;
+          Linux-aarch64) SUFFIX="linux-arm64";;
+          Darwin-arm64)  SUFFIX="darwin-arm64";;
+          Darwin-x86_64) SUFFIX="darwin-x86_64";;
+          *) echo "::error::aldrava-lint: unsupported runner $OS-$ARCH" >&2; exit 1;;
+        esac
+        curl -sL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
+        chmod +x /usr/local/bin/aldrava
+
+    - name: Lint the catalog
+      id: lint
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CATALOG_PATH: ${{ inputs.catalog-path }}

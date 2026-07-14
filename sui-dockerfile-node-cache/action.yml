@@ -1,0 +1,98 @@
+name: 'pleme-io · sui-dockerfile-node-cache'
+description: >-
+  Daemon-aware sui-dockerfile-wrapper GHA integration point
+  (supa-charge-akeyless-ci Phase 3b). Probes the node-local
+  sui-dockerfile-node-cache-daemon Unix socket; when present, routes the
+  Dockerfile-graph cache lookup through the node-local tier via
+  DaemonAwareCacheClient before falling through to the remote tier;
+  when absent, behaves byte-for-byte like the Phase 2 direct-to-remote
+  wrapper. Never requires the daemon.
+branding:
+  icon: 'layers'
+  color: 'purple'
+
+inputs:
+  dockerfile-path:
+    description: "Path to the Dockerfile to build."
+    required: true
+  build-context:
+    description: "Build context directory (mirrors `docker build <context>`)."
+    required: false
+    default: "."
+  image-tag:
+    description: "Image tag to build/pull (mirrors `docker build -t <tag>`)."
+    required: true
+  cache-backend-config:
+    description: >-
+      JSON-encoded sui-cache `BackendConfig` for the remote cache tier
+      (e.g. `{"kind":"s3", ...}` or `{"kind":"local", ...}`).
+    required: true
+  node-cache-socket-path:
+    description: >-
+      Override for the well-known node-local daemon socket path. Empty
+      uses `sui_dockerfile_node_cache_daemon::default_socket_path()`.
+    required: false
+    default: ""
+
+outputs:
+  daemon-used:
+    description: "true when the node-local DaemonSet socket was present and used"
+    value: ${{ steps.run.outputs.daemon-used }}
+  outcome:
+    description: "cache-hit | cache-miss | build-failed (WrapperOutcome kind)"
+    value: ${{ steps.run.outputs.outcome }}
+  cache-hit:
+    description: "true when every Dockerfile-graph node was already cached (no docker build ran)"
+    value: ${{ steps.run.outputs.cache-hit }}
+  docker-ran:
+    description: "true when a real `docker build` (or cache-hit `docker pull`) executed"
+    value: ${{ steps.run.outputs.docker-ran }}
+  duration-ms:
+    description: "Total wall-clock duration of the wrapper run, in milliseconds"
+    value: ${{ steps.run.outputs.duration-ms }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install sui-dockerfile-wrapper (gha-entrypoint)
+      shell: bash
+      # Installed from crates.io (sui-dockerfile-wrapper is published there).
+      run: cargo install --locked sui-dockerfile-wrapper --quiet
+
+    - id: run
+      shell: bash
+      env:
+        SUI_DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+        SUI_BUILD_CONTEXT: ${{ inputs.build-context }}
+        SUI_IMAGE_TAG: ${{ inputs.image-tag }}
+        SUI_CACHE_BACKEND_CONFIG: ${{ inputs.cache-backend-config }}
+        SUI_NODE_CACHE_SOCKET_PATH: ${{ inputs.node-cache-socket-path }}
+      run: |
+        set +e
+        receipt="$(gha-entrypoint)"
+        status=$?
+        set -e
+        echo "$receipt"
+
+        resolved_socket="${SUI_NODE_CACHE_SOCKET_PATH:-/var/run/sui-dockerfile-cache/node-cache.sock}"
+        daemon_used="false"
+        [ -S "$resolved_socket" ] && daemon_used="true"
+
+        outcome="$(echo "$receipt" | jq -r '.outcome.kind // "build-failed"')"
+        cache_hit="false"
+        [ "$outcome" = "CacheHit" ] && cache_hit="true"
+        docker_ran="$(echo "$receipt" | jq -r '.docker_ran // false')"
+        duration_ms="$(echo "$receipt" | jq -r '.total_wall_clock_ms // 0')"
+
+        {
+          echo "daemon-used=$daemon_used"
+          echo "outcome=$outcome"
+          echo "cache-hit=$cache_hit"
+          echo "docker-ran=$docker_ran"
+          echo "duration-ms=$duration_ms"
+        } >> "$GITHUB_OUTPUT"
+
+        exit "$status"
