@@ -40,6 +40,9 @@ outputs:
   count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: count) — a row/item count (e.g. build-matrix rows)"
     value: ${{ steps.exec.outputs.count }}
+  out-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: out-path) — nix-build's built store path. Missing since nix-build's own inception (2026-07-14 discovery: cartorio-attest's nix-closure-info-path silently received an empty string from every nix-build consumer, on both @main and @v1, because this key was never added here)"
+    value: ${{ steps.exec.outputs.out-path }}
   # Delivery-leg keys (super-cache-ci): nix-image / ghcr-publish / zot-pull-scan
   # (+ image-scan's severity/vuln-count). A composite action forwards only
   # DECLARED keys, so these must live here for the scripts' outputs to reach
