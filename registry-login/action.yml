@@ -16,15 +16,15 @@ inputs:
     description: "Registry username (typically github.actor)."
     required: true
   bot-pat:
-    description: "Org PAT with write:packages — preferred. Pass ${{ secrets.BOT_PAT }} raw; empty on private-repo callers where the Free plan doesn't share it."
+    description: "Org PAT with write:packages — preferred. Pass secrets.BOT_PAT raw; empty on private-repo callers where the Free plan doesn't share it."
     required: false
     default: ""
   ghcr-token:
-    description: "Optional dedicated registry token. Pass ${{ secrets.GHCR_TOKEN }} raw."
+    description: "Optional dedicated registry token. Pass secrets.GHCR_TOKEN raw."
     required: false
     default: ""
   github-token:
-    description: "Final fallback — the repo-scoped GITHUB_TOKEN. Pass ${{ secrets.GITHUB_TOKEN }} (or ${{ github.token }}) raw."
+    description: "Final fallback — the repo-scoped GITHUB_TOKEN. Pass secrets.GITHUB_TOKEN (or github.token) raw."
     required: false
     default: ""
 
