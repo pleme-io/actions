@@ -1,0 +1,59 @@
+name: 'pleme-io · registry-login'
+description: 'Resolve an OCI-registry credential from the typed fallback (BOT_PAT > GHCR_TOKEN > GITHUB_TOKEN) and log the chosen client (helm | docker) into the registry. The single overlay every publish reusable calls in place of a hand-repeated `secrets.BOT_PAT || secrets.GHCR_TOKEN || ...` expression — the priority order lives here, once. BOT_PAT carries write:packages on the org-shared ghcr.io/pleme-io/* namespace (a repo-scoped GITHUB_TOKEN 403s on cross-namespace push); on the Free plan it reaches public repos only, so a private caller passes it empty and the fallback lands on GITHUB_TOKEN — the two approved tracks, expressed once.'
+branding:
+  icon: 'log-in'
+  color: 'blue'
+
+inputs:
+  registry:
+    description: "Registry — bare host (ghcr.io) or an oci:// URL (oci://ghcr.io/pleme-io/charts); the host is extracted."
+    required: true
+  client:
+    description: "Which credential store to authenticate: 'helm' (helm's own registry config) or 'docker' (~/.docker/config.json, which skopeo/regctl also read). Default docker."
+    required: false
+    default: "docker"
+  username:
+    description: "Registry username (typically github.actor)."
+    required: true
+  bot-pat:
+    description: "Org PAT with write:packages — preferred. Pass ${{ secrets.BOT_PAT }} raw; empty on private-repo callers where the Free plan doesn't share it."
+    required: false
+    default: ""
+  ghcr-token:
+    description: "Optional dedicated registry token. Pass ${{ secrets.GHCR_TOKEN }} raw."
+    required: false
+    default: ""
+  github-token:
+    description: "Final fallback — the repo-scoped GITHUB_TOKEN. Pass ${{ secrets.GITHUB_TOKEN }} (or ${{ github.token }}) raw."
+    required: false
+    default: ""
+
+outputs:
+  logged-in:
+    description: "'true' iff the login succeeded (forwarded from the script's result)."
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        CLIENT: ${{ inputs.client }}
+        USERNAME: ${{ inputs.username }}
+        BOT_PAT: ${{ inputs.bot-pat }}
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
