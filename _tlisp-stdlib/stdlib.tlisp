@@ -205,6 +205,10 @@
       (string-contains? line "is already taken")
       (string-contains? line "is already on the registry")
       (string-contains? line "crate name is not allowed")
+      ;; crates.io 403 when the name exists under a DIFFERENT owner —
+      ;; the canonical rename-to-pleme-io-<name> trigger (was previously
+      ;; unrecognized → 'failed, e.g. the `tear` crate 2026-07-17).
+      (string-contains? line "seem to be an owner")
       (string-contains? line "Unauthorized")
       (string-contains? line "denied")
       (string-contains? line "Invalid token")))
