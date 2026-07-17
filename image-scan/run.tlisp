@@ -49,33 +49,62 @@
 (define r (apply exec-capture (cons "trivy" args)))
 (define out (stdout-of r))
 
-;; Pull highest severity from the json — trivy emits a Results
-;; array with per-target Vulnerabilities each having Severity.
-(define severity
-  (cond
-    ((log-contains? out "\"Severity\":\"CRITICAL\"") "CRITICAL")
-    ((log-contains? out "\"Severity\":\"HIGH\"") "HIGH")
-    ((log-contains? out "\"Severity\":\"MEDIUM\"") "MEDIUM")
-    ((log-contains? out "\"Severity\":\"LOW\"") "LOW")
-    ((log-contains? out "\"Severity\":\"UNKNOWN\"") "UNKNOWN")
-    (else "none")))
-
-;; Count occurrences of "Severity" — coarse but useful. Written to a temp
-;; file first and grepped BY PATH (a short argument), never embedded
-;; inline in a shell command string -- a real image's trivy JSON (Neo4j:
-;; 574 findings on the stock image alone) is easily megabytes, and
+;; Written to a temp file first and read BY PATH (a short argument), never
+;; embedded inline in a shell command string -- a real image's trivy JSON
+;; (Neo4j: 574 findings on the stock image alone) is easily megabytes, and
 ;; `sh -c "... <(echo '<the whole json>')"` blows past the OS's ARG_MAX
 ;; ("Argument list too long", os error 7), confirmed live 2026-07-17 on
 ;; both the neo4j and node-exporter pre-publish gate runs -- a mechanical
 ;; crash, not a real CVE verdict, silently defeating the "fail
 ;; spectacularly, but for the RIGHT reason" discipline this gate exists
-;; for. `|| true` preserves the original's deliberate always-succeed
-;; shape: a genuinely clean scan means zero matches, and bare `grep -c`
-;; exits 1 on zero matches -- exactly the healthy case that must NOT be
-;; treated as this step's own failure (that's `fail-on`'s job below, off
-;; the parsed `severity`, not off grep's exit code).
+;; for.
 (define trivy-output-file (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-output.json"))
 (write-file trivy-output-file out)
+
+;; Pull the MAX severity from the json via a real jq parse over
+;; .Results[].Vulnerabilities[].Severity -- trivy's actual structure.
+;;
+;; FIXED 2026-07-17 (found live, triaging pleme-io/hardened-images'
+;; residual-CVE list): the previous approach substring-matched
+;; `"\"Severity\":\"HIGH\""` (NO space after the colon) against trivy's
+;; real `--format json` output, which is indented and ALWAYS has a space
+;; after the colon (`"Severity": "HIGH"`) -- so none of the six patterns
+;; ever matched, `severity` always fell through to "none", and this gate
+;; has NEVER actually blocked a push on any severity, on any image, on any
+;; consumer of this action, since it was added. Confirmed against a real
+;; scan (6 genuine findings on pleme-io/hardened-images' vector image) and
+;; a real CI run logging `severity=none count=6`. A real jq parse of the
+;; structured JSON (not a brittle string match) makes this class of bug
+;; unrepresentable going forward -- any future trivy JSON formatting
+;; change (field reorder, compact output) can't silently re-break it the
+;; same way, because the parse walks the actual object shape, not bytes.
+(define severity-jq-filter
+  (string-append
+    "[.Results[]?.Vulnerabilities[]?.Severity] | "
+    "if any(.==\"CRITICAL\") then \"CRITICAL\" "
+    "elif any(.==\"HIGH\") then \"HIGH\" "
+    "elif any(.==\"MEDIUM\") then \"MEDIUM\" "
+    "elif any(.==\"LOW\") then \"LOW\" "
+    "elif any(.==\"UNKNOWN\") then \"UNKNOWN\" "
+    "else \"none\" end"))
+(define severity-r
+  (exec-capture "sh" "-c"
+    (string-append "jq -r '" severity-jq-filter "' " trivy-output-file " 2>/dev/null")))
+(define severity
+  (if (= (status-of severity-r) 0)
+    (let ((v (string-trim (stdout-of severity-r))))
+      (if (equal? v "") "none" v))
+    "none"))
+
+;; Count occurrences of "Severity" — coarse but useful, and NOT broken the
+;; same way severity was: this is a substring COUNT (any "Severity": key,
+;; regardless of what follows the colon), not a value-match, so the
+;; missing-space bug never applied to it -- confirmed accurate against the
+;; same live triage above. `|| true` preserves the deliberate always-
+;; succeed shape: a genuinely clean scan means zero matches, and bare
+;; `grep -c` exits 1 on zero matches -- exactly the healthy case that must
+;; NOT be treated as this step's own failure (that's `fail-on`'s job
+;; below, off the parsed `severity`, not off grep's exit code).
 (define count-r (exec-capture "sh" "-c" (string-append "grep -c '\"Severity\":' " trivy-output-file " || true")))
 (define vuln-count
   (let ((v (string-trim (stdout-of count-r))))
