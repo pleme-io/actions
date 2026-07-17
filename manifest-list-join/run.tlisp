@@ -126,17 +126,34 @@
                       (if insecure? (list "--tls-verify=false") (list))
                       (list local-name (string-append "docker://" index-ref))))))))))))
 
-;; docker manifest create/push (--insecure for a plain-http registry).
+;; docker buildx imagetools create -- composes the index DIRECTLY from
+;; each source's REMOTE registry manifest and pushes in one step.
+;;
+;; NOT `docker manifest create` + `docker manifest push`: that classic
+;; pair operates on the LOCAL docker content store -- `manifest create`
+;; resolves each source ref against images already pulled onto THIS
+;; daemon, it does not itself reach out to the registry. In this
+;; action's actual shape the per-arch images were built and pushed by a
+;; SEPARATE CI job on a separate runner/daemon that never pulled them
+;; back down, so every source ref is "no such manifest" locally --
+;; confirmed live (2026-07-17): reproduced instantly (no network delay)
+;; against a real registry with the exact refs a failing akeylesslabs
+;; camelot/hardened-images run passed. `imagetools create` has no such
+;; requirement -- it inspects and composes purely via registry API
+;; calls, which is what a cross-job/cross-runner join always needs.
+;;
+;; No direct `--insecure`/`--tls-verify` equivalent exists for buildx;
+;; it defers to the daemon's own registry trust config (localhost/
+;; 127.0.0.1 targets are trusted by Docker's own default, verified
+;; against a local registry:2 with no extra setup -- the shape this
+;; action's own e2e test exercises). A registry that needs explicit
+;; insecure-registries trust for this tool would need that configured
+;; at the daemon level; `insecure?` is accepted for signature parity
+;; with the other tool paths but currently unused here -- named
+;; honestly, not silently dropped.
 (define (mlj:docker-join refs index-ref insecure?)
-  (let* ((ins (if insecure? (list "--insecure") (list)))
-         (c (status-of (apply exec-capture
-              (append (list "docker" "manifest" "create") ins
-                      (list index-ref) refs)))))
-    (cond
-      ((not (= c 0)) c)
-      (else
-       (status-of (apply exec-capture
-         (append (list "docker" "manifest" "push") ins (list index-ref))))))))
+  (status-of (apply exec-capture
+    (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
 
 ;; regctl index create <index-ref> --ref <r1> --ref <r2> …
 (define (mlj:regctl-ref-flags refs)
