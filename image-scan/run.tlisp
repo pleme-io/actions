@@ -60,12 +60,23 @@
     ((log-contains? out "\"Severity\":\"UNKNOWN\"") "UNKNOWN")
     (else "none")))
 
-;; Count occurrences of "Severity" — coarse but useful.
-(define count-r
-  (exec-capture "sh" "-c"
-    (string-append "grep -o '\"Severity\":' <(echo '"
-                   (string-replace out "'" "'\"'\"'")
-                   "') | wc -l")))
+;; Count occurrences of "Severity" — coarse but useful. Written to a temp
+;; file first and grepped BY PATH (a short argument), never embedded
+;; inline in a shell command string -- a real image's trivy JSON (Neo4j:
+;; 574 findings on the stock image alone) is easily megabytes, and
+;; `sh -c "... <(echo '<the whole json>')"` blows past the OS's ARG_MAX
+;; ("Argument list too long", os error 7), confirmed live 2026-07-17 on
+;; both the neo4j and node-exporter pre-publish gate runs -- a mechanical
+;; crash, not a real CVE verdict, silently defeating the "fail
+;; spectacularly, but for the RIGHT reason" discipline this gate exists
+;; for. `|| true` preserves the original's deliberate always-succeed
+;; shape: a genuinely clean scan means zero matches, and bare `grep -c`
+;; exits 1 on zero matches -- exactly the healthy case that must NOT be
+;; treated as this step's own failure (that's `fail-on`'s job below, off
+;; the parsed `severity`, not off grep's exit code).
+(define trivy-output-file (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-output.json"))
+(write-file trivy-output-file out)
+(define count-r (exec-capture "sh" "-c" (string-append "grep -c '\"Severity\":' " trivy-output-file " || true")))
 (define vuln-count
   (let ((v (string-trim (stdout-of count-r))))
     (if (equal? v "") "0" v)))
