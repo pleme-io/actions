@@ -6,6 +6,13 @@
 ;; silently pass alongside a clean scan.
 
 (define image (env-required "IMAGE_REF"))
+;; Pre-publish gate shape: a non-empty LOCAL_ARCHIVE means scan a local
+;; docker-archive: tarball (trivy's own `--input` flag, no registry pull,
+;; no network round-trip) instead of pulling IMAGE_REF. This is what makes
+;; "scan before push, never after" possible -- the image hasn't been
+;; published anywhere yet when this runs. IMAGE_REF stays the log/output
+;; label either way.
+(define local-archive (env-get "LOCAL_ARCHIVE" ""))
 (define fail-on (env-get "FAIL_ON_SEVERITY" "HIGH"))
 (define ignore-unfixed (env-get "IGNORE_UNFIXED" "false"))
 ;; Path to a .trivyignore-format file -- named, tracked exceptions
@@ -23,15 +30,21 @@
 
 (define fail-rank (severity-rank fail-on))
 
-(log-info (string-append "==> trivy image " image))
+(log-info (if (equal? local-archive "")
+              (string-append "==> trivy image " image)
+              (string-append "==> trivy image --input " local-archive " (" image ", pre-publish, not yet pushed anywhere)")))
 
 ;; `trivy image [flags...] <target>` -- the subcommand comes first, every
-;; flag before the positional image-ref.
+;; flag before the positional image-ref. With LOCAL_ARCHIVE set, the
+;; target is `--input <path>` (a local docker-archive: tarball) instead
+;; of a pullable registry reference -- trivy's own documented mechanism
+;; for scanning an image that was never pushed anywhere.
 (define unfixed-flag (if (equal? ignore-unfixed "true") (list "--ignore-unfixed") (list)))
 (define ignorefile-flag (if (equal? ignore-file "") (list) (list "--ignorefile" ignore-file)))
+(define target-flag (if (equal? local-archive "") (list image) (list "--input" local-archive)))
 (define args
   (append (list "image") unfixed-flag ignorefile-flag
-          (list "--format" "json" "--quiet" image)))
+          (list "--format" "json" "--quiet") target-flag))
 
 (define r (apply exec-capture (cons "trivy" args)))
 (define out (stdout-of r))

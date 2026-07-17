@@ -6,8 +6,12 @@ branding:
 
 inputs:
   image-ref:
-    description: "Image to scan (e.g. ghcr.io/pleme-io/foo:latest)"
+    description: "Image to scan (e.g. ghcr.io/pleme-io/foo:latest). When local-archive is set, this is used only as a human-readable label in logs/outputs -- nothing is pulled from a registry."
     required: true
+  local-archive:
+    description: "Path to a local docker-archive: tarball (e.g. a Nix-built OCI image's ./result) to scan INSTEAD of pulling image-ref from a registry. This is the pre-publish gate shape: build locally, scan the local artifact, only push on a clean scan -- a scan of an already-registry-pushed image is a receipt, not a gate. Empty (default) = scan image-ref by pulling it, preserving existing callers' behavior exactly."
+    required: false
+    default: ""
   fail-on-severity:
     description: "Lowest severity that fails the build: UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL | none"
     required: false
@@ -54,6 +58,7 @@ runs:
         script: ${{ steps.src.outputs.script }}
       env:
         IMAGE_REF: ${{ inputs.image-ref }}
+        LOCAL_ARCHIVE: ${{ inputs.local-archive }}
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
         IGNORE_FILE: ${{ inputs.ignore-file }}
