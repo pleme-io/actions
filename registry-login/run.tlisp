@@ -1,0 +1,93 @@
+;; registry-login/run.tlisp — resolve an OCI-registry credential from the
+;; typed fallback (BOT_PAT > GHCR_TOKEN > GITHUB_TOKEN) and log the chosen
+;; client (helm | docker) into the registry.
+;;
+;; This factors the token-resolution that every publish reusable used to
+;; hand-repeat as a `${{ secrets.BOT_PAT || secrets.GHCR_TOKEN || ... }}`
+;; expression into ONE tlisp overlay — the priority order lives here, once,
+;; instead of drifting across helm-monorepo-auto-release.yml /
+;; image-push.yml / nix-image-auto-release.yml. (Org directive: "instead of
+;; || do overlays of yaml"; PRIME DIRECTIVE — duplication is a bug.)
+;;
+;; BOT_PAT is preferred because it carries write:packages on the org-shared
+;; ghcr.io/pleme-io/* namespace; a repo-scoped GITHUB_TOKEN 403s on
+;; cross-namespace OCI push. On the Free plan BOT_PAT only reaches PUBLIC
+;; repos, so a private caller passes it empty and the fallback lands on
+;; GITHUB_TOKEN — the two approved tracks, expressed once.
+;;
+;; Password is passed as an arg (GitHub masks registered secret values),
+;; matching the proven skopeo-login shape.
+;;
+;; Inputs (env): REGISTRY, CLIENT (helm|docker), USERNAME,
+;;               BOT_PAT, GHCR_TOKEN, GITHUB_TOKEN
+;; Outputs: result=true|false (forwarded by tatara-script; surfaced as the
+;;          action's `logged-in` output). The real product is the login
+;;          SIDE-EFFECT on the runner's credential store, which the caller's
+;;          publish step consumes.
+
+(define (rl:nth lst i)
+  (cond
+    ((= i 0) (car lst))
+    (else (rl:nth (cdr lst) (- i 1)))))
+
+;; oci://ghcr.io/pleme-io/charts -> ghcr.io ; ghcr.io -> ghcr.io
+;; A scheme (contains "://") splits to (scheme: "" host ...); the host is
+;; the 3rd dot-split part. A bare host splits to (host) — take the first.
+(define (rl:host r)
+  (let ((parts (string-split r "/")))
+    (if (string-contains? r "://")
+      (rl:nth parts 2)
+      (car parts))))
+
+;; First non-empty of the three candidates, in priority order.
+(define (rl:pick a b c)
+  (cond
+    ((not (equal? a "")) a)
+    ((not (equal? b "")) b)
+    (else c)))
+
+(define (rl:fail reason)
+  (log-error (string-append "registry-login: " reason))
+  (append-output "result=false")
+  (exit 1))
+
+;; helm keeps its OWN registry config (~/.config/helm/registry/config.json);
+;; docker/skopeo read ~/.docker/config.json. Pick the client whose store the
+;; caller's publish step will consult. helm is fetched via `nix shell` (the
+;; reusable installs Nix before this step).
+(define (rl:login client host user token)
+  (cond
+    ((equal? client "helm")
+     (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command"
+                 "helm" "registry" "login" host "--username" user "--password" token))
+    (else
+     (exec-check "docker" "login" host "--username" user "--password" token))))
+
+(define (main)
+  (let* ((registry (env-required "REGISTRY"))
+         (client   (env-get "CLIENT" "docker"))
+         (user     (env-required "USERNAME"))
+         (token    (rl:pick (env-get "BOT_PAT" "")
+                            (env-get "GHCR_TOKEN" "")
+                            (env-get "GITHUB_TOKEN" "")))
+         (host     (rl:host registry)))
+    (cond
+      ((equal? token "")
+       (rl:fail "no credential — BOT_PAT, GHCR_TOKEN, and GITHUB_TOKEN are all empty"))
+      ((equal? host "")
+       (rl:fail (string-append "could not extract a host from registry '" registry "'")))
+      (else
+       (log-info (string-append "==> " client " registry login " host))
+       (let ((r (rl:login client host user token)))
+         (cond
+           ((= r 0)
+            (append-output "result=true")
+            (exit 0))
+           (else
+            (rl:fail (string-append client " login failed (exit "
+                       (string-format "{}" r) ")")))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — registry-login helpers loaded; main skipped"))
+  (else (main)))
