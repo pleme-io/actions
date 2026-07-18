@@ -39,10 +39,20 @@ inputs:
     description: "Also push the moving <arch>-latest human pointer (never a deploy source)"
     required: false
     default: "false"
-  insecure:
-    description: "Cluster-internal Zot is http/self-signed — add skopeo --*-tls-verify=false"
+  dest-user:
+    description: "Zot push credential username (e.g. the akeyless-builder admin user)"
+    required: true
+  dest-pass:
+    description: "Zot push credential password"
+    required: true
+  ca-cert-url:
+    description: "Raw URL of the pinned CA/leaf cert (PEM) to trust for TLS -- default points at the committed cert for this cluster's in-pod Zot TLS"
     required: false
-    default: "true"
+    default: "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"
+  insecure:
+    description: "Fall back to plain HTTP if the CA cert fetch fails (real degradation, logged loudly -- never the default path when the cert is reachable)"
+    required: false
+    default: "false"
 
 outputs:
   tag:
@@ -70,11 +80,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Ensure skopeo
-      shell: bash
-      run: |
-        command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
-
     - name: Load stdlib + run.tlisp
       id: src
       shell: bash
@@ -92,6 +97,10 @@ runs:
       with:
         script: ${{ steps.src.outputs.script }}
       env:
+        # nix run needs the same feature gate nix build does on a self-hosted
+        # runner whose baked nix.conf predates flakes (matches substrate's
+        # image-push.yml doca step, the proven precedent this action follows).
+        NIX_CONFIG: "experimental-features = nix-command flakes"
         REGISTRY: ${{ inputs.registry }}
         REPO: ${{ inputs.repo }}
         IMAGE: ${{ inputs.image }}
@@ -101,4 +110,7 @@ runs:
         SHA: ${{ inputs.sha }}
         TARBALL: ${{ inputs.tarball }}
         MOVING_LATEST: ${{ inputs.moving-latest }}
+        DEST_USER: ${{ inputs.dest-user }}
+        DEST_PASS: ${{ inputs.dest-pass }}
+        CA_CERT_URL: ${{ inputs.ca-cert-url }}
         INSECURE: ${{ inputs.insecure }}
