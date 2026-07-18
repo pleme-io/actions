@@ -50,7 +50,17 @@
 ;;   DEST_USER     registry push credential username                (required)
 ;;   DEST_PASS     registry push credential password                (required)
 ;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once
+;;   CA_CERT_PATH  local path the fetched cert is written to (default
+;;                 /tmp/zot-push-ca.crt) — override if a single job runs
+;;                 this action more than once against DIFFERENT certs, to
+;;                 avoid one invocation's cache clobbering another's.
 ;;   INSECURE      fallback to plain HTTP if the cert fetch fails (default "false")
+;;   DOCA_REF      the doca (oci-push) flake ref `nix run` resolves
+;;                 (default github:pleme-io/substrate#oci-push — the
+;;                 latest published main). Pin to a tagged/commit ref for
+;;                 build-reproducibility, or point at a fork.
+;;   BACKEND       doca push backend: native (default, pure-Rust) | skopeo
+;;                 (escape hatch — see substrate's oci-push --backend docs)
 ;;
 ;; Outputs (append-output → GITHUB_OUTPUT):
 ;;   tag / ref / ref-<arch> / digest / pushed / reason
@@ -98,7 +108,10 @@
          (dest-pass (env-required "DEST_PASS"))
          (ca-cert-url (env-get "CA_CERT_URL"
            "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+         (ca-cert-target-path (env-get "CA_CERT_PATH" "/tmp/zot-push-ca.crt"))
          (allow-insecure-fallback (oci:flag-true? (env-get "INSECURE" "false")))
+         (doca-ref (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push"))
+         (backend (env-get "BACKEND" "native"))
          (base (zot:compose-base repo registry image svc)))
     (cond
       ((equal? base "")
@@ -110,7 +123,7 @@
               (dest-image (zot:split-image base))
               (tag (oci:autobump-tag arch run sha))
               (ref (oci:target-ref base tag))
-              (ca-cert-path (zot:fetch-ca-cert ca-cert-url "/tmp/zot-push-ca.crt"))
+              (ca-cert-path (zot:fetch-ca-cert ca-cert-url ca-cert-target-path))
               (tls-args
                 (cond
                   ((not (equal? ca-cert-path ""))
@@ -129,8 +142,8 @@
                       (list)))
                   (push-args
                     (append
-                      (list "nix" "run" "github:pleme-io/substrate#oci-push" "--"
-                            "push" "--backend" "native"
+                      (list "nix" "run" doca-ref "--"
+                            "push" "--backend" backend
                             "--registry" dest-registry
                             "--image" dest-image
                             "--tag" tag
@@ -152,7 +165,7 @@
                 ;; digest lookup — same doca binary, `inspect` subcommand.
                 (let* ((inspect-args
                          (append
-                           (list "nix" "run" "github:pleme-io/substrate#oci-push" "--"
+                           (list "nix" "run" doca-ref "--"
                                  "inspect" "--ref" ref
                                  "--user" dest-user "--pass" dest-pass)
                            tls-args))
