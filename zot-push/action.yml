@@ -53,6 +53,18 @@ inputs:
     description: "Fall back to plain HTTP if the CA cert fetch fails (real degradation, logged loudly -- never the default path when the cert is reachable)"
     required: false
     default: "false"
+  ca-cert-path:
+    description: "Local path the fetched CA cert is written to -- override if a single job invokes this action more than once against DIFFERENT certs"
+    required: false
+    default: "/tmp/zot-push-ca.crt"
+  doca-ref:
+    description: "The doca (oci-push) flake ref `nix run` resolves -- pin to a tagged/commit ref for build-reproducibility, or point at a fork"
+    required: false
+    default: "github:pleme-io/substrate#oci-push"
+  backend:
+    description: "doca push backend: native (default, pure-Rust, no external binary) | skopeo (escape hatch)"
+    required: false
+    default: "native"
 
 outputs:
   tag:
@@ -113,4 +125,7 @@ runs:
         DEST_USER: ${{ inputs.dest-user }}
         DEST_PASS: ${{ inputs.dest-pass }}
         CA_CERT_URL: ${{ inputs.ca-cert-url }}
+        CA_CERT_PATH: ${{ inputs.ca-cert-path }}
         INSECURE: ${{ inputs.insecure }}
+        DOCA_REF: ${{ inputs.doca-ref }}
+        BACKEND: ${{ inputs.backend }}
