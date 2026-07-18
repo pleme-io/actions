@@ -57,6 +57,10 @@ inputs:
     description: "Local path the fetched CA cert is written to -- override if a single job invokes this action more than once against DIFFERENT certs"
     required: false
     default: "/tmp/zot-push-ca.crt"
+  ca-cert-token:
+    description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (the default ca-cert-url points at the private pleme-io/akeyless-k8s; an unauthenticated fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
+    required: false
+    default: ""
   doca-ref:
     description: "The doca (oci-push) flake ref `nix run` resolves -- pin to a tagged/commit ref for build-reproducibility, or point at a fork"
     required: false
@@ -126,6 +130,7 @@ runs:
         DEST_PASS: ${{ inputs.dest-pass }}
         CA_CERT_URL: ${{ inputs.ca-cert-url }}
         CA_CERT_PATH: ${{ inputs.ca-cert-path }}
+        CA_CERT_TOKEN: ${{ inputs.ca-cert-token }}
         INSECURE: ${{ inputs.insecure }}
         DOCA_REF: ${{ inputs.doca-ref }}
         BACKEND: ${{ inputs.backend }}

@@ -34,6 +34,15 @@
   (assert (equal? (oci:moving-tag "amd64") "amd64-latest") "amd64 latest")
   (assert (equal? (oci:moving-tag "arm64") "arm64-latest") "arm64 latest"))
 
+(deftest "zot:ca-cert-curl-args -- unauthenticated by default, token adds Authorization header"
+  (assert (equal? (zot:ca-cert-curl-args "https://example.com/ca.crt" "/tmp/ca.crt" "")
+                  (list "curl" "-sL" "-f" "-o" "/tmp/ca.crt" "https://example.com/ca.crt"))
+          "empty token -> the original unauthenticated argv, unchanged")
+  (assert (equal? (zot:ca-cert-curl-args "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt" "/tmp/ca.crt" "ghp_abc123")
+                  (list "curl" "-sL" "-f" "-H" "Authorization: token ghp_abc123" "-o" "/tmp/ca.crt"
+                        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"))
+          "non-empty token -> Authorization header added (needed for the private akeyless-k8s repo)"))
+
 (deftest "zot:split-registry / zot:split-image recover doca's separate --registry/--image from a composed base"
   (assert (equal? (zot:split-registry "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
                   "zot.zot-system.svc.cluster.local:5000")
