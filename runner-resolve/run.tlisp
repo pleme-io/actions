@@ -1,0 +1,85 @@
+;; runner-resolve/run.tlisp — resolve the runs-on label for a job via a
+;; three-tier precedence: override > repo-committed config file > the
+;; caller's own default.
+;;
+;; GROUNDING: GitHub Actions' `runs-on:` can only reference
+;; github/needs/strategy/matrix/vars/inputs contexts — never a same-job
+;; step output. So this action MUST be consumed as its own job
+;; (`runs-on: ubuntu-latest`), with every other job in the same workflow
+;; depending on it via `needs.<job-id>.outputs.runner`. This action does
+;; NOT hardcode any repo-specific default (e.g. camelot) — the caller
+;; supplies its own `default` (typically a ternary already evaluated in
+;; the workflow_call `with:` block), matching the org's rule that a
+;; generic pleme-io primitive never bakes in a consumer's posture.
+;;
+;; Precedence (highest wins):
+;;   1. override      — the workflow_call's existing `runner:` input,
+;;                       still honored verbatim, still highest.
+;;   2. config-path    — an optional repo-committed YAML file
+;;                       (default .github/runner.yml, field `runner:`)
+;;                       so a repo can pin its own runner without
+;;                       touching workflow YAML at all — the scenario
+;;                       that motivated this action: a repo on GitHub's
+;;                       Free plan has no access to Organization-level
+;;                       `vars.*`, so a ternary reading `vars.SOME_RUNNER`
+;;                       in a reusable workflow silently resolves empty.
+;;   3. default        — the caller's own prescribed default.
+;;
+;; Uses _tlisp-stdlib helpers: append-output, yaml-read-field.
+;; Uses builtins directly: env-get, path-exists?, string-trim,
+;;   string-append, equal?, log-info.
+;;
+;; Inputs (env): DEFAULT OVERRIDE CONFIG_PATH
+;; Outputs (appended): runner provenance
+
+;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────────
+
+;; The resolved runner label given all three tiers as plain strings.
+;; A whitespace-only override/file value counts as empty (never wins).
+(define (rr:resolve-runner override file-runner default)
+  (cond
+    ((not (equal? (string-trim override) "")) (string-trim override))
+    ((not (equal? (string-trim file-runner) "")) (string-trim file-runner))
+    (else (string-trim default))))
+
+;; Which tier won, mirroring the same precedence rr:resolve-runner uses —
+;; kept as a SEPARATE pure function (not derived from the resolved value)
+;; so a test can assert the two never disagree.
+(define (rr:resolve-provenance override file-runner)
+  (cond
+    ((not (equal? (string-trim override) "")) "override")
+    ((not (equal? (string-trim file-runner) "")) "file")
+    (else "default")))
+
+;; ── File I/O — reads the optional repo-committed config. Honestly
+;; empty ("") when config-path is blank, the file is absent, or the
+;; file has no `runner:` field — never a guessed value. yaml-read-field
+;; (stdlib) already degrades to "" on any yq failure; the path-exists?
+;; guard here just avoids invoking yq at all for the common "no config
+;; file committed" case. ─────────────────────────────────────────────
+
+(define (rr:read-file-runner config-path)
+  (cond
+    ((equal? (string-trim config-path) "") "")
+    ((not (path-exists? config-path)) "")
+    (else (string-trim (yaml-read-field config-path ".runner")))))
+
+;; ── Main ─────────────────────────────────────────────────────────────
+
+(define (main)
+  (let* ((default     (env-get "DEFAULT" ""))
+         (override    (env-get "OVERRIDE" ""))
+         (config-path (env-get "CONFIG_PATH" ".github/runner.yml"))
+         (file-runner (rr:read-file-runner config-path))
+         (runner      (rr:resolve-runner override file-runner default))
+         (provenance  (rr:resolve-provenance override file-runner)))
+    (append-output (string-append "runner=" runner))
+    (append-output (string-append "provenance=" provenance))
+    (log-info (string-append "runner-resolve: runner=" runner
+                             " (provenance=" provenance
+                             ", config-path=" config-path ")"))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — runner-resolve helpers loaded; main skipped"))
+  (else (main)))

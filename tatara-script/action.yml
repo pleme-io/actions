@@ -350,6 +350,15 @@ outputs:
   cache-to:
     description: "Forwarded (key: cache-to) — bigorna a --cache-to token fronting the sui store ('' when no cache front)"
     value: ${{ steps.exec.outputs.cache-to }}
+  # runner-resolve — typed runs-on precedence resolver (override >
+  # repo-committed config file > caller default). Added per this file's
+  # own "add it here" convention.
+  runner:
+    description: "Forwarded (key: runner) — runner-resolve's resolved runs-on label"
+    value: ${{ steps.exec.outputs.runner }}
+  provenance:
+    description: "Forwarded (key: provenance) — runner-resolve's winning tier (override|file|default)"
+    value: ${{ steps.exec.outputs.provenance }}
 
 runs:
   using: composite

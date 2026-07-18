@@ -1,0 +1,51 @@
+name: 'pleme-io · runner-resolve'
+description: 'Resolve the runs-on label for a job via typed precedence: an explicit override > an optional repo-committed config file (.github/runner.yml) > the caller-supplied default. GitHub Actions runs-on: cannot read a same-job step output, so every workflow adopting this action MUST call it as its OWN job and have every other job in the same workflow depend on it via needs.<job-id>.outputs.runner. Fully generic — this action never hardcodes a repo-specific default (e.g. camelot); the caller always supplies its own default expression.'
+branding:
+  icon: 'cpu'
+  color: 'blue'
+
+inputs:
+  default:
+    description: "The runner label to use when neither override nor config-path resolve to a value. Required — this action never invents a default of its own; pass your own prescribed default (typically a ternary the caller already evaluates, e.g. a private-repo vs public-repo split) here."
+    required: true
+  override:
+    description: "An explicit runner label that wins over everything else. Typically forwarded verbatim from an existing workflow_call `runner:` input, unchanged. Leave empty (the default) to fall through to config-path, then default."
+    required: false
+    default: ""
+  config-path:
+    description: "Path to an optional repo-committed YAML file (a single top-level `runner:` field) that lets a repo pin its own runner without touching workflow YAML at all. Read only when override is empty; a missing file or missing field is treated as an honest miss and falls through to default."
+    required: false
+    default: ".github/runner.yml"
+
+outputs:
+  runner:
+    description: "The resolved runs-on label."
+    value: ${{ steps.resolve.outputs.runner }}
+  provenance:
+    description: "Which tier won: override | file | default. Observability only — mirrors the org's Provenance{tier,source} idiom as a plain string, not a typed value."
+    value: ${{ steps.resolve.outputs.provenance }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Resolve runner
+      id: resolve
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        DEFAULT: ${{ inputs.default }}
+        OVERRIDE: ${{ inputs.override }}
+        CONFIG_PATH: ${{ inputs.config-path }}
