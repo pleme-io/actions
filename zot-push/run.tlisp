@@ -9,25 +9,33 @@
 ;; akeyless images to the cluster-internal Zot
 ;; (zot.zot-system.svc.cluster.local:5000/akeyless-<svc>), NEVER
 ;; ghcr.io (routing a FedRAMP image through ghcr is the wrong-org trap).
-;; Both are `skopeo copy docker-archive: -> docker://`; the shared push
-;; algebra lives in _tlisp-stdlib (oci:*), so this is a thin typed
-;; wrapper, not a duplicate.
 ;;
-;; AUTOBUMP (org ★★ AUTO-RELEASE → "never :latest"): the exact tag is
-;; <arch>-r<run>-<sha> — sortable (r<run>), immutable, traceable. The
-;; multi-arch coordinate r<run>-<sha> is composed later by
-;; manifest-list-join over the per-arch digests this action reports.
+;; REWRITTEN 2026-07-18: no longer wraps `skopeo`. The prior version's
+;; "Ensure skopeo" step (`apt-get install -y skopeo`, action.yml) silently
+;; never worked on a stock `ghcr.io/actions/actions-runner:latest`
+;; container (no apt-get/sudo baked in) -- confirmed live, three real jobs
+;; (kfm/gateway/auth) failed at exactly this step with `exec-check: No
+;; such file or directory`. Replaced with `doca`
+;; (pleme-io/substrate's `oci-push`, `nix run github:pleme-io/substrate#
+;; oci-push`), the SAME native Rust OCI push already proven end-to-end for
+;; ghcr.io via substrate's own `image-push.yml` (`doca-selftest.yml`).
+;; `nix run` needs no pre-installed binary at all -- it's fetched +
+;; built on demand, the same way this action's own stdlib is fetched.
 ;;
-;; Tier: SHIPPABLE-NOW. The tag/base algebra is pure + unit-tested; the
-;; push wraps skopeo (baked into the runner). Auth is a PRE-CONDITION
-;; (docker/login to the Zot registry, or an insecure cluster-internal
-;; registry via INSECURE=true).
+;; TLS: the in-cluster Zot moved off plain HTTP to real in-pod TLS
+;; (self-signed, no cert-manager on this cluster) 2026-07-18 -- see
+;; pleme-io/akeyless-k8s clusters/camelot-eks/infrastructure/zot/
+;; release.yaml + the committed zot-ca.crt (public, safe to fetch over
+;; plain HTTPS from GitHub). `CA_CERT_URL` (default: that committed cert's
+;; raw GitHub URL) is fetched once and passed to doca's `--dest-ca-cert` --
+;; real encryption in transit AND real server-identity verification
+;; against a SPECIFIC known cert, never a blanket "accept any cert"
+;; escape hatch. `INSECURE=true` (the old default) is now the FALLBACK,
+;; used only if the cert fetch itself fails -- logged loudly, not silent.
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
 ;;   append-output, status-of, stdout-of, oci:autobump-tag,
-;;   oci:target-ref, oci:moving-tag, oci:flag-true?,
-;;   oci:skopeo-push-archive, oci:skopeo-copy-remote,
-;;   oci:skopeo-remote-digest.
+;;   oci:target-ref, oci:moving-tag, oci:flag-true?, oci:compose-base.
 ;;
 ;; Inputs (env):
 ;;   REGISTRY      cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
@@ -39,17 +47,37 @@
 ;;   SHA           github.sha — the trace suffix                  (required)
 ;;   TARBALL       docker-archive path (default ./result)
 ;;   MOVING_LATEST also push <arch>-latest human pointer (default "false")
-;;   INSECURE      cluster-internal Zot is http/self-signed (default "true")
+;;   DEST_USER     registry push credential username                (required)
+;;   DEST_PASS     registry push credential password                (required)
+;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once
+;;   INSECURE      fallback to plain HTTP if the cert fetch fails (default "false")
 ;;
 ;; Outputs (append-output → GITHUB_OUTPUT):
 ;;   tag / ref / ref-<arch> / digest / pushed / reason
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
-;; Compose the target base with akeyless repo-shape (akeyless-<svc>).
-;; Thin akeyless-specialized delegator over the shared oci:compose-base
-;; (repo-prefix = "akeyless-"); no duplicated precedence logic.
+;; Compose the target base with akeyless repo-shape (repo-prefix = "akeyless-").
 (define (zot:compose-base repo registry image svc)
   (oci:compose-base repo registry image "akeyless-" svc))
+
+;; Split a composed "<registry>/<image...>" base back into the two parts
+;; doca's CLI wants separately -- every branch of oci:compose-base
+;; produces a string of exactly this shape (host[:port]/path...), so
+;; splitting on the FIRST "/" is safe regardless of which precedence
+;; branch produced it (an explicit REPO override included).
+(define (zot:split-registry base)
+  (car (string-split base "/")))
+
+(define (zot:split-image base)
+  (string-join "/" (cdr (string-split base "/"))))
+
+;; Fetch the pinned CA cert to a local path via curl (universally
+;; available on these runners, unlike skopeo -- this action's own loader
+;; step already relies on curl to fetch stdlib.tlisp). Returns the local
+;; path on success, "" on failure (an honest miss, not a silent lie).
+(define (zot:fetch-ca-cert url path)
+  (let ((r (exec-capture "curl" "-sL" "-f" "-o" path url)))
+    (if (= (status-of r) 0) path "")))
 
 ;; ── main ──────────────────────────────────────────────────────────
 (define (zot:emit-fail reason)
@@ -66,7 +94,11 @@
          (sha (env-required "SHA"))
          (tarball (env-get "TARBALL" "./result"))
          (moving (oci:flag-true? (env-get "MOVING_LATEST" "false")))
-         (insecure (oci:flag-true? (env-get "INSECURE" "true")))
+         (dest-user (env-required "DEST_USER"))
+         (dest-pass (env-required "DEST_PASS"))
+         (ca-cert-url (env-get "CA_CERT_URL"
+           "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+         (allow-insecure-fallback (oci:flag-true? (env-get "INSECURE" "false")))
          (base (zot:compose-base repo registry image svc)))
     (cond
       ((equal? base "")
@@ -74,38 +106,83 @@
        (zot:emit-fail "need-target")
        1)
       (else
-       (let* ((tag (oci:autobump-tag arch run sha))
-              (ref (oci:target-ref base tag)))
-         (log-info (string-append "==> zot-push " tarball " -> docker://" ref
-                    (if insecure " (insecure)" "")))
-         (let ((s (oci:skopeo-push-archive tarball ref insecure)))
-           (cond
-             ((not (= s 0))
-              (log-error (string-append "zot-push: skopeo push failed (exit "
-                          (string-format "{}" s) ") for " ref))
-              (zot:emit-fail "push-fail")
-              s)
-             (else
-              ;; the pushed repository digest = the EXACT deploy coordinate.
-              (let ((digest (oci:skopeo-remote-digest ref insecure)))
-                (when (equal? digest "")
-                  (log-info "::warning::zot-push: could not resolve pushed digest (skopeo inspect failed) — emitting digest= (honest empty), push itself succeeded"))
-                (append-output (string-append "tag=" tag))
-                (append-output (string-append "ref=" ref))
-                (append-output (string-append "ref-" arch "=" ref))
-                (append-output (string-append "digest=" digest))
-                (append-output "pushed=true")
-                (append-output "reason=pushed")
-                ;; moving human pointer — NEVER a deploy source.
-                (when moving
-                  (let ((ms (oci:skopeo-copy-remote ref
-                              (oci:target-ref base (oci:moving-tag arch)) insecure)))
-                    (when (not (= ms 0))
-                      (log-info (string-append "::warning::zot-push: moving "
-                                 (oci:moving-tag arch) " pointer push failed (non-fatal)")))))
-                (log-info (string-append "pushed exact " ref
-                           (if (equal? digest "") "" (string-append " @ " digest))))
-                0)))))))))
+       (let* ((dest-registry (zot:split-registry base))
+              (dest-image (zot:split-image base))
+              (tag (oci:autobump-tag arch run sha))
+              (ref (oci:target-ref base tag))
+              (ca-cert-path (zot:fetch-ca-cert ca-cert-url "/tmp/zot-push-ca.crt"))
+              (tls-args
+                (cond
+                  ((not (equal? ca-cert-path ""))
+                   (list "--dest-ca-cert" ca-cert-path))
+                  (allow-insecure-fallback
+                   (log-info "::warning::zot-push: CA cert fetch failed, falling back to --insecure (plain HTTP) -- this is a real, tracked degradation, not silent")
+                   (list "--insecure"))
+                  (else
+                   (log-error "zot-push: could not fetch the pinned CA cert and INSECURE fallback is not enabled -- refusing to push over an unverified or plaintext connection")
+                   (list)))))
+         (if (and (equal? ca-cert-path "") (not allow-insecure-fallback))
+           (begin (zot:emit-fail "no-ca-cert") 1)
+           (let* ((tags-args
+                    (if moving
+                      (list "--additional-tags" (oci:moving-tag arch))
+                      (list)))
+                  (push-args
+                    (append
+                      (list "nix" "run" "github:pleme-io/substrate#oci-push" "--"
+                            "push" "--backend" "native"
+                            "--registry" dest-registry
+                            "--image" dest-image
+                            "--tag" tag
+                            "--tarball" tarball
+                            "--dest-user" dest-user
+                            "--dest-pass" dest-pass)
+                      tls-args
+                      tags-args))
+                  (push-result (apply exec-capture push-args)))
+             (log-info (string-append "==> zot-push (doca) " tarball " -> docker://" ref))
+             (cond
+               ((not (= (status-of push-result) 0))
+                (log-error (string-append "zot-push: doca push failed (exit "
+                            (string-format "{}" (status-of push-result)) ") for " ref))
+                (log-error (stderr-of push-result))
+                (zot:emit-fail "push-fail")
+                (status-of push-result))
+               (else
+                ;; digest lookup — same doca binary, `inspect` subcommand.
+                (let* ((inspect-args
+                         (append
+                           (list "nix" "run" "github:pleme-io/substrate#oci-push" "--"
+                                 "inspect" "--ref" ref
+                                 "--user" dest-user "--pass" dest-pass)
+                           tls-args))
+                       (inspect-result (apply exec-capture inspect-args))
+                       (digest
+                         (if (= (status-of inspect-result) 0)
+                           ;; oci-push's inspect subcommand prints "digest: <sha256:...>"
+                           ;; to STDERR (eprintln!), never stdout (which carries the
+                           ;; full manifest JSON) -- stderr-of, not stdout-of. Split on
+                           ;; "digest: " THEN on newline, taking only the first line
+                           ;; after it -- robust against any trailing stderr content
+                           ;; (verified live: a naive split-only-on-"digest: " captured
+                           ;; everything after it, including a following line, in a
+                           ;; local interpreter test before this fix landed).
+                           (let ((after (string-split (stderr-of inspect-result) "digest: ")))
+                             (if (> (length after) 1)
+                               (string-trim (car (string-split (car (cdr after)) "\n")))
+                               ""))
+                           "")))
+                  (when (equal? digest "")
+                    (log-info "::warning::zot-push: could not resolve pushed digest (doca inspect failed) — emitting digest= (honest empty), push itself succeeded"))
+                  (append-output (string-append "tag=" tag))
+                  (append-output (string-append "ref=" ref))
+                  (append-output (string-append "ref-" arch "=" ref))
+                  (append-output (string-append "digest=" digest))
+                  (append-output "pushed=true")
+                  (append-output "reason=pushed")
+                  (log-info (string-append "pushed exact " ref
+                             (if (equal? digest "") "" (string-append " @ " digest))))
+                  0))))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")

@@ -33,3 +33,13 @@
 (deftest "oci:moving-tag is the human <arch>-latest pointer (never a deploy source)"
   (assert (equal? (oci:moving-tag "amd64") "amd64-latest") "amd64 latest")
   (assert (equal? (oci:moving-tag "arm64") "arm64-latest") "arm64 latest"))
+
+(deftest "zot:split-registry / zot:split-image recover doca's separate --registry/--image from a composed base"
+  (assert (equal? (zot:split-registry "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
+                  "zot.zot-system.svc.cluster.local:5000")
+          "registry is everything before the first /")
+  (assert (equal? (zot:split-image "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
+                  "akeyless-auth")
+          "image is everything after the first /")
+  (assert (equal? (zot:split-image "zot.internal/x/y") "x/y")
+          "a multi-segment image path (an explicit REPO override) survives the split"))
