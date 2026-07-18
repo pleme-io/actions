@@ -54,6 +54,13 @@
 ;;                 /tmp/zot-push-ca.crt) — override if a single job runs
 ;;                 this action more than once against DIFFERENT certs, to
 ;;                 avoid one invocation's cache clobbering another's.
+;;   CA_CERT_TOKEN a GitHub token with read access to CA_CERT_URL's repo --
+;;                 REQUIRED when that repo is private (the default
+;;                 CA_CERT_URL points at pleme-io/akeyless-k8s, which is
+;;                 private; an unauthenticated fetch 404s -- confirmed
+;;                 live 2026-07-18, the root cause of a real akeyless-
+;;                 nix-images build failure). Empty (default) keeps the
+;;                 original unauthenticated path for a public cert URL.
 ;;   INSECURE      fallback to plain HTTP if the cert fetch fails (default "false")
 ;;   DOCA_REF      the doca (oci-push) flake ref `nix run` resolves
 ;;                 (default github:pleme-io/substrate#oci-push — the
@@ -81,12 +88,28 @@
 (define (zot:split-image base)
   (string-join "/" (cdr (string-split base "/"))))
 
+;; Build the curl argv for fetching the pinned CA cert -- pure, testable
+;; separately from the exec-capture side effect. When the cert lives in a
+;; PRIVATE repo (e.g. pleme-io/akeyless-k8s, the default CA_CERT_URL's
+;; home), an unauthenticated raw.githubusercontent.com request 404s --
+;; confirmed live 2026-07-18, root cause of a real akeyless-nix-images
+;; build failure ("could not fetch the pinned CA cert"). A bare
+;; `Authorization: token <PAT>` header IS honored by
+;; raw.githubusercontent.com for private repos (verified live), so an
+;; empty token keeps the original unauthenticated path (public repo /
+;; public cert) and a non-empty one adds the header -- no change to the
+;; existing CA_CERT_URL param shape.
+(define (zot:ca-cert-curl-args url path token)
+  (if (equal? token "")
+    (list "curl" "-sL" "-f" "-o" path url)
+    (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
+
 ;; Fetch the pinned CA cert to a local path via curl (universally
 ;; available on these runners, unlike skopeo -- this action's own loader
 ;; step already relies on curl to fetch stdlib.tlisp). Returns the local
 ;; path on success, "" on failure (an honest miss, not a silent lie).
-(define (zot:fetch-ca-cert url path)
-  (let ((r (exec-capture "curl" "-sL" "-f" "-o" path url)))
+(define (zot:fetch-ca-cert url path token)
+  (let ((r (apply exec-capture (zot:ca-cert-curl-args url path token))))
     (if (= (status-of r) 0) path "")))
 
 ;; ── main ──────────────────────────────────────────────────────────
@@ -109,6 +132,7 @@
          (ca-cert-url (env-get "CA_CERT_URL"
            "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
          (ca-cert-target-path (env-get "CA_CERT_PATH" "/tmp/zot-push-ca.crt"))
+         (ca-cert-token (env-get "CA_CERT_TOKEN" ""))
          (allow-insecure-fallback (oci:flag-true? (env-get "INSECURE" "false")))
          (doca-ref (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push"))
          (backend (env-get "BACKEND" "native"))
@@ -123,7 +147,7 @@
               (dest-image (zot:split-image base))
               (tag (oci:autobump-tag arch run sha))
               (ref (oci:target-ref base tag))
-              (ca-cert-path (zot:fetch-ca-cert ca-cert-url ca-cert-target-path))
+              (ca-cert-path (zot:fetch-ca-cert ca-cert-url ca-cert-target-path ca-cert-token))
               (tls-args
                 (cond
                   ((not (equal? ca-cert-path ""))
