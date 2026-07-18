@@ -1,0 +1,68 @@
+;; runner-resolve/run.test.tlisp — (deftest …) units for the pure
+;; precedence logic AND the real config-file read path, run by the
+;; tlisp-test action via `tatara-script --test`. The harness prepends
+;; the stdlib + the sibling run.tlisp (TLISP_TEST=1 gates main), then
+;; this file, so rr:* is driven directly — no runner env, no exit.
+
+(deftest "rr:resolve-runner — override wins over everything"
+  (assert (equal? (rr:resolve-runner "gpu-runner" "file-runner" "ubuntu-latest") "gpu-runner")
+          "override beats file + default")
+  (assert (equal? (rr:resolve-runner "  gpu-runner  " "file-runner" "ubuntu-latest") "gpu-runner")
+          "override is trimmed"))
+
+(deftest "rr:resolve-runner — file wins when override is empty"
+  (assert (equal? (rr:resolve-runner "" "camelot-builder-pleme-eks" "ubuntu-latest")
+                  "camelot-builder-pleme-eks")
+          "file beats default when override is empty")
+  (assert (equal? (rr:resolve-runner "   " "  camelot-builder-pleme-eks  " "ubuntu-latest")
+                  "camelot-builder-pleme-eks")
+          "whitespace-only override treated as empty; file value trimmed"))
+
+(deftest "rr:resolve-runner — default wins when nothing else is set"
+  (assert (equal? (rr:resolve-runner "" "" "ubuntu-latest") "ubuntu-latest")
+          "both empty -> default")
+  (assert (equal? (rr:resolve-runner "" "  " "ubuntu-latest") "ubuntu-latest")
+          "whitespace-only file value -> default"))
+
+(deftest "rr:resolve-provenance — matches the same precedence as rr:resolve-runner"
+  (assert (equal? (rr:resolve-provenance "gpu-runner" "file-runner") "override") "override tier")
+  (assert (equal? (rr:resolve-provenance "" "file-runner") "file") "file tier")
+  (assert (equal? (rr:resolve-provenance "" "") "default") "default tier")
+  (assert (equal? (rr:resolve-provenance "  " "  ") "default") "whitespace-only counts as empty"))
+
+;; The scenario that MOTIVATED this action: a repo on GitHub's Free plan
+;; has no access to Organization-level `vars.*`, so a caller's ternary
+;; reading e.g. `vars.CAMELOT_RUNNER` resolves to an empty string for
+;; `override`. A repo-committed .github/runner.yml still resolves the
+;; intended runner — with NO vars.* dependency anywhere in this path.
+(deftest "the motivating scenario — missing org vars resolves via config-path alone"
+  (let ((override "")                                 ;; unset vars.* forwards as ""
+        (file-runner "camelot-builder-pleme-eks")      ;; read from .github/runner.yml
+        (default "ubuntu-latest"))
+    (assert (equal? (rr:resolve-runner override file-runner default) "camelot-builder-pleme-eks")
+            "resolves the committed runner with zero vars.* involved")
+    (assert (equal? (rr:resolve-provenance override file-runner) "file")
+            "provenance correctly attributes the win to the config file, not a var")))
+
+;; ── Real file-IO path — rr:read-file-runner against actual fixture
+;; files, exercising the genuine path-exists? + yaml-read-field (real
+;; yq subprocess) call, not a mock. Distinct fixture filenames avoid
+;; any ordering dependency between test forms.
+
+(deftest "rr:read-file-runner — reads a real committed config file"
+  (write-file "/tmp/runner-resolve-fixture.yml" "runner: camelot-builder-pleme-eks\n")
+  (assert (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture.yml")
+                  "camelot-builder-pleme-eks")
+          "reads the runner: field from a real YAML file via real yq"))
+
+(deftest "rr:read-file-runner — honestly empty when the file is absent"
+  (assert (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture-absent.yml") "")
+          "absent file -> empty, never a guessed value"))
+
+(deftest "rr:read-file-runner — honestly empty when config-path itself is empty"
+  (assert (equal? (rr:read-file-runner "") "") "empty config-path -> empty, no yq invocation"))
+
+(deftest "rr:read-file-runner — honestly empty when the file has no runner: field"
+  (write-file "/tmp/runner-resolve-fixture-no-field.yml" "other-field: something\n")
+  (assert (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture-no-field.yml") "")
+          "file present but no runner: field -> empty, never a stale/guessed value"))
