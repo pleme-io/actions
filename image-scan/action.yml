@@ -62,3 +62,31 @@ runs:
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
         IGNORE_FILE: ${{ inputs.ignore-file }}
+
+    # Artifact names may only contain alphanumerics, `_`, `-`, `.` — strip
+    # everything else from image-ref (which carries `:`, `/`) so the upload
+    # step below always has a legal, still-human-readable name.
+    - id: sanitize
+      if: always()
+      shell: bash
+      run: |
+        raw="${{ inputs.image-ref }}"
+        clean=$(echo "$raw" | tr -c 'a-zA-Z0-9._-' '-')
+        echo "name=$clean" >> "$GITHUB_OUTPUT"
+
+    # Preserves the full trivy JSON regardless of the gate's verdict — the
+    # scan step above only surfaces a severity + a coarse count; triaging
+    # an actual finding (which package, which CVE) needs the real report.
+    # if: always() so a hard-failed gate (the exact case someone needs to
+    # triage) still uploads. Unique per matrix cell via image-ref (sanitized
+    # for artifact-name legality) + run attempt, since this action runs
+    # inside a matrix across services/archs and artifact names must be
+    # unique within one workflow run.
+    - name: Upload trivy report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: trivy-report-${{ steps.sanitize.outputs.name }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/image-scan-trivy-output.json
+        retention-days: 14
+        if-no-files-found: ignore
