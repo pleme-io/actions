@@ -1,5 +1,5 @@
 name: 'pleme-io · zot-pull-scan'
-description: 'The zot faucet gate: pull an image from a private zot registry, scan the PULLED bytes with Trivy, and admit it into the trusted zone ONLY when the scan clears the fail-on-severity gate. Nothing enters the trusted zone unscanned. Composes skopeo (pull) + Trivy (the image-scan surface).'
+description: 'The zot faucet gate: pull an image from a private zot registry, then gate admission through image-scan -- the fleet''s ONE canonical Trivy severity implementation -- scanning the PULLED bytes, never a re-resolved tag. Nothing enters the trusted zone unscanned, and nothing enters on a scan failure, a parse failure, or a misconfigured override either.'
 branding:
   icon: 'shield'
   color: 'red'
@@ -9,62 +9,130 @@ inputs:
     description: "zot image ref to pull + scan (e.g. zot.internal/pleme-io/svc:tag)"
     required: true
   fail-on-severity:
-    description: "Lowest severity that REJECTS admission: LOW | MEDIUM | HIGH | CRITICAL | none"
+    description: "Lowest severity that REJECTS admission: UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL | none. Default UNKNOWN (zero-tolerance -- every severity gates): this is the trusted-zone admission gate ('nothing enters unscanned'), matching the fleet's proven convention for faucet / pre-publish gates (substrate's nix-image-auto-release.yml scan-before-push default, pangea-operator's own release.yml gate). Forwarded verbatim to image-scan, which forces this to the strictest recognized value if it's ever malformed -- never silently permissive."
     required: false
-    default: "HIGH"
+    default: "UNKNOWN"
   ignore-unfixed:
-    description: "Skip vulns without an available fix"
+    description: "Skip vulns without an available fix. Forwarded verbatim to image-scan."
     required: false
     default: "false"
+  ignore-file:
+    description: "Path to a .trivyignore-format file of named, tracked exceptions (never a blanket severity loosening -- each entry should carry its own justification). Forwarded verbatim to image-scan. Empty = none."
+    required: false
+    default: ""
   dest:
     description: "Local docker-archive path for the pulled bytes"
     required: false
     default: "zot-pull.tar"
 
 outputs:
+  # Each output falls back from steps.verdict -> steps.pull: on a
+  # pull-failed terminal, verdict.tlisp never runs (pull.tlisp hard-exits
+  # without continue-on-error, so GitHub Actions skips every later step by
+  # default) and pull.tlisp emits the full contract itself instead; on the
+  # normal admitted/rejected path, verdict.tlisp is the one that emits
+  # these keys and pull.tlisp never does. Exactly one side is ever
+  # non-empty for a given run -- this is not an ambiguous merge.
   admitted:
     description: "'true' iff pulled AND the scan cleared the gate"
-    value: ${{ steps.run.outputs.admitted }}
+    value: ${{ steps.verdict.outputs.admitted || steps.pull.outputs.admitted }}
   severity:
-    description: "Highest severity found (CRITICAL|HIGH|MEDIUM|LOW|none)"
-    value: ${{ steps.run.outputs.severity }}
+    description: "Highest severity found (CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN|none), as classified by image-scan"
+    value: ${{ steps.verdict.outputs.severity || steps.pull.outputs.severity }}
   vuln-count:
-    description: "Coarse count of Severity occurrences"
-    value: ${{ steps.run.outputs.vuln-count }}
+    description: "Coarse count of Severity occurrences, as reported by image-scan"
+    value: ${{ steps.verdict.outputs.vuln-count || steps.pull.outputs.vuln-count }}
   local-archive:
     description: "Path of the pulled docker-archive"
-    value: ${{ steps.run.outputs.local-archive }}
+    value: ${{ steps.verdict.outputs.local-archive || steps.pull.outputs.local-archive }}
   result:
     description: "'admitted' | 'rejected' | 'pull-failed'"
-    value: ${{ steps.run.outputs.result }}
+    value: ${{ steps.verdict.outputs.result || steps.pull.outputs.result }}
 
 runs:
   using: composite
   steps:
-    - name: Ensure trivy + skopeo
+    # image-scan (stage 2, below) installs its own trivy -- this action no
+    # longer needs to, now that it delegates scanning to it instead of
+    # duplicating the scan+gate logic.
+    - name: Ensure skopeo
       shell: bash
-      run: |
-        command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
-        command -v trivy  >/dev/null 2>&1 || curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+      run: command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
 
-    - name: Load stdlib + run.tlisp
-      id: src
+    # ── Stage 1: pull the image into a local docker-archive. Hard-fails
+    # (no continue-on-error) on a pull failure -- that's terminal, so the
+    # scan + verdict stages below never run, and pull.tlisp itself emits
+    # this action's full output contract before exiting. See pull.tlisp.
+    - name: Load stdlib + pull.tlisp
+      id: pull-src
       shell: bash
       run: |
         {
           echo 'script<<TLISP_EOF'
           curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
           echo
-          cat ${{ github.action_path }}/run.tlisp
+          cat ${{ github.action_path }}/pull.tlisp
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
 
-    - id: run
+    - id: pull
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script: ${{ steps.pull-src.outputs.script }}
       env:
         REF: ${{ inputs.ref }}
-        FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
-        IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
+        DEST: ${{ inputs.dest }}
+
+    # ── Stage 2: scan the PULLED bytes via image-scan -- the fleet's one
+    # canonical severity classification + fail-on-severity gate (real
+    # jq-parsed against trivy's actual JSON shape; hard-fails on a broken
+    # or unreachable scan rather than defaulting to "clean"; forces the
+    # strictest threshold on a malformed fail-on-severity value). This
+    # action never re-implements any of that -- see verdict.tlisp's header
+    # for the history of why it used to (a stale, never-matching substring
+    # classifier) and why that was wrong.
+    #
+    # continue-on-error: true is deliberate -- see verdict.tlisp's header
+    # for exactly why (so a REJECTED image still lets this action emit its
+    # typed admitted=false/result=rejected contract, and so the verdict
+    # stage below is the one true arbiter of this action's own exit code,
+    # not an implicit propagation this composite's own machinery might get
+    # subtly wrong on a future edit).
+    - name: Scan pulled archive (delegates to image-scan's canonical Trivy gate)
+      id: scan
+      continue-on-error: true
+      uses: pleme-io/actions/image-scan@v1
+      with:
+        image-ref: ${{ inputs.ref }}
+        local-archive: ${{ inputs.dest }}
+        fail-on-severity: ${{ inputs.fail-on-severity }}
+        ignore-unfixed: ${{ inputs.ignore-unfixed }}
+        ignore-file: ${{ inputs.ignore-file }}
+
+    # ── Stage 3: the verdict arbiter. Translates steps.scan.outcome into
+    # this action's typed admitted/result vocabulary AND re-asserts the
+    # pass/fail decision as ITS OWN exit code -- see verdict.tlisp's header
+    # for why this explicit re-derivation exists instead of trusting
+    # continue-on-error's interaction with the rest of this composite to
+    # propagate correctly on its own.
+    - name: Load stdlib + verdict.tlisp
+      id: verdict-src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/verdict.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: verdict
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.verdict-src.outputs.script }}
+      env:
+        SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        SCAN_SEVERITY: ${{ steps.scan.outputs.severity }}
+        SCAN_VULN_COUNT: ${{ steps.scan.outputs.vuln-count }}
         DEST: ${{ inputs.dest }}

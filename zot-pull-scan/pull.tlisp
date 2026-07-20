@@ -1,0 +1,58 @@
+;; zot-pull-scan/pull.tlisp — stage 1 of the zot faucet gate: pull an image
+;; from a private zot registry into a local docker-archive so stage 2 (a
+;; nested `image-scan` step, see action.yml) scans exactly the bytes we
+;; pulled, never a re-resolved tag.
+;;
+;; This is the ONLY stage in this action that owns registry I/O. Scan +
+;; gate logic all live in image-scan, the fleet's ONE canonical
+;; implementation of severity classification + fail-on-severity threshold
+;; gating (see verdict.tlisp's header for why this action no longer
+;; duplicates that logic — it used to, with a stale/buggy copy).
+;;
+;; Inputs (env): REF, DEST
+;; Outputs: pulled ("true"|"false")
+;; Exit: 0 on a successful pull; 1 (hard fail) on a pull failure — a faucet
+;; that can't even see the bytes it's supposed to gate must never let
+;; anything through, so this action's later steps are gated on this one
+;; succeeding first (action.yml's default step ordering: a non-continue-on-
+;; error failure here skips scan + verdict entirely).
+
+(define (pull-image ref dest)
+  ;; skopeo copy docker://<ref> -> docker-archive:<dest>. Auth is a
+  ;; pre-condition (docker/skopeo login to the zot registry, done by the
+  ;; consumer workflow before this action runs).
+  (status-of (exec-capture "skopeo" "--insecure-policy" "copy"
+                           (string-append "docker://" ref)
+                           (string-append "docker-archive:" dest))))
+
+(define (main)
+  (let* ((ref (env-required "REF"))
+         (dest (env-get "DEST" "zot-pull.tar")))
+    (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))
+    (cond
+      ((= (pull-image ref dest) 0)
+       (append-output "pulled=true")
+       0)
+      (else
+       (log-error (string-append "zot-pull-scan: skopeo pull failed for " ref))
+       ;; A pull failure is terminal -- the scan + verdict steps never run
+       ;; (this step hard-exits without continue-on-error, so action.yml's
+       ;; later steps are skipped by GitHub Actions' own default behavior).
+       ;; So THIS step must emit the action's full public output contract
+       ;; itself, exactly as it did before this file existed as a separate
+       ;; stage -- a consumer reading steps.<id>.outputs.result must never
+       ;; see an empty string just because the failure happened at pull
+       ;; time instead of scan time.
+       (append-output "pulled=false")
+       (append-output (string-append "local-archive=" dest))
+       (append-output "admitted=false")
+       (append-output "severity=none")
+       (append-output "vuln-count=0")
+       (append-output "result=pull-failed")
+       1))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — zot-pull-scan pull.tlisp helpers loaded; main skipped"))
+  (else
+   (exit (main))))

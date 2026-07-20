@@ -1,0 +1,42 @@
+;; image-scan/run.test.tlisp — (deftest …) smoke for the canonical image
+;; CVE gate's pure decision logic: severity ranking, fail-on-severity
+;; validation (malformed/absent input never resolves to a permissive
+;; threshold), and the threshold-gate decision itself. Run via
+;; tatara-script --test by the tlisp-test action (auto-discovered
+;; fleet-wide against every <base>.tlisp / <base>.test.tlisp pair, see
+;; ci.yml's tlisp-tests job).
+
+(deftest "severity-rank orders the trivy severity ladder, UNKNOWN a real rank above no-finding"
+  (assert (> (severity-rank "CRITICAL") (severity-rank "HIGH")) "CRITICAL > HIGH")
+  (assert (> (severity-rank "HIGH") (severity-rank "MEDIUM")) "HIGH > MEDIUM")
+  (assert (> (severity-rank "MEDIUM") (severity-rank "LOW")) "MEDIUM > LOW")
+  (assert (> (severity-rank "LOW") (severity-rank "UNKNOWN")) "LOW > UNKNOWN")
+  (assert (> (severity-rank "UNKNOWN") (severity-rank "none")) "UNKNOWN > none — a real, distinct rank above no-finding")
+  (assert (= (severity-rank "none") 0) "none == 0")
+  (assert (= (severity-rank "garbage") 0) "an unrecognized finding-severity string == 0"))
+
+(deftest "known-fail-on? recognizes exactly the six valid threshold tokens, case-sensitively"
+  (assert (known-fail-on? "CRITICAL") "CRITICAL recognized")
+  (assert (known-fail-on? "HIGH") "HIGH recognized")
+  (assert (known-fail-on? "MEDIUM") "MEDIUM recognized")
+  (assert (known-fail-on? "LOW") "LOW recognized")
+  (assert (known-fail-on? "UNKNOWN") "UNKNOWN recognized")
+  (assert (known-fail-on? "none") "the explicit opt-out token 'none' recognized")
+  (assert (not (known-fail-on? "")) "empty string not recognized")
+  (assert (not (known-fail-on? "high")) "lowercase not recognized — matches trivy's own casing exactly")
+  (assert (not (known-fail-on? "bogus")) "a typo is not recognized"))
+
+(deftest "resolve-fail-on never falls back to a permissive default on malformed input"
+  (assert (equal? (resolve-fail-on "HIGH") "HIGH") "a recognized value passes through unchanged")
+  (assert (equal? (resolve-fail-on "none") "none") "the explicit opt-out passes through unchanged")
+  (assert (equal? (resolve-fail-on "") "UNKNOWN") "empty input resolves to the strictest threshold, not HIGH, not none")
+  (assert (equal? (resolve-fail-on "bogus") "UNKNOWN") "a typo'd threshold resolves to the strictest threshold, never silently permissive")
+  (assert (equal? (resolve-fail-on "critical") "UNKNOWN") "wrong-case input resolves to the strictest threshold, never silently accepted as-is"))
+
+(deftest "gate-rejects? gates at/above the threshold; fail-on=none never rejects"
+  (assert (gate-rejects? "CRITICAL" "HIGH") "a CVE'd image (CRITICAL) is rejected at a HIGH gate")
+  (assert (gate-rejects? "HIGH" "HIGH") "HIGH is rejected at a HIGH gate (>=, not >)")
+  (assert (not (gate-rejects? "MEDIUM" "HIGH")) "MEDIUM is admitted (passes) at a HIGH gate")
+  (assert (not (gate-rejects? "none" "HIGH")) "a clean image passes")
+  (assert (gate-rejects? "UNKNOWN" "UNKNOWN") "UNKNOWN is rejected at the zero-tolerance gate")
+  (assert (not (gate-rejects? "CRITICAL" "none")) "fail-on=none never rejects, even a CRITICAL image"))
