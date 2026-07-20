@@ -1,0 +1,74 @@
+;; zot-pull-scan/verdict.tlisp — stage 3 of the zot faucet gate: translate
+;; the nested `image-scan` step's outcome into this action's typed
+;; admitted/result contract, and re-assert the pass/fail decision as this
+;; action's OWN exit code.
+;;
+;; WHY a separate, explicit verdict stage (not just letting image-scan's own
+;; exit code propagate through): the scan step in action.yml runs with
+;; `continue-on-error: true` so that a REJECTED image still lets this action
+;; emit its typed admitted=false / result=rejected / severity / vuln-count
+;; outputs — a composite-action step that hard-fails WITHOUT
+;; continue-on-error skips every later step by default, so there would be no
+;; chance to emit anything. But continue-on-error also absorbs the scan
+;; step's own failure from the composite's overall status — so something
+;; later must explicitly re-derive the real verdict and re-assert it as a
+;; real exit code. This file is that something, and it is the LAST step in
+;; the action, so its exit code IS what a consumer workflow sees as this
+;; action's own pass/fail. This is deliberately NOT implicit: a scan that
+;; "ran but didn't gate" — the exact illegal state a forgotten/misused
+;; continue-on-error produces — is closed by this file always re-deriving
+;; its own exit code from the scan's real outcome, never trusting that the
+;; outer composite-action machinery propagated it correctly on its own.
+;;
+;; image-scan is the ONE canonical implementation of severity classification
+;; + fail-on-severity gating (jq-parsed against trivy's real JSON shape,
+;; hard-fails on a broken/unreachable scan rather than defaulting to
+;; "clean" — see image-scan/run.tlisp's own header). This file never
+;; re-implements any of that (a prior version of this action did, with a
+;; stale substring-match severity classifier that never actually matched
+;; trivy's real JSON output — see the commit that introduced this file for
+;; the full history). It only maps a GitHub Actions step "outcome"
+;; (success|failure|cancelled|skipped) to the admit/reject vocabulary this
+;; action's own contract promises its callers.
+;;
+;; Inputs (env): SCAN_OUTCOME, SCAN_SEVERITY, SCAN_VULN_COUNT, DEST
+;; Outputs: admitted, severity, vuln-count, local-archive, result
+;; Exit: 0 iff SCAN_OUTCOME == "success" (admitted). Every other outcome —
+;; rejected/failure/cancelled/skipped/anything unrecognized — fails closed;
+;; an outcome this code doesn't explicitly recognize as success is NEVER
+;; treated as a pass.
+
+;; ── pure helpers (unit-tested via verdict.test.tlisp) ────────────
+
+(define (admitted-outcome? outcome) (equal? outcome "success"))
+
+(define (verdict-of outcome) (if (admitted-outcome? outcome) "admitted" "rejected"))
+
+;; ── main: every side effect lives here ───────────────────────────
+
+(define (main)
+  (let* ((outcome (env-get "SCAN_OUTCOME" ""))
+         (severity (env-get "SCAN_SEVERITY" "none"))
+         (vuln-count (env-get "SCAN_VULN_COUNT" "0"))
+         (dest (env-get "DEST" "zot-pull.tar"))
+         (verdict (verdict-of outcome)))
+    (append-output (string-append "severity=" severity))
+    (append-output (string-append "vuln-count=" vuln-count))
+    (append-output (string-append "local-archive=" dest))
+    (append-output (string-append "admitted=" (if (admitted-outcome? outcome) "true" "false")))
+    (append-output (string-append "result=" verdict))
+    (cond
+      ((admitted-outcome? outcome)
+       (log-info (string-append "zot faucet ADMIT: severity " severity " below the configured threshold"))
+       0)
+      (else
+       (log-error (string-append "zot faucet REJECT: scan outcome=" outcome
+                   " severity=" severity " — not admitted (image-scan's own gate is canonical; "
+                   "this stage never re-derives severity, only re-asserts its verdict)"))
+       1))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — zot-pull-scan verdict.tlisp helpers loaded; main skipped"))
+  (else
+   (exit (main))))

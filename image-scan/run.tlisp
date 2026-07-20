@@ -1,23 +1,38 @@
-;; image-scan/run.tlisp — Trivy container-image scan.
+;; image-scan/run.tlisp — Trivy container-image scan. THE canonical CVE-gate
+;; primitive: every other pleme-io action that needs an image scanned +
+;; gated (zot-pull-scan, substrate's nix-image-auto-release.yml
+;; scan-before-push step, pangea-operator's own release.yml) composes THIS
+;; action rather than re-implementing severity classification or the
+;; threshold decision. Gate-0 illegal states this file makes unrepresentable
+;; (named per the org's `vocabularify` discipline, hardened 2026-07-20):
+;;
+;;   (1) an image with a CRITICAL CVE reaching a push step undetected --
+;;       closed by hard-failing on a trivy EXECUTION failure (see below),
+;;       not just on a findings threshold.
+;;   (2) a scan that runs, finds nothing parseable, but whose failure
+;;       doesn't propagate to the workflow's exit code -- closed by never
+;;       letting a trivy-exec failure OR a jq-parse failure fall through to
+;;       the "severity=none, pass" path. Both are now a hard (exit 1),
+;;       structurally distinct from "the gate ran and found nothing."
+;;   (3) a misconfigured fail-on-severity value silently defaulting to
+;;       permissive -- closed by `resolve-fail-on`: an unrecognized token
+;;       forces the STRICTEST recognized threshold (UNKNOWN, zero-tolerance),
+;;       never falls back toward "HIGH" or worse "none".
+;;   (5) a genuinely-accepted-risk finding forcing the whole gate to be
+;;       weakened -- already closed by `ignore-file` (a named, tracked
+;;       .trivyignore-format exception list, never a blanket loosening).
 ;;
 ;; UNKNOWN is a real, distinct rank ABOVE "no finding" -- Trivy emits it
 ;; for advisories with no assigned severity, and a zero-tolerance
 ;; consumer (fail-on-severity=UNKNOWN) needs it to actually gate, not
 ;; silently pass alongside a clean scan.
+;;
+;; Structure: pure decision helpers first (unit-tested by run.test.tlisp,
+;; TLISP_TEST=1 skips `main`) + a `main` that owns every side effect, per
+;; the fleet's default delivery seam (Environment-trait-shaped: all I/O in
+;; one place, all decisions pure and mockable).
 
-(define image (env-required "IMAGE_REF"))
-;; Pre-publish gate shape: a non-empty LOCAL_ARCHIVE means scan a local
-;; docker-archive: tarball (trivy's own `--input` flag, no registry pull,
-;; no network round-trip) instead of pulling IMAGE_REF. This is what makes
-;; "scan before push, never after" possible -- the image hasn't been
-;; published anywhere yet when this runs. IMAGE_REF stays the log/output
-;; label either way.
-(define local-archive (env-get "LOCAL_ARCHIVE" ""))
-(define fail-on (env-get "FAIL_ON_SEVERITY" "HIGH"))
-(define ignore-unfixed (env-get "IGNORE_UNFIXED" "false"))
-;; Path to a .trivyignore-format file -- named, tracked exceptions
-;; (never a blanket severity loosening). Empty = no ignorefile passed.
-(define ignore-file (env-get "IGNORE_FILE" ""))
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 
 (define (severity-rank s)
   (cond
@@ -28,100 +43,189 @@
     ((equal? s "UNKNOWN") 1)
     (else 0)))
 
-(define fail-rank (severity-rank fail-on))
+;; The six tokens trivy/this gate actually understands as a threshold.
+;; Case-sensitive, matching trivy's own JSON casing exactly -- a lowercase
+;; or misspelled value is exactly the "malformed config" case this gate
+;; must never treat as permissive.
+(define (known-fail-on? s)
+  (or (equal? s "CRITICAL") (equal? s "HIGH") (equal? s "MEDIUM")
+      (equal? s "LOW") (equal? s "UNKNOWN") (equal? s "none")))
 
-(log-info (if (equal? local-archive "")
-              (string-append "==> trivy image " image)
-              (string-append "==> trivy image --input " local-archive " (" image ", pre-publish, not yet pushed anywhere)")))
+;; A malformed or unrecognized FAIL_ON_SEVERITY value NEVER falls back to a
+;; permissive default. It forces the strictest recognized threshold
+;; (UNKNOWN = zero-tolerance, every real severity gates) until the config is
+;; fixed -- Gate-0 illegal state (3). This is deliberately NOT the same as
+;; an absent value (env-get's own default below already handles "unset" by
+;; landing on "HIGH", a long-established, widely-consumed default this
+;; primitive keeps unchanged); this only fires when a value was explicitly
+;; supplied and it's garbage.
+(define (resolve-fail-on raw)
+  (if (known-fail-on? raw) raw "UNKNOWN"))
 
-;; `trivy image [flags...] <target>` -- the subcommand comes first, every
-;; flag before the positional image-ref. With LOCAL_ARCHIVE set, the
-;; target is `--input <path>` (a local docker-archive: tarball) instead
-;; of a pullable registry reference -- trivy's own documented mechanism
-;; for scanning an image that was never pushed anywhere.
-(define unfixed-flag (if (equal? ignore-unfixed "true") (list "--ignore-unfixed") (list)))
-(define ignorefile-flag (if (equal? ignore-file "") (list) (list "--ignorefile" ignore-file)))
-(define target-flag (if (equal? local-archive "") (list image) (list "--input" local-archive)))
-(define args
-  (append (list "image") unfixed-flag ignorefile-flag
-          (list "--format" "json" "--quiet") target-flag))
+;; #t iff a scan run whose max SEVERITY meets/exceeds the FAIL-ON threshold
+;; should be rejected (gate fails). fail-on "none" never rejects.
+(define (gate-rejects? severity fail-on)
+  (cond
+    ((equal? fail-on "none") #f)
+    (else (>= (severity-rank severity) (severity-rank fail-on)))))
 
-(define r (apply exec-capture (cons "trivy" args)))
-(define out (stdout-of r))
+;; ── main: every side effect lives here ───────────────────────────
 
-;; Written to a temp file first and read BY PATH (a short argument), never
-;; embedded inline in a shell command string -- a real image's trivy JSON
-;; (Neo4j: 574 findings on the stock image alone) is easily megabytes, and
-;; `sh -c "... <(echo '<the whole json>')"` blows past the OS's ARG_MAX
-;; ("Argument list too long", os error 7), confirmed live 2026-07-17 on
-;; both the neo4j and node-exporter pre-publish gate runs -- a mechanical
-;; crash, not a real CVE verdict, silently defeating the "fail
-;; spectacularly, but for the RIGHT reason" discipline this gate exists
-;; for.
-(define trivy-output-file (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-output.json"))
-(write-file trivy-output-file out)
+(define (main)
+  (let* ((image (env-required "IMAGE_REF"))
+         ;; Pre-publish gate shape: a non-empty LOCAL_ARCHIVE means scan a
+         ;; local docker-archive: tarball (trivy's own `--input` flag, no
+         ;; registry pull, no network round-trip) instead of pulling
+         ;; IMAGE_REF. This is what makes "scan before push, never after"
+         ;; possible -- the image hasn't been published anywhere yet when
+         ;; this runs. IMAGE_REF stays the log/output label either way.
+         (local-archive (env-get "LOCAL_ARCHIVE" ""))
+         (fail-on-raw (env-get "FAIL_ON_SEVERITY" "HIGH"))
+         (fail-on (resolve-fail-on fail-on-raw))
+         (ignore-unfixed (env-get "IGNORE_UNFIXED" "false"))
+         ;; Path to a .trivyignore-format file -- named, tracked exceptions
+         ;; (never a blanket severity loosening). Empty = no ignorefile
+         ;; passed.
+         (ignore-file (env-get "IGNORE_FILE" "")))
 
-;; Pull the MAX severity from the json via a real jq parse over
-;; .Results[].Vulnerabilities[].Severity -- trivy's actual structure.
-;;
-;; FIXED 2026-07-17 (found live, triaging pleme-io/hardened-images'
-;; residual-CVE list): the previous approach substring-matched
-;; `"\"Severity\":\"HIGH\""` (NO space after the colon) against trivy's
-;; real `--format json` output, which is indented and ALWAYS has a space
-;; after the colon (`"Severity": "HIGH"`) -- so none of the six patterns
-;; ever matched, `severity` always fell through to "none", and this gate
-;; has NEVER actually blocked a push on any severity, on any image, on any
-;; consumer of this action, since it was added. Confirmed against a real
-;; scan (6 genuine findings on pleme-io/hardened-images' vector image) and
-;; a real CI run logging `severity=none count=6`. A real jq parse of the
-;; structured JSON (not a brittle string match) makes this class of bug
-;; unrepresentable going forward -- any future trivy JSON formatting
-;; change (field reorder, compact output) can't silently re-break it the
-;; same way, because the parse walks the actual object shape, not bytes.
-(define severity-jq-filter
-  (string-append
-    "[.Results[]?.Vulnerabilities[]?.Severity] | "
-    "if any(.==\"CRITICAL\") then \"CRITICAL\" "
-    "elif any(.==\"HIGH\") then \"HIGH\" "
-    "elif any(.==\"MEDIUM\") then \"MEDIUM\" "
-    "elif any(.==\"LOW\") then \"LOW\" "
-    "elif any(.==\"UNKNOWN\") then \"UNKNOWN\" "
-    "else \"none\" end"))
-(define severity-r
-  (exec-capture "sh" "-c"
-    (string-append "jq -r '" severity-jq-filter "' " trivy-output-file " 2>/dev/null")))
-(define severity
-  (if (= (status-of severity-r) 0)
-    (let ((v (string-trim (stdout-of severity-r))))
-      (if (equal? v "") "none" v))
-    "none"))
+    (if (not (equal? fail-on-raw fail-on))
+        (log-error (string-append
+          "FAIL_ON_SEVERITY='" fail-on-raw "' is not a recognized threshold "
+          "(CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN|none) -- forcing the strictest "
+          "recognized threshold (" fail-on ") rather than silently accepting "
+          "a permissive/garbage value. Fix the config to silence this."))
+        #t)
 
-;; Count occurrences of "Severity" — coarse but useful, and NOT broken the
-;; same way severity was: this is a substring COUNT (any "Severity": key,
-;; regardless of what follows the colon), not a value-match, so the
-;; missing-space bug never applied to it -- confirmed accurate against the
-;; same live triage above. `|| true` preserves the deliberate always-
-;; succeed shape: a genuinely clean scan means zero matches, and bare
-;; `grep -c` exits 1 on zero matches -- exactly the healthy case that must
-;; NOT be treated as this step's own failure (that's `fail-on`'s job
-;; below, off the parsed `severity`, not off grep's exit code).
-(define count-r (exec-capture "sh" "-c" (string-append "grep -c '\"Severity\":' " trivy-output-file " || true")))
-(define vuln-count
-  (let ((v (string-trim (stdout-of count-r))))
-    (if (equal? v "") "0" v)))
+    (log-info (if (equal? local-archive "")
+                  (string-append "==> trivy image " image)
+                  (string-append "==> trivy image --input " local-archive " (" image ", pre-publish, not yet pushed anywhere)")))
 
-(append-output (string-append "severity=" severity))
-(append-output (string-append "vuln-count=" vuln-count))
+    ;; `trivy image [flags...] <target>` -- the subcommand comes first, every
+    ;; flag before the positional image-ref. With LOCAL_ARCHIVE set, the
+    ;; target is `--input <path>` (a local docker-archive: tarball) instead
+    ;; of a pullable registry reference -- trivy's own documented mechanism
+    ;; for scanning an image that was never pushed anywhere.
+    (let* ((unfixed-flag (if (equal? ignore-unfixed "true") (list "--ignore-unfixed") (list)))
+           (ignorefile-flag (if (equal? ignore-file "") (list) (list "--ignorefile" ignore-file)))
+           (target-flag (if (equal? local-archive "") (list image) (list "--input" local-archive)))
+           (args (append (list "image") unfixed-flag ignorefile-flag
+                          (list "--format" "json" "--quiet") target-flag))
+           (r (apply exec-capture (cons "trivy" args))))
 
-(log-info (string-append "result: severity=" severity " count=" vuln-count))
+      ;; Gate-0 illegal state (1)+(2): trivy itself failing to run (missing
+      ;; binary, unreachable registry, auth failure, a bad --ignorefile
+      ;; path, ...) must NEVER be silently treated as "0 findings, pass".
+      ;; Without --exit-code, trivy always exits 0 on a completed scan
+      ;; regardless of findings -- so a non-zero exit here means the SCAN
+      ;; ITSELF never completed, a structurally different, always-fatal
+      ;; condition, checked before any findings-threshold logic runs.
+      (cond
+        ((not (= (status-of r) 0))
+         (log-error (string-append
+           "trivy scan command failed (exit " (string-format "{}" (status-of r)) ") -- "
+           "the scan never completed, so this is a hard gate failure, never a "
+           "silent pass. stderr: " (stderr-of r)))
+         (append-output "severity=SCAN_FAILED")
+         (append-output "vuln-count=0")
+         1)
+        (else
+         (let ((out (stdout-of r)))
+           ;; Written to a temp file first and read BY PATH (a short
+           ;; argument), never embedded inline in a shell command string --
+           ;; a real image's trivy JSON (Neo4j: 574 findings on the stock
+           ;; image alone) is easily megabytes, and
+           ;; `sh -c "... <(echo '<the whole json>')"` blows past the OS's
+           ;; ARG_MAX ("Argument list too long", os error 7), confirmed live
+           ;; 2026-07-17 on both the neo4j and node-exporter pre-publish
+           ;; gate runs -- a mechanical crash, not a real CVE verdict,
+           ;; silently defeating the "fail spectacularly, but for the RIGHT
+           ;; reason" discipline this gate exists for.
+           (let ((trivy-output-file (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-output.json")))
+             (write-file trivy-output-file out)
+
+             ;; Pull the MAX severity from the json via a real jq parse over
+             ;; .Results[].Vulnerabilities[].Severity -- trivy's actual
+             ;; structure.
+             ;;
+             ;; FIXED 2026-07-17 (found live, triaging pleme-io/hardened-images'
+             ;; residual-CVE list): the previous approach substring-matched
+             ;; `"\"Severity\":\"HIGH\""` (NO space after the colon) against
+             ;; trivy's real `--format json` output, which is indented and
+             ;; ALWAYS has a space after the colon (`"Severity": "HIGH"`) --
+             ;; so none of the six patterns ever matched, `severity` always
+             ;; fell through to "none", and this gate has NEVER actually
+             ;; blocked a push on any severity, on any image, on any
+             ;; consumer of this action, since it was added. A real jq parse
+             ;; of the structured JSON (not a brittle string match) makes
+             ;; this class of bug unrepresentable going forward.
+             (let* ((severity-jq-filter
+                      (string-append
+                        "[.Results[]?.Vulnerabilities[]?.Severity] | "
+                        "if any(.==\"CRITICAL\") then \"CRITICAL\" "
+                        "elif any(.==\"HIGH\") then \"HIGH\" "
+                        "elif any(.==\"MEDIUM\") then \"MEDIUM\" "
+                        "elif any(.==\"LOW\") then \"LOW\" "
+                        "elif any(.==\"UNKNOWN\") then \"UNKNOWN\" "
+                        "else \"none\" end"))
+                    (severity-r
+                      (exec-capture "sh" "-c"
+                        (string-append "jq -r '" severity-jq-filter "' " trivy-output-file " 2>/dev/null"))))
+
+               ;; Gate-0 illegal state (1)+(2), second occurrence: a jq
+               ;; parse failure (trivy produced output that isn't the JSON
+               ;; shape jq expects -- a corrupted temp file, a future trivy
+               ;; format change, jq itself missing) must ALSO never fall
+               ;; through to "severity=none, pass". Hard-fail here too,
+               ;; structurally distinct from the normal threshold gate below.
+               (cond
+                 ((not (= (status-of severity-r) 0))
+                  (log-error (string-append
+                    "jq parse of trivy's own JSON output failed (exit "
+                    (string-format "{}" (status-of severity-r)) ") -- trivy "
+                    "produced output that could not be parsed as its documented "
+                    "shape. This is a hard scan failure, never a silent "
+                    "\"no findings\" pass."))
+                  (append-output "severity=SCAN_PARSE_FAILED")
+                  (append-output "vuln-count=0")
+                  1)
+                 (else
+                  (let ((severity
+                          (let ((v (string-trim (stdout-of severity-r))))
+                            (if (equal? v "") "none" v))))
+
+                    ;; Count occurrences of "Severity" — coarse but useful,
+                    ;; and NOT broken the same way severity was: this is a
+                    ;; substring COUNT (any "Severity": key, regardless of
+                    ;; what follows the colon), not a value-match. `|| true`
+                    ;; preserves the deliberate always-succeed shape: a
+                    ;; genuinely clean scan means zero matches, and bare
+                    ;; `grep -c` exits 1 on zero matches -- exactly the
+                    ;; healthy case that must NOT be treated as this step's
+                    ;; own failure (that's the threshold gate's job below,
+                    ;; off the parsed `severity`, not off grep's exit code).
+                    ;; This count is advisory-only -- it never drives the
+                    ;; gate decision, so it doesn't need the same hard-fail
+                    ;; treatment as severity above.
+                    (let* ((count-r (exec-capture "sh" "-c" (string-append "grep -c '\"Severity\":' " trivy-output-file " || true")))
+                           (vuln-count (let ((v (string-trim (stdout-of count-r)))) (if (equal? v "") "0" v))))
+
+                      (append-output (string-append "severity=" severity))
+                      (append-output (string-append "vuln-count=" vuln-count))
+                      (log-info (string-append "result: severity=" severity " count=" vuln-count " threshold=" fail-on))
+
+                      (cond
+                        ((equal? fail-on "none")
+                         (log-info "fail-on=none — passing regardless")
+                         0)
+                        ((gate-rejects? severity fail-on)
+                         (log-error (string-append "severity " severity " >= threshold " fail-on))
+                         1)
+                        (else
+                         (log-info "below threshold — passing")
+                         0))))))))))))))
 
 (cond
-  ((equal? fail-on "none")
-   (log-info "fail-on=none — passing regardless")
-   (exit 0))
-  ((>= (severity-rank severity) fail-rank)
-   (log-error (string-append "severity " severity " >= threshold " fail-on))
-   (exit 1))
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — image-scan helpers loaded; main skipped"))
   (else
-   (log-info "below threshold — passing")
-   (exit 0)))
+   (exit (main))))

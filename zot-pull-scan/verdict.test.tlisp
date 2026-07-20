@@ -1,0 +1,18 @@
+;; zot-pull-scan/verdict.test.tlisp — (deftest …) smoke for the faucet's
+;; final admit/reject arbiter (verdict.tlisp). Run via tatara-script --test
+;; by the tlisp-test action (auto-discovered fleet-wide against every
+;; <base>.tlisp / <base>.test.tlisp pair, see ci.yml's tlisp-tests job).
+
+(deftest "admitted-outcome? is true only for a genuine success outcome"
+  (assert (admitted-outcome? "success") "success admits")
+  (assert (not (admitted-outcome? "failure")) "failure rejects")
+  (assert (not (admitted-outcome? "cancelled")) "cancelled rejects — fail closed, never treated as a pass")
+  (assert (not (admitted-outcome? "skipped")) "skipped rejects — fail closed, a scan that never ran is never a pass")
+  (assert (not (admitted-outcome? "")) "an unset/unrecognized outcome rejects — fail closed, never permissive"))
+
+(deftest "verdict-of maps outcome to the typed admitted|rejected vocabulary"
+  (assert (equal? (verdict-of "success") "admitted") "success -> admitted")
+  (assert (equal? (verdict-of "failure") "rejected") "failure -> rejected")
+  (assert (equal? (verdict-of "cancelled") "rejected") "cancelled -> rejected")
+  (assert (equal? (verdict-of "skipped") "rejected") "skipped -> rejected")
+  (assert (equal? (verdict-of "garbage") "rejected") "an unrecognized outcome -> rejected, never admitted"))
