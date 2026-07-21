@@ -99,32 +99,53 @@
 
 ;; ── per-tool index composition (returns child status; 0 = ok) ─────
 
+;; Every exec-capture failure below logs its captured stderr before
+;; returning the status int -- exec-capture silently discards stderr
+;; unless a caller reads it, and `main`'s own failure branch only ever
+;; had a generic "index create/push failed (exit N)" with no way to
+;; tell auth-denied from no-such-manifest from a transient registry
+;; error. Confirmed live (2026-07-21): a real akeylesslabs run failed
+;; in 0.28s with zero diagnostic beyond "exit 1" -- this is that gap,
+;; closed at every tool path, not just the one that happened to fail.
+
 ;; buildah & podman share identical `manifest create/add/push` syntax.
 (define (mlj:oci-tool-add tool local-name refs insecure?)
   (cond
     ((null? refs) 0)
     (else
-     (let ((s (status-of (apply exec-capture
+     (let ((r (apply exec-capture
                 (append (list tool "manifest" "add")
                         (if insecure? (list "--tls-verify=false") (list))
-                        (list local-name (string-append "docker://" (car refs))))))))
-       (if (= s 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure?) s)))))
+                        (list local-name (string-append "docker://" (car refs)))))))
+       (cond
+         ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure?))
+         (else
+          (log-error (string-append "manifest-list-join: " tool " manifest add "
+                                     (car refs) " failed: " (string-trim (stderr-of r))))
+          (status-of r)))))))
 
 (define (mlj:oci-tool-join tool local-name refs index-ref insecure?)
   ;; best-effort clean of a stale local manifest (ignore result)
   (exec-check tool "manifest" "rm" local-name)
-  (let ((c (status-of (exec-capture tool "manifest" "create" local-name))))
+  (let ((cr (exec-capture tool "manifest" "create" local-name)))
     (cond
-      ((not (= c 0)) c)
+      ((not (= (status-of cr) 0))
+       (log-error (string-append "manifest-list-join: " tool " manifest create failed: "
+                                  (string-trim (stderr-of cr))))
+       (status-of cr))
       (else
        (let ((a (mlj:oci-tool-add tool local-name refs insecure?)))
          (cond
            ((not (= a 0)) a)
            (else
-            (status-of (apply exec-capture
-              (append (list tool "manifest" "push" "--all")
-                      (if insecure? (list "--tls-verify=false") (list))
-                      (list local-name (string-append "docker://" index-ref))))))))))))
+            (let ((pr (apply exec-capture
+                        (append (list tool "manifest" "push" "--all")
+                                (if insecure? (list "--tls-verify=false") (list))
+                                (list local-name (string-append "docker://" index-ref))))))
+              (when (not (= (status-of pr) 0))
+                (log-error (string-append "manifest-list-join: " tool " manifest push failed: "
+                                           (string-trim (stderr-of pr)))))
+              (status-of pr)))))))))
 
 ;; docker buildx imagetools create -- composes the index DIRECTLY from
 ;; each source's REMOTE registry manifest and pushes in one step.
@@ -152,8 +173,12 @@
 ;; with the other tool paths but currently unused here -- named
 ;; honestly, not silently dropped.
 (define (mlj:docker-join refs index-ref insecure?)
-  (status-of (apply exec-capture
-    (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
+  (let ((r (apply exec-capture
+             (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
+    (when (not (= (status-of r) 0))
+      (log-error (string-append "manifest-list-join: docker buildx imagetools create failed: "
+                                 (string-trim (stderr-of r)))))
+    (status-of r)))
 
 ;; regctl index create <index-ref> --ref <r1> --ref <r2> …
 (define (mlj:regctl-ref-flags refs)
@@ -162,9 +187,13 @@
     (else (append (list "--ref" (car refs)) (mlj:regctl-ref-flags (cdr refs))))))
 
 (define (mlj:regctl-join refs index-ref)
-  (status-of (apply exec-capture
-    (append (list "regctl" "index" "create" index-ref)
-            (mlj:regctl-ref-flags refs)))))
+  (let ((r (apply exec-capture
+             (append (list "regctl" "index" "create" index-ref)
+                     (mlj:regctl-ref-flags refs)))))
+    (when (not (= (status-of r) 0))
+      (log-error (string-append "manifest-list-join: regctl index create failed: "
+                                 (string-trim (stderr-of r)))))
+    (status-of r)))
 
 (define (mlj:join tool refs index-ref insecure?)
   (cond
