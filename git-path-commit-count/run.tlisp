@@ -1,0 +1,64 @@
+;; git-path-commit-count/run.tlisp — count commits reachable from a ref
+;; that touched a given pathspec. The whole point: a deterministic,
+;; monotonic number with NO counter-state anywhere (no file to bump, no
+;; API call, no race between two concurrent runs) -- the count IS the
+;; git history itself, re-derivable from a fresh clone at any time.
+;;
+;; Canonical use: an autobump PATCH version for an artifact whose
+;; publishTag must be an exact, stable, human-readable string a
+;; consumer can pin (so a fleet AUTOBUMP-style sortable <arch>-r<run>-
+;; <sha> tag is the wrong shape) but which still needs to change on
+;; every real content edit, with zero hand-editing. Pair with a
+;; human-curated MAJOR.MINOR: publishTag = "<major>.<minor>.<count>".
+;;
+;; Requires REAL history (fetch-depth: 0) -- a shallow clone would
+;; silently under-count (git rev-list only sees what was fetched), and
+;; a build/patch number that can silently go BACKWARDS or repeat is
+;; worse than no autobump at all. Refuses and errors rather than
+;; guessing: `git rev-parse --is-shallow-repository` is checked FIRST,
+;; before the real count, so the failure is loud and immediate, not a
+;; quietly-wrong number discovered later.
+;;
+;; Outputs (append-output → GITHUB_OUTPUT):
+;;   count=<n>   the commit count (always emitted on success)
+
+(define gpcc-path (env-get "GPCC_PATH" ""))
+(define gpcc-ref (env-get "GPCC_REF" "HEAD"))
+
+(exec-capture "git" "config" "--global" "--add" "safe.directory" "*")
+
+(define (main)
+  (cond
+    ((equal? gpcc-path "")
+     (log-error "git-path-commit-count: PATH input is required")
+     1)
+    (else
+     (let ((shallow (exec-capture "git" "rev-parse" "--is-shallow-repository")))
+       (if (equal? (string-trim (stdout-of shallow)) "true")
+           (begin
+             (log-error
+               (string-append
+                 "git-path-commit-count: this checkout is shallow -- "
+                 "a commit count from a shallow clone silently "
+                 "under-counts (git rev-list only sees fetched history). "
+                 "Use `actions/checkout` with `fetch-depth: 0`."))
+             1)
+           (let ((r (exec-capture "git" "rev-list" "--count" gpcc-ref "--" gpcc-path)))
+             (if (not (= 0 (status-of r)))
+                 (begin
+                   (log-error
+                     (string-append "git-path-commit-count: `git rev-list --count "
+                                     gpcc-ref " -- " gpcc-path "` failed (exit "
+                                     (string-format "{}" (status-of r)) ")"))
+                   1)
+                 (let ((count (string-trim (stdout-of r))))
+                   (log-info (string-append "==> " count " commit(s) touched " gpcc-path
+                                             " (reachable from " gpcc-ref ")"))
+                   (append-output (string-append "count=" count))
+                   0))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — git-path-commit-count helpers loaded; main skipped"))
+  (else
+   (exit (main))))
