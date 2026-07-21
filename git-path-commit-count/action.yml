@@ -29,8 +29,21 @@ runs:
           cat ${{ github.action_path }}/run.tlisp
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
+      # @main, not @v1 -- the `count` output forward was added to
+      # tatara-script/action.yml in 4491a58 ("fix(super-cache-ci): forward
+      # verb outputs -- verbs used stale tatara-script@v1"), after the v1
+      # tag was cut. @v1 silently has NO `count:` output declared at all,
+      # so this step's output comes back empty with no error -- the exact
+      # bug that commit already fixed for other consumers. Reproduced here
+      # live (2026-07-21): every downstream tag in
+      # akeylesslabs/akeyless-main-repo's camelot-hardened-images.yml
+      # rendered as "1.0." with no patch number
+      # (needs.resolve-patch.outputs.patch was empty), failing every
+      # join-manifests job. Same fix shape as build-matrix/cartorio-attest/
+      # nix-build/nix-image/zot-push/etc, which all pin @main for the same
+      # reason -- see this repo's own action.yml grep for the pattern.
     - id: run
-      uses: pleme-io/actions/tatara-script@v1
+      uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
       env:
