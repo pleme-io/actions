@@ -1,5 +1,5 @@
 name: 'pleme-io · oci-image-push'
-description: 'Push an OCI image tarball (Nix dockerTools output) to a registry — skopeo fallback'
+description: 'Push an OCI image tarball (Nix dockerTools output) to a registry via skopeo'
 branding:
   icon: 'upload-cloud'
   color: 'blue'
@@ -19,16 +19,54 @@ inputs:
     required: false
     default: "./result"
   flake-ref:
-    description: "(unused in Docker mode — kept for input-compat with composite caller)"
+    description: "(unused — kept for input-compat with older callers)"
     required: false
     default: "."
 
+# `using: docker` (docker://ghcr.io/pleme-io/action-oci-image-push:latest)
+# UNTIL 2026-07-21 -- root-caused live: a `using: docker` action runs in
+# an isolated container GHA bind-mounts `${{ github.workspace }}` into,
+# but NEVER `/nix`. `tarball` is a Nix-build out-link symlink whose
+# TARGET lives at `/nix/store/...` -- readable as a symlink from inside
+# the container (it's just an inode in the bind-mounted workspace), but
+# opening what it points to is a guaranteed "no such file or directory",
+# regardless of the symlink's freshness on the host. Confirmed against a
+# real akeylesslabs/akeyless-main-repo run: skopeo failed
+# "initializing source docker-archive:camelot/hardened-images/result:
+# ... open camelot/hardened-images/result: no such file or directory"
+# every single time, silently, because the calling workflow had
+# continue-on-error: true on this step -- masked for as long as this
+# action existed in Docker mode. Every OTHER action in the same pipeline
+# that touches a Nix build output (skopeo-login, container-boot-check,
+# cartorio-attest, manifest-list-join, nix-build) is `using: composite`
+# for exactly this reason -- runs natively on the SAME runner process
+# that built the artifact, full `/nix/store` visibility, no bind-mount
+# gap. `skopeo` itself is confirmed present on the stock ubuntu-latest
+# runner image (skopeo-login's own composite `skopeo login` call has run
+# green on this exact pipeline) -- no extra install step needed.
+# run.tlisp was ALREADY written env-agnostic (`INPUT_*` preferred,
+# bare-name fallback) precisely so this conversion needs zero source
+# changes -- only this runs: block.
 runs:
-  using: docker
-  image: docker://ghcr.io/pleme-io/action-oci-image-push:latest
-  env:
-    REGISTRY:  ${{ inputs.registry }}
-    IMAGE:     ${{ inputs.image }}
-    TAG:       ${{ inputs.tag }}
-    TARBALL:   ${{ inputs.tarball }}
-    FLAKE_REF: ${{ inputs.flake-ref }}
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        REGISTRY:  ${{ inputs.registry }}
+        IMAGE:     ${{ inputs.image }}
+        TAG:       ${{ inputs.tag }}
+        TARBALL:   ${{ inputs.tarball }}
+        FLAKE_REF: ${{ inputs.flake-ref }}
