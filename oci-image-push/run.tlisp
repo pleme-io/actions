@@ -27,8 +27,17 @@
 
 (log-info (string-append "pushing " tarball " -> " target))
 
+;; --retry-times: a large multi-blob upload over a real network hits
+;; transient resets mid-transfer -- confirmed live 2026-07-21 against
+;; Harbor (registry.secondfront.com), post the docker->composite fix:
+;; "writing blob: ... read: connection reset by peer" partway through a
+;; ~40-blob rabbitmq image, after successfully reading + uploading most
+;; blobs (proving the underlying /nix/store access fix was correct; this
+;; is a separate, purely-transient network failure). skopeo's own
+;; --retry-times uses exponential backoff by default (no --retry-delay
+;; override needed).
 (define status
-  (exec-check "skopeo" "--insecure-policy" "copy"
+  (exec-check "skopeo" "--insecure-policy" "copy" "--retry-times" "5"
               (string-append "docker-archive:" tarball)
               (string-append "docker://"      target)))
 
