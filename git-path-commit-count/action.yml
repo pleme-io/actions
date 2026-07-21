@@ -1,0 +1,38 @@
+name: 'pleme-io · git-path-commit-count'
+description: 'Count commits reachable from a ref that touched a given pathspec — a deterministic, monotonic build/patch number with no counter-state to maintain. Generic — any repo, any path, no secrets. Requires a checkout with real history (fetch-depth: 0); a shallow clone under-counts silently, so this action refuses to guess and errors instead.'
+branding: { icon: 'hash', color: 'gray-dark' }
+
+inputs:
+  path:
+    description: "Pathspec to scope the count to (e.g. 'camelot/hardened-images/flake.nix', or a directory)"
+    required: true
+  ref:
+    description: "Git ref to count from"
+    required: false
+    default: "HEAD"
+
+outputs:
+  count:
+    description: "Number of commits reachable from ref that touched path"
+    value: ${{ steps.run.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        GPCC_PATH: ${{ inputs.path }}
+        GPCC_REF: ${{ inputs.ref }}
