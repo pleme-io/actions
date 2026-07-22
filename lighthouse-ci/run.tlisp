@@ -3,7 +3,16 @@
 (define urls (env-required "URLS"))
 (define threshold (env-get "SCORE_THRESHOLD" "90"))
 
-(exec-check "sh" "-c" "npm install -g @lhci/cli@0.13.x")
+;; Nix-installed, not runtime-`npm install -g`'d (theory/NIX-HARDENING.md
+;; §VI, the org-wide no-imperative-install-at-job-time rule). `@lhci/cli`
+;; is built as `lhciCli` in pleme-io/hardened-images (a plain
+;; `buildNpmPackage`, Chromium wired to `pkgs.chromium` via `CHROME_PATH`)
+;; rather than fetched from a floating npm dist-tag at job time. `nix
+;; profile install` puts `lhci` on PATH for the rest of this script (the
+;; "Install Nix" step in action.yml already ran
+;; DeterminateSystems/nix-installer-action, wiring nix itself onto PATH).
+(log-info "==> installing lhci (nix profile install, pleme-io/hardened-images)")
+(exec-check "nix" "profile" "install" "github:pleme-io/hardened-images#lhciCli")
 
 (let loop ((us (string-split urls " ")) (all-pass #t))
   (cond

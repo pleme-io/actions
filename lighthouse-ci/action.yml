@@ -16,8 +16,11 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
-      with: { node-version: "20" }
+    # No runtime `npm install -g` (theory/NIX-HARDENING.md §VI) -- lhci is
+    # fetched via Nix's own hash-verified store mechanism (run.tlisp's own
+    # `nix profile install`). This step only sets up Nix itself on the
+    # runner.
+    - uses: DeterminateSystems/nix-installer-action@main
     - id: src
       shell: bash
       run: |
