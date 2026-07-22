@@ -153,6 +153,11 @@
 
 (define name (read-field "name"))
 (define version (read-field "version"))
+;; Publishability preflight (the false-green seal): computed once, guarded so a
+;; missing manifest degrades to "no blockers" (the name/version arms already
+;; catch a missing Cargo.toml). See stdlib `manifest-publish-blockers`.
+(define publish-blockers
+  (manifest-publish-blockers (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") "")))
 
 (cond
   ((equal? name "")
@@ -161,6 +166,20 @@
    (exit 1))
   ((equal? version "")
    (log-error "cargo-publish-crate: package.version not found in Cargo.toml")
+   (append-output "shipped=false")
+   (exit 1))
+  ;; A git dep or a versionless path dep in a SHIPPED table makes this crate
+  ;; permanently unpublishable to crates.io. Caught before the publish attempt,
+  ;; it red-fails LOUDLY with the exact offending dep — instead of a cryptic late
+  ;; failure (or, for a workspace sibling, a dep-missing defer that goes GREEN
+  ;; forever).
+  ((not (null? publish-blockers))
+   (log-error (string-append
+                "cargo-publish-crate: '" name "' is structurally UNPUBLISHABLE — crates.io "
+                "refuses git deps and versionless path deps in shipped tables. Blockers: "
+                (string-join " | " publish-blockers)
+                ". Fix: publish the dependency to crates.io and reference it by version "
+                "(rename to pleme-io-<name> if the bare name is squatted)."))
    (append-output "shipped=false")
    (exit 1))
   ((already-published? name version)
