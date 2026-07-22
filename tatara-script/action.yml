@@ -404,13 +404,37 @@ runs:
           # gets rate-limited hard (60 req/hr shared across the whole
           # runner pool) and returns an empty/error JSON that yields
           # tag_name="".
-          TAG=$(curl -sSL \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/pleme-io/tatara-lisp/releases/latest \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))')
+          #
+          # Retry with backoff (2026-07-22, found live: hardened-images
+          # run 29884874645 + two reruns — EVERY one of 13 concurrent jobs
+          # lacking a pre-baked tatara-script hit an empty TAG here, three
+          # runs in a row, while the ~7 jobs whose runner pod happened to
+          # already have tatara-script on PATH — the fast path above —
+          # never touch this call at all and always succeeded). A single
+          # unretried call to a rate-limited/transiently-flaky endpoint is
+          # a load-bearing single point of failure for every non-pre-baked
+          # consumer of this action fleet-wide, not just this one repo.
+          # 4 attempts, 3s/6s/12s backoff — short enough to stay well
+          # under any reasonable job timeout, long enough to ride out a
+          # transient rate-limit window.
+          TAG=""
+          for attempt in 1 2 3 4; do
+            TAG=$(curl -sSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                https://api.github.com/repos/pleme-io/tatara-lisp/releases/latest \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)
+            if [ -n "$TAG" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              backoff=$((3 * 2 ** (attempt - 1)))
+              echo "::warning::Attempt $attempt: could not resolve latest tag from pleme-io/tatara-lisp releases, retrying in ${backoff}s" >&2
+              sleep "$backoff"
+            fi
+          done
           if [ -z "$TAG" ]; then
-            echo "::error::Could not resolve latest tag from pleme-io/tatara-lisp releases" >&2
+            echo "::error::Could not resolve latest tag from pleme-io/tatara-lisp releases after 4 attempts" >&2
             exit 1
           fi
         else
