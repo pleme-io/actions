@@ -12,10 +12,20 @@
 
 (define eco (detect))
 
+;; Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+;; exact-pinned to nixos-24.05, split out of the "rust" command string
+;; below since sqlx-cli no longer needs to install inside that same
+;; shell invocation. The "Install Nix" step in action.yml already wired
+;; nix onto PATH.
+(cond
+  ((equal? eco "rust")
+   (log-info "==> installing sqlx-cli (nix profile install, nixos-24.05)")
+   (exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#sqlx-cli")))
+
 (define cmd
   (cond
     ((equal? eco "rust")
-     (string-append "cd " wd " && cargo install sqlx-cli --locked --no-default-features --features postgres,sqlite && sqlx migrate run"))
+     (string-append "cd " wd " && sqlx migrate run"))
     ((equal? eco "python")
      (string-append "cd " wd " && uv run alembic upgrade head"))
     ((equal? eco "npm")

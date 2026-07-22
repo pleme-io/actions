@@ -17,6 +17,7 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
     - id: src
       shell: bash
       run: |

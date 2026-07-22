@@ -59,10 +59,14 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
     - name: Ensure skopeo
       shell: bash
       run: |
-        command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
+        # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) --
+        # exact-pinned to nixos-24.05.
+        command -v skopeo >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#skopeo
 
     - name: Load stdlib + run.tlisp
       id: src

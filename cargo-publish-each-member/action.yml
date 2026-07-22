@@ -36,13 +36,18 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-edit
       shell: bash
-      # Pin to 0.13.6 — see substrate cargo-bump for rationale.
-      run: cargo install --locked --version 0.13.6 cargo-edit
+      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # exact-pinned to nixos-24.05's cargo-edit version rather than a
+      # hand-pinned crates.io version. See substrate cargo-bump for the
+      # full rationale.
+      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-edit
 
     - name: Configure cargo credentials
       shell: bash

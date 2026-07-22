@@ -29,11 +29,15 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
     - name: Install yq
       shell: bash
       run: |
-        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-        sudo chmod +x /usr/local/bin/yq
+        # Nix-installed, not a raw GitHub-release wget (theory/NIX-HARDENING.md
+        # §VI) -- exact-pinned to nixos-24.05. `yq-go` is nixpkgs' name for
+        # mikefarah/yq (the Go implementation this action's scripts expect).
+        nix profile install github:NixOS/nixpkgs/nixos-24.05#yq-go
 
     - name: Load stdlib + run.tlisp
       id: src

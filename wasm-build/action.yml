@@ -26,6 +26,7 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
     - uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ inputs.target }}
@@ -33,7 +34,10 @@ runs:
       shell: bash
       run: |
         if [ "${{ inputs.wasm-pack }}" = "true" ]; then
-          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
+          # Nix-installed, not runtime-curled (theory/NIX-HARDENING.md §VI)
+          # -- exact-pinned to nixos-24.05 rather than an installer script
+          # fetched fresh from rustwasm.github.io on every run.
+          nix profile install github:NixOS/nixpkgs/nixos-24.05#wasm-pack
           wasm-pack build ${{ inputs.package && format('--package {0}', inputs.package) || '' }} --target web
           echo "artifact-path=pkg/" >> "$GITHUB_OUTPUT"
         else

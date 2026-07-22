@@ -36,19 +36,21 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install Nix (for crate2nix regenerate + cargo-edit)
+      uses: DeterminateSystems/nix-installer-action@main
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-edit
       shell: bash
-      # Pin to 0.13.6 — 0.13.10 has a manifest-parse regression on
-      # several caixa mirrors (caixa-jpeg-decoder + downstream).
-      # Bump only after confirming a green run across the auto-release
-      # cohort.
-      run: cargo install --locked --version 0.13.6 cargo-edit
-
-    - name: Install Nix (for crate2nix regenerate)
-      uses: DeterminateSystems/nix-installer-action@main
+      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # exact-pinned to nixos-24.05's cargo-edit version rather than a
+      # hand-pinned 0.13.6 (that version pin existed only to dodge a
+      # manifest-parse regression in 0.13.10; the nixos-24.05 channel
+      # ships its own fixed, reproducible version, so pinning a crates.io
+      # version number here is no longer the right lever).
+      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-edit
 
     # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
     # action's run.tlisp so the action's body can use every

@@ -20,6 +20,7 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
+    - uses: DeterminateSystems/nix-installer-action@main
     - id: s
       shell: bash
       env:
@@ -29,8 +30,10 @@ runs:
           echo "::error::spec file not found: ${{ inputs.spec-file }}"
           exit 1
         fi
-        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-        sudo chmod +x /usr/local/bin/yq
+        # Nix-installed, not a raw GitHub-release wget (theory/NIX-HARDENING.md
+        # §VI) -- exact-pinned to nixos-24.05. `yq-go` is nixpkgs' name for
+        # mikefarah/yq (the Go implementation this script's syntax expects).
+        nix profile install github:NixOS/nixpkgs/nixos-24.05#yq-go
         org="${{ github.repository_owner }}"
         added=0; removed=0
         yq '.teams | keys | .[]' "${{ inputs.spec-file }}" | while read team; do

@@ -23,6 +23,8 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
     - name: Install Rust (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
       uses: dtolnay/rust-toolchain@stable
@@ -30,7 +32,9 @@ runs:
     - name: Install tarpaulin (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
       shell: bash
-      run: cargo install --locked cargo-tarpaulin || true
+      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # exact-pinned to nixos-24.05.
+      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-tarpaulin || true
 
     - name: Install Node (if package.json)
       if: hashFiles('package.json') != ''
