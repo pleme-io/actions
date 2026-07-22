@@ -98,10 +98,17 @@ runs:
     # stage below is the one true arbiter of this action's own exit code,
     # not an implicit propagation this composite's own machinery might get
     # subtly wrong on a future edit).
+    # @main, not @v1 -- image-scan was added after v1 was tagged
+    # (2026-05-22); the action directory doesn't exist at that ref at all.
+    # Confirmed live 2026-07-21: a real vendor-image-mirror run failed
+    # here with "Can't find 'action.yml' ... for action
+    # 'pleme-io/actions/image-scan@v1'" -- same stale-tag bug class as
+    # this file's own zot-pull-scan@v1 reference in the README, fixed
+    # alongside this.
     - name: Scan pulled archive (delegates to image-scan's canonical Trivy gate)
       id: scan
       continue-on-error: true
-      uses: pleme-io/actions/image-scan@v1
+      uses: pleme-io/actions/image-scan@main
       with:
         image-ref: ${{ inputs.ref }}
         local-archive: ${{ inputs.dest }}

@@ -52,8 +52,17 @@ runs:
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
 
+      # @main, not @v1 -- this action's own `severity`/`vuln-count`
+      # output forwards don't exist on tatara-script/action.yml at the v1
+      # tag (2026-05-22, predates them), so a @v1 pin here would come
+      # back silently empty rather than erroring -- confirmed live
+      # 2026-07-21 while chasing a downstream zot-pull-scan failure.
+      # The fleet's primary CVE-gate consumers (nix-image-auto-release.yml,
+      # image-push.yml, container-stack.yml, compliance-attest.yml) were
+      # already correctly on @main; this action itself was the one stale
+      # holdout.
     - id: scan
-      uses: pleme-io/actions/tatara-script@v1
+      uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
       env:
