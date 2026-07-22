@@ -1,5 +1,5 @@
 name: 'pleme-io · tatara-script'
-description: 'Execute an embedded .tlisp source string with tatara-script (binary-first, cargo-install fallback)'
+description: 'Execute an embedded .tlisp source string with tatara-script (binary-first, nix-install fallback)'
 branding:
   icon: 'play'
   color: 'green'
@@ -364,9 +364,10 @@ runs:
   using: composite
   steps:
     # Install path: try the pre-built binary from the release page first
-    # (fast), fall back to `cargo install --git` if the asset 404s. This
-    # gives consumers a sensible behavior even before tatara-lisp v0.1.0
-    # is fully propagated to every arch, or if the consumer pins a
+    # (fast), fall back to a Nix-based install (`nix profile install
+    # github:pleme-io/tatara-lisp/<tag>#tatara-script`) if the asset 404s.
+    # This gives consumers a sensible behavior even before tatara-lisp
+    # v0.1.0 is fully propagated to every arch, or if the consumer pins a
     # version that predates the binary-release workflow.
     - name: Install tatara-script
       id: install
@@ -379,7 +380,7 @@ runs:
 
         # Prefer a tatara-script already on PATH (baked into the runner image,
         # e.g. the nix-built pleme-io/arc-runner). Only resolve a tag + download
-        # / cargo-build when none is present. This is what lets pleme-io
+        # / nix-fallback-install when none is present. This is what lets pleme-io
         # tatara-lisp actions run NATIVELY on a pure-nix runner: the baked binary
         # short-circuits the FHS release download a nix image can't execve, and
         # skips the api.github.com/releases/latest call entirely.
@@ -468,19 +469,41 @@ runs:
           chmod +x "$BIN_DIR/tatara-script"
           echo "Installed tatara-script from binary release"
         else
-          echo "::warning::No pre-built binary at $URL — falling back to cargo install --git"
-          if ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo not on PATH; cannot fall back" >&2
-            exit 1
-          fi
-          cargo install --git https://github.com/pleme-io/tatara-lisp \
-            --tag "$TAG" tatara-lisp-script --root "$BIN_DIR/.cargo"
-          ln -s "$BIN_DIR/.cargo/bin/tatara-script" "$BIN_DIR/tatara-script"
-          echo "Installed tatara-script via cargo install"
+          # No shell-installed toolchain fallback (no `cargo install --git`,
+          # no piped installer script) — the fleet-wide rule is that no CI
+          # action installs a binary imperatively at job time. The nix
+          # fallback is two steps below (a `uses:` step can't be invoked
+          # from inside a `run:` block), gated on this same "binary download
+          # failed" circumstance via the fallback-needed output.
+          echo "::warning::No pre-built binary at $URL — falling back to nix profile install"
+          echo "fallback-needed=true" >> "$GITHUB_OUTPUT"
+          echo "resolved-tag=$TAG" >> "$GITHUB_OUTPUT"
         fi
 
         echo "$BIN_DIR" >> "$GITHUB_PATH"
         echo "bin-dir=$BIN_DIR" >> "$GITHUB_OUTPUT"
+
+    # Fallback-only, Nix-based install — only runs when the pre-built
+    # binary download above failed (steps.install.outputs.fallback-needed).
+    # Never runs on the common binary-download-succeeded / pre-installed
+    # paths, so every ordinary invocation of this action pays zero cost
+    # for these two steps. Mirrors the established nix-installer-action +
+    # `nix profile install github:owner/repo/<ref>#<attr>` idiom already
+    # used elsewhere in this repo (e.g. gh-team-sync/action.yml's
+    # `nix profile install github:NixOS/nixpkgs/nixos-24.05#yq-go`).
+    - name: Install Nix (tatara-script fallback)
+      if: steps.install.outputs.fallback-needed == 'true'
+      uses: DeterminateSystems/nix-installer-action@main
+
+    - name: Install tatara-script via nix (fallback)
+      if: steps.install.outputs.fallback-needed == 'true'
+      shell: bash
+      env:
+        RESOLVED_TAG: ${{ steps.install.outputs.resolved-tag }}
+      run: |
+        set -euo pipefail
+        nix profile install "github:pleme-io/tatara-lisp/$RESOLVED_TAG#tatara-script"
+        echo "Installed tatara-script via nix profile install"
 
     # Write the embedded script to a tmp file and exec tatara-script on
     # it. We do not pipe via stdin because tatara-script is file-based;
