@@ -15,7 +15,7 @@ The scan runs on the **local docker-archive we pulled**, so you scan exactly
 what you pulled — not a re-resolved tag.
 
 ```yaml
-- uses: pleme-io/actions/zot-pull-scan@v1
+- uses: pleme-io/actions/zot-pull-scan@main
   id: scan
   with:
     ref: ${{ steps.publish.outputs.ref-amd64 }}
