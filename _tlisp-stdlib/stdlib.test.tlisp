@@ -57,3 +57,69 @@
                     "name = \"kazari\"\n"))
     (assert (equal? (toml-read-field p "[package]" "version") "0.1.3")
             "a [package] comment containing a bracket must not end the section early")))
+
+;; ── publishability preflight — the false-green seal ──────────────
+;; A git dep (or a versionless path dep) in a SHIPPED dep table makes a crate
+;; permanently unpublishable to crates.io; undetected it defers GREEN forever
+;; (sui-spec froze at 0.1.118, 2026-07-21). These lock the DETECTION and, just
+;; as load-bearing, the NO-FALSE-POSITIVE cases — a clean manifest MUST pass or
+;; wiring the preflight into the publish action would red-fail real publishes.
+
+(deftest "manifest-publish-blockers: detects a git dep in a shipped table (the sui-spec bug)"
+  (assert (not (manifest-publishable?
+                 "[package]\nname = \"sui-spec\"\n\n[dependencies]\nkazari = { git = \"https://github.com/pleme-io/kazari\", rev = \"abc\" }\nserde = \"1\"\n"))
+          "a [dependencies] git dep is a blocker")
+  (assert (= 1 (length (manifest-publish-blockers
+                         "[package]\n[dependencies]\nkazari = { git = \"https://x\" }\n")))
+          "exactly one blocker for one git dep"))
+
+(deftest "manifest-publish-blockers: detects a versionless path dep in a shipped table"
+  (assert (not (manifest-publishable?
+                 "[package]\n[dependencies]\nfoo = { path = \"../foo\" }\n"))
+          "a path dep with no version is a blocker")
+  (assert (manifest-publishable?
+            "[package]\n[dependencies]\nfoo = { path = \"../foo\", version = \"0.1\" }\n")
+          "a path dep WITH a version is fine (a common publish pattern)"))
+
+(deftest "manifest-publish-blockers: dev-dependencies are EXEMT (stripped on publish)"
+  (assert (manifest-publishable?
+            "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1\"\n\n[dev-dependencies]\nhelper = { git = \"https://x\" }\n")
+          "a git dev-dependency does NOT block publish"))
+
+(deftest "manifest-publish-blockers: NO false positives on a clean real-shaped manifest"
+  ;; version deps, a workspace dep, repository= in [package], a bracketed
+  ;; comment, a target table, a [lib] — all clean. MUST be publishable.
+  (assert (manifest-publishable?
+            (string-append
+              "[package]\n"
+              "name = \"pleme-io-kazari\"\n"
+              "# the lib name stays `kazari` (see [lib] below)\n"
+              "version = \"0.1.3\"\n"
+              "repository = \"https://github.com/pleme-io/kazari\"\n"
+              "\n"
+              "[lib]\nname = \"kazari\"\n"
+              "\n"
+              "[dependencies]\n"
+              "irodori = \"0.2\"\n"
+              "serde = { version = \"1\", features = [\"derive\"] }\n"
+              "sui-compat.workspace = true\n"
+              "\n"
+              "[target.'cfg(unix)'.dependencies]\n"
+              "libc = \"0.2\"\n"
+              "\n"
+              "[dev-dependencies]\n"
+              "tempfile = \"3\"\n"))
+          "a clean manifest with version/workspace/target deps must NOT be flagged"))
+
+(deftest "manifest-publish-blockers: target dep tables ship (a git dep there IS caught)"
+  (assert (not (manifest-publishable?
+                 "[package]\n[target.'cfg(unix)'.dependencies]\nfoo = { git = \"https://x\" }\n"))
+          "a git dep in a [target.*.dependencies] table blocks")
+  (assert (manifest-publishable?
+            "[package]\n[target.'cfg(unix)'.dev-dependencies]\nfoo = { git = \"https://x\" }\n")
+          "but a [target.*.dev-dependencies] git dep is exempt"))
+
+(deftest "manifest-publish-blockers: a comment mentioning git is not a blocker"
+  (assert (manifest-publishable?
+            "[package]\n[dependencies]\n# clone via git = \"…\" during dev only\nserde = \"1\"\n")
+          "a comment that mentions git= must not be read as a git dep"))

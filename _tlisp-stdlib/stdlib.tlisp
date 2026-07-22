@@ -265,6 +265,71 @@
     (else 'failed)))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Publishability preflight — the false-green seal
+;; ────────────────────────────────────────────────────────────────
+;; A crate that declares it auto-releases to crates.io can be structurally
+;; UNPUBLISHABLE: crates.io refuses a `git = "…"` dep, and a `path = "…"`
+;; dep with no `version`, in any SHIPPED dependency table ([dependencies],
+;; [build-dependencies], and their [target.*] forms — NOT [dev-dependencies],
+;; which are stripped on publish). Left undetected, `cargo publish` fails
+;; with "no matching package named X" and classify's 'dep-missing arm DEFERS
+;; IT GREEN — a false-green indistinguishable from a legitimate same-run
+;; sibling defer. This froze sui-spec at 0.1.118 and auto-deferred every crate
+;; downstream (2026-07-21, [[reference_git_dep_freezes_workspace_publish]]).
+;;
+;; The preflight runs on the MANIFEST, before publish, and returns the closed
+;; blocker set so the caller can red-fail LOUDLY with the offending dep. Tier:
+;; CI-caught (a preflight gate over external Cargo.toml data) — NOT a Rust
+;; compile error; the honest seal for a class whose input is a foreign file.
+;;
+;; Closed blocker vocabulary:
+;;   "git-dependency: <line>"       — a git dep in a shipped table (never lands)
+;;   "path-dep-no-version: <line>"  — a versionless path dep in a shipped table
+
+(define (shipped-dep-table? section)
+  ;; a dependency table whose deps ship with the crate (so each needs a
+  ;; version). [dev-dependencies] and [target.*.dev-dependencies] are exempt.
+  (and (string-contains? section "dependencies")
+       (not (string-contains? section "dev-dependencies"))))
+
+(define (not-comment-line? line)
+  ;; #t unless the trimmed line is a pure comment (text before the first '#'
+  ;; is empty). A trailing comment on a real dep line keeps it a dep line.
+  (not (equal? (string-trim (car (string-split (string-trim line) "#"))) "")))
+
+(define (line-declares-git-dep? line)
+  (and (not-comment-line? line)
+       (or (string-contains? line "git = \"") (string-contains? line "git=\""))))
+
+(define (line-declares-pathless-version-dep? line)
+  (and (not-comment-line? line)
+       (or (string-contains? line "path = \"") (string-contains? line "path=\""))
+       (not (string-contains? line "version"))))
+
+(define (walk-publish-blockers lines in-shipped acc)
+  (cond
+    ((null? lines) (reverse acc))
+    ((line-is-section-header? (car lines))
+     (walk-publish-blockers (cdr lines)
+                            (shipped-dep-table? (string-trim (car lines)))
+                            acc))
+    ((and in-shipped (line-declares-git-dep? (car lines)))
+     (walk-publish-blockers (cdr lines) in-shipped
+                            (cons (string-append "git-dependency: " (string-trim (car lines))) acc)))
+    ((and in-shipped (line-declares-pathless-version-dep? (car lines)))
+     (walk-publish-blockers (cdr lines) in-shipped
+                            (cons (string-append "path-dep-no-version: " (string-trim (car lines))) acc)))
+    (else (walk-publish-blockers (cdr lines) in-shipped acc))))
+
+;; The list of publish blockers in a Cargo.toml's text (empty = publishable).
+(define (manifest-publish-blockers toml-text)
+  (walk-publish-blockers (string-split toml-text "\n") #f '()))
+
+;; #t iff the manifest is structurally publishable to crates.io.
+(define (manifest-publishable? toml-text)
+  (null? (manifest-publish-blockers toml-text)))
+
+;; ────────────────────────────────────────────────────────────────
 ;; git introspection
 ;; ────────────────────────────────────────────────────────────────
 
