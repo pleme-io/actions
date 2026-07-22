@@ -1,0 +1,101 @@
+;; runtime-install-lint/run.tlisp — flag runtime tool installation
+;; (curl|tar, curl|sh, apt-get/apt/pip/npm/go/cargo install) in any
+;; action.yml or run.tlisp in this repo.
+;;
+;; The hard rule this enforces (theory/NIX-HARDENING.md, "no runtime tool
+;; installation, anywhere"): every external binary a pleme-io/actions entry
+;; needs is a Nix-hardened, distroless image via pleme-io/hardened-images,
+;; consumed as a `docker://` container action or a pinned release asset --
+;; never fetched/installed imperatively at job time. Two real, distinct
+;; failure classes this closes (both hit live, secrets-scan, 2026-07-22):
+;; a shell-escaping bug in an embedded multi-line install string, and a
+;; stale version pin silently downloading a 404 page in place of a
+;; tarball. Neither is possible if the binary ships pre-baked in an image.
+;;
+;; Same shape as action-shell-lint's own baseline discipline: existing
+;; violations are named, tracked debt (reported every run, never silently
+;; accepted) rather than an instant hard-fail across the whole catalog --
+;; only a NEW, non-baselined violation fails the build. Graduating an
+;; entry out of the baseline (converting the action to consume a hardened
+;; image) is the intended, tracked path to zero.
+
+(define paths (env-get "PATHS" "*/action.yml */run.tlisp"))
+(define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
+(define baseline-path (env-get "BASELINE_PATH" "runtime-install-lint/baseline.txt"))
+
+(log-info (string-append "==> scanning " paths " for runtime tool installation"))
+
+;; Skip pure-comment lines (YAML `#` / tlisp `;;` at line start, after
+;; leading whitespace) and the sanctioned stdlib loader fetch (a `curl`
+;; of stdlib.tlisp itself, not a tool binary) -- both are real,
+;; pre-existing false-positive sources this lint would otherwise trip on.
+;; One hit is enough per file (`exit` from the pattern block once matched)
+;; -- this reports OFFENDING FILES, the same granularity as
+;; action-shell-lint's own output, not every offending line.
+(define awk-prog
+  "BEGIN { }
+   /^[ \\t]*#/ { next; }
+   /^[ \\t]*;;/ { next; }
+   /stdlib\\.tlisp/ { next; }
+   /curl[^\\n]*\\|/ || /wget /|| /apt-get install/ || /apt install/ || /pip install/ || /npm install -g/ || /go install / || /cargo install / {
+     print FILENAME; nextfile;
+   }")
+
+(define find-cmd
+  (string-append
+    "find . -path './_*' -prune -o -path './runtime-install-lint' -prune -o "
+    "\\( -name 'action.yml' -o -name 'run.tlisp' \\) -print "
+    "| xargs -I{} awk '" awk-prog "' {}"))
+
+(define r (exec-capture "sh" "-c" find-cmd))
+(define out (string-trim (stdout-of r)))
+
+(define files-r (exec-capture "sh" "-c"
+  "find . -path './_*' -prune -o -path './runtime-install-lint' -prune -o \\( -name 'action.yml' -o -name 'run.tlisp' \\) -print | wc -l"))
+(define files (string-trim (stdout-of files-r)))
+
+(define baseline-lines
+  (if (path-exists? baseline-path)
+    (filter (lambda (l) (not (equal? l "")))
+            (string-split (read-file baseline-path) "\n"))
+    (list)))
+
+(define (list-contains? lst item)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) item) #t)
+    (else (list-contains? (cdr lst) item))))
+
+;; tatara-script's `let` has no named-let form -- a top-level `define` is
+;; the portable recursive-loop idiom used elsewhere in this repo (see
+;; action-shell-lint/run.tlisp's own report-violations).
+(define (report-violations lines new-n baseline-n)
+  (cond
+    ((null? lines)
+     (append-output (string-append "violations=" (string-format "{}" new-n)))
+     (append-output (string-append "baselined=" (string-format "{}" baseline-n)))
+     (append-output (string-append "files-scanned=" files))
+     (cond
+       ((and (equal? fail-on "true") (> new-n 0)) (exit 1))
+       (else (exit 0))))
+    ((equal? (car lines) "") (report-violations (cdr lines) new-n baseline-n))
+    (else
+      (let ((offending-file (car lines)))
+        (cond
+          ((list-contains? baseline-lines offending-file)
+           (log-info (string-append "  (baseline, tracked debt) " offending-file))
+           (report-violations (cdr lines) new-n (+ baseline-n 1)))
+          (else
+           (log-error (string-append "  NEW violation: " offending-file " -- convert to a Nix-hardened image + docker:// action, or add to baseline.txt as tracked debt with a reason"))
+           (report-violations (cdr lines) (+ new-n 1) baseline-n)))))))
+
+(cond
+  ((equal? out "")
+   (log-info (string-append "0 runtime-install violations across " files " scanned files"))
+   (append-output "violations=0")
+   (append-output "baselined=0")
+   (append-output (string-append "files-scanned=" files))
+   (exit 0))
+  (else
+   (log-error "runtime tool installation found:")
+   (report-violations (string-split out "\n") 0 0)))

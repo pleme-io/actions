@@ -81,6 +81,20 @@ jobs:
           threshold: "15"          # PR-fail when an action has > 15 shell lines outside the loader
           fail-on-violation: "true"
 
+  enforce-no-runtime-install:
+    name: Enforce hard rule -- no runtime tool installation (theory/NIX-HARDENING.md)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Existing debt is tracked in runtime-install-lint/baseline.txt and
+      # reported every run (never silently accepted) -- only a NEW,
+      # non-baselined violation fails the build. Graduating an entry out of
+      # the baseline (converting the action to consume a Nix-hardened
+      # image via a docker:// action) is the tracked path to zero.
+      - uses: ./runtime-install-lint
+        with:
+          fail-on-violation: "true"
+
   regenerate-catalog:
     name: Regenerate catalog + per-action docs via pleme-doc-gen (Rust)
     runs-on: ubuntu-latest

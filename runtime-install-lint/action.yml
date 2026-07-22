@@ -1,0 +1,45 @@
+name: 'pleme-io · runtime-install-lint'
+description: 'Fail on runtime tool installation (curl|tar, curl|sh, apt-get/apt/pip/npm/go/cargo install) in any action.yml or run.tlisp. The tool must ship as a Nix-hardened image instead — see theory/NIX-HARDENING.md.'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  paths:
+    description: "Glob for files to scan (default: every action.yml + run.tlisp in the repo, excluding this action's own name and any _-prefixed shared dir)."
+    required: false
+    default: "*/action.yml */run.tlisp"
+  fail-on-violation:
+    description: "Fail the job on a NEW (not-yet-baselined) violation. Existing debt in baseline.txt is always reported, never silently accepted, but only fails the build once removed from the baseline without being fixed."
+    required: false
+    default: "true"
+
+outputs:
+  violations:
+    description: "Count of NEW (non-baselined) violations found."
+    value: ${{ steps.scan.outputs.violations }}
+  baselined:
+    description: "Count of already-tracked baseline violations found (reported, not failed)."
+    value: ${{ steps.scan.outputs.baselined }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: scan
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PATHS: ${{ inputs.paths }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        BASELINE_PATH: "runtime-install-lint/baseline.txt"
