@@ -417,24 +417,42 @@ runs:
           # 4 attempts, 3s/6s/12s backoff — short enough to stay well
           # under any reasonable job timeout, long enough to ride out a
           # transient rate-limit window.
+          #
+          # Diagnosability (2026-07-22, second pass): the first version of
+          # this retry loop piped curl's own stderr to /dev/null, so a
+          # PERSISTENT (not transient) failure -- confirmed live: retries
+          # exhausted 4/4 on multiple hardened-images jobs even after this
+          # loop landed -- left no trace of the REAL cause (a genuine 4xx,
+          # a network/DNS failure, vs. rate-limiting) anywhere in the log.
+          # Capture curl's HTTP status code + response body on every
+          # attempt now; print both on the FINAL failure only (kept quiet
+          # on a transient retry that then succeeds, so this doesn't add
+          # noise to the common case).
           TAG=""
+          HTTP_STATUS=""
+          RESPONSE_BODY=""
           for attempt in 1 2 3 4; do
-            TAG=$(curl -sSL \
+            RESPONSE_BODY=$(curl -sSL -w '\n%{http_code}' \
                 -H "Authorization: Bearer $GH_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/pleme-io/tatara-lisp/releases/latest \
-              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)
+                https://api.github.com/repos/pleme-io/tatara-lisp/releases/latest)
+            HTTP_STATUS=$(echo "$RESPONSE_BODY" | tail -n1)
+            RESPONSE_BODY=$(echo "$RESPONSE_BODY" | sed '$d')
+            TAG=$(echo "$RESPONSE_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)
             if [ -n "$TAG" ]; then
               break
             fi
             if [ "$attempt" -lt 4 ]; then
               backoff=$((3 * 2 ** (attempt - 1)))
-              echo "::warning::Attempt $attempt: could not resolve latest tag from pleme-io/tatara-lisp releases, retrying in ${backoff}s" >&2
+              echo "::warning::Attempt $attempt: could not resolve latest tag from pleme-io/tatara-lisp releases (HTTP $HTTP_STATUS), retrying in ${backoff}s" >&2
               sleep "$backoff"
             fi
           done
           if [ -z "$TAG" ]; then
-            echo "::error::Could not resolve latest tag from pleme-io/tatara-lisp releases after 4 attempts" >&2
+            echo "::error::Could not resolve latest tag from pleme-io/tatara-lisp releases after 4 attempts (HTTP $HTTP_STATUS)" >&2
+            echo "::group::Final response body"
+            echo "$RESPONSE_BODY"
+            echo "::endgroup::"
             exit 1
           fi
         else
