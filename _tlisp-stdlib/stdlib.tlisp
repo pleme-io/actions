@@ -82,9 +82,19 @@
 ;; cargo-bump to report "package.version not found" on num-traits
 ;; and any Cargo.toml with array fields above `version`.
 (define (line-is-section-header? line)
+  ;; A TOML section header is `[section]` / `[[array]]` at line start (after
+  ;; whitespace) — i.e. the text BEFORE the first `[` is empty/whitespace. The
+  ;; old test was `contains "[" && !contains "="`, which mis-read a COMMENT that
+  ;; merely contains a bracket — e.g. `# see [lib] below` — as a section header,
+  ;; so the walker exited `[package]` before reaching `version` and reported
+  ;; `package.version not found` (kazari, 2026-07-21: a bracketed [package]
+  ;; comment). This stdlib has no `string-prefix?`, so "starts with `[`" is
+  ;; expressed as: the piece before the first `[` trims to empty. The `=` guard
+  ;; is kept belt-and-suspenders.
   (let ((trimmed (string-trim line)))
     (and (> (string-length trimmed) 0)
          (string-contains? trimmed "[")
+         (equal? (string-trim (car (string-split trimmed "["))) "")
          (not (string-contains? trimmed "=")))))
 
 ;; True when a TOML line is `<field> = ...` for the EXACT field name.

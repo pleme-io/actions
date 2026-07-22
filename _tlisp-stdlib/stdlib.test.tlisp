@@ -10,7 +10,9 @@
   (assert (line-is-section-header? "[workspace.package]") "real section header")
   (assert (line-is-section-header? "  [package]  ") "trimmed section header")
   (assert (not (line-is-section-header? "keywords = [\"a\", \"b\"]")) "array-valued field is NOT a header")
-  (assert (not (line-is-section-header? "version = \"1.0\"")) "plain field is not a header"))
+  (assert (not (line-is-section-header? "version = \"1.0\"")) "plain field is not a header")
+  (assert (not (line-is-section-header? "# see [lib] below")) "bracketed COMMENT is NOT a header (kazari 2026-07-21)")
+  (assert (not (line-is-section-header? "  # a [b] c")) "trimmed bracketed comment is NOT a header"))
 
 (deftest "line-assigns-field?: exact field name, not a substring"
   (assert (line-assigns-field? "version = \"1.0\"" "version") "version assigns version")
@@ -37,3 +39,21 @@
     (write-file p "[package]\nname = \"a\"\n\n[dependencies]\nversion = \"9.9.9\"\n")
     (assert (equal? (toml-read-field p "[package]" "version") "")
             "no version in [package] — must not read [dependencies].version")))
+
+(deftest "toml-read-field reads version past a bracketed [package] comment (kazari 2026-07-21)"
+  ;; The recurring regression: a legal [package] comment that CONTAINS a bracket
+  ;; (e.g. `# … (see [lib] below)`) was mis-read as a new section header, so the
+  ;; walker left [package] before reaching `version` → cargo-bump reported
+  ;; "package.version not found". The published-name-collision fix (renaming
+  ;; kazari → pleme-io-kazari with an explanatory bracketed comment) tripped it.
+  (let ((p "/tmp/stdlib-test-cargo3.toml"))
+    (write-file p (string-append
+                    "[package]\n"
+                    "# the lib name stays `kazari` (see [lib] below)\n"
+                    "name = \"pleme-io-kazari\"\n"
+                    "version = \"0.1.3\"\n"
+                    "\n"
+                    "[lib]\n"
+                    "name = \"kazari\"\n"))
+    (assert (equal? (toml-read-field p "[package]" "version") "0.1.3")
+            "a [package] comment containing a bracket must not end the section early")))
