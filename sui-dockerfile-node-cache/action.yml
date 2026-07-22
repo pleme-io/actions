@@ -54,13 +54,16 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+    - uses: DeterminateSystems/nix-installer-action@main
 
     - name: Install sui-dockerfile-wrapper (gha-entrypoint)
       shell: bash
-      # Installed from crates.io (sui-dockerfile-wrapper is published there).
-      run: cargo install --locked sui-dockerfile-wrapper --quiet
+      # packages.<system>.sui-dockerfile-wrapper (pleme-io/sui flake — the
+      # workspace member's default_bin is `gha-entrypoint`, explicit
+      # `toolName` in the flake keeps the package attribute crate-named).
+      # The fleet-wide rule is that no CI action installs a binary
+      # imperatively at job time.
+      run: nix profile install github:pleme-io/sui#sui-dockerfile-wrapper
 
     - id: run
       shell: bash
