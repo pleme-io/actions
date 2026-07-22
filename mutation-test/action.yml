@@ -20,13 +20,16 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
     - name: Install Rust (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
       uses: dtolnay/rust-toolchain@stable
     - name: Install cargo-mutants
       if: hashFiles('Cargo.toml') != ''
       shell: bash
-      run: cargo install --locked cargo-mutants || true
+      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # exact-pinned to nixos-24.05.
+      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-mutants || true
     - id: src
       shell: bash
       run: |

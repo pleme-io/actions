@@ -52,12 +52,16 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
     # image-scan (stage 2, below) installs its own trivy -- this action no
     # longer needs to, now that it delegates scanning to it instead of
     # duplicating the scan+gate logic.
+    # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) -- exact-pinned
+    # to nixos-24.05.
     - name: Ensure skopeo
       shell: bash
-      run: command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo ; }
+      run: command -v skopeo >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#skopeo
 
     # ── Stage 1: pull the image into a local docker-archive. Hard-fails
     # (no continue-on-error) on a pull failure -- that's terminal, so the

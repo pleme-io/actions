@@ -28,6 +28,8 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
+
     - name: Install Rust (if needed)
       if: hashFiles('Cargo.toml') != ''
       uses: dtolnay/rust-toolchain@stable
@@ -35,7 +37,9 @@ runs:
     - name: Install cargo-audit (if Rust)
       if: hashFiles('Cargo.toml') != ''
       shell: bash
-      run: cargo install --locked cargo-audit || true
+      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # exact-pinned to nixos-24.05.
+      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-audit || true
 
     - name: Install Node (if needed)
       if: hashFiles('package.json') != ''

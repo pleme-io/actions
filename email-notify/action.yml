@@ -29,6 +29,7 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: DeterminateSystems/nix-installer-action@main
     - id: mail
       shell: bash
       env:
@@ -41,8 +42,9 @@ runs:
         SUBJECT: ${{ inputs.subject }}
         BODY: ${{ inputs.body }}
       run: |
-        # swaks is a robust portable SMTP client (apt-installable)
-        sudo apt-get install -y swaks >/dev/null
+        # swaks is a robust portable SMTP client. Nix-installed, not
+        # apt (theory/NIX-HARDENING.md §VI) -- exact-pinned to nixos-24.05.
+        nix profile install github:NixOS/nixpkgs/nixos-24.05#swaks
         IFS=',' read -ra recipients <<< "$TO"
         for r in "${recipients[@]}"; do
           swaks --silent 2 \
