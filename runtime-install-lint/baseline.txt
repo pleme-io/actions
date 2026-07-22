@@ -1,8 +1,40 @@
+# Tracked runtime-install debt (theory/NIX-HARDENING.md §VI). Each entry
+# below is real, named debt with a stated reason it wasn't converted in
+# the 2026-07-22 purge -- not a silent exception. Remove a line only by
+# actually converting that action to a Nix-based install (nix profile
+# install / a docker:// hardened image), never by loosening this lint.
+#
+# codeowners-validate/run.tlisp -- `go install ...@latest`. The tool
+#   (mszostok/codeowners-validator) is not in nixpkgs; needs a proper
+#   buildGoModule + fetchFromGitHub derivation (pinned tag + a computed
+#   vendorHash) before it can convert. Concrete, doable follow-up -- not
+#   attempted yet.
 ./codeowners-validate/run.tlisp
-./k6-load-test/run.tlisp
+# lighthouse-ci/run.tlisp -- `npm install -g @lhci/cli@0.13.x`. Not in
+#   nixpkgs under any name (nixpkgs' own `lighthouse` package is a
+#   DIFFERENT tool -- plain Lighthouse, not the CI wrapper with
+#   `lhci collect`/`lhci assert` this action actually needs). Needs a
+#   buildNpmPackage derivation with a computed npmDepsHash.
 ./lighthouse-ci/run.tlisp
+# caixa-render-pr/action.yml -- `cargo install --locked pleme-doc-gen`.
+#   pleme-doc-gen (pleme-io-owned) has no flake.nix, only a crate2nix
+#   Cargo.nix consumed by some other repo's build -- needs its own flake
+#   package output (or a hardened-images entry) before this can convert.
 ./caixa-render-pr/action.yml
+# caixa-render/action.yml -- `cargo install --locked feira`. feira lives
+#   inside pleme-io/caixa (caixa-feira workspace member); that flake does
+#   not yet expose it as a standalone package/app this action can
+#   reference directly.
 ./caixa-render/action.yml
-./secrets-scan/run.tlisp
+# sui-dockerfile-node-cache/action.yml -- installs sui-dockerfile-wrapper
+#   via cargo. The crate lives inside pleme-io/sui's workspace but isn't
+#   exposed as a referenceable flake package/app from outside that repo
+#   yet.
 ./sui-dockerfile-node-cache/action.yml
+# tatara-script/action.yml -- `cargo install --git` is a FALLBACK path
+#   (only reached when no pre-built tatara-lisp release binary matches
+#   the runner's platform). Converting the fallback to `nix profile
+#   install github:pleme-io/tatara-lisp` is the right fix once that
+#   repo's own flake is confirmed to expose the right package cleanly --
+#   not verified yet, so left as-is rather than guessing.
 ./tatara-script/action.yml

@@ -21,6 +21,11 @@ runs:
   steps:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
+    # No runtime curl/tar install (theory/NIX-HARDENING.md §VI) -- gitleaks is
+    # fetched via Nix's own hash-verified store mechanism (run.tlisp's own
+    # `nix profile install`), exact-pinned to the nixos-24.05 channel. This
+    # step only sets up Nix itself on the runner.
+    - uses: DeterminateSystems/nix-installer-action@main
     - id: src
       shell: bash
       run: |

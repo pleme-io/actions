@@ -3,29 +3,19 @@
 (define config (env-get "CONFIG_PATH" ""))
 (define fail-on-found (env-get "FAIL_ON_FOUND" "true"))
 
-;; Found live 2026-07-22 (hardened-images' first consumer run), two stacked
-;; bugs in the install line:
-;;   (1) a literal backslash-newline inside a Lisp string literal is NOT
-;;       shell line-continuation -- the reader preserves both characters
-;;       verbatim, so `sh -c` received a malformed two-line command and
-;;       failed with `Syntax error: "|" unexpected` before gitleaks was
-;;       ever installed. Fixed the same way other actions in this catalog
-;;       do: one single-line command string, no embedded newline.
-;;   (2) the URL hardcoded gitleaks_8.18.4 against the `/releases/latest/
-;;       download/` path -- that path only resolves if the pinned
-;;       filename exists in the CURRENT latest release; gitleaks has
-;;       since shipped v8.30.1, so the 8.18.4 asset 404s. `curl -sSL`
-;;       (no `-f`) treats that 404 as a "successful" transfer of the
-;;       error page, silently writing a 9-byte "Not Found" string in place
-;;       of a tarball -- `tar` then fails with a confusing "Unrecognized
-;;       archive format" that names no root cause. Fixed by resolving the
-;;       real latest tag from the GitHub API at install time (never
-;;       staling again) and adding `-f` to BOTH curls so an HTTP error is
-;;       a loud, immediate failure here, never a silently-corrupted
-;;       download surfacing as a mysterious tar error three steps later.
-(log-info "==> installing gitleaks")
-(exec-check "sh" "-c"
-  "v=$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r '.tag_name' | sed 's/^v//'); curl -fsSL \"https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz\" | tar xz -C /tmp gitleaks && sudo mv /tmp/gitleaks /usr/local/bin/")
+;; Nix-installed, not runtime-curled (theory/NIX-HARDENING.md §VI). This
+;; line replaced two stacked runtime-curl bugs found live 2026-07-22 (a
+;; shell-escaping failure, then a stale version pin silently downloading a
+;; 404 page in place of a tarball) -- neither failure mode is representable
+;; once the binary comes from Nix's own hash-verified store fetch instead of
+;; an ad-hoc curl|tar pipeline. Exact-pinned to nixos-24.05 (the same
+;; channel hardened-images' primary pin uses) rather than an unpinned
+;; `nixpkgs#gitleaks`, which would float to whatever the runner's registry
+;; currently resolves. `nix profile install` puts the binary on PATH for
+;; the rest of this script (the "Install Nix" step in action.yml already
+;; ran DeterminateSystems/nix-installer-action, wiring nix itself onto PATH).
+(log-info "==> installing gitleaks (nix profile install, nixos-24.05)")
+(exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#gitleaks")
 
 (define args
   (append (list "detect" "--no-banner" "--redact" "--report-format=json" "--report-path=/tmp/gitleaks.json")

@@ -4,12 +4,11 @@
 (define vus (env-get "VUS" "10"))
 (define dur (env-get "DURATION" "30s"))
 
-;; install k6 via apt-key + repo (no curl|sh pipes)
-(exec-check "sh" "-c"
-  "sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69")
-(exec-check "sh" "-c"
-  "echo 'deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main' | sudo tee /etc/apt/sources.list.d/k6.list")
-(exec-check "sh" "-c" "sudo apt-get update -qq && sudo apt-get install -y k6")
+;; Nix-installed, not apt (theory/NIX-HARDENING.md §VI) -- exact-pinned to
+;; nixos-24.05, not an ambient apt repo whose signing key/package version
+;; can change under us. The "Install Nix" step in action.yml already wired
+;; nix onto PATH.
+(exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#k6")
 
 (define r (exec-capture "k6" "run"
             "--vus" vus
