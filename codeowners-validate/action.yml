@@ -15,6 +15,11 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
+    # No runtime `go install ...@latest` (theory/NIX-HARDENING.md §VI) --
+    # codeowners-validator is fetched via Nix's own hash-verified store
+    # mechanism (run.tlisp's own `nix profile install`), exact-pinned to
+    # v0.7.4. This step only sets up Nix itself on the runner.
+    - uses: DeterminateSystems/nix-installer-action@main
     - id: src
       shell: bash
       run: |
