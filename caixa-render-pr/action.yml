@@ -33,10 +33,10 @@ runs:
     - uses: actions/checkout@v4
       with:
         token: ${{ secrets.BOT_PAT || github.token }}
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: DeterminateSystems/nix-installer-action@main
     - name: Install pleme-doc-gen
       shell: bash
-      run: cargo install --locked pleme-doc-gen
+      run: nix profile install github:pleme-io/pleme-doc-gen
     - id: src
       shell: bash
       run: |
