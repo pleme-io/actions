@@ -119,9 +119,16 @@
           (gbs:emit lang spec (supercache:content-key spec) "false" "unknown" "gen-absent-livetodo")
           0)))
       ;; ── cargo NOW path: real `gen build .` + the stale gate ──
+      ;;
+      ;; `gen build` shells out to the literal `cargo metadata` binary (not
+      ;; a Nix-mediated call). A runner that bakes `gen` onto PATH (the
+      ;; on-path? check above) may still lack a Rust toolchain -- confirmed
+      ;; live on Camelot's camelot-builder-pleme-eks pool, 2026-07-23.
+      ;; `nix shell nixpkgs#cargo` supplies it hermetically regardless of
+      ;; what the runner ships with (same fix as stdlib's regen-gen-lock).
       (else
        (let* ((before (supercache:content-key spec))
-              (r      (exec-capture "gen" "build" "."))
+              (r      (exec-capture "nix" "shell" "nixpkgs#cargo" "--command" "gen" "build" "."))
               (rc     (status-of r)))
          (cond
            ((not (= rc 0))
