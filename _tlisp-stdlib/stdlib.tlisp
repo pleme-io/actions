@@ -173,8 +173,21 @@
 (define (gen-lock-fresh?)
   (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
 
+;; `gen build` shells out to the literal `cargo metadata` binary (not a
+;; Nix-mediated call) to read the workspace graph. GitHub-hosted runners
+;; ship a pre-installed Rust toolchain, so this always worked there
+;; silently; self-hosted pools (e.g. Camelot's camelot-builder-pleme-eks
+;; ARC runners) carry no such toolchain by default, so `cargo metadata`
+;; failed with a bare "No such file or directory" the moment a consumer's
+;; runner input moved off a GitHub-hosted default (confirmed live:
+;; pangea-operator's release pipeline broke this exact way, 2026-07-23).
+;; `nix shell nixpkgs#cargo` supplies it hermetically -- no imperative
+;; install, identical on every runner regardless of what it ships with.
+;; Every consumer of this helper (rust-workspace-bump, cargo-bump) is
+;; fixed by this one change.
 (define (regen-gen-lock)
-  (exec-capture "nix" "run" "github:pleme-io/gen" "--" "build" "."))
+  (exec-capture "nix" "shell" "nixpkgs#cargo" "--command"
+                "nix" "run" "github:pleme-io/gen" "--" "build" "."))
 
 (define (ensure-gen-lock-fresh)
   (cond
