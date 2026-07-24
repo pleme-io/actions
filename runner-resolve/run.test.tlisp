@@ -18,17 +18,58 @@
                   "camelot-builder-pleme-eks")
           "whitespace-only override treated as empty; file value trimmed"))
 
-(deftest "rr:resolve-runner — default wins when nothing else is set"
+(deftest "rr:resolve-runner — effective-default wins when nothing else is set"
   (assert (equal? (rr:resolve-runner "" "" "ubuntu-latest") "ubuntu-latest")
-          "both empty -> default")
+          "both empty -> effective-default")
   (assert (equal? (rr:resolve-runner "" "  " "ubuntu-latest") "ubuntu-latest")
-          "whitespace-only file value -> default"))
+          "whitespace-only file value -> effective-default"))
 
 (deftest "rr:resolve-provenance — matches the same precedence as rr:resolve-runner"
-  (assert (equal? (rr:resolve-provenance "gpu-runner" "file-runner") "override") "override tier")
-  (assert (equal? (rr:resolve-provenance "" "file-runner") "file") "file tier")
-  (assert (equal? (rr:resolve-provenance "" "") "default") "default tier")
-  (assert (equal? (rr:resolve-provenance "  " "  ") "default") "whitespace-only counts as empty"))
+  (assert (equal? (rr:resolve-provenance "gpu-runner" "file-runner" "default") "override") "override tier")
+  (assert (equal? (rr:resolve-provenance "" "file-runner" "default") "file") "file tier")
+  (assert (equal? (rr:resolve-provenance "" "" "default") "default") "default tier passed through")
+  (assert (equal? (rr:resolve-provenance "" "" "visibility-default") "visibility-default")
+          "visibility-default tier passed through")
+  (assert (equal? (rr:resolve-provenance "  " "  " "default") "default") "whitespace-only counts as empty"))
+
+;; ── The new tier-4 pure helpers: rr:effective-default,
+;; rr:effective-default-provenance, rr:is-private? ──────────────────
+
+(deftest "rr:is-private? — only the literal string \"true\" counts as private"
+  (assert (rr:is-private? "true") "exact match is private")
+  (assert (not (rr:is-private? "false")) "false is public")
+  (assert (not (rr:is-private? "")) "empty (unset context) fails toward public, never private")
+  (assert (not (rr:is-private? "True")) "wrong case is NOT treated as private -- no guessed truthiness")
+  (assert (not (rr:is-private? "1")) "not a recognized private-truthy form"))
+
+(deftest "rr:effective-default — explicit default always wins over visibility"
+  (assert (equal? (rr:effective-default "gpu-runner" "true" "camelot-builder-pleme-eks" "ubuntu-24.04")
+                  "gpu-runner")
+          "explicit default beats private visibility default")
+  (assert (equal? (rr:effective-default "gpu-runner" "false" "camelot-builder-pleme-eks" "ubuntu-24.04")
+                  "gpu-runner")
+          "explicit default beats public visibility default too"))
+
+(deftest "rr:effective-default — private repo, no explicit default, resolves to private-runner-default"
+  (assert (equal? (rr:effective-default "" "true" "camelot-builder-pleme-eks" "ubuntu-24.04")
+                  "camelot-builder-pleme-eks")
+          "the actual billing-safe fix: a private repo with no explicit default lands on camelot, never a metered runner"))
+
+(deftest "rr:effective-default — public repo, no explicit default, resolves to public-runner-default"
+  (assert (equal? (rr:effective-default "" "false" "camelot-builder-pleme-eks" "ubuntu-24.04")
+                  "ubuntu-24.04")
+          "public repos keep their free GitHub-hosted minutes, untouched"))
+
+(deftest "rr:effective-default — unset/unrecognized visibility fails toward public (never private)"
+  (assert (equal? (rr:effective-default "" "" "camelot-builder-pleme-eks" "ubuntu-24.04")
+                  "ubuntu-24.04")
+          "an empty IS_PRIVATE context (e.g. a non-repository-scoped event) never silently routes onto camelot"))
+
+(deftest "rr:effective-default-provenance — distinguishes an explicit default from the visibility fallback"
+  (assert (equal? (rr:effective-default-provenance "gpu-runner") "default")
+          "caller explicitly passed a default")
+  (assert (equal? (rr:effective-default-provenance "") "visibility-default")
+          "caller passed nothing -- visibility tier fired"))
 
 ;; The scenario that MOTIVATED this action: a repo on GitHub's Free plan
 ;; has no access to Organization-level `vars.*`, so a caller's ternary
@@ -41,7 +82,7 @@
         (default "ubuntu-latest"))
     (assert (equal? (rr:resolve-runner override file-runner default) "camelot-builder-pleme-eks")
             "resolves the committed runner with zero vars.* involved")
-    (assert (equal? (rr:resolve-provenance override file-runner) "file")
+    (assert (equal? (rr:resolve-provenance override file-runner "default") "file")
             "provenance correctly attributes the win to the config file, not a var")))
 
 ;; ── Real file-IO path — rr:read-file-runner against actual fixture

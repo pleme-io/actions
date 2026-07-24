@@ -1,55 +1,104 @@
 ;; runner-resolve/run.tlisp — resolve the runs-on label for a job via a
-;; three-tier precedence: override > repo-committed config file > the
-;; caller's own default.
+;; typed precedence: override > repo-committed config file > the
+;; caller's own explicit default > a visibility-aware billing-safe
+;; default.
 ;;
 ;; GROUNDING: GitHub Actions' `runs-on:` can only reference
 ;; github/needs/strategy/matrix/vars/inputs contexts — never a same-job
 ;; step output. So this action MUST be consumed as its own job
 ;; (`runs-on: ubuntu-latest`), with every other job in the same workflow
 ;; depending on it via `needs.<job-id>.outputs.runner`. This action does
-;; NOT hardcode any repo-specific default (e.g. camelot) — the caller
-;; supplies its own `default` (typically a ternary already evaluated in
-;; the workflow_call `with:` block), matching the org's rule that a
-;; generic pleme-io primitive never bakes in a consumer's posture.
+;; NOT hardcode any repo-specific SELF-HOSTED posture beyond the fleet's
+;; own standing invariant (private repo -> camelot; public repo -> free
+;; GitHub-hosted minutes) — a caller that genuinely needs something else
+;; still wins via override/config-path/default, all three unchanged.
 ;;
 ;; Precedence (highest wins):
-;;   1. override      — the workflow_call's existing `runner:` input,
-;;                       still honored verbatim, still highest.
-;;   2. config-path    — an optional repo-committed YAML file
-;;                       (default .github/runner.yml, field `runner:`)
-;;                       so a repo can pin its own runner without
-;;                       touching workflow YAML at all — the scenario
-;;                       that motivated this action: a repo on GitHub's
-;;                       Free plan has no access to Organization-level
-;;                       `vars.*`, so a ternary reading `vars.SOME_RUNNER`
-;;                       in a reusable workflow silently resolves empty.
-;;   3. default        — the caller's own prescribed default.
+;;   1. override           — the workflow_call's existing `runner:`
+;;                           input, still honored verbatim, still
+;;                           highest.
+;;   2. config-path        — an optional repo-committed YAML file
+;;                           (default .github/runner.yml, field
+;;                           `runner:`) so a repo can pin its own runner
+;;                           without touching workflow YAML at all — the
+;;                           scenario that motivated this action: a repo
+;;                           on GitHub's Free plan has no access to
+;;                           Organization-level `vars.*`, so a ternary
+;;                           reading `vars.SOME_RUNNER` in a reusable
+;;                           workflow silently resolves empty.
+;;   3. default            — the caller's own explicit `default` input,
+;;                           when non-empty.
+;;   4. visibility-default — ADDED: when the caller passes NO explicit
+;;                           default, resolve off the repo's own
+;;                           visibility (`github.event.repository.private`)
+;;                           instead of silently landing on a metered
+;;                           GitHub-hosted runner. This is the actual
+;;                           fix for the class of bug found live in
+;;                           ensaio (and 30 other private repos, 48
+;;                           hardcoded `runs-on: ubuntu-*`/`macos-*`
+;;                           hits fleet-wide): every caller that used to
+;;                           pass a hardcoded metered default now simply
+;;                           omits `default` and gets the billing-safe
+;;                           answer for free. A caller that genuinely
+;;                           wants a metered runner on a private repo
+;;                           (e.g. no self-hosted capability exists yet,
+;;                           macOS) still can — passing an explicit
+;;                           `default` (tier 3) always outranks this.
 ;;
 ;; Uses _tlisp-stdlib helpers: append-output, yaml-read-field.
 ;; Uses builtins directly: env-get, path-exists?, string-trim,
 ;;   string-append, equal?, log-info.
 ;;
-;; Inputs (env): DEFAULT OVERRIDE CONFIG_PATH
+;; Inputs (env): DEFAULT OVERRIDE CONFIG_PATH IS_PRIVATE
+;;   PRIVATE_RUNNER_DEFAULT PUBLIC_RUNNER_DEFAULT
 ;; Outputs (appended): runner provenance
 
 ;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────────
 
-;; The resolved runner label given all three tiers as plain strings.
-;; A whitespace-only override/file value counts as empty (never wins).
-(define (rr:resolve-runner override file-runner default)
+;; Tier 4's own resolution: the caller's explicit default wins when
+;; non-empty; otherwise fall back to the visibility-appropriate default.
+;; `is-private` is the literal string form of GitHub's own
+;; `github.event.repository.private` boolean context ("true"/"false") —
+;; anything other than exactly "true" is treated as public, never
+;; silently as private (fail toward the cheaper, non-billing-exposed
+;; answer on an unrecognized/empty value, not the more expensive one).
+(define (rr:is-private? is-private)
+  (equal? (string-trim is-private) "true"))
+
+(define (rr:effective-default explicit-default is-private private-default public-default)
+  (cond
+    ((not (equal? (string-trim explicit-default) "")) (string-trim explicit-default))
+    ((rr:is-private? is-private) (string-trim private-default))
+    (else (string-trim public-default))))
+
+;; Which tier tier-4 itself resolved to — kept separate from
+;; rr:effective-default (not derived from its output) for the same
+;; test-both-agree discipline rr:resolve-provenance already uses.
+(define (rr:effective-default-provenance explicit-default)
+  (if (not (equal? (string-trim explicit-default) "")) "default" "visibility-default"))
+
+;; The resolved runner label given all three PRIOR tiers as plain
+;; strings, `effective-default` already folding in tier 3 vs tier 4 per
+;; rr:effective-default above. A whitespace-only override/file value
+;; counts as empty (never wins). Signature unchanged from the original
+;; 3-tier fold — tier 3/4 collapse into the one `effective-default`
+;; argument the caller (main) computes first.
+(define (rr:resolve-runner override file-runner effective-default)
   (cond
     ((not (equal? (string-trim override) "")) (string-trim override))
     ((not (equal? (string-trim file-runner) "")) (string-trim file-runner))
-    (else (string-trim default))))
+    (else (string-trim effective-default))))
 
-;; Which tier won, mirroring the same precedence rr:resolve-runner uses —
-;; kept as a SEPARATE pure function (not derived from the resolved value)
-;; so a test can assert the two never disagree.
-(define (rr:resolve-provenance override file-runner)
+;; Which tier won overall, mirroring the same precedence
+;; rr:resolve-runner uses — kept as a SEPARATE pure function (not
+;; derived from the resolved value) so a test can assert the two never
+;; disagree. `default-provenance` is rr:effective-default-provenance's
+;; own output, threaded through rather than recomputed here.
+(define (rr:resolve-provenance override file-runner default-provenance)
   (cond
     ((not (equal? (string-trim override) "")) "override")
     ((not (equal? (string-trim file-runner) "")) "file")
-    (else "default")))
+    (else default-provenance)))
 
 ;; ── File I/O — reads the optional repo-committed config. Honestly
 ;; empty ("") when config-path is blank, the file is absent, or the
@@ -67,16 +116,22 @@
 ;; ── Main ─────────────────────────────────────────────────────────────
 
 (define (main)
-  (let* ((default     (env-get "DEFAULT" ""))
-         (override    (env-get "OVERRIDE" ""))
-         (config-path (env-get "CONFIG_PATH" ".github/runner.yml"))
-         (file-runner (rr:read-file-runner config-path))
-         (runner      (rr:resolve-runner override file-runner default))
-         (provenance  (rr:resolve-provenance override file-runner)))
+  (let* ((default          (env-get "DEFAULT" ""))
+         (override         (env-get "OVERRIDE" ""))
+         (config-path      (env-get "CONFIG_PATH" ".github/runner.yml"))
+         (is-private       (env-get "IS_PRIVATE" "false"))
+         (private-default  (env-get "PRIVATE_RUNNER_DEFAULT" "camelot-builder-pleme-eks"))
+         (public-default   (env-get "PUBLIC_RUNNER_DEFAULT" "ubuntu-24.04"))
+         (file-runner      (rr:read-file-runner config-path))
+         (effective-default (rr:effective-default default is-private private-default public-default))
+         (default-provenance (rr:effective-default-provenance default))
+         (runner           (rr:resolve-runner override file-runner effective-default))
+         (provenance       (rr:resolve-provenance override file-runner default-provenance)))
     (append-output (string-append "runner=" runner))
     (append-output (string-append "provenance=" provenance))
     (log-info (string-append "runner-resolve: runner=" runner
                              " (provenance=" provenance
+                             ", is-private=" is-private
                              ", config-path=" config-path ")"))))
 
 (cond
