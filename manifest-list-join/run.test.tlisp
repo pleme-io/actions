@@ -41,6 +41,15 @@
                   (list "--ref" "A" "--ref" "B"))
           "regctl --ref flags"))
 
+;; ── registry write credentials (2026-07-24: this action shipped with
+;; ZERO credential wiring since inception -- fixed alongside zot-push's
+;; own stale-password 401; see run.tlisp's "registry write credentials"
+;; header note for the full incident).
+(deftest "mlj:creds-flag composes buildah/podman's --creds user:pass"
+  (assert (equal? (mlj:creds-flag "akeyless-builder" "s3cr3t")
+                  (list "--creds" "akeyless-builder:s3cr3t"))
+          "--creds <user>:<pass>"))
+
 ;; ── the stdlib oci: helpers this action's regctl trust-config path
 ;; leans on -- covered here (the ≥2-consumer rule already applies:
 ;; zot-push's own run.test.tlisp covers its local zot: duplicates of

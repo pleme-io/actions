@@ -40,6 +40,12 @@ inputs:
     description: "Cluster-internal Zot is http/self-signed (default 'true'). For regctl this is the CA-cert-fetch-failed fallback (real, logged degradation); for buildah/podman a real --tls-verify=false; a documented no-op for docker."
     required: false
     default: "true"
+  dest-user:
+    description: "Registry push credential username (required — Zot's authz rejects anonymous manifest-index writes the same way it rejects anonymous blob pushes; same input shape as zot-push's dest-user)"
+    required: true
+  dest-pass:
+    description: "Registry push credential password (required — see dest-user)"
+    required: true
   tool:
     description: "Manifest tool: auto | regctl | buildah | podman | docker"
     required: false
@@ -126,6 +132,8 @@ runs:
         RUN_NUMBER: ${{ inputs.run-number }}
         SHA: ${{ inputs.sha }}
         INSECURE: ${{ inputs.insecure }}
+        DEST_USER: ${{ inputs.dest-user }}
+        DEST_PASS: ${{ inputs.dest-pass }}
         TOOL: ${{ inputs.tool }}
         CA_CERT_URL: ${{ inputs.ca-cert-url }}
         CA_CERT_PATH: ${{ inputs.ca-cert-path }}

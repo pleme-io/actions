@@ -64,6 +64,8 @@
 ;;                 logged degradation, never silent); for buildah/podman a
 ;;                 real per-invocation --tls-verify=false; a documented no-op
 ;;                 for docker (see the TOOL PRIORITY note above).
+;;   DEST_USER     registry push credential username                (required)
+;;   DEST_PASS     registry push credential password                (required)
 ;;   TOOL          auto|regctl|buildah|podman|docker (default "auto")
 ;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once,
 ;;                 used only by the regctl path (default: the same committed
@@ -155,23 +157,29 @@
 ;; in 0.28s with zero diagnostic beyond "exit 1" -- this is that gap,
 ;; closed at every tool path, not just the one that happened to fail.
 
-;; buildah & podman share identical `manifest create/add/push` syntax.
-(define (mlj:oci-tool-add tool local-name refs insecure?)
+;; buildah & podman share identical `manifest create/add/push` syntax, and
+;; both accept the SAME `--creds user:pass` flag on any subcommand that
+;; actually touches the registry (`add` pulls a remote manifest to inspect
+;; it; `push` writes the joined index) -- `create` never leaves the local
+;; store, so it never needs creds. See `mlj:creds-flag`'s header note for
+;; why this is required, not optional, against this cluster's Zot.
+(define (mlj:oci-tool-add tool local-name refs insecure? creds)
   (cond
     ((null? refs) 0)
     (else
      (let ((r (apply exec-capture
                 (append (list tool "manifest" "add")
                         (if insecure? (list "--tls-verify=false") (list))
+                        creds
                         (list local-name (string-append "docker://" (car refs)))))))
        (cond
-         ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure?))
+         ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure? creds))
          (else
           (log-error (string-append "manifest-list-join: " tool " manifest add "
                                      (car refs) " failed: " (string-trim (stderr-of r))))
           (status-of r)))))))
 
-(define (mlj:oci-tool-join tool local-name refs index-ref insecure?)
+(define (mlj:oci-tool-join tool local-name refs index-ref insecure? creds)
   ;; best-effort clean of a stale local manifest (ignore result)
   (exec-check tool "manifest" "rm" local-name)
   (let ((cr (exec-capture tool "manifest" "create" local-name)))
@@ -181,13 +189,14 @@
                                   (string-trim (stderr-of cr))))
        (status-of cr))
       (else
-       (let ((a (mlj:oci-tool-add tool local-name refs insecure?)))
+       (let ((a (mlj:oci-tool-add tool local-name refs insecure? creds)))
          (cond
            ((not (= a 0)) a)
            (else
             (let ((pr (apply exec-capture
                         (append (list tool "manifest" "push" "--all")
                                 (if insecure? (list "--tls-verify=false") (list))
+                                creds
                                 (list local-name (string-append "docker://" index-ref))))))
               (when (not (= (status-of pr) 0))
                 (log-error (string-append "manifest-list-join: " tool " manifest push failed: "
@@ -219,13 +228,28 @@
 ;; at the daemon level; `insecure?` is accepted for signature parity
 ;; with the other tool paths but currently unused here -- named
 ;; honestly, not silently dropped.
-(define (mlj:docker-join refs index-ref insecure?)
-  (let ((r (apply exec-capture
-             (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
-    (when (not (= (status-of r) 0))
-      (log-error (string-append "manifest-list-join: docker buildx imagetools create failed: "
-                                 (string-trim (stderr-of r)))))
-    (status-of r)))
+;;
+;; `docker buildx imagetools create` has no --creds of its own either --
+;; unlike regctl/buildah/podman it reads auth from the shared daemon's
+;; OWN credential store (~/.docker/config.json), so authenticating this
+;; path means a real `docker login` against the target registry BEFORE
+;; the imagetools call, the same shared-daemon-config trust model this
+;; file's own header note already describes for TLS.
+(define (mlj:docker-login registry-host user pass)
+  (status-of (exec-capture "docker" "login" registry-host "--username" user "--password" pass)))
+
+(define (mlj:docker-join refs index-ref insecure? registry-host user pass)
+  (cond
+    ((not (= (mlj:docker-login registry-host user pass) 0))
+     (log-error (string-append "manifest-list-join: docker login " registry-host " failed"))
+     1)
+    (else
+     (let ((r (apply exec-capture
+                (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
+       (when (not (= (status-of r) 0))
+         (log-error (string-append "manifest-list-join: docker buildx imagetools create failed: "
+                                    (string-trim (stderr-of r)))))
+       (status-of r)))))
 
 ;; regctl index create <index-ref> --ref <r1> --ref <r2> …
 (define (mlj:regctl-ref-flags refs)
@@ -296,16 +320,54 @@
                   host " and INSECURE fallback is not enabled — refusing to trust regctl against an unverified connection"))
        #f))))
 
-(define (mlj:join tool refs index-ref insecure? registry-host ca-cert-url ca-cert-path ca-cert-token)
+;; ── registry write credentials ────────────────────────────────────
+;;
+;; Zot rejects anonymous writes the same way for a manifest INDEX as it
+;; does for a blob (authz.defaultPolicy: [read]; only a named `writers`
+;; principal may create/update/delete -- see zot-push's own header +
+;; the cluster's release.yaml). This action shipped with ZERO credential
+;; wiring since inception: `mlj:regctl-configure-trust` (below) only
+;; ever established TLS/CA trust, never authentication, so `regctl index
+;; create` always failed "no credentials available: unauthorized" the
+;; moment it ran against an authz-enabled Zot -- confirmed live
+;; 2026-07-24 (the SAME session that fixed zot-push's own stale-password
+;; 401: fixing that credential alone was not sufficient, because this
+;; action never offered a credential in the first place). Every tool
+;; path below now authenticates the same `dest-user`/`dest-pass` zot-push
+;; already requires, so the class (not just the regctl instance that
+;; happened to be live-tested) is closed.
+
+;; buildah/podman: `--creds user:pass` on any subcommand that touches
+;; the registry (see `mlj:oci-tool-add`/`mlj:oci-tool-join` above).
+(define (mlj:creds-flag user pass)
+  (list "--creds" (string-append user ":" pass)))
+
+;; regctl persists creds the SAME way it persists cacert/tls trust:
+;; `regctl registry login <host> --user <user> --pass <pass>` writes
+;; into the SAME per-host entry in $HOME/.regctl/config.json that
+;; `mlj:regctl-set-cacert`/`mlj:regctl-set-insecure` already write --
+;; confirmed live against a real regclient 0.9.2 binary (`registry set`
+;; for tls, `registry login` for user/pass, one shared config file; a
+;; LATER, separate `regctl index create` call loads both automatically).
+;; `--skip-check` matches the trust-config calls above: skip the
+;; connectivity ping so an unreachable-at-login-time (but reachable-at-
+;; join-time) registry never fails this step for the wrong reason.
+(define (mlj:regctl-login host user pass)
+  (status-of (exec-capture "regctl" "registry" "login" host
+               "--user" user "--pass" pass "--skip-check")))
+
+(define (mlj:join tool refs index-ref insecure? registry-host ca-cert-url ca-cert-path ca-cert-token user pass)
   (cond
-    ((equal? tool "buildah") (mlj:oci-tool-join "buildah" "mlj-index" refs index-ref insecure?))
-    ((equal? tool "podman")  (mlj:oci-tool-join "podman"  "mlj-index" refs index-ref insecure?))
-    ((equal? tool "docker")  (mlj:docker-join refs index-ref insecure?))
+    ((equal? tool "buildah") (mlj:oci-tool-join "buildah" "mlj-index" refs index-ref insecure? (mlj:creds-flag user pass)))
+    ((equal? tool "podman")  (mlj:oci-tool-join "podman"  "mlj-index" refs index-ref insecure? (mlj:creds-flag user pass)))
+    ((equal? tool "docker")  (mlj:docker-join refs index-ref insecure? registry-host user pass))
     ((equal? tool "regctl")
      (cond
-       ((mlj:regctl-configure-trust registry-host ca-cert-url ca-cert-path ca-cert-token insecure?)
-        (mlj:regctl-join refs index-ref))
-       (else 1)))
+       ((not (mlj:regctl-configure-trust registry-host ca-cert-url ca-cert-path ca-cert-token insecure?)) 1)
+       ((not (= (mlj:regctl-login registry-host user pass) 0))
+        (log-error (string-append "manifest-list-join: regctl registry login " registry-host " failed"))
+        1)
+       (else (mlj:regctl-join refs index-ref))))
     (else 127)))
 
 ;; ── main ──────────────────────────────────────────────────────────
@@ -326,6 +388,8 @@
          (sha (env-get "SHA" ""))
          (tag-in (env-get "TAG" ""))
          (insecure (oci:flag-true? (env-get "INSECURE" "true")))
+         (dest-user (env-required "DEST_USER"))
+         (dest-pass (env-required "DEST_PASS"))
          (tool-req (env-get "TOOL" "auto"))
          (ca-cert-url (env-get "CA_CERT_URL"
            "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
@@ -354,7 +418,7 @@
                        "} -> docker://" index-ref (if insecure " (insecure)" "")))
             (when (< (length refs) 2)
               (log-info "::warning::manifest-list-join: fewer than 2 arches — emitting a DEGENERATE single-arch index (load-bearing once arm64-native lands)"))
-            (let ((s (mlj:join tool refs index-ref insecure registry-host ca-cert-url ca-cert-path ca-cert-token)))
+            (let ((s (mlj:join tool refs index-ref insecure registry-host ca-cert-url ca-cert-path ca-cert-token dest-user dest-pass)))
               (cond
                 ((not (= s 0))
                  (log-error (string-append "manifest-list-join: index create/push failed (exit "

@@ -49,6 +49,13 @@ jobs:
           run-number: "412"
           sha: 9c1f2ab
           insecure: "true"
+          # dummy creds -- this local registry:2 has no auth configured, so
+          # any Basic-auth header buildah sends is simply ignored, but the
+          # inputs are required (2026-07-24 fix: manifest-list-join never
+          # wired credentials at all, closed alongside zot-push's own
+          # stale-password 401 against the real cluster Zot).
+          dest-user: testuser
+          dest-pass: testpass
           tool: buildah
       - name: Independently prove the index is a real multi-arch manifest list
         run: |
@@ -100,6 +107,11 @@ jobs:
           run-number: "412"
           sha: 9c1f2ab
           insecure: "true"
+          # dummy creds -- see the buildah job's comment above; docker login
+          # against an unauthenticated registry:2 succeeds trivially (no
+          # WWW-Authenticate challenge to fail against).
+          dest-user: testuser
+          dest-pass: testpass
           tool: docker
       - name: Independently prove the index is a real multi-arch manifest list
         run: |
@@ -169,6 +181,12 @@ jobs:
           run-number: "412"
           sha: 9c1f2ab
           insecure: "true"
+          # dummy creds -- see the buildah job's comment above; regctl's
+          # `registry login --skip-check` writes the config entry without
+          # pinging the registry, so an unauthenticated local registry:2
+          # never rejects it.
+          dest-user: testuser
+          dest-pass: testpass
           tool: regctl
           ca-cert-url: "file:///tmp/mlj-tls/tls.crt"
           ca-cert-path: "/tmp/mlj-tls/fetched-ca.crt"
