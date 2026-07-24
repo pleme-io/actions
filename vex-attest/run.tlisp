@@ -1,0 +1,45 @@
+;; vex-attest/run.tlisp — attach an OpenVEX 0.2.0 predicate to an OCI image
+;; BY DIGEST via `cosign attest --type openvex`. Keyless (Fulcio + Rekor via
+;; ambient OIDC) by default; --key for a cofre/ESO/KMS-held key. Lets a
+;; downstream re-scanner (e.g. 2F/SecondFront) consume the transferable
+;; not_affected/backport justifications with `grype --vex` instead of
+;; re-flagging version-based CVEs whose code is backported or unreachable.
+;; The V-attest sibling of the L-sign (cosign-sign) layer.
+
+(define image-ref (env-required "IMAGE_REF"))
+(define vex-file (env-required "VEX_FILE"))
+(define key-ref (env-get "KEY_REF" ""))
+
+;; cosign attest ALWAYS binds to the resolved digest even when passed a tag.
+;; Refuse only a :latest-style moving pointer — never an attestation subject.
+(cond
+  ((string-contains? image-ref ":latest")
+   (log-error (string-append "vex-attest refuses a :latest moving pointer (attest an exact tag or a @sha256: digest): " image-ref))
+   (append-output "attested=false")
+   (exit 1)))
+(cond
+  ((not (string-contains? image-ref "@sha256:"))
+   (log-info (string-append "::warning::vex-attest given a tag ref; cosign will resolve + attest the digest: " image-ref))))
+
+(define keyless (equal? key-ref ""))
+
+(log-info (string-append "==> cosign attest --type openvex --predicate " vex-file " "
+            (if keyless "(keyless Fulcio+Rekor) " (string-append "--key " key-ref " "))
+            image-ref))
+
+(define r
+  (if keyless
+    (exec-capture "cosign" "attest" "--yes" "--type" "openvex" "--predicate" vex-file image-ref)
+    (exec-capture "cosign" "attest" "--yes" "--type" "openvex" "--predicate" vex-file "--key" key-ref image-ref)))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info (string-append "openvex attested to " image-ref))
+   (append-output "attested=true")
+   (exit 0))
+  (else
+   (log-error "cosign attest --type openvex failed")
+   (log-info (stdout-of r))
+   (log-info (stderr-of r))
+   (append-output "attested=false")
+   (exit 1)))

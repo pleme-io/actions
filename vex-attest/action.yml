@@ -1,0 +1,58 @@
+name: 'pleme-io · vex-attest'
+description: >-
+  Attach an OpenVEX 0.2.0 predicate to an OCI image via
+  `cosign attest --type openvex`. Keyless (Fulcio + Rekor via ambient OIDC)
+  by default; supply key-ref for a cofre/ESO/KMS-held key. Lets a downstream
+  re-scanner (e.g. 2F/SecondFront) consume the transferable not_affected /
+  backport justifications with `grype --vex` instead of re-flagging
+  version-based CVEs whose code is backported or unreachable. The V-attest
+  sibling of the L-sign (cosign-sign) layer.
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  image-ref:
+    description: "OCI image to attest, BY DIGEST (registry/repo@sha256:...) or an exact AUTOBUMP tag. Never a :latest moving pointer."
+    required: true
+  vex-file:
+    description: "Path to the OpenVEX 0.2.0 JSON predicate to attest."
+    required: true
+  key-ref:
+    description: >-
+      cosign key reference (file path, KMS URI, or k8s://ns/secret from
+      cofre/ESO). Empty = keyless Fulcio+Rekor (requires id-token: write).
+    required: false
+    default: ""
+
+outputs:
+  attested:
+    description: "true when the VEX was attested"
+    value: ${{ steps.attest.outputs.attested }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: attest
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        VEX_FILE: ${{ inputs.vex-file }}
+        KEY_REF: ${{ inputs.key-ref }}
