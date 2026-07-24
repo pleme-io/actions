@@ -824,6 +824,45 @@
                       (list (string-append "docker://" ref))))))
     (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
 
+;; Split a composed "<registry>/<image...>" base back into the two
+;; parts a CLI wants separately (doca's --registry/--image; regctl's
+;; bare registry-host for `regctl registry set`). Every branch of
+;; oci:compose-base produces a string of exactly this shape
+;; (host[:port]/path...), so splitting on the FIRST "/" is safe
+;; regardless of which precedence branch produced it. Shared by
+;; zot-push + manifest-list-join (the ≥2-consumer rule). `zot-push/
+;; run.tlisp` still carries its own local `zot:split-registry` /
+;; `zot:split-image`; converging it onto these is a NAMED LiveTODO
+;; (same follow-up-refactor discipline as the rest of this block).
+(define (oci:split-registry base)
+  (car (string-split base "/")))
+
+(define (oci:split-image base)
+  (string-join "/" (cdr (string-split base "/"))))
+
+;; Build the curl argv for fetching a pinned CA/leaf cert (PEM) --
+;; pure, testable separately from the exec-capture side effect. Shared
+;; by zot-push + manifest-list-join, both establishing real TLS trust
+;; against the cluster-internal Zot registry's self-signed cert (no
+;; cert-manager on this cluster). A bare `Authorization: token <PAT>`
+;; header IS honored by raw.githubusercontent.com for a PRIVATE repo's
+;; raw file (verified live, zot-push 2026-07-18) -- an empty token
+;; keeps the original unauthenticated path for a public cert URL.
+;; `zot-push/run.tlisp` still carries its own local
+;; `zot:ca-cert-curl-args` / `zot:fetch-ca-cert`; converging it onto
+;; these is the same NAMED LiveTODO as oci:split-registry above.
+(define (oci:ca-cert-curl-args url path token)
+  (if (equal? token "")
+    (list "curl" "-sL" "-f" "-o" path url)
+    (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
+
+;; Fetch the pinned CA cert to a local path via curl (universally
+;; available on these runners). Returns the local path on success, ""
+;; on failure -- an honest miss, never a silent lie.
+(define (oci:fetch-ca-cert url path token)
+  (let ((r (apply exec-capture (oci:ca-cert-curl-args url path token))))
+    (if (= (status-of r) 0) path "")))
+
 ;; ────────────────────────────────────────────────────────────────
 ;; BLAKE3 content-addressing (the ATTEST leg). Shared across
 ;; cartorio-attest + tameshi-attest (the ≥2-consumer rule). A real

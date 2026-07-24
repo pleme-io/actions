@@ -37,13 +37,25 @@ inputs:
     required: false
     default: ""
   insecure:
-    description: "Cluster-internal Zot is http/self-signed"
+    description: "Cluster-internal Zot is http/self-signed (default 'true'). For regctl this is the CA-cert-fetch-failed fallback (real, logged degradation); for buildah/podman a real --tls-verify=false; a documented no-op for docker."
     required: false
     default: "true"
   tool:
-    description: "Manifest tool: auto | buildah | podman | docker | regctl"
+    description: "Manifest tool: auto | regctl | buildah | podman | docker"
     required: false
     default: "auto"
+  ca-cert-url:
+    description: "Raw URL of the pinned CA/leaf cert (PEM) the regctl path trusts -- default points at the committed cert for this cluster's in-pod Zot TLS (the same cert zot-push already trusts)"
+    required: false
+    default: "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"
+  ca-cert-path:
+    description: "Local path the fetched CA cert is written to -- distinct default from zot-push's own so one job step never clobbers the other's cached fetch"
+    required: false
+    default: "/tmp/manifest-list-join-ca.crt"
+  ca-cert-token:
+    description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (the default ca-cert-url points at the private pleme-io/akeyless-k8s; an unauthenticated fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
+    required: false
+    default: ""
 
 outputs:
   index-ref:
@@ -74,6 +86,20 @@ runs:
         # exact-pinned to nixos-24.05.
         command -v skopeo >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#skopeo
 
+    - name: Ensure regctl
+      shell: bash
+      run: |
+        # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) -- exact-pinned
+        # to nixos-24.05, matching the skopeo step above. regctl is `auto`'s
+        # PREFERRED tool (see run.tlisp's TOOL PRIORITY header note): it is
+        # the one manifest tool that accepts per-registry TLS/CA trust
+        # (`regctl registry set --cacert`) without touching a shared daemon's
+        # global config, unlike docker/buildah/podman. Not preinstalled on
+        # the akeylesslabs camelot ARC runner image (stock
+        # ghcr.io/actions/actions-runner:latest + dind) -- confirmed live,
+        # 2026-07-23.
+        command -v regctl >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#regctl
+
     - name: Load stdlib + run.tlisp
       id: src
       shell: bash
@@ -101,3 +127,6 @@ runs:
         SHA: ${{ inputs.sha }}
         INSECURE: ${{ inputs.insecure }}
         TOOL: ${{ inputs.tool }}
+        CA_CERT_URL: ${{ inputs.ca-cert-url }}
+        CA_CERT_PATH: ${{ inputs.ca-cert-path }}
+        CA_CERT_TOKEN: ${{ inputs.ca-cert-token }}
