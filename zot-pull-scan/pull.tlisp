@@ -15,24 +15,33 @@
 ;; zot's self-signed endpoint failed server-identity verification before a
 ;; single byte moved — the faucet could never open. This mirrors the
 ;; sibling `zot-push` action's already-proven CA-trust pattern: fetch the
-;; pinned CA/leaf cert once from a raw URL (default: the CA committed
-;; alongside the cluster's zot release) and hand it to skopeo. skopeo pins a
-;; DIRECTORY of certs (`--src-cert-dir`, *.crt = CA) rather than a single
+;; pinned CA/leaf cert once from a raw URL and hand it to skopeo. skopeo pins
+;; a DIRECTORY of certs (`--src-cert-dir`, *.crt = CA) rather than a single
 ;; file (doca's `--dest-ca-cert`), so the fetched PEM is written into a
 ;; dedicated dir and that dir is passed. Verification is against a SPECIFIC
 ;; known cert, never a blanket "accept any cert". `SRC_INSECURE=true` is the
 ;; FALLBACK (plain `--src-tls-verify=false`), used only if the cert fetch
-;; itself fails — logged loudly, never silent. A consumer pulling from a
-;; publicly-trusted (non-zot) registry sets `SRC_CA_CERT_URL=""` to skip the
-;; CA path entirely and keep the original plain-copy behavior.
+;; itself fails — logged loudly, never silent.
+;;
+;; OPT-IN by default -- `SRC_CA_CERT_URL` defaults to "" (skip CA trust,
+;; original plain-copy behavior) because this action's SOURCE is not always
+;; the self-signed zot: its shipped consumer `vendor-image-mirror.yml` uses
+;; it to pull the SOURCE image from GHCR (publicly-trusted TLS, no zot CA
+;; wanted), and defaulting to a required zot-CA fetch would REFUSE every one
+;; of those pulls. A consumer that genuinely pulls FROM the self-signed zot
+;; opts in: set `SRC_CA_CERT_URL` to the committed zot-ca.crt (plus a
+;; `SRC_CA_CERT_TOKEN` for the private repo) for pinned verification, OR set
+;; `SRC_INSECURE=true` for the loud plaintext fallback.
 ;;
 ;; Inputs (env):
 ;;   REF               zot image ref to pull + scan (required)
 ;;   DEST              local docker-archive path (default zot-pull.tar)
 ;;   SRC_CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once.
-;;                     Default: the committed zot-ca.crt for camelot-eks.
-;;                     Empty ("") skips CA trust entirely (plain copy — for a
-;;                     publicly-trusted source registry).
+;;                     Default "" = skip CA trust entirely (plain copy — the
+;;                     original behavior, correct for a publicly-trusted
+;;                     source registry like GHCR). Set it to the committed
+;;                     zot-ca.crt URL to pin the self-signed zot when the
+;;                     SOURCE is zot itself.
 ;;   SRC_CA_CERT_DIR   local dir the fetched cert is written into + handed to
 ;;                     skopeo's --src-cert-dir (default /tmp/zot-pull-certs).
 ;;   SRC_CA_CERT_TOKEN GitHub token with read access to SRC_CA_CERT_URL's
@@ -100,8 +109,10 @@
 (define (main)
   (let* ((ref (env-required "REF"))
          (dest (env-get "DEST" "zot-pull.tar"))
-         (ca-cert-url (env-get "SRC_CA_CERT_URL"
-           "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+         ;; Default "" => opt-out (plain copy). Non-empty => fetch + pin, so
+         ;; the self-signed-zot-source case is opt-in and the GHCR-source
+         ;; consumers (vendor-image-mirror) are unaffected.
+         (ca-cert-url (env-get "SRC_CA_CERT_URL" ""))
          (ca-cert-dir (env-get "SRC_CA_CERT_DIR" "/tmp/zot-pull-certs"))
          (ca-cert-token (env-get "SRC_CA_CERT_TOKEN" ""))
          (allow-insecure (oci:flag-true? (env-get "SRC_INSECURE" "false")))

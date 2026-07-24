@@ -25,9 +25,9 @@ inputs:
     required: false
     default: "zot-pull.tar"
   src-ca-cert-url:
-    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for the source zot's self-signed in-pod TLS -- mirrors zot-push's ca-cert-url. Default points at the committed cert for camelot-eks's Zot. Set to '' to skip CA trust entirely (plain copy, for a publicly-trusted source registry)."
+    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for a self-signed SOURCE registry (mirrors zot-push's ca-cert-url; skopeo pins it via --src-cert-dir). Default '' = OPT-OUT (plain copy, the original behavior) -- correct for a publicly-trusted source like GHCR (the shipped vendor-image-mirror consumer pulls its source from GHCR, so a required zot-CA fetch would wrongly refuse it). When the SOURCE is the self-signed zot itself, set this to the committed zot-ca.crt raw URL (https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt) plus src-ca-cert-token, or set src-insecure=true."
     required: false
-    default: "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"
+    default: ""
   src-ca-cert-dir:
     description: "Local directory the fetched CA cert is written into and handed to skopeo's --src-cert-dir (skopeo pins a DIR of *.crt certs, not a single file). Override if a job invokes this action more than once against DIFFERENT source certs."
     required: false
