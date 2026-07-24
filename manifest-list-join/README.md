@@ -26,6 +26,8 @@ it **fails loudly** — it never fakes an index digest.
     run-number: ${{ github.run_number }}
     sha: ${{ github.sha }}
     insecure: "true"
+    dest-user: ${{ secrets.ZOT_ADMIN_USERNAME }}
+    dest-pass: ${{ secrets.ZOT_ADMIN_PASSWORD }}
     # tool: auto        # buildah|podman|docker|regctl
 ```
 
@@ -46,6 +48,7 @@ environment pins the returned `index-digest` (`sha256:…`) — never a moving t
 | `tag` | `""` | explicit index tag; else composed `r<run>-<sha>` |
 | `run-number` / `sha` | `""` | compose the `r<run>-<sha>` index tag |
 | `insecure` | `true` | http/self-signed cluster registry |
+| `dest-user` / `dest-pass` | *(required)* | registry push credentials — Zot rejects anonymous index writes the same way it rejects anonymous blob pushes (same shape as `zot-push`) |
 | `tool` | `auto` | `auto` \| `buildah` \| `podman` \| `docker` \| `regctl` |
 
 ## Outputs
@@ -68,6 +71,12 @@ environment pins the returned `index-digest` (`sha256:…`) — never a moving t
   **degenerate-but-honest** index (`reason=single-arch`). It becomes load-bearing
   the moment arm64-native lands — no action change, just a second `arch-refs`
   entry.
+- **2026-07-24 fix:** this action shipped with **zero credential wiring** since
+  inception — `dest-user`/`dest-pass` are new required inputs. Every tool path
+  (regctl `registry login`, buildah/podman `--creds`, `docker login`) now
+  authenticates before the join, closing "no credentials available: unauthorized"
+  against an authz-enabled Zot at every tool path, not just the regctl instance
+  that happened to be live-tested (task #74).
 
 ## Verification
 
