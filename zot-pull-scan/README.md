@@ -33,6 +33,10 @@ what you pulled — not a re-resolved tag.
 | `ignore-unfixed` | no | `false` | Skip vulns without an available fix. Forwarded verbatim. |
 | `ignore-file` | no | `""` | Path to a `.trivyignore`-format file of named, tracked exceptions (never a blanket loosening). Forwarded verbatim. |
 | `dest` | no | `zot-pull.tar` | Local docker-archive path for the pulled bytes |
+| `src-ca-cert-url` | no | committed `zot-ca.crt` (camelot-eks) | Raw URL of the pinned CA/leaf cert to TRUST for the source zot's **self-signed in-pod TLS** (mirrors `zot-push`'s `ca-cert-url`; skopeo pins it via `--src-cert-dir`). Set to `""` to skip CA trust (plain copy, for a publicly-trusted source). |
+| `src-ca-cert-dir` | no | `/tmp/zot-pull-certs` | Local dir the fetched CA cert is written into and handed to skopeo's `--src-cert-dir` (skopeo pins a **directory** of `*.crt`, not a single file). |
+| `src-ca-cert-token` | no | `""` | GitHub token with read access to `src-ca-cert-url`'s repo — **required** when that repo is private (the default URL points at the private `pleme-io/akeyless-k8s`; an unauthenticated fetch 404s). |
+| `src-insecure` | no | `false` | Fall back to `--src-tls-verify=false` if the CA cert fetch fails (real degradation, logged loudly — never the default path when the cert is reachable). |
 
 ## Outputs
 
@@ -54,6 +58,14 @@ what you pulled — not a re-resolved tag.
   (`admitted-outcome?`, `verdict-of`) is unit-tested. A live pull needs a
   reachable zot + docker/skopeo auth (a runtime pre-condition, not an
   unshipped seam).
+- **TLS (2026-07-24)** — the source zot serves a **self-signed** cert, so the
+  pull now fetches the pinned CA once (`src-ca-cert-url`, default the committed
+  `zot-ca.crt`) and passes it to skopeo via `--src-cert-dir`, mirroring
+  `zot-push`'s proven CA-trust pattern. Verification is against a **specific
+  known cert**, never a blanket skip; `src-insecure=true` is a loud, tracked
+  fallback used only if the cert fetch itself fails. The prior version ran a
+  bare `skopeo copy` with no source-TLS trust, so a pull from the self-signed
+  zot failed before any byte moved.
 
 ## Architecture
 

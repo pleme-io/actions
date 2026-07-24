@@ -9,47 +9,135 @@
 ;; gating (see verdict.tlisp's header for why this action no longer
 ;; duplicates that logic — it used to, with a stale/buggy copy).
 ;;
-;; Inputs (env): REF, DEST
+;; TLS (added 2026-07-24): the in-cluster Zot serves real in-pod TLS with a
+;; SELF-SIGNED cert (no cert-manager on camelot-eks). The prior version ran
+;; a bare `skopeo copy` with NO source-TLS trust wiring, so a pull from
+;; zot's self-signed endpoint failed server-identity verification before a
+;; single byte moved — the faucet could never open. This mirrors the
+;; sibling `zot-push` action's already-proven CA-trust pattern: fetch the
+;; pinned CA/leaf cert once from a raw URL (default: the CA committed
+;; alongside the cluster's zot release) and hand it to skopeo. skopeo pins a
+;; DIRECTORY of certs (`--src-cert-dir`, *.crt = CA) rather than a single
+;; file (doca's `--dest-ca-cert`), so the fetched PEM is written into a
+;; dedicated dir and that dir is passed. Verification is against a SPECIFIC
+;; known cert, never a blanket "accept any cert". `SRC_INSECURE=true` is the
+;; FALLBACK (plain `--src-tls-verify=false`), used only if the cert fetch
+;; itself fails — logged loudly, never silent. A consumer pulling from a
+;; publicly-trusted (non-zot) registry sets `SRC_CA_CERT_URL=""` to skip the
+;; CA path entirely and keep the original plain-copy behavior.
+;;
+;; Inputs (env):
+;;   REF               zot image ref to pull + scan (required)
+;;   DEST              local docker-archive path (default zot-pull.tar)
+;;   SRC_CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once.
+;;                     Default: the committed zot-ca.crt for camelot-eks.
+;;                     Empty ("") skips CA trust entirely (plain copy — for a
+;;                     publicly-trusted source registry).
+;;   SRC_CA_CERT_DIR   local dir the fetched cert is written into + handed to
+;;                     skopeo's --src-cert-dir (default /tmp/zot-pull-certs).
+;;   SRC_CA_CERT_TOKEN GitHub token with read access to SRC_CA_CERT_URL's
+;;                     repo — REQUIRED when that repo is private (the default
+;;                     URL points at the private pleme-io/akeyless-k8s; an
+;;                     unauthenticated raw fetch 404s). Empty keeps the
+;;                     unauthenticated path (public cert URL).
+;;   SRC_INSECURE      fall back to --src-tls-verify=false if the cert fetch
+;;                     fails (default "false").
+;;
 ;; Outputs: pulled ("true"|"false")
-;; Exit: 0 on a successful pull; 1 (hard fail) on a pull failure — a faucet
-;; that can't even see the bytes it's supposed to gate must never let
-;; anything through, so this action's later steps are gated on this one
-;; succeeding first (action.yml's default step ordering: a non-continue-on-
-;; error failure here skips scan + verdict entirely).
+;; Exit: 0 on a successful pull; 1 (hard fail) on a pull failure OR a
+;; refused-unverified-connection — a faucet that can't even see the bytes it
+;; is supposed to gate must never let anything through, so this action's
+;; later steps are gated on this one succeeding first (action.yml's default
+;; step ordering: a non-continue-on-error failure here skips scan + verdict
+;; entirely).
 
-(define (pull-image ref dest)
-  ;; skopeo copy docker://<ref> -> docker-archive:<dest>. Auth is a
-  ;; pre-condition (docker/skopeo login to the zot registry, done by the
-  ;; consumer workflow before this action runs).
-  (status-of (exec-capture "skopeo" "--insecure-policy" "copy"
-                           (string-append "docker://" ref)
-                           (string-append "docker-archive:" dest))))
+;; ── pure helpers (mirrors zot-push's fetch-CA shape) ──────────────
+;; Build the curl argv for fetching the pinned CA cert. A bare
+;; `Authorization: token <PAT>` header IS honored by raw.githubusercontent.com
+;; for private repos (same as zot-push) — an empty token keeps the original
+;; unauthenticated path, a non-empty one adds the header.
+(define (pull:ca-cert-curl-args url path token)
+  (if (equal? token "")
+    (list "curl" "-sL" "-f" "-o" path url)
+    (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
+
+;; Fetch the pinned CA cert to a local path via curl (always present on
+;; these runners — this action's own loader already relies on it). Returns
+;; the path on success, "" on failure (an honest miss, not a silent lie).
+(define (pull:fetch-ca-cert url path token)
+  (let ((r (apply exec-capture (pull:ca-cert-curl-args url path token))))
+    (if (= (status-of r) 0) path "")))
+
+;; skopeo copy docker://<ref> -> docker-archive:<dest>. `--insecure-policy`
+;; is a GLOBAL flag (before the subcommand); `--src-cert-dir` /
+;; `--src-tls-verify` are `copy` flags (after it, scoping the SOURCE).
+;; cert-dir non-empty => pin the fetched CA; else insecure => skip verify;
+;; else plain (publicly-trusted source). Auth to the zot registry is a
+;; pre-condition (the consumer workflow logs in before this action runs).
+(define (pull-image ref dest cert-dir insecure)
+  (let* ((tls-args
+           (cond
+             ((not (equal? cert-dir "")) (list "--src-cert-dir" cert-dir))
+             (insecure (list "--src-tls-verify=false"))
+             (else (list))))
+         (args (append
+                 (list "skopeo" "--insecure-policy" "copy")
+                 tls-args
+                 (list (string-append "docker://" ref)
+                       (string-append "docker-archive:" dest)))))
+    (status-of (apply exec-capture args))))
+
+;; The full public output contract this action must emit itself on a
+;; terminal pull-side failure (the scan + verdict steps never run).
+(define (emit-pull-failed dest)
+  (append-output "pulled=false")
+  (append-output (string-append "local-archive=" dest))
+  (append-output "admitted=false")
+  (append-output "severity=none")
+  (append-output "vuln-count=0")
+  (append-output "result=pull-failed"))
 
 (define (main)
   (let* ((ref (env-required "REF"))
-         (dest (env-get "DEST" "zot-pull.tar")))
-    (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))
+         (dest (env-get "DEST" "zot-pull.tar"))
+         (ca-cert-url (env-get "SRC_CA_CERT_URL"
+           "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+         (ca-cert-dir (env-get "SRC_CA_CERT_DIR" "/tmp/zot-pull-certs"))
+         (ca-cert-token (env-get "SRC_CA_CERT_TOKEN" ""))
+         (allow-insecure (oci:flag-true? (env-get "SRC_INSECURE" "false")))
+         ;; skopeo pins a DIR of certs; the CA file must live inside it.
+         (ca-cert-path (string-append ca-cert-dir "/zot-ca.crt"))
+         ;; When SRC_CA_CERT_URL is empty the consumer opted out of CA trust
+         ;; (public source registry) -> keep the original plain-copy path.
+         (fetched
+           (if (equal? ca-cert-url "")
+             ""
+             (begin
+               (exec-capture "mkdir" "-p" ca-cert-dir)
+               (pull:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token))))
+         (effective-cert-dir (if (equal? fetched "") "" ca-cert-dir)))
     (cond
-      ((= (pull-image ref dest) 0)
-       (append-output "pulled=true")
-       0)
+      ;; The CA was REQUESTED (non-empty URL) but couldn't be fetched, and no
+      ;; insecure fallback is enabled -> refuse rather than pull over an
+      ;; unverified/plaintext connection (matches zot-push).
+      ((and (not (equal? ca-cert-url ""))
+            (equal? fetched "")
+            (not allow-insecure))
+       (log-error "zot-pull-scan: could not fetch the pinned CA cert (SRC_CA_CERT_TOKEN may be required for the private default URL) and SRC_INSECURE fallback is not enabled -- refusing to pull over an unverified or plaintext connection")
+       (emit-pull-failed dest)
+       1)
       (else
-       (log-error (string-append "zot-pull-scan: skopeo pull failed for " ref))
-       ;; A pull failure is terminal -- the scan + verdict steps never run
-       ;; (this step hard-exits without continue-on-error, so action.yml's
-       ;; later steps are skipped by GitHub Actions' own default behavior).
-       ;; So THIS step must emit the action's full public output contract
-       ;; itself, exactly as it did before this file existed as a separate
-       ;; stage -- a consumer reading steps.<id>.outputs.result must never
-       ;; see an empty string just because the failure happened at pull
-       ;; time instead of scan time.
-       (append-output "pulled=false")
-       (append-output (string-append "local-archive=" dest))
-       (append-output "admitted=false")
-       (append-output "severity=none")
-       (append-output "vuln-count=0")
-       (append-output "result=pull-failed")
-       1))))
+       (when (and (not (equal? ca-cert-url "")) (equal? fetched ""))
+         (log-info "::warning::zot-pull-scan: CA cert fetch failed, falling back to --src-tls-verify=false -- this is a real, tracked degradation, not silent"))
+       (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))
+       (cond
+         ((= (pull-image ref dest effective-cert-dir allow-insecure) 0)
+          (append-output "pulled=true")
+          0)
+         (else
+          (log-error (string-append "zot-pull-scan: skopeo pull failed for " ref))
+          (emit-pull-failed dest)
+          1))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")

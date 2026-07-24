@@ -24,6 +24,22 @@ inputs:
     description: "Local docker-archive path for the pulled bytes"
     required: false
     default: "zot-pull.tar"
+  src-ca-cert-url:
+    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for the source zot's self-signed in-pod TLS -- mirrors zot-push's ca-cert-url. Default points at the committed cert for camelot-eks's Zot. Set to '' to skip CA trust entirely (plain copy, for a publicly-trusted source registry)."
+    required: false
+    default: "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"
+  src-ca-cert-dir:
+    description: "Local directory the fetched CA cert is written into and handed to skopeo's --src-cert-dir (skopeo pins a DIR of *.crt certs, not a single file). Override if a job invokes this action more than once against DIFFERENT source certs."
+    required: false
+    default: "/tmp/zot-pull-certs"
+  src-ca-cert-token:
+    description: "GitHub token with read access to src-ca-cert-url's repo -- REQUIRED when that repo is private (the default URL points at the private pleme-io/akeyless-k8s; an unauthenticated raw fetch 404s). Empty keeps the unauthenticated path for a public cert URL."
+    required: false
+    default: ""
+  src-insecure:
+    description: "Fall back to plain --src-tls-verify=false if the CA cert fetch fails (real degradation, logged loudly -- never the default path when the cert is reachable)."
+    required: false
+    default: "false"
 
 outputs:
   # Each output falls back from steps.verdict -> steps.pull: on a
@@ -86,6 +102,10 @@ runs:
       env:
         REF: ${{ inputs.ref }}
         DEST: ${{ inputs.dest }}
+        SRC_CA_CERT_URL: ${{ inputs.src-ca-cert-url }}
+        SRC_CA_CERT_DIR: ${{ inputs.src-ca-cert-dir }}
+        SRC_CA_CERT_TOKEN: ${{ inputs.src-ca-cert-token }}
+        SRC_INSECURE: ${{ inputs.src-insecure }}
 
     # ── Stage 2: scan the PULLED bytes via image-scan -- the fleet's one
     # canonical severity classification + fail-on-severity gate (real
