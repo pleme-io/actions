@@ -1,13 +1,14 @@
 name: 'pleme-io · runner-resolve'
-description: 'Resolve the runs-on label for a job via typed precedence: an explicit override > an optional repo-committed config file (.github/runner.yml) > the caller-supplied default. GitHub Actions runs-on: cannot read a same-job step output, so every workflow adopting this action MUST call it as its OWN job and have every other job in the same workflow depend on it via needs.<job-id>.outputs.runner. Fully generic — this action never hardcodes a repo-specific default (e.g. camelot); the caller always supplies its own default expression.'
+description: 'Resolve the runs-on label for a job via typed precedence: an explicit override > an optional repo-committed config file (.github/runner.yml) > the caller-supplied default > a visibility-aware billing-safe default (private repo -> Camelot self-hosted, public repo -> free GitHub-hosted minutes). GitHub Actions runs-on: cannot read a same-job step output, so every workflow adopting this action MUST call it as its OWN job and have every other job in the same workflow depend on it via needs.<job-id>.outputs.runner. The visibility-aware tier is the ONLY posture this action bakes in — it exists to make the org standing invariant ("a CI path either flows through a genuinely public repo or Camelot self-hosted, never a metered GitHub-hosted runner on a private repo") the default outcome of omitting `default`, not something every caller re-derives by hand. A caller that needs something else always wins via override/config-path/an explicit default.'
 branding:
   icon: 'cpu'
   color: 'blue'
 
 inputs:
   default:
-    description: "The runner label to use when neither override nor config-path resolve to a value. Required — this action never invents a default of its own; pass your own prescribed default (typically a ternary the caller already evaluates, e.g. a private-repo vs public-repo split) here."
-    required: true
+    description: "The runner label to use when neither override nor config-path resolve to a value. Optional — leave empty to fall through to the visibility-aware default (private-runner-default / public-runner-default below) instead. Pass this only when you need something OTHER than the fleet's own billing-safe default for this repo (e.g. a genuinely different self-hosted pool, or a macOS runner on a private repo, which has no self-hosted answer yet)."
+    required: false
+    default: ""
   override:
     description: "An explicit runner label that wins over everything else. Typically forwarded verbatim from an existing workflow_call `runner:` input, unchanged. Leave empty (the default) to fall through to config-path, then default."
     required: false
@@ -16,13 +17,21 @@ inputs:
     description: "Path to an optional repo-committed YAML file (a single top-level `runner:` field) that lets a repo pin its own runner without touching workflow YAML at all. Read only when override is empty; a missing file or missing field is treated as an honest miss and falls through to default."
     required: false
     default: ".github/runner.yml"
+  private-runner-default:
+    description: "The billing-safe default used when `default` is empty and the calling repo is private (github.event.repository.private == true) — Camelot's scale-to-zero breathable self-hosted pool by default. Override only if a repo needs a different self-hosted target (e.g. an arm64 pool)."
+    required: false
+    default: "camelot-builder-pleme-eks"
+  public-runner-default:
+    description: "The default used when `default` is empty and the calling repo is public — free GitHub-hosted minutes, no billing exposure."
+    required: false
+    default: "ubuntu-24.04"
 
 outputs:
   runner:
     description: "The resolved runs-on label."
     value: ${{ steps.resolve.outputs.runner }}
   provenance:
-    description: "Which tier won: override | file | default. Observability only — mirrors the org's Provenance{tier,source} idiom as a plain string, not a typed value."
+    description: "Which tier won: override | file | default | visibility-default. Observability only — mirrors the org's Provenance{tier,source} idiom as a plain string, not a typed value."
     value: ${{ steps.resolve.outputs.provenance }}
 
 runs:
@@ -49,3 +58,6 @@ runs:
         DEFAULT: ${{ inputs.default }}
         OVERRIDE: ${{ inputs.override }}
         CONFIG_PATH: ${{ inputs.config-path }}
+        IS_PRIVATE: ${{ github.event.repository.private }}
+        PRIVATE_RUNNER_DEFAULT: ${{ inputs.private-runner-default }}
+        PUBLIC_RUNNER_DEFAULT: ${{ inputs.public-runner-default }}
