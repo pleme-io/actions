@@ -61,6 +61,21 @@ runs:
       # image-push.yml, container-stack.yml, compliance-attest.yml) were
       # already correctly on @main; this action itself was the one stale
       # holdout.
+      # TRIVY_USERNAME/TRIVY_PASSWORD, GHCR-scoped -- found live 2026-07-23:
+      # this action never authenticated trivy's registry pull at all, so it
+      # only ever worked by AMBIENT LUCK on self-hosted runners that happen
+      # to carry pre-baked GHCR credentials out-of-band. Any GitHub-hosted
+      # runner (e.g. the fleet's own `runnerOverride` on-demand escape
+      # hatch) failed outright: trivy's "remote" registry backend returned
+      # a real `401 UNAUTHORIZED` on `ghcr.io/token?...` -- confirmed via a
+      # real failed scan job's raw log, not inferred. Every pleme-io image
+      # this action scans publishes to ghcr.io/pleme-io (★★ TOOL
+      # DISTRIBUTION), so scoping to that prefix covers the real fleet-wide
+      # case without a false general-registry assumption. `github.token`
+      # is the ambient per-job GITHUB_TOKEN -- always present, needs no new
+      # secret and no caller-side change. Harmless when LOCAL_ARCHIVE is
+      # set (trivy scans `--input <path>`, never touches a registry, so
+      # these credentials are simply unused).
     - id: scan
       uses: pleme-io/actions/tatara-script@main
       with:
@@ -71,6 +86,8 @@ runs:
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
         IGNORE_FILE: ${{ inputs.ignore-file }}
+        TRIVY_USERNAME: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.actor || '' }}
+        TRIVY_PASSWORD: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.token || '' }}
 
     # Artifact names may only contain alphanumerics, `_`, `-`, `.` — strip
     # everything else from image-ref (which carries `:`, `/`) so the upload
