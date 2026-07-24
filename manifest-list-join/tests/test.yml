@@ -111,3 +111,74 @@ jobs:
           echo "$RAW" | jq -e '[.manifests[].platform.architecture] | (index("amd64") != null and index("arm64") != null)' >/dev/null \
             || { echo "index missing amd64/arm64 platform entry"; echo "$RAW"; exit 1; }
           echo "manifest-list-join (docker tool) verified — $IDX is a real amd64+arm64 index"
+
+  # `tool: regctl` -- the tool `auto` now PREFERS (2026-07-23 fix). regctl is
+  # the one manifest tool that establishes real per-registry TLS/CA trust
+  # (`regctl registry set --cacert`) without touching a shared daemon, so this
+  # job proves that chain end-to-end against a registry shaped like the REAL
+  # target: TLS-ONLY, self-signed cert, no plain-HTTP listener -- exactly
+  # Zot's posture since its 2026-07-18 in-pod TLS migration. NOT a
+  # GH Actions `services:` container: service containers start before ANY
+  # step (including checkout) runs, so a step-generated cert file can't be
+  # bind-mounted into one at the moment it starts (confirmed by reading how
+  # GH Actions provisions services); a plain `docker run` STEP, after cert
+  # generation, sidesteps that entirely. `ca-cert-url` points at the
+  # step-generated cert via a `file://` URL (curl supports `file://`,
+  # confirmed live) -- this exercises the PRIMARY, load-bearing route
+  # (`oci:fetch-ca-cert` -> `mlj:regctl-set-cacert` -> a later, separate
+  # `regctl index create` loading it from `$HOME/.regctl/config.json`), not
+  # just the insecure fallback. regctl itself is installed by the action's
+  # own "Ensure regctl" step, not pre-installed here (proves that step
+  # actually works, not just assumed).
+  join-two-arches-regctl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure skopeo + jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo jq
+      - name: Generate a self-signed cert + start a TLS-only local registry (matches Zot's real in-pod-TLS posture, no plain-HTTP listener)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mlj-tls
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/mlj-tls/tls.key -out /tmp/mlj-tls/tls.crt \
+            -days 1 -nodes -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+          docker run -d --name mlj-tls-registry -p 5002:5000 \
+            -v /tmp/mlj-tls:/certs:ro \
+            -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/tls.crt \
+            -e REGISTRY_HTTP_TLS_KEY=/certs/tls.key \
+            registry:2
+          for i in $(seq 1 30); do
+            curl -sk -o /dev/null "https://localhost:5002/v2/" && break
+            sleep 1
+          done
+      - name: Push per-arch images (amd64 + arm64) to the local TLS registry
+        run: |
+          set -euo pipefail
+          skopeo --insecure-policy copy --override-arch amd64 --override-os linux \
+            docker://busybox:latest docker://localhost:5002/akeyless-auth:amd64-r412-9c1f2ab --dest-tls-verify=false
+          skopeo --insecure-policy copy --override-arch arm64 --override-os linux \
+            docker://busybox:latest docker://localhost:5002/akeyless-auth:arm64-r412-9c1f2ab --dest-tls-verify=false
+      - id: join
+        uses: ./manifest-list-join
+        with:
+          registry: localhost:5002
+          svc: auth
+          arch-refs: "amd64=localhost:5002/akeyless-auth:amd64-r412-9c1f2ab,arm64=localhost:5002/akeyless-auth:arm64-r412-9c1f2ab"
+          run-number: "412"
+          sha: 9c1f2ab
+          insecure: "true"
+          tool: regctl
+          ca-cert-url: "file:///tmp/mlj-tls/tls.crt"
+          ca-cert-path: "/tmp/mlj-tls/fetched-ca.crt"
+      - name: Independently prove the index is a real multi-arch manifest list
+        run: |
+          set -euo pipefail
+          IDX="localhost:5002/akeyless-auth:r412-9c1f2ab"
+          RAW=$(skopeo --insecure-policy inspect --tls-verify=false --raw "docker://$IDX")
+          echo "$RAW" | jq -e '.manifests | length >= 2' >/dev/null \
+            || { echo "index has fewer than 2 platform manifests"; echo "$RAW"; exit 1; }
+          echo "$RAW" | jq -e '[.manifests[].platform.architecture] | (index("amd64") != null and index("arm64") != null)' >/dev/null \
+            || { echo "index missing amd64/arm64 platform entry"; echo "$RAW"; exit 1; }
+          echo "manifest-list-join (regctl tool, real CA-cert-pinned TLS trust) verified — $IDX is a real amd64+arm64 index"

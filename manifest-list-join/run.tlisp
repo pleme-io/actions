@@ -6,10 +6,36 @@
 ;; Part of the super-cache-ci MANIFEST leg (job 3). skopeo *copies*
 ;; single images; it does NOT *compose* an index from separately-pushed
 ;; per-arch digests — so this action drives a real manifest tool
-;; (buildah|podman `manifest create/add/push`, `docker manifest`, or
-;; `regctl index create`), auto-detected. It consumes the per-arch refs
+;; (regctl `index create/add`, buildah|podman `manifest create/add/push`,
+;; or `docker manifest`), auto-detected. It consumes the per-arch refs
 ;; that zot-push produced (amd64=<ref>,arm64=<ref>) and is attested by
 ;; cartorio-attest.
+;;
+;; TOOL PRIORITY (REVISED 2026-07-23): `mlj:select-tool` now tries
+;; regctl FIRST, then buildah/podman, then docker last. Root cause: the
+;; cluster-internal Zot moved off plain HTTP onto real in-pod TLS
+;; (self-signed, no cert-manager) 2026-07-18 -- see zot-push/run.tlisp's
+;; header for the full story. This action's own INSECURE input/flag was
+;; already a documented no-op for `docker buildx imagetools create`
+;; (mlj:docker-join's own comment): it has no `--insecure`/`--tls-verify`
+;; equivalent and defers entirely to the shared dind sidecar's daemon-
+;; level trust config, which carries no entry for the Zot host or its
+;; CA. buildah/podman's `--tls-verify=false` IS a real per-invocation
+;; flag but only ever buys the (real, tracked) insecure fallback, never
+;; a genuine CA-pinned verification. regctl is the one candidate tool
+;; that is a standalone client accepting PER-REGISTRY trust config
+;; (`regctl registry set --cacert "<pem>"`, confirmed real against a
+;; live regclient 0.6.1 AND 0.9.2 binary: the config is written to
+;; regctl's own `$HOME/.regctl/config.json` and a LATER, separate
+;; `regctl index create/add` call loads it automatically, source=host in
+;; -v debug output) without touching any shared daemon's global trust
+;; store -- so it is the tool actually capable of honoring either the
+;; real CA-cert route or an explicit insecure fallback here. It is not
+;; preinstalled on the akeylesslabs camelot ARC runner image (stock
+;; `ghcr.io/actions/actions-runner:latest` + dind -- confirmed live,
+;; 2026-07-23: no buildah/podman/regctl on PATH, only the dind-sidecar
+;; `docker`), so action.yml's "Ensure regctl" step nix-installs it the
+;; same way "Ensure skopeo" already does.
 ;;
 ;; Tier: SHIPPABLE-NOW. Index composition is deterministic; the tag/base
 ;; algebra + arch/ref parsing are pure + unit-tested. The ONE runtime
@@ -21,19 +47,36 @@
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
 ;;   append-output, status-of, stdout-of, oci:compose-base,
-;;   oci:target-ref, oci:index-tag, oci:flag-true?, oci:skopeo-remote-digest.
+;;   oci:target-ref, oci:index-tag, oci:flag-true?, oci:skopeo-remote-digest,
+;;   oci:split-registry, oci:fetch-ca-cert.
 ;;
 ;; Inputs (env):
-;;   REGISTRY    cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
-;;   REPO        full base override "<host>/<repo>" (no tag); wins when set
-;;   IMAGE       repo path override "<repo>" (with REGISTRY when REPO empty)
-;;   SVC         akeyless service name; composes "akeyless-<svc>"
-;;   ARCH_REFS   per-arch refs to join: "amd64=<ref>,arm64=<ref>"  (required)
-;;   TAG         explicit index tag; else composed r<run>-<sha>
-;;   RUN_NUMBER  github.run_number (for the composed index tag)
-;;   SHA         github.sha        (for the composed index tag)
-;;   INSECURE    cluster-internal Zot is http/self-signed (default "true")
-;;   TOOL        auto|buildah|podman|docker|regctl (default "auto")
+;;   REGISTRY      cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
+;;   REPO          full base override "<host>/<repo>" (no tag); wins when set
+;;   IMAGE         repo path override "<repo>" (with REGISTRY when REPO empty)
+;;   SVC           akeyless service name; composes "akeyless-<svc>"
+;;   ARCH_REFS     per-arch refs to join: "amd64=<ref>,arm64=<ref>"  (required)
+;;   TAG           explicit index tag; else composed r<run>-<sha>
+;;   RUN_NUMBER    github.run_number (for the composed index tag)
+;;   SHA           github.sha        (for the composed index tag)
+;;   INSECURE      cluster-internal Zot is http/self-signed (default "true") --
+;;                 for regctl this is the CA-cert-fetch-failed fallback (real,
+;;                 logged degradation, never silent); for buildah/podman a
+;;                 real per-invocation --tls-verify=false; a documented no-op
+;;                 for docker (see the TOOL PRIORITY note above).
+;;   TOOL          auto|regctl|buildah|podman|docker (default "auto")
+;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once,
+;;                 used only by the regctl path (default: the same committed
+;;                 cluster cert zot-push already trusts)
+;;   CA_CERT_PATH  local path the fetched cert is written to (default
+;;                 /tmp/manifest-list-join-ca.crt — distinct from zot-push's
+;;                 own default so one job step never clobbers the other's
+;;                 cached fetch)
+;;   CA_CERT_TOKEN a GitHub token with read access to CA_CERT_URL's repo --
+;;                 REQUIRED when that repo is private (the default
+;;                 CA_CERT_URL points at pleme-io/akeyless-k8s, which is
+;;                 private). Empty (default) keeps the unauthenticated path
+;;                 for a public cert URL.
 ;;
 ;; Outputs (append-output → GITHUB_OUTPUT):
 ;;   index-ref / index-digest / arches / joined / reason
@@ -86,15 +129,19 @@
   (= 0 (status-of (exec-capture "sh" "-c"
                     (string-append "command -v " name " >/dev/null 2>&1")))))
 
-;; auto → first present of buildah|podman|docker|regctl; else the
-;; requested tool verbatim; "" when auto finds nothing.
+;; auto → first present of regctl|buildah|podman|docker; else the
+;; requested tool verbatim; "" when auto finds nothing. regctl FIRST
+;; (see the TOOL PRIORITY header note): it is the one candidate that
+;; accepts per-registry TLS/CA trust without touching a shared daemon's
+;; global config, so `auto` prefers it over docker (this action's
+;; `Ensure regctl` action.yml step guarantees it is on PATH).
 (define (mlj:select-tool requested)
   (cond
     ((not (equal? requested "auto")) requested)
+    ((mlj:has? "regctl")  "regctl")
     ((mlj:has? "buildah") "buildah")
     ((mlj:has? "podman")  "podman")
     ((mlj:has? "docker")  "docker")
-    ((mlj:has? "regctl")  "regctl")
     (else "")))
 
 ;; ── per-tool index composition (returns child status; 0 = ok) ─────
@@ -195,12 +242,70 @@
                                  (string-trim (stderr-of r)))))
     (status-of r)))
 
-(define (mlj:join tool refs index-ref insecure?)
+;; ── regctl TLS/CA trust config ────────────────────────────────────
+;;
+;; `regctl index create/add` has no per-invocation --insecure/--cacert
+;; flag of its own; trust is PERSISTENT, PER-REGISTRY config in
+;; regctl's own `$HOME/.regctl/config.json`, written by `regctl
+;; registry set` BEFORE the join call. Confirmed real + real syntax
+;; against a live regclient binary (both 0.6.1, the nixos-24.05 pin
+;; action.yml's "Ensure regctl" step installs, and 0.9.2): the written
+;; `regcert`/`tls` fields are loaded automatically by a LATER, separate
+;; `regctl index create` invocation (source=host in -v debug output) --
+;; no env var, no flag needed on the join call itself. `--skip-check`:
+;; `registry set` PINGS the registry by default and exits nonzero on a
+;; failed ping even though the config was written successfully; skip
+;; that ping so an unreachable-at-config-time (but reachable-at-join-
+;; time) registry never fails this step for the wrong reason.
+(define (mlj:regctl-set-cacert host cert-path)
+  (status-of (exec-capture "regctl" "registry" "set" host
+               "--cacert" (read-file cert-path) "--skip-check")))
+
+;; `--tls insecure` (HTTPS, certificate verification skipped) -- NOT
+;; `--tls disabled` (plain HTTP). Confirmed live against a real
+;; self-signed-cert `registry:2` (regclient 0.9.2): `--tls disabled`
+;; against a TLS-only listener fails hard ("Client sent an HTTP request
+;; to an HTTPS server" / 400) -- regctl, unlike docker/skopeo/buildah's
+;; `--tls-verify=false`, does NOT probe HTTPS-then-fall-back-to-HTTP; the
+;; mode is exact. Zot itself has had no plain-HTTP listener since its
+;; 2026-07-18 in-pod TLS migration (see the header note), so `disabled`
+;; would never actually recover anything here -- `insecure` is the only
+;; value that is a real fallback against the real target.
+(define (mlj:regctl-set-insecure host)
+  (status-of (exec-capture "regctl" "registry" "set" host
+               "--tls" "insecure" "--skip-check")))
+
+;; Establish trust for `host` before any `regctl index …` call. Same
+;; precedence as zot-push's own TLS handling: real CA-pinned
+;; verification (against a SPECIFIC known cert) when the fetch
+;; succeeds; INSECURE (HTTPS, skip cert verification) only as the
+;; named, logged fallback when `insecure?` allows it -- never a silent
+;; downgrade. #t on success, #f when neither route is available (an
+;; honest refusal, not a faked join).
+(define (mlj:regctl-configure-trust host ca-cert-url ca-cert-path ca-cert-token insecure?)
+  (let ((fetched (oci:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token)))
+    (cond
+      ((not (equal? fetched ""))
+       (= 0 (mlj:regctl-set-cacert host fetched)))
+      (insecure?
+       (log-info (string-append "::warning::manifest-list-join: CA cert fetch failed for "
+                  host " — falling back to regctl --tls insecure (HTTPS, cert verification skipped), a real tracked degradation, not silent"))
+       (= 0 (mlj:regctl-set-insecure host)))
+      (else
+       (log-error (string-append "manifest-list-join: could not fetch the pinned CA cert for "
+                  host " and INSECURE fallback is not enabled — refusing to trust regctl against an unverified connection"))
+       #f))))
+
+(define (mlj:join tool refs index-ref insecure? registry-host ca-cert-url ca-cert-path ca-cert-token)
   (cond
     ((equal? tool "buildah") (mlj:oci-tool-join "buildah" "mlj-index" refs index-ref insecure?))
     ((equal? tool "podman")  (mlj:oci-tool-join "podman"  "mlj-index" refs index-ref insecure?))
     ((equal? tool "docker")  (mlj:docker-join refs index-ref insecure?))
-    ((equal? tool "regctl")  (mlj:regctl-join refs index-ref))
+    ((equal? tool "regctl")
+     (cond
+       ((mlj:regctl-configure-trust registry-host ca-cert-url ca-cert-path ca-cert-token insecure?)
+        (mlj:regctl-join refs index-ref))
+       (else 1)))
     (else 127)))
 
 ;; ── main ──────────────────────────────────────────────────────────
@@ -222,6 +327,10 @@
          (tag-in (env-get "TAG" ""))
          (insecure (oci:flag-true? (env-get "INSECURE" "true")))
          (tool-req (env-get "TOOL" "auto"))
+         (ca-cert-url (env-get "CA_CERT_URL"
+           "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+         (ca-cert-path (env-get "CA_CERT_PATH" "/tmp/manifest-list-join-ca.crt"))
+         (ca-cert-token (env-get "CA_CERT_TOKEN" ""))
          (pairs (mlj:parse-pairs (string-split arch-refs ",")))
          (refs (mlj:refs-of pairs))
          (arches (mlj:arches-of pairs))
@@ -233,10 +342,11 @@
       ((equal? tag "") (log-error "manifest-list-join: need TAG, or RUN_NUMBER+SHA to compose r<run>-<sha>") (mlj:emit-fail "need-tag") 1)
       (else
        (let* ((index-ref (oci:target-ref base tag))
-              (tool (mlj:select-tool tool-req)))
+              (tool (mlj:select-tool tool-req))
+              (registry-host (oci:split-registry base)))
          (cond
            ((equal? tool "")
-            (log-error "manifest-list-join: no manifest tool on PATH (buildah|podman|docker|regctl) — refusing to fake an index")
+            (log-error "manifest-list-join: no manifest tool on PATH (regctl|buildah|podman|docker) — refusing to fake an index")
             (mlj:emit-fail "no-tool") 1)
            (else
             (log-info (string-append "==> manifest-list-join [" tool "] "
@@ -244,7 +354,7 @@
                        "} -> docker://" index-ref (if insecure " (insecure)" "")))
             (when (< (length refs) 2)
               (log-info "::warning::manifest-list-join: fewer than 2 arches — emitting a DEGENERATE single-arch index (load-bearing once arm64-native lands)"))
-            (let ((s (mlj:join tool refs index-ref insecure)))
+            (let ((s (mlj:join tool refs index-ref insecure registry-host ca-cert-url ca-cert-path ca-cert-token)))
               (cond
                 ((not (= s 0))
                  (log-error (string-append "manifest-list-join: index create/push failed (exit "

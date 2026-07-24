@@ -40,3 +40,27 @@
   (assert (equal? (mlj:regctl-ref-flags (list "A" "B"))
                   (list "--ref" "A" "--ref" "B"))
           "regctl --ref flags"))
+
+;; ── the stdlib oci: helpers this action's regctl trust-config path
+;; leans on -- covered here (the ≥2-consumer rule already applies:
+;; zot-push's own run.test.tlisp covers its local zot: duplicates of
+;; the same shapes).
+
+(deftest "oci:split-registry / oci:split-image recover regctl's bare registry-host + doca's --image from a composed base"
+  (assert (equal? (oci:split-registry "zot-pleme-zot.zot.svc.cluster.local:5000/akeyless-auth")
+                  "zot-pleme-zot.zot.svc.cluster.local:5000")
+          "registry-host is everything before the first /")
+  (assert (equal? (oci:split-image "zot-pleme-zot.zot.svc.cluster.local:5000/akeyless-auth")
+                  "akeyless-auth")
+          "image is everything after the first /")
+  (assert (equal? (oci:split-image "zot.internal/x/y") "x/y")
+          "a multi-segment image path (an explicit REPO override) survives the split"))
+
+(deftest "oci:ca-cert-curl-args -- unauthenticated by default, token adds Authorization header"
+  (assert (equal? (oci:ca-cert-curl-args "https://example.com/ca.crt" "/tmp/ca.crt" "")
+                  (list "curl" "-sL" "-f" "-o" "/tmp/ca.crt" "https://example.com/ca.crt"))
+          "empty token -> the unauthenticated argv")
+  (assert (equal? (oci:ca-cert-curl-args "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt" "/tmp/ca.crt" "ghp_abc123")
+                  (list "curl" "-sL" "-f" "-H" "Authorization: token ghp_abc123" "-o" "/tmp/ca.crt"
+                        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"))
+          "non-empty token -> Authorization header added (needed for the private akeyless-k8s repo)"))
