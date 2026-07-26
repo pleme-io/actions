@@ -1,5 +1,5 @@
 name: 'pleme-io · runtime-install-lint'
-description: 'Fail on runtime tool installation (curl|tar, curl|sh, apt-get/apt/pip/npm/go/cargo install) in any action.yml or run.tlisp. The tool must ship as a Nix-hardened image instead — see theory/NIX-HARDENING.md.'
+description: 'Fail on runtime tool installation (curl|tar, curl|sh, apt-get/apt/pip/npm/go/cargo install) in any action.yml or run.tlisp, AND per-job Nix installation (nix-installer-action / `nix shell nixpkgs#…`) in any .github/workflows/*.yml. The tool must ship as a Nix-hardened image / baked runner image instead — see theory/NIX-HARDENING.md §VI, §VI.1.'
 branding:
   icon: 'shield'
   color: 'red'

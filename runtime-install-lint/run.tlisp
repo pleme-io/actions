@@ -1,6 +1,11 @@
 ;; runtime-install-lint/run.tlisp — flag runtime tool installation
 ;; (curl|tar, curl|sh, apt-get/apt/pip/npm/go/cargo install) in any
-;; action.yml or run.tlisp in this repo.
+;; action.yml or run.tlisp in this repo, AND per-job Nix installation
+;; (DeterminateSystems/nix-installer-action, `nix shell nixpkgs#…`) in any
+;; .github/workflows/*.yml — a SEPARATE, narrow scan so the broad install
+;; patterns are never applied to workflow YAML (legit CI curls would false-
+;; positive). See NIX-HARDENING.md §VI.1: the CI build env belongs BAKED in the
+;; runner image; the per-job installer is the debt this flags.
 ;;
 ;; The hard rule this enforces (theory/NIX-HARDENING.md, "no runtime tool
 ;; installation, anywhere"): every external binary a pleme-io/actions entry
@@ -50,6 +55,36 @@
 (define r (exec-capture "sh" "-c" find-cmd))
 (define out (string-trim (stdout-of r)))
 
+;; Second scan — WORKFLOW YAML (.github/workflows/*.yml|*.yaml). A SEPARATE,
+;; NARROW rule (NIX-HARDENING.md §VI.1): the broad install-pattern awk above must
+;; NOT be repointed at workflow YAML — legit CI curls / pip / npm-installs are
+;; everywhere and would false-positive. This flags ONLY per-job NIX installation:
+;; the DeterminateSystems/nix-installer-action, or a per-job `nix shell nixpkgs#…`
+;; fetching a toolchain the runner IMAGE should bake in (the exact debt the
+;; canteiro live runs hit). Offending files flow through the same baseline/report
+;; machinery below. This scan finds work only when the action runs in a repo that
+;; HAS `.github/workflows/` (i.e. invoked in a consuming repo's CI, e.g. sui —
+;; set BASELINE_PATH to that repo's own baseline listing any known debt).
+(define wf-awk-prog
+  "/^[ \\t]*#/ { next; }
+   /DeterminateSystems\\/nix-installer-action/ { print FILENAME; nextfile; }
+   /nix shell nixpkgs#/ { print FILENAME; nextfile; }")
+
+(define wf-find-cmd
+  (string-append
+    "find . -path './_*' -prune -o -path '*/.github/workflows/*' "
+    "\\( -name '*.yml' -o -name '*.yaml' \\) -print "
+    "| xargs -I{} awk '" wf-awk-prog "' {}"))
+
+(define wf-r (exec-capture "sh" "-c" wf-find-cmd))
+(define wf-out (string-trim (stdout-of wf-r)))
+
+;; Both scans' offending-file lists, merged for one report pass.
+(define combined
+  (cond ((equal? out "") wf-out)
+        ((equal? wf-out "") out)
+        (else (string-append out "\n" wf-out))))
+
 (define files-r (exec-capture "sh" "-c"
   "find . -path './_*' -prune -o -path './runtime-install-lint' -prune -o \\( -name 'action.yml' -o -name 'run.tlisp' \\) -print | wc -l"))
 (define files (string-trim (stdout-of files-r)))
@@ -90,7 +125,7 @@
            (report-violations (cdr lines) (+ new-n 1) baseline-n)))))))
 
 (cond
-  ((equal? out "")
+  ((equal? combined "")
    (log-info (string-append "0 runtime-install violations across " files " scanned files"))
    (append-output "violations=0")
    (append-output "baselined=0")
@@ -98,4 +133,4 @@
    (exit 0))
   (else
    (log-error "runtime tool installation found:")
-   (report-violations (string-split out "\n") 0 0)))
+   (report-violations (string-split combined "\n") 0 0)))
