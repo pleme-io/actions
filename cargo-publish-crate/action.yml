@@ -18,6 +18,20 @@ outputs:
   shipped:
     description: "'true' on success (including skip-when-already), 'false' on failure"
     value: ${{ steps.ship.outputs.shipped }}
+  deferred:
+    description: >-
+      'true' when publish was deferred because a dependency is not yet on
+      crates.io (a GREEN outcome — the crate publishes once the dep lands).
+      Was emitted by run.tlisp but undeclared here; declared now so the
+      contract matches what the action actually returns.
+    value: ${{ steps.ship.outputs.deferred }}
+  conflict:
+    description: >-
+      'true' when crates.io refused the crate NAME (403 not-an-owner / name
+      taken). Terminal: retrying cannot succeed. The remedy is a rename to
+      `pleme-<name>`, which is an operator decision, so the action fails
+      RED with that remedy named rather than renaming automatically.
+    value: ${{ steps.ship.outputs.conflict }}
 
 runs:
   using: composite

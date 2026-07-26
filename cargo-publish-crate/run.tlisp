@@ -75,42 +75,19 @@
 ;; Rate-limit + already-uploaded detection                         ;;
 ;; -------------------------------------------------------------- ;;
 
-(define (any-line-matches? lines pred)
-  (cond
-    ((null? lines) #f)
-    ((pred (car lines)) #t)
-    (else (any-line-matches? (cdr lines) pred))))
-
-(define (rate-limit-on-line? line)
-  (or (string-contains? line "status 429 Too Many Requests")
-      (string-contains? line "published too many new crates")
-      (string-contains? line "rate-limits")))
-
-(define (already-uploaded-on-line? line)
-  (or (string-contains? line "already exists on crates.io")
-      (string-contains? line "already uploaded")
-      (string-contains? line "was already published")))
-
-;; A dependency this crate needs is not yet on crates.io. cargo emits
-;; "no matching package named `X` found" (+ "failed to prepare local
-;; package for uploading"). This is the AUTO-RELEASE "auto-defer crates
-;; whose deps aren't yet on the registry" case — NOT a failure: the dep
-;; publishes via its own repo's auto-release, then THIS crate's next run
-;; succeeds. Treat as a deferred SUCCESS (green CI), never a hard red.
-;; NOTE (dedup follow-up): these predicates duplicate
-;; `_tlisp-stdlib/stdlib.tlisp`'s `classify-cargo-publish-outcome`
-;; (already used by cargo-publish-each-member). The compounding fix is to
-;; prepend the stdlib here (like cargo-publish-each-member's action.yml)
-;; and call that classifier instead of this ad-hoc set. Strings below are
-;; kept BYTE-IDENTICAL to the stdlib's `cargo-publish-dep-missing-line?`
-;; so the two can't disagree until the dedup lands.
-(define (dep-not-published-on-line? line)
-  (or (string-contains? line "no matching package named")
-      (string-contains? line "failed to select a version for")))
-
-(define (rate-limit? log) (any-line-matches? (string-split log "\n") rate-limit-on-line?))
-(define (already-uploaded? log) (any-line-matches? (string-split log "\n") already-uploaded-on-line?))
-(define (dep-not-published? log) (any-line-matches? (string-split log "\n") dep-not-published-on-line?))
+;; The local shadow classifier that used to live here is GONE — it is the
+;; stdlib's `classify-cargo-publish-outcome` (stdlib.tlisp:271), which
+;; action.yml already prepends (:33). The shadows were defined AFTER that
+;; prepend, so they WON, and because the set had no conflict/403 predicate
+;; at all, a crates.io `403 … you don't seem to be an owner` fell through
+;; to the `else` arm and reported "publish failed with no recognizable
+;; retry signature" — hiding the one thing the operator needed to know:
+;; the crate NAME is taken by someone else and the remedy is a rename.
+;;
+;; The stdlib grew that exact arm on 2026-07-17 citing `tear` BY NAME
+;; (stdlib.tlisp:228-231) — so the fix already existed and was merely
+;; shadowed. This deletion is the dedup the removed comment called for,
+;; and it closes the TODO it carried.
 
 ;; -------------------------------------------------------------- ;;
 ;; Try-loop                                                        ;;
@@ -126,40 +103,79 @@
       (log-info (string-append "publish attempt " (string-format "{}" attempt)))
       (let* ((r (do-publish))
              (code (status-of r))
-             (log (string-append (stdout-of r) "\n" (stderr-of r))))
+             (log (string-append (stdout-of r) "\n" (stderr-of r)))
+             (outcome (classify-cargo-publish-outcome log code)))
         (cond
-          ((= code 0)
+          ((equal? outcome 'published)
            (log-info "published successfully")
            (append-output "shipped=true")
            (exit 0))
-          ((already-uploaded? log)
+          ((equal? outcome 'already-uploaded)
            (log-info "already published — treating as success")
            (append-output "shipped=true")
            (exit 0))
-          ((dep-not-published? log)
+          ((equal? outcome 'dep-missing)
            (log-info "a dependency is not yet on crates.io — deferring (green); this crate publishes once the dep lands")
            (append-output "shipped=false")
            (append-output "deferred=true")
            (exit 0))
-          ((rate-limit? log)
+          ((equal? outcome 'rate-limited)
            (log-info "crates.io rate limit hit — sleeping 600s")
            (exec-capture "sleep" "600")
            (try-publish (+ attempt 1)))
+          ;; NAME CONFLICT — the registry refused because this name is
+          ;; taken (or owned by someone else): the crates.io 403
+          ;; "you don't seem to be an owner". Retrying can NEVER succeed,
+          ;; so fail fast with the remedy named instead of burning the
+          ;; retry budget on an unrecoverable condition.
+          ;;
+          ;; Deliberately RED, not skipped-green: renaming a published
+          ;; artifact's registry identity is an operator decision (the
+          ;; fleet precedent is `pleme-dojo`, and `pleme-tear` was chosen
+          ;; the same way), so this action states the remedy and stops
+          ;; rather than auto-renaming behind the operator's back.
+          ;; cargo-publish-each-member maps 'conflict to 'skip instead,
+          ;; correctly — there, one member's taken name must not block its
+          ;; siblings; here the conflicted crate IS the whole job.
+          ((equal? outcome 'conflict)
+           (log-error
+             (string-append
+               "crates.io refused the name '" name
+               "' — it exists under a different owner. Retrying cannot fix this. "
+               "Remedy: rename the [package] to `pleme-" name
+               "` (keeping any [[bin]] name as-is so nothing operator-facing changes), "
+               "then re-run. Fleet precedent: pleme-dojo, pleme-tear."))
+           (log-info log)
+           (append-output "shipped=false")
+           (append-output "conflict=true")
+           (exit 1))
           (else
             (log-error "publish failed with no recognizable retry signature")
             (log-info log)
             (append-output "shipped=false")
             (exit code)))))))
 
-(define name (read-field "name"))
-(define version (read-field "version"))
+;; TLISP_TEST gate — same shape as `cargo-publish-each-member/run.tlisp:262-266`.
+;; Under the test harness the definitions above are loaded but the main is
+;; SKIPPED, so run.test.tlisp can drive the real functions without a
+;; Cargo.toml, a registry, or a network. Without this gate the harness ran
+;; the main and died on "package.name not found in Cargo.toml", which is
+;; why this action had no tests at all.
+(define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
+
+(define name (if tlisp-test-mode "" (read-field "name")))
+(define version (if tlisp-test-mode "" (read-field "version")))
 ;; Publishability preflight (the false-green seal): computed once, guarded so a
 ;; missing manifest degrades to "no blockers" (the name/version arms already
 ;; catch a missing Cargo.toml). See stdlib `manifest-publish-blockers`.
 (define publish-blockers
-  (manifest-publish-blockers (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") "")))
+  (if tlisp-test-mode
+    (list)
+    (manifest-publish-blockers (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") ""))))
 
 (cond
+  (tlisp-test-mode
+   (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
   ((equal? name "")
    (log-error "cargo-publish-crate: package.name not found in Cargo.toml")
    (append-output "shipped=false")

@@ -35,11 +35,22 @@
 ;; PR that re-verifies `nix build` on a consumer, never an ambient drift.
 (define crate2nix-pinned-rev "c994c83963b42b26f127e9cc50a8c86852db67d0")
 
+;; Returns the FULL capture result (not just the status) so a non-zero
+;; regen can surface its stdout+stderr. Discarding that output is what
+;; made this failure class undiagnosable: 22 repos went red with
+;; "crate2nix generate failed" and no reason attached, so the true
+;; sub-split (isolated-resolve vs a private git dep vs a real break)
+;; could not be read off the logs at all.
 (define (do-regen)
-  (status-of
-    (exec-capture "nix" "run"
-      (string-append "github:nix-community/crate2nix/" crate2nix-pinned-rev)
-      "--" "generate")))
+  (exec-capture "nix" "run"
+    (string-append "github:nix-community/crate2nix/" crate2nix-pinned-rev)
+    "--" "generate"))
+
+;; A repo only owes a Cargo.nix if it SHIPS one. Regenerating (and
+;; failing on) an artifact the repo does not carry is a fabricated
+;; requirement — the presence gate is the same shape stdlib's
+;; `ensure-gen-lock-fresh` uses for Cargo.gen.lock (stdlib.tlisp:194).
+(define (repo-ships-cargo-nix?) (path-exists? "Cargo.nix"))
 
 (define (emit-skip msg old-v)
   (log-info msg)
@@ -91,15 +102,34 @@
       ((not (equal? regenerate-cargo-nix "true"))
        (log-info "regenerate-cargo-nix=false — skipping crate2nix step")
        (post-bump-checks old-v))
+      ((not (repo-ships-cargo-nix?))
+       ;; Presence gate: no Cargo.nix in the repo ⇒ nothing to regenerate.
+       (log-info "no Cargo.nix in repo — skipping crate2nix step")
+       (post-bump-checks old-v))
       (else
         (log-info "regenerating Cargo.nix")
-        (let ((regen-status (do-regen)))
-          (cond
-            ((not (= regen-status 0))
-             (emit-failure "crate2nix generate failed" old-v)
-             regen-status)
-            (else
-              (post-bump-checks old-v))))))))
+        ;; Best-effort artifact regen — NON-FATAL, exactly as
+        ;; `rust-workspace-bump/run.tlisp:182-190` already does for the
+        ;; identical reason: a workspace with cross-repo path or
+        ;; unpublished/private git deps cannot resolve on an isolated
+        ;; runner, so its Cargo.nix is regenerated locally (siblings
+        ;; present) and committed. Treating that as FATAL failed the
+        ;; whole bump — and therefore the whole release — for 22 repos
+        ;; whose only sin was not being isolated-resolvable.
+        ;;
+        ;; The D2 gate in `post-bump-checks` stays FATAL: a STALE
+        ;; committed artifact is a real, verifiable defect, whereas an
+        ;; un-regenerable one is an environment limit.
+        (let ((regen (do-regen)))
+          (if (= (status-of regen) 0)
+            (log-info "Cargo.nix regenerated")
+            (begin
+              ;; Surface the reason — never swallow it. This is the one
+              ;; place the true sub-split becomes readable.
+              (log-info "Cargo.nix regen skipped (workspace not isolated-resolvable; regen + commit locally)")
+              (log-info (string-append "crate2nix stdout: " (stdout-of regen)))
+              (log-info (string-append "crate2nix stderr: " (stderr-of regen)))))
+          (post-bump-checks old-v))))))
 
 (define old-version (cargo-package-version))
 
