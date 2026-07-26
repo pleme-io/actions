@@ -13,6 +13,10 @@ inputs:
     description: "Fail the job on a NEW (not-yet-baselined) violation. Existing debt in baseline.txt is always reported, never silently accepted, but only fails the build once removed from the baseline without being fixed."
     required: false
     default: "true"
+  baseline-path:
+    description: "Path (relative to the checked-out repo root) of the tracked-debt baseline file. Defaults to this action's own convention; a CONSUMING repo (e.g. one invoking the lint over its own .github/workflows) sets it to its own baseline, e.g. .github/workflows/runtime-install-baseline.txt."
+    required: false
+    default: "runtime-install-lint/baseline.txt"
 
 outputs:
   violations:
@@ -42,4 +46,4 @@ runs:
       env:
         PATHS: ${{ inputs.paths }}
         FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
-        BASELINE_PATH: "runtime-install-lint/baseline.txt"
+        BASELINE_PATH: ${{ inputs.baseline-path }}
