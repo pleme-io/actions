@@ -41,7 +41,25 @@ runs:
         } >> "$GITHUB_OUTPUT"
     - name: Compare upstream sha
       id: compare
-      uses: pleme-io/actions/tatara-script@v1
+      # @main, not @v1 — the `changed` / `new-sha` / `cached-sha` output
+      # forwards were added to tatara-script/action.yml AFTER the v1 tag was
+      # cut. A composite action forwards only DECLARED keys, so on @v1 all
+      # three come back as the empty string with no error at all: this
+      # repo's own CI smoke test failed as `expected changed=true got `,
+      # with the symptom appearing at the CONSUMER two steps downstream of
+      # the cause.
+      #
+      # Same fix shape, same reason, as git-path-commit-count (whose comment
+      # documents this class biting akeylesslabs/akeyless-main-repo live on
+      # 2026-07-21 — every tag rendered "1.0." with an empty patch) and as
+      # build-matrix / cartorio-attest / nix-build / nix-image / zot-push,
+      # which all pin @main for exactly this.
+      #
+      # 288 actions in this repo still pin @v1. Any of them reading an
+      # output added after the tag was cut is silently broken the same way;
+      # re-cutting v1 is the load-bearing fix and is an operator decision
+      # (it moves a release tag under 288 consumers at once).
+      uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
       env:
