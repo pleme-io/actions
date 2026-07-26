@@ -1,0 +1,61 @@
+name: 'pleme-io · git-credentials'
+description: 'Route github.com fetches through a resolved PAT so a build can clone PRIVATE pleme-io git dependencies. The git twin of registry-login: the BOT_PAT > GITHUB_TOKEN priority order and the load-bearing extraheader-unset live here, ONCE, instead of being hand-repeated in every reusable that builds Rust/Go with private deps. On the Free plan BOT_PAT reaches PUBLIC repos only, so a private caller passes it empty and the fallback lands on the repo-scoped GITHUB_TOKEN — the two approved tracks, expressed once.'
+branding:
+  icon: 'key'
+  color: 'blue'
+
+inputs:
+  bot-pat:
+    description: >-
+      Org PAT that can read private pleme-io repos — preferred. Pass
+      secrets.BOT_PAT raw. Empty on private-repo callers where the Free plan
+      does not share org secrets; those repos set a REPO-level BOT_PAT
+      instead (the pangea-operator track).
+    required: false
+    default: ""
+  github-token:
+    description: >-
+      Fallback — the repo-scoped GITHUB_TOKEN. Pass secrets.GITHUB_TOKEN (or
+      github.token) raw. Sufficient only when every git dependency lives in
+      THIS repo; it cannot read a sibling private repo.
+    required: false
+    default: ""
+  host:
+    description: "Git host to rewrite. Default github.com."
+    required: false
+    default: "github.com"
+  required:
+    description: >-
+      When 'true', fail the step if no credential resolves. Default 'false' —
+      a repo with no private deps legitimately needs none, and this action is
+      wired into shared reusables whose consumers differ.
+    required: false
+    default: "false"
+
+outputs:
+  configured:
+    description: "'true' iff a credential resolved and the rewrite was installed."
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@v1
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        BOT_PAT: ${{ inputs.bot-pat }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GIT_HOST: ${{ inputs.host }}
+        REQUIRED: ${{ inputs.required }}
