@@ -1,0 +1,127 @@
+;; git-credentials/run.tlisp — route github.com fetches through a resolved
+;; PAT so a build can clone PRIVATE pleme-io git dependencies.
+;;
+;; WHY THIS ACTION EXISTS. On 2026-07-23 roughly twenty pleme-io repos that
+;; are cargo git dependencies flipped PRIVATE. 84 consumer repos depend on at
+;; least one of them, and none had credential wiring, so every one of those
+;; builds is armed to fail the moment it next runs with:
+;;
+;;   failed to load source for dependency `nami-core`
+;;   failed to authenticate when downloading repository
+;;   attempted to find username/password via git's `credential.helper`
+;;
+;; (mado's release-binaries tripped exactly this on 2026-07-26.) The two-line
+;; remedy was already known and had been hand-copied into at least five
+;; workflows — substrate's image-push.yml + nix-devshell-cargo-test.yml, and
+;; pangea-operator's ci.yml + release.yml + crd-drift.yml — while being
+;; absent from the four reusables that carry the whole fleet
+;; (cargo-auto-release 350 consumers, reusable-gen-spec 337, pre-merge-gate
+;; 169, security-gate 168). A fix living in five copies and none of the four
+;; load-bearing places is the shape this action ends: the priority order and
+;; the extraheader subtlety live HERE, once, and every flow parameterizes it.
+;;
+;; This is the git twin of `registry-login`, deliberately: same typed
+;; token-fallback shape, same "expressed once" rationale, same Free-plan
+;; two-track reality.
+;;
+;; TOKEN PRIORITY — BOT_PAT > GITHUB_TOKEN
+;;   BOT_PAT is preferred because it can read OTHER private pleme-io repos.
+;;   GITHUB_TOKEN is repo-scoped: it cannot, so it only suffices when every
+;;   git dependency is in this same repo. On the GitHub Free plan an ORG
+;;   secret reaches PUBLIC repos only (verified 2026-07-25: org pleme-io is
+;;   `plan: free` with 374 private repos), so:
+;;     * public consumer  -> the org BOT_PAT resolves; private deps clone.
+;;     * private consumer -> org secrets do not reach it, so BOT_PAT arrives
+;;       EMPTY and this falls back to GITHUB_TOKEN. If that repo needs a
+;;       sibling private dep it must set a REPO-level BOT_PAT — the
+;;       workaround pangea-operator already carries.
+;;   Neither track is a code defect, so `required` defaults to false.
+;;
+;; THE LOAD-BEARING SUBTLETY — unset the extraheader FIRST.
+;;   actions/checkout writes an `http.https://github.com/.extraheader` auth
+;;   header scoped to THIS repo. Git matches it by URL PREFIX, so it wins
+;;   over our `url.insteadOf` rewrite and the rewrite silently does nothing.
+;;   Unsetting it is what makes the credential actually take effect; getting
+;;   this wrong looks identical to having no fix at all.
+;;
+;; NOTE ON CARGO. This installs the git-level rewrite. A cargo consumer must
+;; ALSO set CARGO_NET_GIT_FETCH_WITH_CLI=true so cargo shells out to the real
+;; git binary (which honours insteadOf) instead of its bundled libgit2
+;; backend (which does not). That env var belongs on the build step, not
+;; here, so it stays the caller's one line — see every consumer reusable.
+
+;; Typed fallback — mirrors registry-login's `rl:pick`, two rungs.
+(define (gc:pick a b)
+  (cond
+    ((not (equal? a "")) a)
+    (else b)))
+
+(define (gc:which bot gh)
+  (cond
+    ((not (equal? bot "")) "bot-pat")
+    ((not (equal? gh "")) "github-token")
+    (else "none")))
+
+;; Install the rewrite. Returns #t on success. The unset is best-effort by
+;; design: a runner with no extraheader set (a job that never ran
+;; actions/checkout) makes `--unset-all` exit non-zero, which is not a
+;; failure of this action.
+(define (gc:configure host token)
+  (let* ((url (string-append "https://x-access-token:" token "@" host "/"))
+         (key (string-append "url." url ".insteadOf"))
+         (plain (string-append "https://" host "/"))
+         (hdr (string-append "http.https://" host "/.extraheader"))
+         ;; Unset FIRST — see the header comment; a surviving extraheader
+         ;; wins by prefix match and silently voids the rewrite.
+         (_unset (exec-capture "git" "config" "--global" "--unset-all" hdr))
+         (set (exec-capture "git" "config" "--global" key plain)))
+    (= (status-of set) 0)))
+
+(define (gc:run)
+  (let* ((bot   (env-get "BOT_PAT" ""))
+         (gh    (env-get "GITHUB_TOKEN" ""))
+         (host  (env-get "GIT_HOST" "github.com"))
+         (req   (equal? (env-get "REQUIRED" "false") "true"))
+         (token (gc:pick bot gh))
+         (which (gc:which bot gh)))
+    (cond
+      ((equal? token "")
+       ;; Never log a token; log only WHICH rung was taken.
+       (cond
+         (req
+          (log-error
+            (string-append
+              "git-credentials: no credential resolved for " host
+              " — BOT_PAT and GITHUB_TOKEN are both empty, and required=true. "
+              "A public repo should receive the org BOT_PAT; a PRIVATE repo on "
+              "the Free plan does not, and must set a repo-level BOT_PAT."))
+          (append-output "result=false")
+          1)
+         (else
+          (log-info
+            (string-append
+              "git-credentials: no credential provided — leaving git config "
+              "untouched (a repo with no private git dependencies needs none)"))
+          (append-output "result=false")
+          0)))
+      (else
+        (cond
+          ((gc:configure host token)
+           (log-info
+             (string-append "git-credentials: " host
+                            " fetches routed via " which
+                            " (checkout extraheader cleared so the rewrite takes effect)"))
+           (append-output "result=true")
+           0)
+          (else
+            (log-error
+              (string-append "git-credentials: `git config` failed installing the "
+                             host " rewrite"))
+            (append-output "result=false")
+            1))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
+  (else
+   (exit (gc:run))))
