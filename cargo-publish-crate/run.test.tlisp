@@ -1,0 +1,73 @@
+;; cargo-publish-crate/run.test.tlisp — pins the classifier this action
+;; dispatches over, run via tatara-script's --test mode by the tlisp-test
+;; action (it prepends the stdlib + the sibling run.tlisp with TLISP_TEST=1).
+;;
+;; WHY THIS FILE EXISTS. cargo-publish-crate used to carry its OWN copy of
+;; the publish-failure predicates. Because action.yml prepends the stdlib
+;; BEFORE run.tlisp, those local copies were defined second and therefore
+;; WON — and the local set had no conflict/403 predicate at all. So a
+;; crates.io `403 … you don't seem to be an owner` fell through to the
+;; catch-all and reported "publish failed with no recognizable retry
+;; signature", hiding the actual remedy (the crate NAME is taken; rename).
+;; pleme-io/tear sat red for a week on exactly that, hourly.
+;;
+;; The stdlib grew the 403 arm on 2026-07-17 citing `tear` BY NAME, so the
+;; fix already existed and was merely shadowed. These tests exist so the
+;; shadow can never grow back silently: they assert the real 403 log text
+;; classifies as 'conflict, and that each other outcome keeps its own arm.
+
+;; The verbatim crates.io refusal, as cargo prints it. This is the string
+;; that must never again classify as 'failed.
+(define tear-403-log
+  (string-append
+    "    Updating crates.io index\n"
+    "   Packaging tear v0.1.8 (/home/runner/work/tear/tear/tear)\n"
+    "   Uploading tear v0.1.8 (/home/runner/work/tear/tear/tear)\n"
+    "error: failed to publish tear v0.1.8 to registry at https://crates.io\n"
+    "\n"
+    "Caused by:\n"
+    "  the remote server responded with an error (status 403 Forbidden): "
+    "this crate exists but you don't seem to be an owner. If you believe "
+    "this is a mistake, perhaps you need to accept an invitation to be an "
+    "owner before publishing.\n"))
+
+(deftest "the tear 403 not-an-owner refusal classifies as 'conflict, never 'failed"
+  (assert (equal? (classify-cargo-publish-outcome tear-403-log 101) 'conflict)
+          "403 not-an-owner -> 'conflict (the rename trigger)")
+  (assert (not (equal? (classify-cargo-publish-outcome tear-403-log 101) 'failed))
+          "403 not-an-owner must NOT fall through to the catch-all")
+  ;; The specific substring the stdlib keys on — pinned so a reword of the
+  ;; predicate cannot silently stop matching the real cargo output.
+  (assert (cargo-publish-conflict? tear-403-log)
+          "the conflict predicate matches 'seem to be an owner'"))
+
+(deftest "a zero status is 'published regardless of log noise"
+  (assert (equal? (classify-cargo-publish-outcome "" 0) 'published)
+          "status 0 -> 'published")
+  (assert (equal? (classify-cargo-publish-outcome tear-403-log 0) 'published)
+          "status dominates: a 0 exit is a publish even if the log looks scary"))
+
+(deftest "every other outcome keeps its own arm (no arm swallows another)"
+  (assert (equal? (classify-cargo-publish-outcome
+                    "error: crate version 0.1.8 is already uploaded" 101)
+                  'already-uploaded)
+          "already-uploaded -> its own arm (idempotent success)")
+  (assert (equal? (classify-cargo-publish-outcome
+                    "error: failed to get a 200 OK response, got 429 Too Many Requests" 101)
+                  'rate-limited)
+          "429 -> 'rate-limited (retryable)")
+  (assert (equal? (classify-cargo-publish-outcome
+                    "error: no matching package named `meimei` found" 101)
+                  'dep-missing)
+          "dep-missing -> 'dep-missing (deferred green)")
+  (assert (equal? (classify-cargo-publish-outcome
+                    "error: could not compile `thing` due to 3 previous errors" 101)
+                  'failed)
+          "a genuine build failure still reaches 'failed"))
+
+(deftest "'conflict is terminal — it must not be retried"
+  ;; A 403 not-an-owner can never succeed on a later attempt, so the action
+  ;; fails fast rather than burning the retry budget. Guarding the CLASS:
+  ;; 'conflict is distinct from 'rate-limited, the one retryable outcome.
+  (assert (not (equal? (classify-cargo-publish-outcome tear-403-log 101) 'rate-limited))
+          "'conflict is not retryable"))
