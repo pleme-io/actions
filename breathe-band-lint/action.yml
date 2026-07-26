@@ -1,0 +1,50 @@
+name: 'pleme-io · breathe-band-lint'
+description: 'Static coverage gate for breathe bands in a GitOps tree — every bandable workload has a MemoryBand, every band targetRef resolves, no BestEffort on stateful/control-plane, every band declares spec.mode. Parses committed YAML only; never contacts a cluster. The fourth baseline-debt sibling of action-shell-lint / runtime-install-lint / no-cve-suppression.'
+branding:
+  icon: 'wind'
+  color: 'blue'
+
+inputs:
+  root:
+    description: "Cluster tree to scan (e.g. clusters/camelot-eks). Config is read from <root>/.breathe-bands.yaml and tracked debt from <root>/.breathe-bands-baseline.txt, so each cluster carries its own."
+    required: false
+    default: "."
+  fail-on-violation:
+    description: "Fail the job on a NEW (not-yet-baselined) finding. Existing debt in the baseline is always reported, never silently accepted. Set false to adopt report-only first."
+    required: false
+    default: "true"
+
+outputs:
+  violations:
+    description: "Count of NEW (non-baselined) findings."
+    value: ${{ steps.scan.outputs.violations }}
+  baselined:
+    description: "Count of findings matched against the tracked-debt baseline (reported, not failed)."
+    value: ${{ steps.scan.outputs.baselined }}
+  workloads-scanned:
+    description: "Count of Deployments/StatefulSets/DaemonSets found in the tree."
+    value: ${{ steps.scan.outputs.workloads-scanned }}
+  bands-scanned:
+    description: "Count of Cpu/Memory/StorageBands found in the tree."
+    value: ${{ steps.scan.outputs.bands-scanned }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: scan
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ROOT: ${{ inputs.root }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}

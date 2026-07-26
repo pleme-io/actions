@@ -1,0 +1,292 @@
+;; breathe-band-lint/run.tlisp — static coverage gate for breathe bands in a
+;; GitOps tree. Parses the committed YAML only; NEVER contacts a cluster.
+;;
+;; WHY THIS EXISTS. Band coverage drifted silently on camelot-eks in three
+;; distinct ways that no human review caught, each one found only by hand:
+;;   (a) a band was added for a workload, then the workload was renamed —
+;;       the band kept reporting Healthy/Dormant ("target scaled to zero")
+;;       while matching ZERO pods. A dead band and a correct idle band are
+;;       indistinguishable at runtime. Only a static tree join catches it.
+;;   (b) `spec.mode` was left unset on 61 of 74 bands. Unset resolves to
+;;       ShadowConfirmEffect, which SELF-PROMOTES to live once the confirm
+;;       gate passes — so "we added a shadow band" silently became "we added
+;;       a live carver". `spec.dryRun` is dead code for 8 of breathe's 10
+;;       kinds, so it is not a substitute.
+;;   (c) new workloads landed with no band at all, and nothing said so.
+;;
+;; The four rules below are each traceable to one of those real defects.
+;; Same baseline-debt discipline as action-shell-lint / no-cve-suppression:
+;; pre-existing debt is NAMED in baseline.txt and reported every run (never
+;; silent); only a NEW, non-baselined finding fails the build.
+;;
+;; DIMENSION-AWARENESS IS LOAD-BEARING. A breathe band writes LIMITS ONLY —
+;; it never raises a request. Two consequences are encoded as hard exemptions
+;; rather than left to reviewer memory:
+;;   * a container with NO declared limit on a dimension must NOT be banded:
+;;     breathe would INVENT a limit and ratchet it down. This really happened
+;;     — ebs-csi-controller's ebs-plugin was capped at 22 millicores on the
+;;     controller that mediates every volume attach/detach.
+;;   * a Guaranteed (requests==limits) workload must NOT be banded: writing a
+;;     limit breaks requests==limits and demotes it to Burstable, undoing the
+;;     oom_score_adj protection that is often the whole point (sui-cache-pg).
+;; So R1 demands a band only where a memory LIMIT is declared AND the
+;; workload is not Guaranteed. A gate that demanded a band unconditionally
+;; would be actively harmful.
+
+(define root (env-get "ROOT" "."))
+(define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
+(define config-path (string-append root "/.breathe-bands.yaml"))
+(define baseline-path (string-append root "/.breathe-bands-baseline.txt"))
+
+(log-info (string-append "==> breathe-band-lint scanning " root))
+
+;; ────────────────────────────────────────────────────────────────
+;; Extraction. Deliberately DUMB: yq emits raw counts, never verdicts.
+;; Every comparison is a string equality in this file, where it is
+;; reviewable — no logic hides in a yq expression.
+;; ────────────────────────────────────────────────────────────────
+
+;; W|kind|ns|name|nContainers|nCpuLimits|nMemLimits|nWithRequests|nGuaranteed
+(define w-expr
+  (string-append
+    "select(.kind == \"Deployment\" or .kind == \"StatefulSet\" or .kind == \"DaemonSet\") | "
+    "\"W|\" + .kind + \"|\" + (.metadata.namespace // \"\") + \"|\" + .metadata.name"
+    " + \"|\" + (.spec.template.spec.containers | length | tostring)"
+    " + \"|\" + ([.spec.template.spec.containers[] | select(.resources.limits.cpu)] | length | tostring)"
+    " + \"|\" + ([.spec.template.spec.containers[] | select(.resources.limits.memory)] | length | tostring)"
+    " + \"|\" + ([.spec.template.spec.containers[] | select(.resources.requests)] | length | tostring)"
+    " + \"|\" + ([.spec.template.spec.containers[] | select(.resources.requests.cpu)"
+    " | select(.resources.requests.cpu == .resources.limits.cpu)"
+    " | select(.resources.requests.memory == .resources.limits.memory)] | length | tostring)"))
+
+;; B|bandKind|ns|name|targetKind|targetName|targetNs|mode
+;; targetRef.namespace is optional and in practice never set on this fleet,
+;; so it falls back to the band's own metadata.namespace — which is what
+;; breathe itself resolves against.
+(define b-expr
+  (string-append
+    "select(.kind == \"MemoryBand\" or .kind == \"CpuBand\" or .kind == \"StorageBand\") | "
+    "\"B|\" + .kind + \"|\" + (.metadata.namespace // \"\") + \"|\" + .metadata.name"
+    " + \"|\" + (.spec.targetRef.kind // \"-\")"
+    " + \"|\" + (.spec.targetRef.name // \"-\")"
+    " + \"|\" + (.spec.targetRef.namespace // .metadata.namespace // \"\")"
+    " + \"|\" + (.spec.mode // \"UNSET\")"))
+
+;; One yq invocation per file (xargs -I{}) rather than one over all files:
+;; a single unparseable document must not abort the whole scan.
+(define (scan expr tag)
+  (let ((r (exec-capture "sh" "-c"
+             (string-append "cd " root " && find . -name '*.y*ml' -print"
+                            " | xargs -I{} yq -N '" expr "' {} 2>/dev/null"
+                            " | grep '^" tag "|'"))))
+    (filter (lambda (l) (not (equal? l "")))
+            (string-split (string-trim (stdout-of r)) "\n"))))
+
+(define workloads (scan w-expr "W"))
+(define bands (scan b-expr "B"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Config + baseline
+;; ────────────────────────────────────────────────────────────────
+
+(define (config-list field)
+  (if (path-exists? config-path)
+    (filter (lambda (l) (not (equal? l "")))
+            (string-split
+              (string-trim (stdout-of (exec-capture "sh" "-c"
+                (string-append "yq -N '" field "[]' " config-path " 2>/dev/null"))))
+              "\n"))
+    (list)))
+
+;; Workloads this tree does not contain as raw manifests because a
+;; HelmRelease / EKS addon / ARC controller generates them. A static linter
+;; cannot render a chart, so a band pointing at one of these is verified
+;; against a DECLARED list: adding a band for a generated workload costs one
+;; line here, and that line is the review surface. Without it, R2 could only
+;; be satisfied by weakening to "some HelmRelease exists in the namespace",
+;; which would not catch a typo in the target name — the exact bug R2 is for.
+(define generated-targets (config-list ".generatedTargets"))
+(define control-plane-ns (config-list ".controlPlaneNamespaces"))
+(define stateful-workloads (config-list ".statefulWorkloads"))
+(define coverage-waivers (config-list ".coverageWaivers"))
+
+;; Comment stripping is delegated to grep rather than done with a string
+;; slice: tatara-script has no `string-slice`, and reaching for one silently
+;; worked until a baseline file first existed (the branch was simply never
+;; evaluated). Filtering at read time keeps the failure mode impossible.
+(define baseline-lines
+  (if (path-exists? baseline-path)
+    (filter (lambda (l) (not (equal? l "")))
+            (string-split
+              (string-trim (stdout-of (exec-capture "sh" "-c"
+                (string-append "grep -v '^#' " baseline-path " 2>/dev/null"))))
+              "\n"))
+    (list)))
+
+(define (list-contains? lst item)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) item) #t)
+    (else (list-contains? (cdr lst) item))))
+
+(define (nth lst n)
+  (cond ((equal? n 0) (car lst)) (else (nth (cdr lst) (- n 1)))))
+
+;; ────────────────────────────────────────────────────────────────
+;; Derived sets
+;; ────────────────────────────────────────────────────────────────
+
+;; "Kind/namespace/name" is the join key everywhere.
+(define (w-key rec)
+  (let ((p (string-split rec "|")))
+    (string-append (nth p 1) "/" (nth p 2) "/" (nth p 3))))
+
+(define (b-target-key rec)
+  (let ((p (string-split rec "|")))
+    (string-append (nth p 4) "/" (nth p 6) "/" (nth p 5))))
+
+(define (map-keys lst f acc)
+  (cond ((null? lst) acc)
+        (else (map-keys (cdr lst) f (cons (f (car lst)) acc)))))
+
+(define workload-keys (map-keys workloads w-key (list)))
+
+(define memory-band-targets
+  (map-keys (filter (lambda (b) (equal? (nth (string-split b "|") 1) "MemoryBand"))
+                    bands)
+            b-target-key (list)))
+
+;; ────────────────────────────────────────────────────────────────
+;; Findings. Each is "RULE key :: message"; the baseline matches on the
+;; stable "RULE key" prefix so a message reword never silently un-baselines.
+;; ────────────────────────────────────────────────────────────────
+
+(define findings (list))
+(define (add-finding f) (set! findings (cons f findings)))
+
+;; R1 COVERAGE — a Deployment/StatefulSet/DaemonSet with a declared memory
+;; limit, not Guaranteed, not waived, must have a MemoryBand.
+(define (rule-coverage lst)
+  (cond
+    ((null? lst) #t)
+    (else
+      (let* ((p (string-split (car lst) "|"))
+             (key (w-key (car lst)))
+             (nctr (nth p 4))
+             (nmem (nth p 6))
+             (nguar (nth p 8)))
+        (cond
+          ((not (equal? nmem nctr)) #t)          ; no declared mem limit -> never band
+          ((equal? nguar nctr) #t)               ; Guaranteed -> banding demotes QoS
+          ((list-contains? coverage-waivers key) #t)
+          ((list-contains? memory-band-targets key) #t)
+          (else
+            (add-finding (string-append
+              "R1-COVERAGE " key
+              " :: no MemoryBand targets this workload (it declares a memory limit and is not Guaranteed, so it IS bandable). Add a band with spec.mode: shadow, or waive it in .breathe-bands.yaml coverageWaivers with a reason."))))
+        (rule-coverage (cdr lst))))))
+
+;; R2 TARGET-RESOLVES — every band must point at something real.
+(define (rule-target lst)
+  (cond
+    ((null? lst) #t)
+    (else
+      (let* ((p (string-split (car lst) "|"))
+             (tkey (b-target-key (car lst)))
+             (bkey (string-append (nth p 1) "/" (nth p 2) "/" (nth p 3))))
+        (cond
+          ((list-contains? workload-keys tkey) #t)
+          ((list-contains? generated-targets tkey) #t)
+          (else
+            (add-finding (string-append
+              "R2-TARGET " bkey
+              " :: targetRef -> " tkey " resolves to NOTHING in the tree and is not a declared generatedTarget. A band whose selector matches nothing still reports Healthy/Dormant forever — it is indistinguishable from an idle band at runtime. Fix the targetRef, or declare it in .breathe-bands.yaml generatedTargets."))))
+        (rule-target (cdr lst))))))
+
+;; R3 QOS — BestEffort is a hard fail for stateful/control-plane workloads.
+;; A BestEffort pod has request 0, so kubelet ranks it FIRST for eviction
+;; under node pressure and the kernel gives it oom_score_adj 1000.
+(define (rule-qos lst)
+  (cond
+    ((null? lst) #t)
+    (else
+      (let* ((p (string-split (car lst) "|"))
+             (key (w-key (car lst)))
+             (kind (nth p 1))
+             (ns (nth p 2))
+             (nreq (nth p 7)))
+        (cond
+          ((not (equal? nreq "0")) #t)
+          ((or (equal? kind "StatefulSet")
+               (list-contains? control-plane-ns ns)
+               (list-contains? stateful-workloads key))
+            (add-finding (string-append
+              "R3-QOS " key
+              " :: BestEffort (no container declares requests) on a stateful/control-plane workload. It is first to be evicted under node pressure and gets oom_score_adj 1000. Declare requests+limits. NOTE: a breathe band cannot fix this — bands write limits only and never raise a request.")))
+          (else #t))
+        (rule-qos (cdr lst))))))
+
+;; R4 MODE-SET — every band must declare spec.mode explicitly.
+(define (rule-mode lst)
+  (cond
+    ((null? lst) #t)
+    (else
+      (let* ((p (string-split (car lst) "|"))
+             (bkey (string-append (nth p 1) "/" (nth p 2) "/" (nth p 3)))
+             (mode (nth p 7)))
+        (cond
+          ((equal? mode "UNSET")
+            (add-finding (string-append
+              "R4-MODE " bkey
+              " :: spec.mode is unset, which resolves to ShadowConfirmEffect and SELF-PROMOTES to live once the confirm gate passes. Set spec.mode: shadow explicitly. (spec.dryRun is NOT a substitute — it is dead code for 8 of breathe's 10 kinds.)")))
+          (else #t))
+        (rule-mode (cdr lst))))))
+
+(rule-coverage workloads)
+(rule-target bands)
+(rule-qos workloads)
+(rule-mode bands)
+
+;; ────────────────────────────────────────────────────────────────
+;; Report
+;; ────────────────────────────────────────────────────────────────
+
+;; Baseline keys are the stable "RULE key" prefix (everything before " :: ").
+(define (finding-key f) (car (string-split f " :: ")))
+
+(define (count lst n) (cond ((null? lst) n) (else (count (cdr lst) (+ n 1)))))
+
+(define (report lst new-n base-n)
+  (cond
+    ((null? lst)
+     (append-output (string-append "violations=" (string-format "{}" new-n)))
+     (append-output (string-append "baselined=" (string-format "{}" base-n)))
+     (append-output (string-append "workloads-scanned=" (string-format "{}" (count workloads 0))))
+     (append-output (string-append "bands-scanned=" (string-format "{}" (count bands 0))))
+     (log-info (string-append "scanned " (string-format "{}" (count workloads 0))
+                              " workloads, " (string-format "{}" (count bands 0)) " bands"))
+     (log-info (string-append "NEW violations: " (string-format "{}" new-n)
+                              " | tracked baseline debt: " (string-format "{}" base-n)))
+     (cond
+       ((and (equal? fail-on "true") (> new-n 0)) (exit 1))
+       (else (exit 0))))
+    (else
+      (let ((f (car lst)))
+        (cond
+          ((list-contains? baseline-lines (finding-key f))
+           (log-info (string-append "  (baseline, tracked debt) " (finding-key f)))
+           (report (cdr lst) new-n (+ base-n 1)))
+          (else
+           (log-error (string-append "  NEW " f))
+           (report (cdr lst) (+ new-n 1) base-n)))))))
+
+(cond
+  ((null? findings)
+   (log-info "breathe band coverage clean: every bandable workload is banded, every targetRef resolves, no BestEffort on stateful/control-plane, every band declares spec.mode")
+   (append-output "violations=0")
+   (append-output "baselined=0")
+   (append-output (string-append "workloads-scanned=" (string-format "{}" (count workloads 0))))
+   (append-output (string-append "bands-scanned=" (string-format "{}" (count bands 0))))
+   (exit 0))
+  (else
+   (report findings 0 0)))
