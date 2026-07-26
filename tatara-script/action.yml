@@ -359,6 +359,33 @@ outputs:
   provenance:
     description: "Forwarded (key: provenance) — runner-resolve's winning tier (override|file|default)"
     value: ${{ steps.exec.outputs.provenance }}
+  # ── baseline-debt lint family ───────────────────────────────────────
+  # action-shell-lint / no-cve-suppression / runtime-install-lint /
+  # breathe-band-lint (+ commitlint, conftest, conventional-commit-lint,
+  # license-finder) all declare `violations` and forward it from
+  # `steps.<id>.outputs.violations` — but the key was never declared HERE,
+  # so every one of them has been resolving to an EMPTY STRING since it was
+  # written. Exactly the same latent class as the `out-path` gap documented
+  # above (a composite action forwards only DECLARED keys). Their exit codes
+  # were always correct, so the gates themselves worked; only a workflow
+  # trying to READ the count got nothing. Declaring the keys here repairs
+  # all of them at the cause. Purely additive — adding an output declaration
+  # cannot change any existing job's behaviour.
+  violations:
+    description: "Forwarded (key: violations) — count of NEW, non-baselined findings from a baseline-debt lint"
+    value: ${{ steps.exec.outputs.violations }}
+  baselined:
+    description: "Forwarded (key: baselined) — count of findings matched against the tracked-debt baseline"
+    value: ${{ steps.exec.outputs.baselined }}
+  files-scanned:
+    description: "Forwarded (key: files-scanned) — count of files a lint scanned"
+    value: ${{ steps.exec.outputs.files-scanned }}
+  workloads-scanned:
+    description: "Forwarded (key: workloads-scanned) — breathe-band-lint: Deployments/StatefulSets/DaemonSets found in the tree"
+    value: ${{ steps.exec.outputs.workloads-scanned }}
+  bands-scanned:
+    description: "Forwarded (key: bands-scanned) — breathe-band-lint: Cpu/Memory/StorageBands found in the tree"
+    value: ${{ steps.exec.outputs.bands-scanned }}
 
 runs:
   using: composite
