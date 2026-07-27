@@ -135,7 +135,9 @@
 
 (cond
   ((not (path-exists? "Cargo.toml"))
-   (emit-failure "cargo-bump: no Cargo.toml at repo root" "")
+   (emit-failure
+     "cargo-bump: no Cargo.toml in the working directory — if this crate is not at the repo root, set the action's `crate-path` input (e.g. crate-path: cli)"
+     "")
    (exit 1))
   ((equal? old-version "")
    (emit-failure

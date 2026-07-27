@@ -16,6 +16,19 @@ inputs:
     description: "Positional arguments passed to the script (forwarded as $@ after the script file)"
     required: false
     default: ""
+  working-directory:
+    description: >-
+      Directory to run the script from. Defaults to "." — the repo root —
+      so every existing caller behaves EXACTLY as before; this input is
+      additive, not a behaviour change.
+
+      Exists because several tlisp scripts operate on repo-root-relative
+      paths (cargo-bump reads ./Cargo.toml, for instance) and so could not
+      serve a repo whose crate does not live at the root. Rather than
+      teach each script its own path handling, the working directory is
+      set once, here, where the process is actually spawned.
+    required: false
+    default: "."
 
 # Composite-action outputs are explicit forwards, not wildcards.
 # Tatara-script declares the well-known output names that callers
@@ -543,6 +556,10 @@ runs:
     - name: Run script
       id: exec
       shell: bash
+      # Defaults to "." so this is a no-op for every existing caller. The
+      # script file itself is written to an absolute mktemp path, so moving
+      # the working directory cannot affect locating it.
+      working-directory: ${{ inputs.working-directory }}
       env:
         TATARA_SCRIPT_SRC: ${{ inputs.script }}
         TATARA_SCRIPT_ARGS: ${{ inputs.args }}

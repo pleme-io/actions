@@ -13,6 +13,21 @@ inputs:
     description: "Skip the bump when no source path changed since the previous tag"
     required: false
     default: "true"
+  crate-path:
+    description: >-
+      Directory containing the crate's Cargo.toml, relative to the repo
+      root. Defaults to "." so every existing caller is unaffected.
+
+      Set it for a repo whose crate does not live at the root — e.g. forge,
+      whose CLI is at cli/ and which therefore could not use the standard
+      AUTO-RELEASE flow at all: this action aborted with "no Cargo.toml at
+      repo root" before doing anything.
+
+      NOTE source-paths is interpreted relative to THIS directory, not the
+      repo root, so the default "src Cargo.toml Cargo.lock" keeps working
+      unchanged for a non-root crate.
+    required: false
+    default: "."
   source-paths:
     description: "Space-separated globs the skip-detector inspects for changes since the last tag"
     required: false
@@ -71,6 +86,7 @@ runs:
       id: bump
       uses: pleme-io/actions/tatara-script@main
       with:
+        working-directory: ${{ inputs.crate-path }}
         script: ${{ steps.src.outputs.script }}
       env:
         BUMP_TYPE: ${{ inputs.bump-type }}
