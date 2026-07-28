@@ -106,6 +106,18 @@
       (string-contains? line "published too many new crates")
       (string-contains? line "rate-limits")))
 
+;; Return the FIRST line matching `pred`, or "" — so a classifier can SHOW
+;; the cargo line it classified on instead of only its own verdict. A verdict
+;; without its evidence is how a misclassification survives: the log said
+;; "dep not on registry yet" for escriba while all 23 of its dependencies were
+;; published and semver-satisfiable, and nothing in the output revealed what
+;; cargo had actually complained about.
+(define (first-matching-line lines pred)
+  (cond
+    ((null? lines) "")
+    ((pred (car lines)) (car lines))
+    (else (first-matching-line (cdr lines) pred))))
+
 (define (any-line-matches? lines pred)
   (cond
     ((null? lines) #f)
@@ -123,11 +135,23 @@
 (define (already-uploaded? log) (any-line-matches? (string-split log "\n") already-uploaded-on-line?))
 
 (define (dep-missing-on-line? line)
-  ;; cargo emits "no matching package named `X` found" when a workspace
-  ;; dep isn't yet on the registry. That means the dep wasn't published
-  ;; first; defer this crate + retry after a full pass.
+  ;; cargo emits "no matching package named `X` found" when a workspace dep
+  ;; isn't yet on the registry — defer this crate and retry after a full pass.
+  ;;
+  ;; "failed to select a version" is DELIBERATELY NOT matched on its own.
+  ;; cargo emits it for ANY unsatisfiable constraint — a genuine version
+  ;; conflict, a yanked release, a feature-gated dep — not just a missing
+  ;; sibling. Matching it broadly laundered real resolution failures into
+  ;; "dep not on registry yet", which then deferred forever and aborted with
+  ;; "no progress this pass", naming a cause that was provably false:
+  ;; escriba's 23 dependencies were ALL published and semver-satisfiable while
+  ;; this classifier reported one missing.
+  ;;
+  ;; It still counts when the SAME line also names a missing package, which is
+  ;; the genuine sibling-ordering case it was added for.
   (or (string-contains? line "no matching package named")
-      (string-contains? line "failed to select a version")))
+      (and (string-contains? line "failed to select a version")
+           (string-contains? line "which is not on the registry"))))
 
 (define (dep-missing? log) (any-line-matches? (string-split log "\n") dep-missing-on-line?))
 
@@ -244,7 +268,9 @@
            (log-info (string-append "already published '" name "' — treating as success"))
            (list "done" name))
           ((dep-missing? log)
-           (log-info (string-append "deferring '" name "' — dep not on registry yet"))
+           (log-info (string-append "deferring '" name "' — dep not on registry yet: "
+                                    (first-matching-line (string-split log "\n")
+                                                         dep-missing-on-line?)))
            (list "defer" name))
           ((rate-limit? log)
            (let ((decision (rate-limit-decision log)))
