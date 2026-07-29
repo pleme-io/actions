@@ -23,8 +23,37 @@
     ((not (equal? skip-flag "true")) #t)
     (else (has-changes-since? (last-tag) source-paths))))
 
-(define (do-bump)
-  (status-of (exec-capture "cargo" "set-version" "--bump" bump-type)))
+;; ── Release monotonicity ──────────────────────────────────────────────
+;;
+;; `cargo set-version --bump <type>` seeds from the MANIFEST and knows
+;; nothing about tags — strictly worse than rust-workspace-bump, which at
+;; least probed for a collision. So when a manifest lags its tags, this
+;; action bumps into territory the repo already passed and the published
+;; version walks BACKWARD (937-repo census, 2026-07-27: 527 inverted tag
+;; pairs on linear history; pleme-io's own bumpers produced 4).
+;;
+;; The fix keeps `--bump` on the healthy path and only takes over when the
+;; manifest actually lags: `semver:bump-seed` returns the manifest version
+;; unchanged whenever it is at or above the highest release, so a repo in
+;; the normal state runs the exact command it ran before, byte for byte.
+;; A lagging repo instead gets an EXPLICIT `cargo set-version <target>`
+;; computed from the tags. Either way `cargo set-version` — not a hand
+;; rewrite — does the writing, so its dependent-requirement updates are
+;; preserved.
+(define (bump-target old-v max-v type)
+  (cond
+    ((equal? (semver:bump-seed old-v max-v) old-v) "")   ;; "" = use --bump
+    (else (semver:bump (semver:bump-seed old-v max-v) type))))
+
+(define (do-bump target)
+  (cond
+    ((equal? target "")
+     (status-of (exec-capture "cargo" "set-version" "--bump" bump-type)))
+    (else
+     (log-info (string-append
+                 "manifest lags the tags — setting the version explicitly to "
+                 target " instead of bumping from the manifest"))
+     (status-of (exec-capture "cargo" "set-version" target)))))
 
 ;; PINNED, not master: the regenerated Cargo.nix's embedded runtime template
 ;; must match what the fleet's builders consume. An unpinned regen silently
@@ -88,13 +117,25 @@
              (string-append "version unchanged after bump: " old-v)
              old-v)
            1)
+          ;; POST-CONDITION. The seed above already makes a below-max
+          ;; version unnameable, so this asserts rather than mechanises —
+          ;; but `cargo set-version` is a foreign binary, and this is the
+          ;; only place its ACTUAL output is checked against the invariant.
+          ((not (semver:release-monotone? new-v (git:max-released-version "v")))
+           (emit-failure
+             (string-append "cargo set-version produced " new-v
+                            ", which is not above the highest released version v"
+                            (git:max-released-version "v")
+                            " — refusing to release backward (release-monotonicity)")
+             old-v)
+           1)
           (else
             (emit-success old-v new-v)
             0))))))
 
 (define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
-  (let ((bump-status (do-bump)))
+  (let ((bump-status (do-bump (bump-target old-v (git:max-released-version "v") bump-type))))
     (cond
       ((not (= bump-status 0))
        (emit-failure "cargo set-version failed" old-v)
@@ -131,23 +172,32 @@
               (log-info (string-append "crate2nix stderr: " (stderr-of regen)))))
           (post-bump-checks old-v))))))
 
-(define old-version (cargo-package-version))
+(define (main)
+  (let ((old-version (cargo-package-version)))
+    (cond
+      ((not (path-exists? "Cargo.toml"))
+       (emit-failure
+         "cargo-bump: no Cargo.toml in the working directory — if this crate is not at the repo root, set the action's `crate-path` input (e.g. crate-path: cli)"
+         "")
+       (exit 1))
+      ((equal? old-version "")
+       (emit-failure
+         "cargo-bump: package.version not found (workspace? use rust-workspace-bump)"
+         "")
+       (exit 1))
+      ((not (should-bump?))
+       (emit-skip
+         (string-append "no changes since last tag — skipping (at " old-version ")")
+         old-version)
+       (exit 0))
+      (else
+        (exit (run-bump-pipeline old-version))))))
 
+;; Gated on TLISP_TEST so the tlisp-test harness can load this unit and
+;; drive bump-target with a mock tag set without running the real bump
+;; (which needs a Cargo.toml, cargo-edit, and git tags). Same shape as
+;; rust-workspace-bump.
 (cond
-  ((not (path-exists? "Cargo.toml"))
-   (emit-failure
-     "cargo-bump: no Cargo.toml in the working directory — if this crate is not at the repo root, set the action's `crate-path` input (e.g. crate-path: cli)"
-     "")
-   (exit 1))
-  ((equal? old-version "")
-   (emit-failure
-     "cargo-bump: package.version not found (workspace? use rust-workspace-bump)"
-     "")
-   (exit 1))
-  ((not (should-bump?))
-   (emit-skip
-     (string-append "no changes since last tag — skipping (at " old-version ")")
-     old-version)
-   (exit 0))
-  (else
-    (exit (run-bump-pipeline old-version))))
+  ((equal? (env-get "TLISP_TEST" "") "1")
+   (log-info "TLISP_TEST=1 — bump fns loaded; main skipped (the test harness drives them)"))
+  (else (main)))

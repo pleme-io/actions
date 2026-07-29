@@ -47,48 +47,49 @@
           ((has-changes? tag source-paths) #t)
           (else #f))))))
 
-;; Compute next semver per bump-type — PURE tatara-lisp, no cargo, no awk,
-;; no subprocess. `cargo set-version` runs full `cargo metadata` (which
-;; fails on an isolated CI runner with cross-repo path / unpublished
-;; optional deps), and the prior awk shell-out couldn't be unit-tested
-;; without spawning `sh`. Bumping a version is plain integer arithmetic on
-;; three segments: parse each with `read-string` (digits -> Int), add, and
-;; render with `pr-str` (Int -> bare digits). Now bump-semver is a pure
-;; function the .test.tlisp exercises directly — the test IS the proof.
-(define (semver-seg parts idx)
-  (cond
-    ((and (= idx 0) (>= (length parts) 1)) (read-string (car parts)))
-    ((and (= idx 1) (>= (length parts) 2)) (read-string (car (cdr parts))))
-    ((and (= idx 2) (>= (length parts) 3)) (read-string (car (cdr (cdr parts)))))
-    (else 0)))
+;; Compute next semver per bump-type. The arithmetic itself now lives in
+;; the stdlib as `semver:bump` (byte-identical rules, LENIENT segment
+;; reads) because THREE actions had grown their own copy of it —
+;; rust-workspace-bump, helm-bump and caixa-bump. This alias keeps every
+;; call site and the .test.tlisp reading the way they did. Converging
+;; helm-bump + caixa-bump onto the stdlib is a NAMED follow-up, kept out
+;; of this change so the seed fix lands on its own.
+;;
+;; Still PURE tatara-lisp, no cargo, no awk, no subprocess: `cargo
+;; set-version` runs full `cargo metadata` (which fails on an isolated CI
+;; runner with cross-repo path / unpublished optional deps), and the prior
+;; awk shell-out couldn't be unit-tested without spawning `sh`.
+(define (bump-semver version type) (semver:bump version type))
 
-(define (bump-semver version type)
-  (let* ((parts (string-split version "."))
-         (major (semver-seg parts 0))
-         (minor (semver-seg parts 1))
-         (patch (semver-seg parts 2)))
-    (cond
-      ((equal? type "patch")
-       (string-append (pr-str major) "." (pr-str minor) "." (pr-str (+ patch 1))))
-      ((equal? type "minor")
-       (string-append (pr-str major) "." (pr-str (+ minor 1)) ".0"))
-      ((equal? type "major")
-       (string-append (pr-str (+ major 1)) ".0.0"))
-      (else ""))))
-
-;; The bump-type's naive next version (e.g. patch 0.2.2 -> 0.2.3) can
-;; COLLIDE with an already-existing tag when Cargo.toml lags the latest
-;; tag — the version-skew class: Cargo.toml=0.2.2 while v0.2.3 was already
-;; cut. git-commit-tag then aborts on the duplicate tag and the whole
-;; release fails (a green run that ships nothing). next-free-version walks
-;; FORWARD on the patch axis from the candidate until it lands on a version
-;; whose tag does not yet exist — staying on the major.minor the bump-type
-;; chose, so orphan tags on OTHER minor lines never force a cross-minor
-;; jump (which would break intra-workspace caret dep pins like ^0.2.2).
-;; `tag-exists?` : (version-string -> bool), injected so the .test.tlisp
-;; drives this with a mock tag set — no git, no network.
-(define (next-free-version old-v type tag-exists?)
-  (let ((candidate (bump-semver old-v type)))
+;; THE SEED — the STEP-2 half of the backward-release fix.
+;;
+;; What this used to do, and why it shipped regressions: it bumped from
+;; `old-v` (the COMMITTED manifest version) and then walked FORWARD on the
+;; patch axis only while each candidate tag was taken. That is a
+;; same-line COLLISION guard, not a monotonicity guard, and the two come
+;; apart exactly at a minor boundary:
+;;
+;;   skew WITHIN a minor  — committed 0.1.0, tag v0.1.1 exists.
+;;                          candidate 0.1.1 collides -> advance -> 0.1.2.
+;;                          ABSORBED. (Why 19 pleme-*-derive repos are fine.)
+;;   skew ACROSS a minor  — committed 0.2.5, tag v0.3.1 exists.
+;;                          candidate 0.2.6 is FREE -> released.
+;;                          The published version walks BACKWARD, exit 0.
+;;
+;; Seeding from `max(committed, highest released)` makes a below-max
+;; result unreachable by the arithmetic rather than caught afterwards: the
+;; bump can no longer even NAME a version under the max. A cross-minor
+;; jump stops being the thing to avoid and becomes the correct answer —
+;; it happens if and only if a higher minor was ACTUALLY RELEASED.
+;;
+;; The collision walk is KEPT, unchanged, behind the seed: the seeded
+;; candidate can still be taken (a tag cut with no manifest bump), and the
+;; absorbed case above must keep producing exactly what it produced before.
+;;
+;; `max-v` and `tag-exists?` are both injected so the .test.tlisp drives
+;; this with a mock tag set — no git, no network.
+(define (next-free-version old-v type max-v tag-exists?)
+  (let ((candidate (bump-semver (semver:bump-seed old-v max-v) type)))
     (if (equal? candidate "")
       ""
       (advance-to-free candidate tag-exists?))))
@@ -126,6 +127,146 @@
                 " && rm -f Cargo.toml.bak"))))
     (= (status-of r) 0)))
 
+;; ── Intra-workspace caret pins ─────────────────────────────────────── ;;
+;;
+;; THE QUESTION THE OLD SEED COMMENT RAISED, ANSWERED. It refused
+;; cross-minor jumps because "that would break intra-workspace caret dep
+;; pins like ^0.2.2". The concern is REAL: for a 0.x version Cargo treats
+;; the MINOR as the major, so `^0.1.4` means `>=0.1.4, <0.2.0` and a
+;; 0.1.x -> 0.2.0 move genuinely stops satisfying it. A `path` + `version`
+;; dep resolves from the local source but still CHECKS the requirement, so
+;; the workspace fails to resolve.
+;;
+;; But the protection it claimed was never real, and this is measured, not
+;; argued. Across the 662 substrate-consuming repos, 70 are Rust
+;; workspaces and 19 of those carry `path` + `version` intra-workspace
+;; deps. SIXTEEN OF THE NINETEEN are ALREADY STALE today — engenho pins
+;; ^0.1.4 while [workspace.package] is 0.1.5; sui pins ^0.1.10 at 0.1.152;
+;; gen pins ^0.1.0 at 0.1.27; escriba ^0.1.1 at 0.1.20. This bumper has
+;; never once rewritten them. Patch bumps merely happen to stay inside the
+;; requirement, which is why nobody noticed — and `bump-type: minor` and
+;; `major` already break the pins TODAY, with no change from anyone.
+;;
+;; So the old rule bought nothing it claimed, and the load-bearing fix is
+;; the one it was avoiding: REWRITE the pins in the same pass. That makes
+;; the cross-minor jump safe, fixes the pre-existing minor/major breakage,
+;; and retires the accumulated staleness in all sixteen — one fix at the
+;; cause instead of a constraint that only looked like a guard.
+;;
+;; A pin is rewritten ONLY when the crate it points at declares
+;; `version.workspace = true`. That is the PROOF the crate's version IS
+;; the workspace version, so setting its requirement to the new workspace
+;; version is correct by construction. Without the check we would retarget
+;; crates that version INDEPENDENTLY — the vendored caixa-ratatui
+;; workspace carries members at 0.1.0 / 0.3.0 / 0.7.0 / 0.30.0 side by
+;; side (it has no [workspace.package].version at all, so this action
+;; already aborts there, but the check is what makes that safety a
+;; property rather than a coincidence).
+
+;; The last non-empty whitespace-delimited word of S ("" when none).
+(define (last-word s)
+  (let ((ws (filter (lambda (w) (not (equal? w ""))) (string-split s " "))))
+    (if (null? ws) "" (car (reverse ws)))))
+
+;; The TOML key a quoted value belongs to, given the literal text
+;; immediately preceding it: the word before that text's FINAL `=`.
+;;   ", version = "                 -> "version"
+;;   "versioned-thing = { path = "  -> "path"
+;; The second example is why this is not a `string-contains? "version"`
+;; test: that would match the DEP NAME and overwrite the path with a
+;; version string.
+(define (key-before-quoted seg)
+  (let ((parts (string-split seg "=")))
+    (cond
+      ((< (length parts) 2) "")
+      (else (last-word (car (cdr (reverse parts))))))))
+
+;; Rebuild one line, replacing every quoted value whose key is `version`
+;; with NEW-V. Walks the `"`-split pieces alternating literal/quoted.
+(define (rewrite-quoted-versions pieces in-quote? prev acc new-v)
+  (cond
+    ((null? pieces) (string-join "\"" (reverse acc)))
+    (in-quote?
+      (let ((v (if (equal? (key-before-quoted prev) "version") new-v (car pieces))))
+        (rewrite-quoted-versions (cdr pieces) #f (car pieces) (cons v acc) new-v)))
+    (else
+      (rewrite-quoted-versions (cdr pieces) #t (car pieces)
+                               (cons (car pieces) acc) new-v))))
+
+;; The quoted value for KEY on this line ("" when absent).
+(define (quoted-value-for-key pieces in-quote? prev key)
+  (cond
+    ((null? pieces) "")
+    ((and in-quote? (equal? (key-before-quoted prev) key)) (car pieces))
+    (in-quote? (quoted-value-for-key (cdr pieces) #f (car pieces) key))
+    (else (quoted-value-for-key (cdr pieces) #t (car pieces) key))))
+
+(define (dep-line-value line key)
+  (quoted-value-for-key (string-split line "\"") #f "" key))
+
+;; #t iff the crate at PATH inherits the workspace version.
+(define (member-inherits-workspace-version? path)
+  (let ((p (string-append path "/Cargo.toml")))
+    (and (not (equal? path ""))
+         (path-exists? p)
+         (any-line-matches? (string-split (read-file p) "\n")
+                            (lambda (l) (line-assigns-field? l "version.workspace"))))))
+
+;; #t iff this line is an intra-workspace dep whose pin we own: it has a
+;; `path`, it has a `version`, its quotes are balanced (an odd piece count
+;; == an even number of quotes -> malformed, left alone), and its target
+;; inherits the workspace version.
+(define (rewritable-pin-line? line inherits?)
+  (and (= (mod (length (string-split line "\"")) 2) 1)
+       (not (equal? (dep-line-value line "path") ""))
+       (not (equal? (dep-line-value line "version") ""))
+       (inherits? (dep-line-value line "path"))))
+
+(define (rewrite-pin-line line new-v)
+  (rewrite-quoted-versions (string-split line "\"") #f "" '() new-v))
+
+;; Walk the file, rewriting only inside [workspace.dependencies].
+(define (rewrite-pins-walk lines in-deps acc new-v inherits?)
+  (cond
+    ((null? lines) (reverse acc))
+    ((line-is-named-section? (car lines) "[workspace.dependencies]")
+     (rewrite-pins-walk (cdr lines) #t (cons (car lines) acc) new-v inherits?))
+    ((line-is-section-header? (car lines))
+     (rewrite-pins-walk (cdr lines) #f (cons (car lines) acc) new-v inherits?))
+    ((and in-deps (rewritable-pin-line? (car lines) inherits?))
+     (rewrite-pins-walk (cdr lines) in-deps
+                        (cons (rewrite-pin-line (car lines) new-v) acc)
+                        new-v inherits?))
+    (else (rewrite-pins-walk (cdr lines) in-deps (cons (car lines) acc) new-v inherits?))))
+
+;; Pure: TOML text in, TOML text out. `inherits?` is injected so the
+;; .test.tlisp drives this with a mock membership set — no filesystem.
+(define (rewrite-workspace-dep-pins toml-text new-v inherits?)
+  (string-join "\n" (rewrite-pins-walk (string-split toml-text "\n")
+                                       #f '() new-v inherits?)))
+
+;; Side-effecting wrapper: rewrite Cargo.toml in place. Returns #t when it
+;; wrote (or had nothing to write); the caller treats it as best-effort —
+;; a workspace with no intra-workspace pins is the common case and is a
+;; no-op, not a failure.
+(define (write-workspace-dep-pins new-v)
+  (cond
+    ((not (path-exists? "Cargo.toml")) #f)
+    (else
+      (let* ((before (read-file "Cargo.toml"))
+             (after (rewrite-workspace-dep-pins before new-v
+                                                member-inherits-workspace-version?)))
+        (cond
+          ((equal? before after)
+           (log-info "no intra-workspace caret pins to rewrite")
+           #t)
+          (else
+            (write-file "Cargo.toml" after)
+            (log-info (string-append
+                        "rewrote intra-workspace caret pins to " new-v
+                        " (path deps inheriting version.workspace = true)"))
+            #t))))))
+
 (define (do-regen)
   (status-of
     (exec-capture "nix" "run" "github:nix-community/crate2nix" "--" "generate")))
@@ -162,23 +303,48 @@
 ;; any of the sub-step failures. All branches set GITHUB_OUTPUT lines.
 (define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
-  (let* ((candidate (bump-semver old-v bump-type))
-         (new-v (next-free-version old-v bump-type vtag-exists?)))
+  (let* ((max-released (git:max-released-version "v"))
+         (candidate (bump-semver old-v bump-type))
+         (new-v (next-free-version old-v bump-type max-released vtag-exists?)))
     (cond
       ((equal? new-v "")
        (emit-failure (string-append "failed to compute bumped version from " old-v) old-v)
+       1)
+      ;; POST-CONDITION, not the mechanism. The seed already makes a
+      ;; below-max result unnameable; this asserts it, so a future edit
+      ;; that breaks the seed goes red here instead of shipping quietly.
+      ;; It is the in-action twin of git-commit-tag's gate — belt and
+      ;; braces on the one class that stayed silent for 527 tag pairs.
+      ((not (semver:release-monotone? new-v max-released))
+       (emit-failure (string-append
+                       "computed version " new-v " is not above the highest "
+                       "released version v" max-released
+                       " — refusing to bump backward (release-monotonicity)")
+                     old-v)
        1)
       ((not (write-workspace-version old-v new-v))
        (emit-failure "failed to write workspace.package.version" old-v)
        1)
       (else
-        ;; Surface the version-skew guard: if the naive candidate was
-        ;; taken (an existing tag), say so + which free slot we advanced to.
-        (if (not (equal? new-v candidate))
-          (log-info (string-append "tag v" candidate
-                     " already exists — advanced to v" new-v
-                     " (version-skew guard: Cargo.toml lagged the latest tag)"))
+        ;; Say out loud when the seed did work, and which kind. These are
+        ;; the two distinguishable histories behind one bumped version.
+        (if (semver:gt? max-released old-v)
+          (log-info (string-append
+                      "manifest " old-v " LAGGED the highest released v"
+                      max-released " — seeded the bump from the tag, not the"
+                      " manifest (release-monotonicity: bumping from " old-v
+                      " would have produced v" candidate ", which is not above v"
+                      max-released ")"))
           #t)
+        (if (not (equal? new-v candidate))
+          (log-info (string-append "naive candidate was v" candidate
+                     " — released version is v" new-v))
+          #t)
+        ;; Keep the intra-workspace caret pins in step with the new
+        ;; version. Best-effort by design: most workspaces have no such
+        ;; pins and this is a no-op. See the block above for why this is
+        ;; a fix at the cause and not new risk.
+        (write-workspace-dep-pins new-v)
         ;; Best-effort artifact regen — NON-FATAL. A workspace with
         ;; cross-repo path / unpublished optional deps can't resolve on
         ;; an isolated runner; its Cargo.nix / Cargo.build-spec.json are

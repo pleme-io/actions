@@ -79,6 +79,48 @@
   (exec-check "nix" "run" ".#gem:bump" "--" bump-type))
 
 ;; ---------------------------------------------------------------- ;;
+;; Release monotonicity                                             ;;
+;; ---------------------------------------------------------------- ;;
+;;
+;; This action does not COMPUTE a version — it delegates the whole write
+;; to the consumer repo's own flake app (`nix run .#bump` / `.#gem:bump`),
+;; which seeds from the manifest and, like every other bumper before this
+;; fix, knows nothing about the repo's tags. So a manifest that lags its
+;; tags bumps into already-passed territory and the release walks BACKWARD
+;; (937-repo census, 2026-07-27: 527 inverted tag pairs on linear history).
+;;
+;; TIER-HONEST, and weaker here than in the siblings. rust-workspace-bump
+;; and cargo-bump SEED from max(manifest, released), so a backward version
+;; is unnameable by the arithmetic. Here the arithmetic lives in another
+;; repo's flake, so the honest ceiling is a POST-CONDITION: let the
+;; delegated bump run, then refuse to report success if what it produced
+;; is not above the highest release. That is only-mitigated — a loud
+;; Result::Err — and it is genuinely late: the flake app may already have
+;; committed and tagged locally. It is still real protection, because both
+;; consuming workflows (gem-auto-bump, ansible-collection-auto-bump) push
+;; in a LATER step, and a non-zero exit here fails the job before
+;; git-push-with-token ever runs — the bad tag never leaves the runner.
+;;
+;; Seeding this properly means teaching the substrate flake apps the same
+;; invariant; that is a substrate change, deliberately not made from here.
+(define (release-monotone-or-die! label after)
+  (let ((max-released (git:max-released-version "v")))
+    (cond
+      ((semver:release-monotone? after max-released) #t)
+      (else
+        (append-output "bumped=false")
+        (append-output "new-version=")
+        (log-error (string-append
+                     label " produced version " after
+                     ", which is not above the highest already-released"
+                     " version v" max-released
+                     " — refusing (release-monotonicity guard). The flake"
+                     " app seeds from the manifest, so this means the"
+                     " manifest lags the tags: reconcile it to at least "
+                     max-released " and re-run."))
+        (exit 1)))))
+
+;; ---------------------------------------------------------------- ;;
 ;; Dispatch                                                         ;;
 ;; ---------------------------------------------------------------- ;;
 
@@ -94,6 +136,7 @@
       (let ((after (ansible-version)))
         (cond
           ((and (not (equal? after "")) (not (equal? after before)))
+           (release-monotone-or-die! "nix run .#bump" after)
            (append-output "bumped=true")
            (append-output (string-append "new-version=" after))
            (log-info (string-append "ansible bump: " before " -> " after)))
@@ -117,6 +160,8 @@
       (let ((after (read-gem-version gem-name)))
         (cond
           ((and (not (equal? after "")) (not (equal? after before)))
+           (release-monotone-or-die! (string-append "nix run .#gem:bump (" gem-name ")")
+                                     after)
            (append-output "bumped=true")
            (append-output (string-append "new-version=" after))
            (log-info (string-append "gem bump (" gem-name "): "

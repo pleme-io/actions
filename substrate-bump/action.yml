@@ -28,14 +28,21 @@ runs:
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@main
 
-    # Load run.tlisp into an output so the redistributable tatara-script
-    # action can execute it without us re-implementing the install path.
-    - name: Load run.tlisp
+    # Load stdlib + run.tlisp into an output so the redistributable
+    # tatara-script action can execute it without us re-implementing the
+    # install path. The stdlib prepend is REQUIRED, not cosmetic: this
+    # action's release-monotonicity check calls the shared `semver:` /
+    # `git:` helpers, and without the prepend those names are simply
+    # undefined at runtime — the check would crash instead of guarding,
+    # which is the worst failure mode a gate can have.
+    - name: Load stdlib + run.tlisp
       id: src
       shell: bash
       run: |
         {
           echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
           cat ${{ github.action_path }}/run.tlisp
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
