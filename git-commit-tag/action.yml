@@ -1,5 +1,5 @@
 name: 'pleme-io · git-commit-tag'
-description: 'Configure github-actions bot identity, stage typed paths, commit with a typed message template, and create an annotated tag. Composes with git-push-with-token for the push half.'
+description: 'Configure github-actions bot identity, stage typed paths, commit with a typed message template, and create an annotated tag. Refuses to cut a tag that is not ABOVE the highest already-released version (release-monotonicity guard) or that already exists (collision guard). Composes with git-push-with-token for the push half.'
 branding:
   icon: 'git-commit'
   color: 'gray-dark'
