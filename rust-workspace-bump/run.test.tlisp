@@ -177,3 +177,37 @@
   (let* ((toml "[workspace.dependencies]\na = { path = \"a\" }\n")
          (out (rewrite-workspace-dep-pins toml "9.9.9" always-inherits)))
     (assert (equal? (string-trim out) (string-trim toml)) "unchanged — no version key to move")))
+
+;; ── exact pins survive the bump (the lib↔derive seal) ─────────────────
+;;
+;; THE REGRESSION THIS PINS. Before `exact-pin?`, the rewriter replaced the
+;; whole quoted value, so an exact `"=0.2.5"` came back as `"0.3.0"` — the
+;; bump SILENTLY downgraded an exact pin to a caret and reopened the very
+;; hole the pin existed to close, with every gate green. Delete the
+;; `exact-pin?` branch in run.tlisp and the first assert below goes red;
+;; that is the fail-once proof that this gate is not vacuous.
+
+(deftest "exact-pin?: distinguishes an exact requirement from a caret"
+  (assert (exact-pin? "=0.2.5") "a leading '=' is an exact pin")
+  (assert (not (exact-pin? "0.2.5")) "a bare version is a caret requirement")
+  (assert (not (exact-pin? "")) "the empty string is not an exact pin")
+  (assert (not (exact-pin? "1")) "a bare major is not an exact pin"))
+
+(deftest "rewrite-workspace-dep-pins: an EXACT pin stays exact across the bump"
+  ;; The tatara-lisp lib↔derive shape: the lib exact-pins its own proc-macro
+  ;; so the pair can never drift. The bump must move the version and KEEP
+  ;; the '='.
+  (let* ((toml (string-append
+                 "[workspace.dependencies]\n"
+                 "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"=0.2.5\" }\n"
+                 "engenho-types      = { path = \"engenho-types\", version = \"0.1.4\" }\n"))
+         (out (rewrite-workspace-dep-pins toml "0.3.0" always-inherits)))
+    (assert (string-contains? out "version = \"=0.3.0\"")
+            "the exact pin moved AND kept its '=' — the seal survives its own release")
+    ;; Scoped to the derive's OWN line: a bare `version = "0.3.0"` substring
+    ;; also matches the caret line below it, so an unscoped negative assert
+    ;; is vacuous-in-reverse (it fails even on correct output — measured).
+    (assert (not (string-contains? out "path = \"tatara-lisp-derive\", version = \"0.3.0\""))
+            "…and was not silently downgraded to a caret")
+    (assert (string-contains? out "{ path = \"engenho-types\", version = \"0.3.0\" }")
+            "a caret pin alongside it is still rewritten as a caret — no '=' invented")))
