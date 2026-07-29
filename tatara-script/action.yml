@@ -11,7 +11,11 @@ inputs:
   version:
     description: "tatara-lisp release tag (e.g. v0.1.0) or 'latest'"
     required: false
-    default: latest
+    # Phase 0 freeze (theory/TATARA-LISP-CONSOLIDATION.md): pinned off
+    # 'latest' so a tatara-lisp release cannot reach 315 action.yml
+    # consumers unreviewed. v0.2.5 is what 'latest' resolves to today,
+    # so this is a no-op now and a guardrail during the consolidation.
+    default: v0.2.5
   args:
     description: "Positional arguments passed to the script (forwarded as $@ after the script file)"
     required: false
