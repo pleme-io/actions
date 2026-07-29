@@ -1,0 +1,49 @@
+;; cargo-bump/run.test.tlisp — (deftest …) for the release-monotonicity
+;; seed, run via tatara-script's canonical --test mode by the tlisp-test
+;; action: stdlib + run.tlisp (TLISP_TEST=1, so it defines the fns but
+;; skips main) + this file.
+;;
+;; `bump-target` is the whole decision: "" means keep the historical
+;; `cargo set-version --bump <type>` command untouched; a non-empty string
+;; means the manifest lags its tags and we must set that version
+;; explicitly instead. Pure — no cargo, no git, no filesystem.
+
+(deftest "bump-target: healthy repo keeps `cargo set-version --bump` EXACTLY"
+  ;; The regression guard. Every repo whose manifest is at or above its
+  ;; highest release must run the same command it always ran, so the
+  ;; change cannot alter a single healthy release.
+  (assert (equal? (bump-target "0.4.0" "0.3.1" "patch") "")
+          "manifest ahead of the tags -> --bump, unchanged")
+  (assert (equal? (bump-target "0.3.1" "0.3.1" "patch") "")
+          "manifest level with the tags -> --bump, unchanged")
+  (assert (equal? (bump-target "0.1.0" "" "patch") "")
+          "no released version at all -> --bump, unchanged")
+  (assert (equal? (bump-target "0.1.0" "" "major") "")
+          "…for every bump type"))
+
+(deftest "bump-target: a LAGGING manifest is set explicitly, above the max"
+  ;; The engenho-shaped defect: `cargo set-version --bump patch` from a
+  ;; manifest at 0.2.5 yields 0.2.6 while v0.3.1 is already released.
+  (assert (equal? (bump-target "0.2.5" "0.3.1" "patch") "0.3.2")
+          "seeds from the tag -> 0.3.2, not the backward 0.2.6")
+  (assert (equal? (bump-target "0.2.5" "0.3.1" "minor") "0.4.0")
+          "minor over the seeded 0.3.1")
+  (assert (equal? (bump-target "0.2.5" "0.3.1" "major") "1.0.0")
+          "major over the seeded 0.3.1")
+  (assert (equal? (bump-target "0.9.0" "0.10.0" "patch") "0.10.1")
+          "and the numeric case — 0.10.0 outranks 0.9.0, so the seed is 0.10.0"))
+
+(deftest "bump-target: whatever it returns is release-monotone"
+  ;; The property: when bump-target takes over, its answer always clears
+  ;; git-commit-tag's gate. (When it returns "" the manifest is already at
+  ;; or above the max, so --bump's own increment clears it too.)
+  (let ((cases (list (list "0.2.5" "0.3.1") (list "0.9.0" "0.10.0")
+                     (list "0.1.0" "2.0.0"))))
+    (for-each
+      (lambda (c)
+        (let* ((old-v (car c)) (max-v (car (cdr c)))
+               (got (bump-target old-v max-v "patch")))
+          (assert (not (equal? got "")) "these all lag, so a target is computed")
+          (assert (semver:release-monotone? got max-v)
+                  (string-append "computed " got " must be above " max-v))))
+      cases)))
