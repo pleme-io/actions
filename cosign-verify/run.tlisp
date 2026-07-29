@@ -1,4 +1,88 @@
-;; cosign-verify/run.tlisp — STUB. Implementation lands on consumer demand.
-(log-info "::warning::cosign-verify not yet implemented — typed schema is locked")
-(append-output "verified=stub")
-(exit 0)
+;; cosign-verify/run.tlisp — verify a cosign signature on an OCI image.
+;;
+;; The counterpart to cosign-sign. Signing without verifying is decorative: it
+;; produces an artifact nobody ever checks, and a supply chain whose final gate
+;; is "we signed it" has no gate at all. This is the step that turns a signature
+;; into evidence.
+;;
+;; FAIL CLOSED, ALWAYS. Every path that cannot positively establish a valid
+;; signature exits non-zero. That includes the boring ones — cosign missing from
+;; PATH, a moving tag, a missing identity — because a verify step that passes
+;; when it could not run is worse than no verify step: it converts an unknown
+;; into a green checkmark. The stub this replaces did exactly that, emitting
+;; `verified=stub` and exit 0.
+
+(define image-ref (env-required "ARTIFACT"))
+(define cert-identity (env-get "CERTIFICATE_IDENTITY" ""))
+(define cert-issuer (env-get "CERTIFICATE_OIDC_ISSUER" ""))
+(define key-ref (env-get "KEY_REF" ""))
+(define identity-regexp (env-get "CERTIFICATE_IDENTITY_REGEXP" ""))
+
+(define keyless (equal? key-ref ""))
+
+;; A moving pointer is not a verification subject. Verifying :latest tells you
+;; something was signed at some point, not that THESE bytes were, and the tag
+;; can move between the check and the pull.
+(cond
+  ((string-contains? image-ref ":latest")
+   (log-error (string-append "cosign-verify refuses a :latest moving pointer (verify an exact tag or a @sha256: digest): " image-ref))
+   (append-output "verified=false")
+   (exit 1)))
+
+(cond
+  ((not (string-contains? image-ref "@sha256:"))
+   (log-info (string-append "::warning::cosign-verify given a tag ref; the tag may move between this check and the pull. Prefer a @sha256: digest: " image-ref))))
+
+;; Keyless verification is meaningless without BOTH the identity and the issuer.
+;; With only one, cosign accepts a signature from any issuer that asserted that
+;; identity string, which is precisely the substitution a keyless attack needs.
+;; Refusing here rather than passing a partial constraint is the whole point.
+(cond
+  ((and keyless (equal? cert-identity "") (equal? identity-regexp ""))
+   (log-error "cosign-verify: keyless verification requires certificate-identity (or certificate-identity-regexp); refusing to verify against any identity")
+   (append-output "verified=false")
+   (exit 1)))
+
+(cond
+  ((and keyless (equal? cert-issuer ""))
+   (log-error "cosign-verify: keyless verification requires certificate-oidc-issuer; an identity without an issuer would accept that same identity asserted by ANY issuer")
+   (append-output "verified=false")
+   (exit 1)))
+
+;; cosign absent is a failure, not a skip.
+(define which-r (exec-capture "sh" "-c" "command -v cosign"))
+(cond
+  ((not (= (status-of which-r) 0))
+   (log-error "cosign-verify: cosign is not on PATH; cannot establish a signature, refusing to report success")
+   (append-output "verified=false")
+   (exit 1)))
+
+(log-info (string-append "==> cosign verify "
+            (if keyless "(keyless Fulcio+Rekor) " (string-append "--key " key-ref " "))
+            image-ref))
+
+(define r
+  (if keyless
+    (if (equal? identity-regexp "")
+      (exec-capture "cosign" "verify"
+                    "--certificate-identity" cert-identity
+                    "--certificate-oidc-issuer" cert-issuer
+                    image-ref)
+      (exec-capture "cosign" "verify"
+                    "--certificate-identity-regexp" identity-regexp
+                    "--certificate-oidc-issuer" cert-issuer
+                    image-ref))
+    (exec-capture "cosign" "verify" "--key" key-ref image-ref)))
+
+(cond
+  ((= (status-of r) 0)
+   (log-info (string-append "verified " image-ref))
+   (log-info (stdout-of r))
+   (append-output "verified=true")
+   (exit 0))
+  (else
+   (log-error (string-append "cosign verify FAILED for " image-ref))
+   (log-info (stdout-of r))
+   (log-info (stderr-of r))
+   (append-output "verified=false")
+   (exit 1)))

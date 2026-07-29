@@ -4,9 +4,24 @@ branding: { icon: 'shield', color: 'green' }
 
 inputs:
   artifact:
+    description: "Image ref to verify. A @sha256: digest is preferred; a moving :latest pointer is refused."
     required: true
   certificate-identity:
-    required: true
+    description: "Exact SAN the signing certificate must carry (keyless). Required unless certificate-identity-regexp or key-ref is set."
+    required: false
+    default: ""
+  certificate-identity-regexp:
+    description: "Regexp alternative to certificate-identity, for a workflow whose ref varies."
+    required: false
+    default: ""
+  certificate-oidc-issuer:
+    description: "OIDC issuer the certificate must come from, e.g. https://token.actions.githubusercontent.com. MANDATORY for keyless: an identity without an issuer would accept that identity asserted by any issuer."
+    required: false
+    default: ""
+  key-ref:
+    description: "Public key for key-based verification. Empty = keyless Fulcio+Rekor."
+    required: false
+    default: ""
 
 outputs:
   verified:
@@ -32,3 +47,6 @@ runs:
       env:
         ARTIFACT: ${{ inputs.artifact }}
         CERTIFICATE_IDENTITY: ${{ inputs.certificate-identity }}
+        CERTIFICATE_IDENTITY_REGEXP: ${{ inputs.certificate-identity-regexp }}
+        CERTIFICATE_OIDC_ISSUER: ${{ inputs.certificate-oidc-issuer }}
+        KEY_REF: ${{ inputs.key-ref }}
