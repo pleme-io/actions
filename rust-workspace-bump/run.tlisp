@@ -181,13 +181,52 @@
       ((< (length parts) 2) "")
       (else (last-word (car (cdr (reverse parts))))))))
 
+;; #t iff V is an EXACT version requirement (`=X.Y.Z`) rather than the
+;; default caret (`X.Y.Z`). Prefix test without `string-prefix?`: splitting
+;; on "=" yields an empty FIRST piece exactly when the string starts with
+;; "=", and the length guard rejects a value with no "=" at all (whose
+;; split is a 1-element list whose car is the value itself, and "" for the
+;; empty string).
+;;
+;; WHY THIS EXISTS — the seal that erased itself. `=` is the ONLY thing
+;; standing between a lib and its own proc-macro drifting apart: a caret
+;; `0.2.2` requirement is satisfied by 0.2.154, so a derive that emits
+;; calls into its lib can float onto a line the lib does not export.
+;; That is not hypothetical — it is reproduced: published tatara-lisp
+;; 0.2.4 declares `tatara-lisp-derive = "0.2.2"`, `cargo update -p
+;; tatara-lisp-derive` moves it to 0.2.154, and tatara-lisp 0.2.4 then
+;; FAILS TO COMPILE ITSELF with
+;;   error[E0425]: cannot find function `parse_kwargs_strict`
+;;                 in module `tatara_lisp::domain`
+;; (compiler_spec.rs:47, via the DeriveTataraDomain macro). The fleet's
+;; workaround has been a hand-copied exact-pin comment block in every
+;; consumer's Cargo.toml — the same fix duplicated N times, which the
+;; PRIME DIRECTIVE calls a bug.
+;;
+;; The real fix is one exact pin at the lib. But WITHOUT this predicate
+;; that fix is decorative: the rewrite below replaced the whole quoted
+;; value, so `"=0.2.5"` came back as `"0.3.0"` and the very next release
+;; silently downgraded the seal to a caret — green bump, green publish,
+;; hole reopened. A guard that quietly weakens itself while reporting
+;; success is worse than no guard, so the prefix is now carried through.
+(define (exact-pin? v)
+  (let ((parts (string-split v "=")))
+    (and (not (< (length parts) 2))
+         (equal? (car parts) ""))))
+
 ;; Rebuild one line, replacing every quoted value whose key is `version`
-;; with NEW-V. Walks the `"`-split pieces alternating literal/quoted.
+;; with NEW-V — PRESERVING an exact-pin `=` prefix when the old
+;; requirement carried one (see `exact-pin?`). Walks the `"`-split pieces
+;; alternating literal/quoted.
 (define (rewrite-quoted-versions pieces in-quote? prev acc new-v)
   (cond
     ((null? pieces) (string-join "\"" (reverse acc)))
     (in-quote?
-      (let ((v (if (equal? (key-before-quoted prev) "version") new-v (car pieces))))
+      (let ((v (if (equal? (key-before-quoted prev) "version")
+                   (if (exact-pin? (car pieces))
+                       (string-append "=" new-v)
+                       new-v)
+                   (car pieces))))
         (rewrite-quoted-versions (cdr pieces) #f (car pieces) (cons v acc) new-v)))
     (else
       (rewrite-quoted-versions (cdr pieces) #t (car pieces)
