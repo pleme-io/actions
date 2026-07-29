@@ -1,4 +1,28 @@
-;; caixa-bump/run.tlisp — bump the :version inside (defcaixa ...).
+;; caixa-bump/run.tlisp — bump a caixa manifest.
+;;
+;; Two corrections landed here 2026-07-29, both of which stopped this action
+;; ever succeeding on a real repo:
+;;
+;;   1. DISCOVERY. It searched caixa.tlisp / caixa.lisp / Caixa.tlisp /
+;;      .caixa/main.tlisp / src/caixa.tlisp. Every real manifest in the org is
+;;      named <name>.caixa.lisp (gha.caixa.lisp, git.caixa.lisp,
+;;      serde.caixa.lisp), so the search found nothing and exited 1.
+;;
+;;   2. CONTENT. It rewrote :version and nothing else. A caixa manifest embeds
+;;      each declared file's :sha256, :size and :body, so bumping the version
+;;      alone publishes a new version carrying the PREVIOUS revision's content
+;;      — internally inconsistent, and silently so.
+;;
+;; The refresh covers the files the manifest already declares; it never
+;; discovers new ones. The :path list is the author's statement of what the
+;; library ships, and a release is the wrong moment to start shipping a file
+;; nobody declared. Adding a file stays a human edit, which then releases
+;; normally.
+;;
+;; Every rewrite is verified by re-reading the result: the version must have
+;; moved to exactly the computed value, the path set must be unchanged, and
+;; each embedded sha256 must equal the hash of the file on disk. A textual
+;; rewriter that quietly corrupts a manifest is worse than one that refuses.
 
 (define bump-type
   (config-resolve "BUMP_TYPE" "bump" "default-type" "patch"))
@@ -8,81 +32,165 @@
   (config-resolve "SOURCE_PATHS" "bump" "source-paths" "*.tlisp *.lisp"))
 (define caixa-path-in (env-get "CAIXA_PATH" ""))
 
+(define (fail msg)
+  (log-error (string-append "caixa-bump: " msg))
+  (append-output "old-version=")
+  (append-output "bumped=false")
+  (append-output "new-version=")
+  (exit 1))
+
+;; <name>.caixa.lisp first, since that is what the org actually uses. The
+;; legacy fixed names stay in the search so an older layout keeps working.
 (define (find-caixa)
   (cond
     ((not (equal? caixa-path-in "")) caixa-path-in)
     (else
-     (let* ((r (exec-capture "sh" "-c"
-                "for p in caixa.tlisp caixa.lisp Caixa.tlisp .caixa/main.tlisp src/caixa.tlisp; do [ -f \"$p\" ] && echo \"$p\" && break; done")))
-       (string-trim (stdout-of r))))))
+     (let ((r (exec-capture "sh" "-c"
+                (string-append
+                  "ls *.caixa.lisp 2>/dev/null | head -1; "
+                  "for p in caixa.tlisp caixa.lisp Caixa.tlisp .caixa/main.tlisp src/caixa.tlisp; "
+                  "do [ -f \"$p\" ] && echo \"$p\" && break; done"))))
+       (string-trim (car (string-split (string-trim (stdout-of r)) "\n")))))))
 
 (define caixa-path (find-caixa))
 
-(cond
-  ((equal? caixa-path "")
-   (log-error "no caixa file found at canonical paths")
-   (append-output "old-version=")
-   (append-output "bumped=false")
-   (append-output "new-version=")
-   (exit 1)))
+(when (equal? caixa-path "")
+  (fail "no caixa manifest found (*.caixa.lisp or a legacy canonical path)"))
 
-(define (extract-version)
-  (let* ((r (exec-capture "sh" "-c"
-              (string-append "grep -oE ':version \"[^\"]+\"' " caixa-path
-                             " | head -1 | sed 's/:version \"//;s/\"$//'"))))
-    (string-trim (stdout-of r))))
+(define text (read-file caixa-path))
 
-(define old-version (extract-version))
+(define version-captures
+  (re-captures ":version \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" text))
 
-(cond
-  ((equal? old-version "")
-   (log-error "no :version field found in caixa")
-   (append-output "old-version=")
-   (append-output "bumped=false")
-   (append-output "new-version=")
-   (exit 1)))
+(when (null? version-captures)
+  (fail (string-append caixa-path ": no :version \"X.Y.Z\" field")))
+
+(define old-version (car (cdr version-captures)))
 
 (define (should-bump?)
   (cond
     ((not (equal? skip-flag "true")) #t)
     (else (has-changes-since? (last-tag) source-paths))))
 
+(when (not (should-bump?))
+  (log-info (string-append "no changes since last tag — skipping (at " old-version ")"))
+  (append-output (string-append "old-version=" old-version))
+  (append-output "bumped=false")
+  (append-output "new-version=")
+  (exit 0))
+
 (define (bump-semver v kind)
-  ;; Naive but typed: parse "X.Y.Z" + bump component via awk.
+  ;; awk, not arithmetic in tlisp: the stdlib has no string->number, so a
+  ;; single discrete exec is the honest way to add 1 to a semver component.
   (let* ((cmd (string-append "echo " v " | awk -F. -v k=" kind
                              " '{ if (k==\"major\") print $1+1\".0.0\";"
                              "    else if (k==\"minor\") print $1\".\"$2+1\".0\";"
                              "    else print $1\".\"$2\".\"$3+1 }'"))
-         (r (exec-capture "sh" "-c" cmd)))
-    (string-trim (stdout-of r))))
-
-(cond
-  ((not (should-bump?))
-   (log-info (string-append "no changes since last tag — skipping (at " old-version ")"))
-   (append-output (string-append "old-version=" old-version))
-   (append-output "bumped=false")
-   (append-output "new-version=")
-   (exit 0)))
+         (r (exec-capture "sh" "-c" cmd))
+         (out (string-trim (stdout-of r))))
+    (when (or (not (= (status-of r) 0)) (equal? out ""))
+      (fail (string-append "could not bump " v " as " kind)))
+    out))
 
 (define new-version (bump-semver old-version bump-type))
 
-;; Rewrite :version "OLD" → :version "NEW" via sed.
-(define sed-cmd
-  (string-append "sed -i.bak 's/:version \"" old-version "\"/:version \""
-                 new-version "\"/' " caixa-path
-                 " && rm " caixa-path ".bak"))
+;; ── declared files ───────────────────────────────────────────────────
 
-(let ((r (exec-capture "sh" "-c" sed-cmd)))
-  (cond
-    ((= (status-of r) 0)
-     (log-info (string-append "bumped: " old-version " -> " new-version))
-     (append-output (string-append "old-version=" old-version))
-     (append-output "bumped=true")
-     (append-output (string-append "new-version=" new-version))
-     (exit 0))
-    (else
-      (log-error "sed rewrite failed")
-      (append-output (string-append "old-version=" old-version))
-      (append-output "bumped=false")
-      (append-output "new-version=")
-      (exit 1))))
+;; Split on the quote rather than re-replace: verified 2026-07-29 that
+;; re-replace returns its second argument regardless of argument order, so it
+;; cannot be used for substitution here.
+(define (strip-path-key s)
+  (car (cdr (string-split s "\""))))
+
+(define declared
+  (map strip-path-key (re-find-all ":path \"[^\"]+\"" text)))
+
+(define has-files-block (not (null? declared)))
+
+;; BYTES, not characters. string-length counts characters, and a manifest
+;; whose files contain any multi-byte glyph would then disagree with every
+;; consumer that checks size against the file on disk (measured: 4540 vs 4870
+;; on this repo's own stdlib.tlisp).
+(define (byte-size path)
+  (let ((r (exec-capture "sh" "-c" (string-append "wc -c < " path))))
+    (string-trim (stdout-of r))))
+
+(define (file-entry path)
+  (when (not (path-exists? path))
+    (fail (string-append caixa-path " declares " path ", which is not in the tree")))
+  (let ((body (read-file path)))
+    (string-append
+      "{:path " (json-stringify path) "\n"
+      "   :sha256 " (json-stringify (sha256 body)) "\n"
+      "   :size " (byte-size path) "\n"
+      "   :body " (json-stringify body) "}")))
+
+;; The :files block is regenerated wholesale rather than patched. The embedded
+;; bodies are arbitrary text, so an in-place edit would have to reason about
+;; escaping inside data it did not produce. Everything above :files is carried
+;; through untouched, which is where name/description/license/ci-config live.
+(define (rewrite-with-files head)
+  (string-append
+    head "\n  :files\n  ["
+    (string-join " " (map file-entry declared))
+    "])\n"))
+
+(when has-files-block
+  (let ((hits (re-find-all "\n  :files\n" text)))
+    (when (not (= (length hits) 1))
+      (fail (string-append caixa-path ": expected exactly one \"  :files\" block, found "
+                           (string-format "{}" (length hits)))))))
+
+(let ((r (exec-capture "sh" "-c"
+           (string-append "sed -i.bak 's/:version \"" old-version "\"/:version \""
+                          new-version "\"/' " caixa-path
+                          " && rm -f " caixa-path ".bak"))))
+  (when (not (= (status-of r) 0))
+    (fail "the :version rewrite failed")))
+
+;; Re-read so the files block is regenerated from the version-bumped text.
+(define bumped-text (read-file caixa-path))
+
+(when has-files-block
+  (write-file caixa-path
+              (rewrite-with-files (car (re-split "\n  :files\n" bumped-text)))))
+
+;; ── verify by re-reading ─────────────────────────────────────────────
+
+(define after (read-file caixa-path))
+
+(define after-version
+  (let ((c (re-captures ":version \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" after)))
+    (if (null? c) "" (car (cdr c)))))
+
+(when (not (equal? after-version new-version))
+  (fail (string-append "verify: version reads " after-version ", expected " new-version)))
+
+(when (string-contains? after (string-append ":version \"" old-version "\""))
+  (fail "verify: the old version string still appears in the manifest"))
+
+(define after-paths
+  (map strip-path-key (re-find-all ":path \"[^\"]+\"" after)))
+
+(when (not (= (length after-paths) (length declared)))
+  (fail (string-append "verify: declared " (string-format "{}" (length declared))
+                       " paths before the rewrite, "
+                       (string-format "{}" (length after-paths)) " after")))
+
+(define (verify-hash path)
+  (let ((want (sha256 (read-file path))))
+    (when (not (string-contains? after want))
+      (fail (string-append "verify: manifest does not carry the current sha256 of " path)))))
+
+(map verify-hash declared)
+
+(log-info (string-append "bumped: " old-version " -> " new-version
+                         (if has-files-block
+                             (string-append " (" (string-format "{}" (length declared))
+                                            " file(s) refreshed)")
+                             " (no :files block)")))
+
+(append-output (string-append "old-version=" old-version))
+(append-output "bumped=true")
+(append-output (string-append "new-version=" new-version))
+(exit 0)

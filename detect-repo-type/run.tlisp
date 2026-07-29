@@ -9,10 +9,11 @@
 ;;   ansible-collection  — galaxy.yml
 ;;   ruby-gem            — *.gemspec at root
 ;;   github-action       — action.yml at root
+;;   caixa               — a *.caixa.lisp manifest and NO language manifest
 ;;   unknown             — none of the above
 ;;
 ;; Precedence (when multiple manifests coexist):
-;;   rust > go > ansible > helm > python > npm > ruby > action > unknown
+;;   rust > go > ansible > helm > python > npm > ruby > action > caixa > unknown
 ;;
 ;; Outputs (appended):
 ;;   repo-type       the typed identifier
@@ -44,6 +45,22 @@
 
 (define (find-gemspec)
   (let ((r (exec-capture "sh" "-c" "ls *.gemspec 2>/dev/null | head -1")))
+    (string-trim (alist-get r "stdout" ""))))
+
+;; -------------------------------------------------------------- ;;
+;; caixa — a *.caixa.lisp manifest at root                         ;;
+;;                                                                 ;;
+;; DELIBERATELY LAST in the cond below, after every language        ;;
+;; manifest. The vendored caixa-* crates carry BOTH a Cargo.toml    ;;
+;; and a <crate>.caixa.lisp (verified 2026-07-29: caixa-serde,      ;;
+;; caixa-clap), so matching on the manifest first would move ~200   ;;
+;; working rust-single-crate repos onto this pipeline at once.      ;;
+;; caixa is therefore the answer only when nothing else claims the  ;;
+;; repo, which is exactly the pure-tlisp library case.              ;;
+;; -------------------------------------------------------------- ;;
+
+(define (find-caixa-manifest)
+  (let ((r (exec-capture "sh" "-c" "ls *.caixa.lisp 2>/dev/null | head -1")))
     (string-trim (alist-get r "stdout" ""))))
 
 ;; -------------------------------------------------------------- ;;
@@ -87,6 +104,10 @@
    (emit "github-action" "action.yml"))
   ((path-exists? "action.yaml")
    (emit "github-action" "action.yaml"))
+
+  ;; caixa — see the precedence note above: last, never first
+  ((not (equal? (find-caixa-manifest) ""))
+   (emit "caixa" (find-caixa-manifest)))
 
   ;; Nothing matched. A detector REPORTS its answer (including
   ;; "unknown") and succeeds — exiting non-zero here fails the detect
