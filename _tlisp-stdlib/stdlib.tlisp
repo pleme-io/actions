@@ -417,6 +417,206 @@
                                 (string-append "refs/tags/" tag)))))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Generic string prefix helpers. First consumer is the `semver:`
+;; block below (stripping a tag prefix); kept generic because this
+;; stdlib has had no `string-prefix?` and open-coded the idea twice
+;; already (see line-is-section-header?'s "trims to empty" trick).
+;; ────────────────────────────────────────────────────────────────
+
+;; #t iff S starts with PREFIX. Expressed via string-split because there
+;; is no char indexing here: splitting on the prefix yields ≥2 pieces AND
+;; nothing precedes the first occurrence.
+(define (string-prefix? s prefix)
+  (cond
+    ((equal? prefix "") #t)
+    (else
+      (let ((parts (string-split s prefix)))
+        (and (>= (length parts) 2) (equal? (car parts) ""))))))
+
+;; S with ONE leading PREFIX removed; S unchanged when it does not start
+;; with PREFIX. Re-joins on the prefix so a LATER occurrence survives:
+;; ("vv1.0.0", "v") -> "v1.0.0", never "1.0.0".
+(define (string-strip-prefix s prefix)
+  (cond
+    ((equal? prefix "") s)
+    ((not (string-prefix? s prefix)) s)
+    (else (string-join prefix (cdr (string-split s prefix))))))
+
+;; ────────────────────────────────────────────────────────────────
+;; semver: — NUMERIC three-segment version algebra, and the release
+;; MONOTONICITY invariant every pleme-io bumper owes.
+;;
+;; THE DEFECT THIS EXISTS FOR (937-repo census, 2026-07-27: 527 inverted
+;; tag pairs confirmed by exact `git merge-base --is-ancestor`): a
+;; released version can walk BACKWARD along strictly linear history.
+;; pleme-io's own shared bumpers produced 4 of the cases — worst
+;; `engenho` v0.53.0 -> v0.1.5 across 307 commits with zero merges.
+;;
+;; The root cause is one substituted question. Every bumper asked
+;;   "is this exact tag FREE?"        — a same-LINE collision guard
+;; and never
+;;   "is this version ABOVE everything already released?" — MONOTONICITY.
+;; A version BELOW the max passes a free-slot check completely unharmed,
+;; which is why skew WITHIN a minor was absorbed (0.1.1 taken -> advance
+;; to 0.1.2) while skew ACROSS a minor shipped backwards (committed
+;; 0.2.5, tags at v0.3.1 -> 0.2.6 is free -> release regresses).
+;;
+;; The comparison MUST be numeric over three integer segments. NOT
+;; lexical ("0.10.0" < "0.9.0" as strings — wrong), and NOT `sort -V`
+;; (a shell-out this stack bans, whose order is a GNU/git definition
+;; rather than the one we mean). Nothing in this repo computed a
+;; max-of-tags before this block; `last-tag` above is `git describe
+;; --abbrev=0` = NEAREST-REACHABLE, explicitly NOT highest — it must
+;; never be reused for a monotonicity question.
+;;
+;; TWO STRICTNESSES, on purpose:
+;;   semver:parse  (RANKING)  is STRICT — a version it cannot read is a
+;;                            version it refuses to rank, so the max is
+;;                            honest rather than confidently wrong.
+;;   semver:bump   (ARITHMETIC) is LENIENT — a missing segment reads 0,
+;;                            byte-preserving the shipped bump behavior
+;;                            these actions have always had.
+;; ────────────────────────────────────────────────────────────────
+
+;; A bare non-negative integer segment as an Int; -1 for ANYTHING else
+;; ("", "rc1", "1-rc1", "x"). -1 rather than 0 deliberately: a 0 would let
+;; a malformed "0.1.rc" tie a real "0.1.0" instead of being discarded.
+;; `read-string` RAISES on an empty source, so the "" guard comes first;
+;; `integer?` is what separates a parsed Int from the symbol read-string
+;; hands back for non-numeric text.
+(define (semver:segment s)
+  (cond
+    ((equal? s "") -1)
+    (else (let ((v (read-string s))) (if (integer? v) v -1)))))
+
+;; (major minor patch) for a bare X.Y.Z; '() for anything else. Two-segment,
+;; four-segment, pre-release and build-metadata versions are EXCLUDED from
+;; ranking rather than coerced into it.
+(define (semver:parse v)
+  (let ((parts (string-split v ".")))
+    (cond
+      ((not (= (length parts) 3)) '())
+      (else
+        (let ((a (semver:segment (car parts)))
+              (b (semver:segment (car (cdr parts))))
+              (c (semver:segment (car (cdr (cdr parts))))))
+          (cond
+            ((or (< a 0) (< b 0) (< c 0)) '())
+            (else (list a b c))))))))
+
+(define (semver:valid? v) (not (null? (semver:parse v))))
+
+;; Strict numeric ordering on parsed segment lists: major, then minor,
+;; then patch. This is the entire reason the block exists — 0.10.0 beats
+;; 0.9.0 here and loses to it under every string comparison.
+(define (semver:parts-gt? pa pb)
+  (cond
+    ((> (car pa) (car pb)) #t)
+    ((< (car pa) (car pb)) #f)
+    ((> (car (cdr pa)) (car (cdr pb))) #t)
+    ((< (car (cdr pa)) (car (cdr pb))) #f)
+    (else (> (car (cdr (cdr pa))) (car (cdr (cdr pb)))))))
+
+;; #t iff A is strictly greater than B, numerically. FAIL-CLOSED: an
+;; unrankable side is never "greater", so a caller gating on this refuses
+;; rather than waving through.
+(define (semver:gt? a b)
+  (let ((pa (semver:parse a)) (pb (semver:parse b)))
+    (and (not (null? pa)) (not (null? pb)) (semver:parts-gt? pa pb))))
+
+;; The numerically-highest bare X.Y.Z in VS; "" when VS holds none.
+(define (semver:max-fold vs best)
+  (cond
+    ((null? vs) best)
+    ((not (semver:valid? (car vs))) (semver:max-fold (cdr vs) best))
+    ((equal? best "") (semver:max-fold (cdr vs) (car vs)))
+    ((semver:gt? (car vs) best) (semver:max-fold (cdr vs) (car vs)))
+    (else (semver:max-fold (cdr vs) best))))
+
+(define (semver:max vs) (semver:max-fold vs ""))
+
+;; Next version by bump TYPE. LENIENT segment reads (a missing segment is
+;; 0) so this is byte-identical to the arithmetic rust-workspace-bump has
+;; always shipped; "" for an unknown type, which every caller treats as a
+;; hard failure. Plain integer arithmetic on three segments — no cargo, no
+;; awk, no subprocess, so it is unit-testable directly.
+(define (semver:bump-segment parts idx)
+  (cond
+    ((and (= idx 0) (>= (length parts) 1)) (read-string (car parts)))
+    ((and (= idx 1) (>= (length parts) 2)) (read-string (car (cdr parts))))
+    ((and (= idx 2) (>= (length parts) 3)) (read-string (car (cdr (cdr parts)))))
+    (else 0)))
+
+(define (semver:bump version type)
+  (let* ((parts (string-split version "."))
+         (major (semver:bump-segment parts 0))
+         (minor (semver:bump-segment parts 1))
+         (patch (semver:bump-segment parts 2)))
+    (cond
+      ((equal? type "patch")
+       (string-append (pr-str major) "." (pr-str minor) "." (pr-str (+ patch 1))))
+      ((equal? type "minor")
+       (string-append (pr-str major) "." (pr-str (+ minor 1)) ".0"))
+      ((equal? type "major")
+       (string-append (pr-str (+ major 1)) ".0.0"))
+      (else ""))))
+
+;; Every LOCAL tag name. Deliberately UNSORTED — ordering is semver:max's
+;; job, not git's (`--sort=v:refname` is a different, git-defined order).
+;; Requires tags in the checkout; every substrate release workflow checks
+;; out with `fetch-depth: 0`, which brings them (verified 2026-07-27
+;; across all 7 git-commit-tag-routing reusables).
+(define (git:tag-names)
+  (let ((r (exec-capture "git" "tag" "--list")))
+    (cond
+      ((not (= (status-of r) 0)) '())
+      (else
+        (filter (lambda (l) (not (equal? l "")))
+                (map string-trim (string-split (stdout-of r) "\n")))))))
+
+;; The highest released version as a BARE X.Y.Z, over tags shaped
+;; <prefix>X.Y.Z. "" iff the repo has released no rankable version yet.
+;;
+;; The prefix filter is load-bearing, not cosmetic. Measured over the 662
+;; substrate-consuming repos: 264 of 2886 tags are NOT bare vX.Y.Z, and
+;; they are OTHER KINDS OF TAG — AUTOBUMP image tags
+;; (macos-universal-r24-<sha>), component-scoped tags (guardrail-v1.2.3,
+;; otel/v0.1.0), moving action refs (v1), and pre-release tags
+;; (v0.8.18-pleme.1). Each is excluded by prefix or by semver:parse, so a
+;; component tag can never gate a root release and an image tag can never
+;; be mistaken for a version.
+(define (git:max-released-version prefix)
+  (semver:max
+    (map (lambda (t) (string-strip-prefix t prefix))
+         (filter (lambda (t) (string-prefix? t prefix)) (git:tag-names)))))
+
+;; ── THE INVARIANT — one definition, every consumer ──────────────
+
+;; #t iff releasing NEW-V is monotone against MAX-V, the repo's highest
+;; already-released version. An empty MAX-V is a genuine first release —
+;; the one case where there is nothing to regress below, so the gate is
+;; vacuous BY DEFINITION rather than by accident. An unrankable NEW-V
+;; never passes.
+(define (semver:release-monotone? new-v max-v)
+  (cond
+    ((not (semver:valid? new-v)) #f)
+    ((equal? max-v "") #t)
+    (else (semver:gt? new-v max-v))))
+
+;; The version a bump must start FROM: the higher of what the manifest
+;; says and what has actually been released. Seeding from the manifest
+;; alone IS the defect — a manifest lagging its tags bumps into territory
+;; the repo already passed, and the release walks backward. Seeding from
+;; the max makes a below-max result unreachable by the arithmetic rather
+;; than caught after the fact.
+(define (semver:bump-seed committed-v max-v)
+  (cond
+    ((equal? max-v "") committed-v)
+    ((not (semver:valid? committed-v)) max-v)
+    ((semver:gt? max-v committed-v) max-v)
+    (else committed-v)))
+
+;; ────────────────────────────────────────────────────────────────
 ;; Log scanning — match any line by predicate
 ;; ────────────────────────────────────────────────────────────────
 

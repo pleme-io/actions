@@ -36,6 +36,58 @@
                             "against the existing tag before releasing."))
   (exit 1))
 
+;; MONOTONICITY guard — checked BEFORE any mutation, alongside the
+;; collision guard above, because the two answer DIFFERENT questions and
+;; only one of them was ever asked here.
+;;
+;; The guard above asks "is this exact tag TAKEN?". That is a same-line
+;; collision check: it refuses v0.2.6 when v0.2.6 exists, and waves
+;; through v0.2.6 when the repo's highest release is v0.3.1 — because
+;; v0.2.6 is, indeed, free. So a release could walk BACKWARD along
+;; strictly linear history and every gate in the pipeline stayed green.
+;; Measured 2026-07-27 over a 937-repo census: 527 inverted tag pairs
+;; confirmed by exact `git merge-base --is-ancestor`, 4 of them produced
+;; by pleme-io's own shared bumpers, worst `engenho` v0.53.0 -> v0.1.5
+;; across 307 commits with zero merges.
+;;
+;; This guard asks the question that was missing: "is this version ABOVE
+;; everything already released?" It is the LAST line before a tag object
+;; exists, and it is the one line every routing path crosses — verified
+;; 2026-07-27: all 7 substrate reusables that cut a version tag
+;; (cargo-, rust-, rust-binary-, npm-, python-, helm-, caixa-auto-release)
+;; reach the tag through THIS action, and zero repos in the org call any
+;; bumper directly. Fixing the seed upstream (the bumpers) is the real
+;; correction; this is the backstop that turns a silent regression into a
+;; red CI run no matter which bumper, or which future bumper, fed it.
+;;
+;; TIER-HONEST: a runtime `exit 1` is ONLY-MITIGATED — a loud
+;; Result::Err at release time, not an unrepresentable state. The
+;; parse-time-rejected tier lives upstream in the bumpers, where
+;; `semver:bump-seed` makes a below-max version unreachable by the
+;; arithmetic rather than caught after the fact. Both ship; neither is
+;; rounded up to the other.
+;;
+;; Fail-closed on an unrankable VERSION is deliberate and measured: every
+;; bumper feeding this action emits a bare X.Y.Z, and zero repos on this
+;; routing path release pre-release or 4-segment versions (the org's one
+;; such tag, typemill's v0.8.18-pleme.1, is a vendor fork that does not
+;; route here). An unrankable version arriving from a pleme-io bumper is
+;; itself the defect, so surfacing it is the point.
+(define max-released (git:max-released-version tag-prefix))
+(when (not (semver:release-monotone? version max-released))
+  (log-error (string-append
+               "refusing to release " tag " — version " version
+               " is not ABOVE the highest already-released version "
+               tag-prefix max-released
+               " (release-monotonicity guard). Releasing it would walk the"
+               " published version BACKWARD. This almost always means the"
+               " manifest version lags the tags: reconcile the manifest to"
+               " at least " max-released " and re-run."))
+  (exit 1))
+(when (equal? max-released "")
+  (log-info (string-append "no rankable " tag-prefix "X.Y.Z tag yet — "
+                           "first release, monotonicity vacuously holds")))
+
 ;; Stage each path SEPARATELY. `git add a b c` fails ATOMICALLY if ANY
 ;; pathspec doesn't match an existing file — e.g. `Cargo.nix` in a repo
 ;; that doesn't use crate2nix, or `Cargo.lock` in some layouts: git
