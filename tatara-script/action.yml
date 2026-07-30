@@ -412,6 +412,32 @@ outputs:
   healthy:
     description: "Forwarded (key: healthy) — container-boot-check: did the image boot and pass its health check"
     value: ${{ steps.exec.outputs.healthy }}
+  # ── rust-workspace-publish ──────────────────────────────────────────
+  # Its `steps.ship` IS a tatara-script call, and its own action.yml
+  # forwards all five of these from `steps.ship.outputs.<key>` — but they
+  # were never declared HERE, so every one resolved to an EMPTY STRING.
+  # The same latent class as `out-path` and the `violations` family above.
+  # Receipt (2026-07-30): tatara-lisp v0.3.3 published all 17 members
+  # successfully and the job STILL went red, because the script's own
+  # output-contract guard correctly refused to let the drop pass silently
+  # ("the script wrote output key(s) this action does not declare").
+  # A green publish that reports red is the failure this repairs; the
+  # publish itself was never broken. Purely additive.
+  shipped-count:
+    description: "Forwarded (key: shipped-count) — rust-workspace-publish: members successfully shipped"
+    value: ${{ steps.exec.outputs.shipped-count }}
+  renamed-crates:
+    description: "Forwarded (key: renamed-crates) — rust-workspace-publish: crates auto-renamed on a name collision"
+    value: ${{ steps.exec.outputs.renamed-crates }}
+  pending-crates:
+    description: "Forwarded (key: pending-crates) — rust-workspace-publish: crates left for the next capacity window (rate-limited / dep-deferred); empty when the bootstrap is complete"
+    value: ${{ steps.exec.outputs.pending-crates }}
+  failed-crates:
+    description: "Forwarded (key: failed-crates) — rust-workspace-publish: crates that failed PERMANENTLY; a non-empty value means the step exited red"
+    value: ${{ steps.exec.outputs.failed-crates }}
+  bootstrap-complete:
+    description: "Forwarded (key: bootstrap-complete) — rust-workspace-publish: true when every member is on the registry AND nothing failed permanently"
+    value: ${{ steps.exec.outputs.bootstrap-complete }}
 
 runs:
   using: composite
