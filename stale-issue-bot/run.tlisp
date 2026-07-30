@@ -18,15 +18,17 @@
             "--jq" ".[].number"))
 
 (define closed-count 0)
-(let loop ((nums (string-split (string-trim (stdout-of r)) "\n")))
+(define (comment-stale-issues nums)
   (cond
     ((null? nums) #t)
-    ((equal? (car nums) "") (loop (cdr nums)))
+    ((equal? (car nums) "") (comment-stale-issues (cdr nums)))
     (else
       (exec-capture "gh" "issue" "comment" (car nums) "--repo" repo
                     "--body" "Marking stale per pleme-io/stale-issue-bot")
       (set! closed-count (+ closed-count 1))
-      (loop (cdr nums)))))
+      (comment-stale-issues (cdr nums)))))
+
+(comment-stale-issues (string-split (string-trim (stdout-of r)) "\n"))
 
 (append-output (string-append "closed-count=" (string-format "{}" closed-count)))
 (exit 0)

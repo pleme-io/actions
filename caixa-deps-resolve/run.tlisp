@@ -44,10 +44,10 @@
 (exec-check "mkdir" "-p" deps-dir)
 
 (define resolved 0)
-(let dep-loop ((ds deps))
+(define (resolve-deps ds)
   (cond
     ((null? ds) #t)
-    ((equal? (car ds) "") (dep-loop (cdr ds)))
+    ((equal? (car ds) "") (resolve-deps (cdr ds)))
     (else
       (let* ((parts (string-split (car ds) "@"))
              (repo (car parts))
@@ -65,7 +65,9 @@
              (set! resolved (+ resolved 1)))
             (else
              (log-error (string-append "failed to resolve " (car ds))))))
-        (dep-loop (cdr ds))))))
+        (resolve-deps (cdr ds))))))
+
+(resolve-deps deps)
 
 (append-output (string-append "resolved-count=" (string-format "{}" resolved)))
 (log-info (string-append "resolved " (string-format "{}" resolved) " dep(s)"))

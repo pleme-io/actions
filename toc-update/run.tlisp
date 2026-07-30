@@ -6,11 +6,13 @@
 
 (exec-check "npm" "install" "-g" "doctoc@latest")
 
-(let loop ((fs (string-split files " ")))
+(define (doctoc-each fs)
   (cond
     ((null? fs) #t)
-    ((equal? (car fs) "") (loop (cdr fs)))
-    (else (exec-capture "doctoc" (car fs)) (loop (cdr fs)))))
+    ((equal? (car fs) "") (doctoc-each (cdr fs)))
+    (else (exec-capture "doctoc" (car fs)) (doctoc-each (cdr fs)))))
+
+(doctoc-each (string-split files " "))
 
 (define diff-r (exec-capture "git" "diff" "--quiet"))
 (cond

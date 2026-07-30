@@ -10,7 +10,7 @@
 
 (define count-r
   (exec-capture "sh" "-c"
-    (string-append "echo '" (string-replace out "'" "'"'"'")
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
                    "' | jq '.results | length'")))
 (define count (string-trim (stdout-of count-r)))
 (define cnum (cond ((equal? count "") "0") (else count)))

@@ -7,7 +7,7 @@
 (exec-check "sudo" "apt-get" "install" "-y" "-qq" "kcat")
 
 (define cmd
-  (string-append "echo '" (string-replace message "'" "'"'"'")
+  (string-append "echo '" (string-replace message "'" "'\"'\"'")
                  "' | kcat -P -b '" brokers "' -t '" topic "'"))
 (define r (exec-capture "sh" "-c" cmd))
 (cond

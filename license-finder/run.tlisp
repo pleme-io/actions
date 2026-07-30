@@ -5,19 +5,21 @@
 
 (exec-check "gem" "install" "license_finder" "--no-document")
 
-(let loop ((licenses (string-split permitted ",")))
+(define (add-permitted-licenses licenses)
   (cond
     ((null? licenses) #t)
     (else
       (exec-capture "license_finder" "permitted_licenses" "add" (car licenses))
-      (loop (cdr licenses)))))
+      (add-permitted-licenses (cdr licenses)))))
+
+(add-permitted-licenses (string-split permitted ","))
 
 (define r (exec-capture "license_finder" "--format" "json"))
 (define out (stdout-of r))
 
 (define viol-r
   (exec-capture "sh" "-c"
-    (string-append "echo '" (string-replace out "'" "'"'"'")
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
                    "' | jq '.unapproved + .restricted | length' 2>/dev/null || echo 0")))
 (define viol (string-trim (stdout-of viol-r)))
 

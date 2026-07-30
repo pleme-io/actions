@@ -36,17 +36,19 @@
 (define adopted 0)
 (define gap-list (list))
 
-(let loop ((rs repos))
+(define (audit-repos rs)
   (cond
     ((null? rs) #t)
-    ((equal? (car rs) "") (loop (cdr rs)))
+    ((equal? (car rs) "") (audit-repos (cdr rs)))
     (else
       (cond
         ((check-repo (car rs))
          (set! adopted (+ adopted 1)))
         (else
          (set! gap-list (cons (car rs) gap-list))))
-      (loop (cdr rs)))))
+      (audit-repos (cdr rs)))))
+
+(audit-repos repos)
 
 (define total (length repos))
 (define gaps (length gap-list))
@@ -75,14 +77,16 @@
   "**Gap**: " (string-format "{}" gaps) "\n\n"
   "## Gap repos (no .github/workflows/auto-release.yml)\n\n"))
 
-(let r-loop ((gs gap-list) (acc ""))
+(define (render-gap-rows gs acc)
   (cond
     ((null? gs)
      (write-file "/tmp/adoption-audit.md" (string-append report acc))
      (append-output "report-path=/tmp/adoption-audit.md"))
     (else
-     (r-loop (cdr gs)
-             (string-append acc "- " (car gs) "\n")))))
+     (render-gap-rows (cdr gs)
+                      (string-append acc "- " (car gs) "\n")))))
+
+(render-gap-rows gap-list "")
 
 (log-info (string-append "adoption: " (string-format "{}" adopted) "/"
                          (string-format "{}" total) " (" pct "%)"))
