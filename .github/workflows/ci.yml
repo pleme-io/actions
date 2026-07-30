@@ -100,6 +100,30 @@ jobs:
         with:
           fail-on-violation: "true"
 
+  enforce-output-contract:
+    name: Enforce the two-boundary output contract (generated == committed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Self-hosted from its own path so a PR is gated by its own version of the
+      # rule. Seven layers: inner drift, catalog drift, dynamic-spec
+      # reconciliation both ways, outer boundary, ghost step, parser parity, and
+      # a non-vacuity floor that FAILS a run whose scan matched nothing.
+      #
+      # This is the static complement to tatara-script/output-contract.tlisp.
+      # That gate is per-run and per-branch -- it only sees the one code path a
+      # given execution took, and it reads GITHUB_ACTION_PATH/action.yml, which
+      # inside the exec step is tatara-script's OWN manifest. So it can prove
+      # neither "every branch" nor "the wrapper forwards it". This job does both,
+      # before anything runs.
+      #
+      # A failure here is fixed by regenerating, never by relaxing the check:
+      #   MODE=write tatara-script <(cat _tlisp-stdlib/stdlib.tlisp output-contract-sync/run.tlisp)
+      - uses: ./output-contract-sync
+        with:
+          mode: check
+          fail-on-drift: "true"
+
   regenerate-catalog:
     name: Regenerate catalog + per-action docs via pleme-doc-gen (Rust)
     runs-on: ubuntu-latest
@@ -108,14 +132,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install pleme-doc-gen
         run: cargo install --locked --git https://github.com/pleme-io/pleme-doc-gen pleme-doc-gen
-      - name: Regenerate
+      # NOTE: this job CANNOT FAIL and therefore enforces nothing. It renders
+      # into /tmp, never diffs against what is committed, and writes a step
+      # summary carrying HARDCODED counts ("192 per-action README.md" in a repo
+      # with 338 action dirs). Left in place because it is the only thing
+      # exercising pleme-doc-gen, and labelled rather than deleted so nobody
+      # reads its green tick as evidence the catalog is current. The
+      # enforce-output-contract job above is the one that actually diffs
+      # generated against committed. Closing this properly needs a
+      # `pleme-doc-gen check` subcommand -- and the `cargo install --git` above
+      # is itself a runtime tool install in the repo that ships
+      # runtime-install-lint, so it needs a pinned path in the same change.
+      - name: Regenerate (advisory only -- does not gate)
         run: |
           pleme-doc-gen all --patterns-out /tmp/patterns-generated.nix
           lines=$(wc -l < /tmp/patterns-generated.nix)
           actions=$(grep -c 'uses = "pleme-io' /tmp/patterns-generated.nix)
-          echo "## Catalog + docs preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Catalog + docs preview (ADVISORY -- this job cannot fail)" >> "$GITHUB_STEP_SUMMARY"
           echo "- patterns-full.nix: $lines lines covering $actions actions" >> "$GITHUB_STEP_SUMMARY"
-          echo "- 192 per-action README.md regenerated in-place" >> "$GITHUB_STEP_SUMMARY"
+          echo "- per-action README.md regenerated in-place" >> "$GITHUB_STEP_SUMMARY"
           echo "- root README.md catalog index regenerated" >> "$GITHUB_STEP_SUMMARY"
           echo "- Sync substrate: \`cp /tmp/patterns-generated.nix substrate/lib/release/patterns-full.nix\`" >> "$GITHUB_STEP_SUMMARY"
 
