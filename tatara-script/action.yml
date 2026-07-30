@@ -409,6 +409,9 @@ outputs:
   bands-scanned:
     description: "Forwarded (key: bands-scanned) — breathe-band-lint: Cpu/Memory/StorageBands found in the tree"
     value: ${{ steps.exec.outputs.bands-scanned }}
+  healthy:
+    description: "Forwarded (key: healthy) — container-boot-check: did the image boot and pass its health check"
+    value: ${{ steps.exec.outputs.healthy }}
 
 runs:
   using: composite
