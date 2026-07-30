@@ -164,3 +164,50 @@
         "[dependencies]\n"
         "bevy_utils = { path = \"../bevy_utils\" }\n"))
     "a publish=false fork with a versionless path dep is still a clean skip"))
+
+(deftest
+  "an array field above `publish` does not end the [package] walk"
+  ;; THE REGRESSION. Every fixture above put `publish` immediately after
+  ;; `version`, so all four passed while the real thing was broken: run.tlisp
+  ;; carried a local `line-is-section-header?` that called ANY line containing
+  ;; `[` a section header, and it shadowed the stdlib's strict one. mado has
+  ;; `categories = [...]` and `keywords = [...]` above `publish = false`, so
+  ;; the walk ended at `categories` and the crate red-failed as structurally
+  ;; unpublishable — having correctly declared it does not publish.
+  ;;
+  ;; This is mado's real manifest shape, field order included.
+  (assert
+    (manifest-declares-no-publish?
+      (string-append
+        "[package]\n"
+        "name = \"mado\"\n"
+        "version = \"0.1.102\"\n"
+        "categories = [\"command-line-utilities\"]\n"
+        "keywords = [\"terminal\", \"emulator\", \"gpu\"]\n"
+        "publish = false\n"
+        "\n"
+        "[lib]\n"
+        "name = \"mado\"\n"))
+    "an array field above publish ended the [package] walk early")
+  ;; The same shape must still find a real section boundary, or the fix would
+  ;; have traded one silent misread for another.
+  (assert
+    (not
+      (manifest-declares-no-publish?
+        (string-append
+          "[package]\n"
+          "name = \"real\"\n"
+          "keywords = [\"a\", \"b\"]\n"
+          "\n"
+          "[dependencies]\n"
+          "publish = false\n")))
+    "a publish=false OUTSIDE [package] was honoured — the walk no longer stops at all")
+  ;; A comment mentioning a bracketed section is not a boundary either.
+  (assert
+    (manifest-declares-no-publish?
+      (string-append
+        "[package]\n"
+        "name = \"x\"\n"
+        "# see [lib] below for the library target\n"
+        "publish = false\n"))
+    "a comment naming [lib] ended the walk"))
