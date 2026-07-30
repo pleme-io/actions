@@ -1,0 +1,132 @@
+;; tatara-script/output-contract.tlisp — the output contract gate.
+;;
+;; A composite action exposes a step's GITHUB_OUTPUT keys to its caller ONLY
+;; through its own `outputs:` block. A key the script writes but the action does
+;; not declare is dropped at the boundary, silently, and every consumer reads an
+;; empty string. Nothing fails. Nothing logs.
+;;
+;; That is what killed the polymorphic auto-release dispatcher org-wide:
+;; detect-repo-type wrote `repo-type=caixa` correctly for months while every
+;; caller saw '' and every arm's `if:` compared against nothing. Seven
+;; hypotheses were eliminated by inspection before a bisect found it.
+;;
+;; This runs in the SAME step as the script — GITHUB_OUTPUT is per-step, so a
+;; later step cannot see it — and turns that silent drop into a named failure.
+;;
+;; Reads   GITHUB_OUTPUT        the keys the script actually wrote
+;;         GITHUB_ACTION_PATH   this action's own action.yml, for what it declares
+;; Exits   0  every written key is declared (or nothing was written)
+;;         1  at least one key would be dropped; names each one
+
+(define out-file (env-get "GITHUB_OUTPUT" ""))
+(define action-path (env-get "GITHUB_ACTION_PATH" ""))
+
+;; A missing file is not a violation: plenty of scripts write no outputs, and a
+;; contract gate that fails on absence would block them for no reason.
+(define (skip why)
+  (log-info (string-append "output-contract: skipped — " why))
+  (exit 0))
+
+(when (equal? out-file "") (skip "GITHUB_OUTPUT is unset"))
+(when (not (path-exists? out-file)) (skip "the script wrote no outputs"))
+(when (equal? action-path "") (skip "GITHUB_ACTION_PATH is unset"))
+
+(define manifest (string-append action-path "/action.yml"))
+(when (not (path-exists? manifest)) (skip (string-append "no action.yml at " action-path)))
+
+;; ── keys the script wrote ────────────────────────────────────────────────
+;;
+;; Two shapes in GITHUB_OUTPUT: `key=value` and the heredoc form
+;; `key<<DELIM`. Continuation lines of a heredoc body must NOT be mistaken for
+;; keys, so a line only counts when its name part is a plain identifier — a
+;; body line like "  foo bar" has a space and is rejected, and one containing
+;; `=` inside prose is rejected by the same identifier test.
+
+(define ident-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+
+(define (all-ident-chars? s)
+  (cond
+    ((equal? s "") #f)
+    (else
+      (null? (filter (fn (c) (not (string-contains? ident-chars c)))
+                     (string-split s ""))))))
+
+(define (key-of line)
+  (let* ((eq-parts (string-split line "="))
+         (hd-parts (string-split line "<<")))
+    (cond
+      ;; heredoc first: `key<<EOF` also contains no `=`, but a `key=a<<b` value
+      ;; must be read as the `=` form, so prefer whichever delimiter appears
+      ;; first by checking the `=` split's head for the `<<` marker.
+      ((and (> (length hd-parts) 1)
+            (all-ident-chars? (car hd-parts)))
+       (car hd-parts))
+      ((and (> (length eq-parts) 1)
+            (all-ident-chars? (car eq-parts)))
+       (car eq-parts))
+      (else ""))))
+
+(define written
+  (filter (fn (k) (not (equal? k "")))
+          (map key-of (string-split (read-file out-file) "\n"))))
+
+;; ── keys the action declares ─────────────────────────────────────────────
+;;
+;; The `outputs:` block, to the next top-level key. Declared entries are the
+;; lines indented exactly two spaces and ending in `:` — nested `description:`
+;; and `value:` sit deeper and are skipped by the indent test.
+
+(define (top-level? line)
+  (and (not (equal? line ""))
+       (not (string-starts-with? line " "))
+       (not (string-starts-with? line "#"))))
+
+(define (declared-entry line)
+  (cond
+    ((not (string-starts-with? line "  ")) "")
+    ((string-starts-with? line "   ") "")
+    (else
+      (let ((name (car (string-split (string-trim line) ":"))))
+        (if (and (string-ends-with? (string-trim line) ":")
+                 (all-ident-chars? name))
+            name
+            "")))))
+
+(define (scan-declared lines inside acc)
+  (cond
+    ((null? lines) acc)
+    (else
+      (let ((line (car lines)) (rest (cdr lines)))
+        (cond
+          ((string-starts-with? line "outputs:") (scan-declared rest #t acc))
+          ((and inside (top-level? line)) acc)
+          (inside
+            (let ((e (declared-entry line)))
+              (scan-declared rest #t (if (equal? e "") acc (cons e acc)))))
+          (else (scan-declared rest inside acc)))))))
+
+(define declared
+  (scan-declared (string-split (read-file manifest) "\n") #f (list)))
+
+;; ── the gate ─────────────────────────────────────────────────────────────
+
+(define dropped
+  (filter (fn (k) (not (elem? k declared))) written))
+
+(cond
+  ((null? dropped)
+   (log-info (string-append "output-contract: ok — "
+                            (string-format "{}" (length written))
+                            " key(s) written, all declared"))
+   (exit 0))
+  (else
+    (log-error
+      (string-append
+        "output-contract: the script wrote output key(s) this action does not "
+        "declare, so they are DROPPED at the composite boundary and every "
+        "consumer reads an empty string: "
+        (string-join ", " dropped)))
+    (log-error
+      (string-append "add them to the `outputs:` block of " manifest
+                     " as `value: ${{ steps.exec.outputs.<key> }}`"))
+    (exit 1)))
