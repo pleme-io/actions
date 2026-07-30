@@ -1,0 +1,57 @@
+# tlisp-lint/stdlib-shadow-baseline.txt
+#
+# Pre-existing stdlib SHADOWS, one "<path>\t<name>" row each.
+#
+# action.yml concatenates _tlisp-stdlib/stdlib.tlisp FIRST and an action's
+# run.tlisp SECOND, and a later top-level (define …) WINS. So every name listed
+# here is an action carrying its OWN private copy of a stdlib definition — the
+# stdlib's version is loaded and then never reached. While the copies agree this
+# is only duplication; the moment one is edited it is a silent divergence.
+#
+# It has already cost a release line. rust-workspace-publish carried its own
+# dep-missing-on-line?, narrowed until it matched nothing cargo emits, while the
+# stdlib's cargo-publish-dep-missing-line? matched the real log and was never
+# called. A textbook sibling-ordering failure was classified "no recognizable
+# signature" and the whole tatara-lisp 0.3.x line sat unpublished at 0.2.5.
+#
+# Every row is REPORTED on every lint run, never silently accepted. Only a NEW
+# shadow fails the build. Removing a row — delete the local copy, use the
+# stdlib's — is the tracked path to zero. Do not add a row to silence a fresh
+# shadow you could simply delete instead.
+#
+# Counted 2026-07-29: 21 rows across 12 actions. rust-workspace-publish and
+# tlisp-lint are deliberately absent — both were cleaned to zero when the
+# gate landed.
+#
+# TIER + KNOWN LIMIT (do not round this up). The rule is CI-caught, not
+# unrepresentable, and it detects only a SAME-NAME re-declaration. It does NOT
+# catch an action re-implementing a stdlib predicate under a NEW name and using
+# that instead — which is literally what happened: the local predicate was
+# called `dep-missing-on-line?` while the stdlib's is
+# `cargo-publish-dep-missing-line?`, so no name collided. (That file was still
+# catchable here, because it ALSO re-declared `any-line-matches?`.) A
+# phrase-level rule — "cargo error strings live only in the stdlib" — was
+# measured and rejected: the literals are too generic (`"version"` alone hits 8
+# actions), so it would have been a noisy gate, and a noisy gate gets deleted.
+# The differently-named-reimplementation half of this class is OPEN.
+ansible-collection-build/run.tlisp	append-output
+cargo-publish-crate/run.tlisp	append-output
+cargo-publish-crate/run.tlisp	status-of
+cargo-publish-crate/run.tlisp	stdout-of
+cargo-publish-crate/run.tlisp	stderr-of
+cargo-publish-crate/run.tlisp	extract-quoted-value
+cargo-publish-crate/run.tlisp	line-is-section-header?
+derive-version-from-tag/run.tlisp	append-output
+detect-repo-type/run.tlisp	append-output
+gem-publish/run.tlisp	extract-quoted-value
+git-commit-tag/run.tlisp	append-output
+helm-publish/run.tlisp	helm-published?
+npm-publish/run.tlisp	npm-published?
+python-publish/run.tlisp	pypi-published?
+rust-workspace-bump/run.tlisp	append-output
+rust-workspace-bump/run.tlisp	status-of
+rust-workspace-bump/run.tlisp	stdout-of
+rust-workspace-bump/run.tlisp	last-tag
+spec-watch/run.tlisp	append-output
+substrate-bump/run.tlisp	append-output
+substrate-bump/run.tlisp	extract-quoted-value

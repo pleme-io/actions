@@ -22,11 +22,8 @@
 (define paths-input (env-get "PATHS" "**/*.tlisp"))
 (define fail-flag (env-get "FAIL_ON_UNBALANCED" "true"))
 (define parser-flag (env-get "RUN_PARSER_CHECK" "true"))
-(define gh-output (env-required "GITHUB_OUTPUT"))
-
-(define (append-output line)
-  (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
-  (write-file gh-output (string-append prior line "\n")))
+;; append-output comes from the STDLIB — a local copy would shadow it, which is
+;; precisely the class Layer 4 below now gates. The linter holds itself to it.
 
 ;; -------------------------------------------------------------- ;;
 ;; File discovery — glob the input patterns                        ;;
@@ -105,11 +102,13 @@
 ;; Main                                                            ;;
 ;; -------------------------------------------------------------- ;;
 
-(define files (find-tlisp-files paths-input))
-(define file-count (length files))
+;; TLISP_TEST gate — under the harness the definitions load but no scan runs,
+;; so run.test.tlisp can drive the pure rule functions (the stdlib-shadow
+;; layer's name extraction + baseline diff) with no `find`, no python, no repo.
+(define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
 
-(log-info (string-append "scanning " (string-format "{}" file-count)
-                         " .tlisp files under " paths-input))
+(define files (if tlisp-test-mode (list) (find-tlisp-files paths-input)))
+(define file-count (length files))
 
 (define (lint-all files acc-errors)
   (cond
@@ -117,8 +116,6 @@
     (else
      (lint-all (cdr files)
                (+ acc-errors (lint-file (car files)))))))
-
-(define error-count (lint-all files 0))
 
 ;; ── Layer 3: semantic rule lint ────────────────────────────────
 ;; Re-invoke this tatara-script binary's `lint` subcommand (the
@@ -145,19 +142,133 @@
             (log-error (string-trim (stdout-of r)))
             1)))))))
 
-(define total-errors (+ error-count (semantic-rule-errors)))
+;; ── Layer 4: stdlib shadowing ──────────────────────────────────
+;; action.yml concatenates `_tlisp-stdlib/stdlib.tlisp` FIRST and the action's
+;; `run.tlisp` SECOND, and a later top-level `(define …)` WINS. So any name an
+;; action re-defines silently shadows the stdlib's original — and the action
+;; keeps its private copy forever, including every bug the stdlib has since
+;; fixed and every fix the stdlib has since gained.
+;;
+;; That is not hypothetical. `rust-workspace-publish` carried its own
+;; `dep-missing-on-line?`, narrowed until it matched nothing cargo actually
+;; emits; the stdlib's `cargo-publish-dep-missing-line?` matched the real log
+;; correctly and was never reached. Result: a textbook sibling-ordering failure
+;; classified as "no recognizable signature" → exit 1, and the whole
+;; tatara-lisp 0.3.x line sat unpublished at 0.2.5 while every run was
+;; "green then red for no visible reason". The same shadowing also withheld the
+;; stdlib's 403-not-an-owner conflict arm and its "429 Too Many" rate-limit arm
+;; from that action.
+;;
+;; Existing shadows are BASELINED (reported every run, never silently accepted)
+;; exactly like runtime-install-lint's debt list; only a NEW one fails. Removing
+;; a baseline row — delete the local copy, use the stdlib — is the path to zero.
 
-(append-output (string-append "files-scanned=" (string-format "{}" file-count)))
-(append-output (string-append "errors-found=" (string-format "{}" total-errors)))
+(define stdlib-src-path "_tlisp-stdlib/stdlib.tlisp")
+(define shadow-baseline-path "tlisp-lint/stdlib-shadow-baseline.txt")
+
+;; "(define (foo a b)" → "foo" ; "(define bar 1)" → "bar" ; else "".
+;; Only column-0 defines count: an inner `(define …)` is scoped to its body and
+;; shadows nothing at top level.
+(define (top-level-define-name line)
+  (cond
+    ((not (string-prefix? line "(define ")) "")
+    (else
+      (let* ((rest (string-replace line "(define " ""))
+             (bare (if (string-prefix? rest "(") (string-replace rest "(" "") rest))
+             (head (car (string-split (string-trim bare) " "))))
+        (car (string-split (car (string-split head ")")) "\t"))))))
+
+(define (collect-define-names lines acc)
+  (cond
+    ((null? lines) (reverse acc))
+    (else
+      (let ((n (top-level-define-name (car lines))))
+        (collect-define-names (cdr lines) (if (equal? n "") acc (cons n acc)))))))
+
+(define (define-names-in path)
+  (if (path-exists? path)
+    (collect-define-names (string-split (read-file path) "\n") (list))
+    (list)))
+
+(define (name-member? x xs)
+  (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (name-member? x (cdr xs)))))
+
+;; every name in `names` that the stdlib also defines at top level
+(define (shadowed-names names stdlib-names)
+  (filter (lambda (n) (name-member? n stdlib-names)) names))
+
+;; one baseline row per shadow: "<path>\t<name>", path repo-relative.
+;; `find .` yields "./x/run.tlisp"; the baseline stores "x/run.tlisp", so the
+;; row must not depend on how the file was discovered — an un-normalized path
+;; makes every baselined row read as NEW and the gate is red for everyone.
+(define (repo-relative path)
+  (if (string-prefix? path "./") (string-replace path "./" "") path))
+
+(define (shadow-row path name) (string-append (repo-relative path) "\t" name))
+
+(define baselined-shadows
+  (if (path-exists? shadow-baseline-path)
+    (filter (lambda (l) (and (not (equal? (string-trim l) ""))
+                             (not (string-prefix? (string-trim l) "#"))))
+            (string-split (read-file shadow-baseline-path) "\n"))
+    (list)))
+
+(define (new-shadow-rows path names stdlib-names)
+  (filter (lambda (row) (not (name-member? row baselined-shadows)))
+          (map (lambda (n) (shadow-row path n))
+               (shadowed-names names stdlib-names))))
+
+(define (shadow-errors-for path stdlib-names)
+  (let* ((all (shadowed-names (define-names-in path) stdlib-names))
+         (new (new-shadow-rows path (define-names-in path) stdlib-names)))
+    (cond
+      ((null? all) 0)
+      ((null? new)
+       (log-info (string-append "  shadow (baselined) " path " — "
+                                (string-join "," all)))
+       0)
+      (else
+        (log-error (string-append "  NEW STDLIB SHADOW " path " — "
+                                  (string-join "," new)
+                                  " : delete the local copy and use the stdlib's, "
+                                  "or add the row to " shadow-baseline-path))
+        (length new)))))
+
+(define (shadow-errors files stdlib-names acc)
+  (cond
+    ((null? files) acc)
+    (else (shadow-errors (cdr files) stdlib-names
+                         (+ acc (shadow-errors-for (car files) stdlib-names))))))
+
+(define (stdlib-shadow-errors)
+  (cond
+    ((not (path-exists? stdlib-src-path))
+     (log-info "  stdlib shadow check skipped (no _tlisp-stdlib/stdlib.tlisp here)")
+     0)
+    (else (shadow-errors files (define-names-in stdlib-src-path) 0))))
+
+(define (lint-main)
+  (log-info (string-append "scanning " (string-format "{}" file-count)
+                           " .tlisp files under " paths-input))
+  (let ((total-errors (+ (lint-all files 0)
+                         (semantic-rule-errors)
+                         (stdlib-shadow-errors))))
+    (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
+    (append-output (string-append "errors-found=" (string-format "{}" total-errors)))
+    (cond
+      ((= total-errors 0)
+       (log-info (string-append "all " (string-format "{}" file-count) " files clean"))
+       0)
+      ((equal? fail-flag "true")
+       (log-error (string-append (string-format "{}" total-errors) " file(s) failed lint"))
+       1)
+      (else
+       (log-info (string-append (string-format "{}" total-errors)
+                                " file(s) failed lint — continuing (fail-on-unbalanced=false)"))
+       0))))
 
 (cond
-  ((= total-errors 0)
-   (log-info (string-append "all " (string-format "{}" file-count) " files clean"))
-   (exit 0))
-  ((equal? fail-flag "true")
-   (log-error (string-append (string-format "{}" total-errors) " file(s) failed lint"))
-   (exit 1))
+  (tlisp-test-mode
+   (log-info "TLISP_TEST=1 — linter loaded; main skipped (the test harness drives it)"))
   (else
-   (log-info (string-append (string-format "{}" total-errors)
-                            " file(s) failed lint — continuing (fail-on-unbalanced=false)"))
-   (exit 0)))
+    (exit (lint-main))))
