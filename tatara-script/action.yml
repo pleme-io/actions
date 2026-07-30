@@ -763,6 +763,9 @@ outputs:
   skipped-count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: skipped-count)"
     value: ${{ steps.exec.outputs.skipped-count }}
+  skipped-no-publish:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: skipped-no-publish)"
+    value: ${{ steps.exec.outputs.skipped-no-publish }}
   slsa-path:
     description: "Forwarded (key: slsa-path) — cartorio-attest SLSA provenance predicate path"
     value: ${{ steps.exec.outputs.slsa-path }}

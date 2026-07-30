@@ -38,6 +38,14 @@ outputs:
       Was emitted by run.tlisp but undeclared here; declared now so the
       contract matches what the action actually returns.
     value: ${{ steps.ship.outputs.deferred }}
+  skipped-no-publish:
+    description: >-
+      'true' when the crate's [package] declares `publish = false`, so there
+      was no registry claim to make. A GREEN outcome. Declared because an
+      undeclared output does not forward out of a composite action at all —
+      it would emit into the void and the caller could never tell this skip
+      apart from a real publish.
+    value: ${{ steps.ship.outputs.skipped-no-publish }}
   conflict:
     description: >-
       'true' when crates.io refused the crate NAME (403 not-an-owner / name

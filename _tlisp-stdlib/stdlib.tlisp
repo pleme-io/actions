@@ -578,6 +578,44 @@
 (define (manifest-publishable? toml-text) (null? (manifest-publish-blockers toml-text)))
 
 ;; ────────────────────────────────────────────────────────────────
+;; publish = false — a DECLARED non-publisher, not a failure
+;; ────────────────────────────────────────────────────────────────
+;; A crate whose [package] carries `publish = false` has no registry claim to
+;; make, so the honest outcome is a GREEN no-op — the same reasoning drip
+;; already applies to private repos.
+;;
+;; Without this arm `cargo publish` refuses with "cannot be published",
+;; `classify-cargo-publish-outcome` has no arm matching that wording, it falls
+;; through to 'failed, and the run goes RED for doing exactly what its manifest
+;; asked. That RED is what made `publish = false` unusable as the remedy for a
+;; squatted crate NAME — the remedy the conflict arm itself recommends. 25
+;; caixa-bevy-* forks declare upstream `bevy_*` names they can never own, and
+;; each one would have gone red on adopting the fix.
+;;
+;; Decided on the MANIFEST, before cargo runs, so the verdict never depends on
+;; cargo's error prose. Tier: CI-caught preflight over a foreign file — not a
+;; compile error.
+(define
+  (walk-declares-no-publish? lines in-package)
+  (cond
+    ((null? lines) #f)
+    ((line-is-named-section? (car lines) "[package]")
+      (walk-declares-no-publish? (cdr lines) #t))
+    ((and in-package (line-is-section-header? (car lines))) #f)
+    ((and
+        in-package
+        (not-comment-line? (car lines))
+        (line-assigns-field? (car lines) "publish")
+        (string-contains? (car lines) "false"))
+      #t)
+    (else (walk-declares-no-publish? (cdr lines) in-package))))
+
+;; #t iff [package] declares `publish = false`.
+(define
+  (manifest-declares-no-publish? toml-text)
+  (walk-declares-no-publish? (string-split toml-text "\n") #f))
+
+;; ────────────────────────────────────────────────────────────────
 ;; git introspection
 ;; ────────────────────────────────────────────────────────────────
 

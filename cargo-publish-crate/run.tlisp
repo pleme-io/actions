@@ -189,9 +189,34 @@
     (list)
     (manifest-publish-blockers (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") ""))))
 
+;; `publish = false` — a declared non-publisher. Green no-op, not a failure.
+;; See stdlib `manifest-declares-no-publish?` for why cargo's own refusal
+;; would otherwise land in the 'failed arm and red the run.
+(define
+  declares-no-publish
+  (if
+    tlisp-test-mode
+    #f
+    (manifest-declares-no-publish?
+      (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") ""))))
+
 (cond
   (tlisp-test-mode
     (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
+  ;; Checked FIRST and deliberately: a crate that declares it does not publish
+  ;; makes no registry claim, so no later arm is relevant to it — not a git dep
+  ;; it will never ship, and not a name it will never upload. Stating the skip
+  ;; out loud is the point; a silent no-op is the failure mode this whole action
+  ;; exists to remove.
+  (declares-no-publish
+    (log-info
+      (string-append
+        "cargo-publish-crate: '"
+        name
+        "' declares publish = false — no registry claim to make; skipping (green)"))
+    (append-output "shipped=true")
+    (append-output "skipped-no-publish=true")
+    (exit 0))
   ((equal? name "")
     (log-error "cargo-publish-crate: package.name not found in Cargo.toml")
     (append-output "shipped=false")

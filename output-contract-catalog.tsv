@@ -7,9 +7,9 @@
 #
 # actions                338
 # routing tatara-script  316
-# distinct keys written  287
+# distinct keys written  288
 # dynamic key expansions 8
-# inner union (generated)295
+# inner union (generated)296
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -71,7 +71,7 @@ caixa-publish-to-git	tatara-script	run.tlisp	2	2
 caixa-render	own-runner	-	0	2
 caixa-render-pr	tatara-script	run.tlisp	3	3
 cargo-bump	tatara-script	run.tlisp	3	3
-cargo-publish-crate	tatara-script	run.tlisp	3	3
+cargo-publish-crate	tatara-script	run.tlisp	4	4
 cargo-publish-each-member	tatara-script	run.tlisp	3	3
 cartorio-attest	tatara-script	run.tlisp	12	12
 cdk-deploy	tatara-script	run.tlisp	1	1
@@ -324,7 +324,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	295
+tatara-script	own-runner	-	0	296
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -466,6 +466,7 @@ cargo-bump	old-version	static	declared	forwarded
 cargo-publish-crate	conflict	static	declared	forwarded
 cargo-publish-crate	deferred	static	declared	forwarded
 cargo-publish-crate	shipped	static	declared	forwarded
+cargo-publish-crate	skipped-no-publish	static	declared	forwarded
 cargo-publish-each-member	failed-count	static	declared	forwarded
 cargo-publish-each-member	published-count	static	declared	forwarded
 cargo-publish-each-member	skipped-count	static	declared	forwarded
