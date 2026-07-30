@@ -103,6 +103,22 @@
         (if (equal? user "")
           (list)
           (list "--src-creds" (string-append user ":" pass))))
+      ;; Clear DEST first. `docker-archive:` opens an existing path read-write
+      ;; to APPEND another image, so a pre-existing dest is not overwritten --
+      ;; and when that dest is a `nix build` out-link, the open fails outright:
+      ;;
+      ;;   initializing destination docker-archive:.../result: opening file
+      ;;   ".../result": permission denied
+      ;;
+      ;; which is exactly what the camelot faucet hit, because its dest is
+      ;; deliberately the same path nix-build wrote (so everything downstream
+      ;; attests the bytes Zot actually returned, not the local build). The
+      ;; symlink points into the read-only store, so skopeo can never open it.
+      ;;
+      ;; Unlinking is also the honest semantic: the faucet's whole claim is
+      ;; that what ships is what Zot holds, and appending to whatever was
+      ;; already there would quietly break that.
+      (_cleared (exec-capture "rm" "-f" dest))
       (args
         (append
           (list "skopeo" "--insecure-policy" "copy")
