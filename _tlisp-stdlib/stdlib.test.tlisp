@@ -226,3 +226,140 @@
     (assert (equal? next "0.3.2") "0.2.5 seeded to 0.3.1 patch-bumps to 0.3.2")
     (assert (semver:release-monotone? next "0.3.1")
             "and the seeded result passes the gate the old result failed")))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; VERIFIED TEXT MUTATION — the mutate-and-report-success-regardless seal
+;;
+;; These drive the REAL primitive against REAL files in /tmp. The whole point
+;; of the primitive is an effect on disk, so a mock would prove nothing: the
+;; defect being sealed is precisely "the function returned normally and the
+;; disk was untouched".
+;; ─────────────────────────────────────────────────────────────────────
+
+(define tmp-toml "/tmp/stdlib-replace-verified.toml")
+
+(deftest "replace-once-in-file-verified: 'needle-absent and NOTHING is written"
+  ;; THE defect. Before this primitive, string-replace returned the contents
+  ;; unchanged, write-file rewrote them byte-identically, and the caller was
+  ;; told nothing. MEASURED: (string-replace "abc" "ZZZ" "Q") ⇒ "abc".
+  (write-file tmp-toml "name = \"keep-me\"\n")
+  (let ((outcome (replace-once-in-file-verified tmp-toml "name = \"gone\"" "x")))
+    (assert (equal? outcome 'needle-absent) "an absent needle is LOUD, not silent")
+    (assert (equal? (read-file tmp-toml) "name = \"keep-me\"\n")
+            "and the file is left untouched — no half-mutation before the give-up")))
+
+(deftest "replace-once-in-file-verified: 'replaced verifies by RE-READING"
+  (write-file tmp-toml "version = \"=0.3.3\"\n")
+  (let ((outcome (replace-once-in-file-verified tmp-toml "=0.3.3" "=0.4.0")))
+    (assert (equal? outcome 'replaced) "a present needle replaces")
+    (assert (equal? (read-file tmp-toml) "version = \"=0.4.0\"\n")
+            "and the bytes on disk are the bytes we intended")))
+
+(deftest "replace-once-in-file-verified: a tautological edit is 'unchanged, not 'replaced"
+  (write-file tmp-toml "a = 1\n")
+  (assert (equal? (replace-once-in-file-verified tmp-toml "a = 1" "a = 1") 'unchanged)
+          "replacing a needle with itself changed nothing and says so"))
+
+(deftest "replace-once-in-file-verified: a missing file is 'needle-absent, never a crash"
+  (assert (equal? (replace-once-in-file-verified "/tmp/stdlib-no-such-file-xyz.toml" "a" "b")
+                  'needle-absent)
+          "an absent path cannot contain the needle"))
+
+(deftest "replace-outcome-reason: every non-replaced outcome gets a named diagnosis"
+  (assert (string-contains? (replace-outcome-reason 'needle-absent "/p" "N")
+                            "nothing was written")
+          "'needle-absent says the file was NOT touched")
+  (assert (string-contains? (replace-outcome-reason 'needle-absent "/p" "N") "N")
+          "and it quotes the needle so the operator can see what moved")
+  (assert (string-contains? (replace-outcome-reason 'write-mismatch "/p" "N")
+                            "does NOT match")
+          "'write-mismatch names the re-read failure"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; TOML inline-table surgery — preserve what you did not come to change
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "string-suffix?: the sentinel trap in (string-split s \"\")"
+  ;; MEASURED: (string-split "ab}" "") ⇒ ("" "a" "b" "}" "") — sentinels at
+  ;; BOTH ends, so a "last char" test via split-on-empty reads "" not "}".
+  (assert (string-suffix? "x = { a = 1 }" "}") "trailing brace detected")
+  (assert (not (string-suffix? "x = { a = 1 } # note" "}")) "a trailing comment is not a brace")
+  (assert (string-suffix? "a," ",") "trailing comma detected")
+  (assert (not (string-suffix? "abc" "}")) "no false positive"))
+
+(deftest "toml-inline-table-line?: refuses the shapes it must not mangle"
+  (assert (toml-inline-table-line? "dep = { path = \"d\", version = \"=0.3.3\" }")
+          "a single-line inline table is operable")
+  (assert (not (toml-inline-table-line? "dep = \"1.0\"")) "a bare string dep is NOT")
+  (assert (not (toml-inline-table-line? "dep.workspace = true")) "inheritance is NOT")
+  (assert (not (toml-inline-table-line? "dep = {")) "a multi-line table opener is NOT"))
+
+(deftest "toml-inline-table-add-key PRESERVES an EXACT pin — the lib<->derive seal"
+  ;; The seal that must survive: tatara-lisp/Cargo.toml pins its derive at
+  ;; version = "=0.3.3". Re-synthesizing the line from cargo-workspace-version
+  ;; would emit "0.3.3" and ERASE the `=`. Editing in place cannot.
+  (let ((out (toml-inline-table-add-key
+               "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"=0.3.3\" }"
+               "package" "pleme-io-tatara-lisp-derive")))
+    (assert (string-contains? out "version = \"=0.3.3\"")
+            "the EXACT pin survives byte-for-byte")
+    (assert (string-contains? out "package = \"pleme-io-tatara-lisp-derive\"")
+            "and the rename key is added")
+    (assert (string-suffix? out "}") "the table is still closed")))
+
+(deftest "toml-inline-table-add-key: caret, plain and no-space closers all work"
+  (assert (string-contains?
+            (toml-inline-table-add-key "d = { path = \"d\", version = \"^0.3.3\" }" "package" "p")
+            "version = \"^0.3.3\", package = \"p\" }")
+          "a caret requirement is preserved")
+  (assert (string-contains?
+            (toml-inline-table-add-key "d = { path = \"d\", version = \"0.3.3\" }" "package" "p")
+            "version = \"0.3.3\", package = \"p\" }")
+          "a plain requirement is preserved")
+  (assert (string-contains?
+            (toml-inline-table-add-key "d = { path = \"d\", version = \"0.3.3\"}" "package" "p")
+            "version = \"0.3.3\", package = \"p\" }")
+          "a brace with no leading space still normalizes"))
+
+(deftest "toml-inline-table-add-key: indentation preserved, refusal is empty"
+  (assert (string-prefix?
+            (toml-inline-table-add-key "    d = { version = \"1\" }" "package" "p")
+            "    d = ")
+          "leading indentation is kept byte-for-byte")
+  (assert (equal? (toml-inline-table-add-key "d.workspace = true" "package" "p") "")
+          "a shape it cannot edit returns \"\" so the caller must refuse LOUDLY"))
+
+(deftest "toml-line-in-section returns the VERBATIM line, not a reconstruction"
+  (write-file tmp-toml
+    (string-append
+      "[workspace.package]\n"
+      "version = \"0.3.3\"\n"
+      "\n"
+      "[workspace.dependencies]\n"
+      "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"=0.3.3\" }\n"
+      "tatara-lisp = { path = \"tatara-lisp\", version = \"0.3.3\" }\n"))
+  (assert (equal? (toml-line-in-section tmp-toml "[workspace.dependencies]" "tatara-lisp-derive")
+                  "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"=0.3.3\" }")
+          "the exact-pinned row comes back with its `=` intact")
+  (assert (equal? (toml-line-in-section tmp-toml "[workspace.dependencies]" "tatara-lisp")
+                  "tatara-lisp = { path = \"tatara-lisp\", version = \"0.3.3\" }")
+          "and the plain row is not confused with the derive row (strict field match)")
+  (assert (equal? (toml-line-in-section tmp-toml "[workspace.dependencies]" "absent-crate") "")
+          "an absent dep is \"\" — the caller's LOUD-refusal signal")
+  (assert (equal? (toml-line-in-section tmp-toml "[workspace.package]" "tatara-lisp") "")
+          "the walker stops at the next section header"))
+
+(deftest "replace-once-in-file-verified: 'needle-ambiguous — ONCE is enforced"
+  ;; MEASURED: (string-replace "a X b X c" "X" "Y") ⇒ "a Y b Y c". A function
+  ;; named replace-ONCE handing a 2-match needle to string-replace rewrites
+  ;; BOTH and reports success — the same class, one level down.
+  (write-file tmp-toml "name = \"dup\"\nother = 1\nname = \"dup\"\n")
+  (let ((outcome (replace-once-in-file-verified tmp-toml "name = \"dup\"" "name = \"new\"")))
+    (assert (equal? outcome 'needle-ambiguous) "two matches is a refusal, not a double rewrite")
+    (assert (equal? (read-file tmp-toml) "name = \"dup\"\nother = 1\nname = \"dup\"\n")
+            "and NOTHING was written"))
+  (assert (= (string-occurrence-count "a X b X c" "X") 2) "occurrence count is exact")
+  (assert (= (string-occurrence-count "abc" "X") 0) "absent counts 0")
+  (assert (string-contains? (replace-outcome-reason 'needle-ambiguous "/p" "N")
+                            "MORE THAN ONCE")
+          "'needle-ambiguous names its own diagnosis"))

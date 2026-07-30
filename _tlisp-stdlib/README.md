@@ -29,11 +29,37 @@ discovery / CI lint targets only sibling-dirs with an
 | Fn | Signature | Purpose |
 |---|---|---|
 | `extract-quoted-value` | `(extract-quoted-value LINE)` | Pull the first `"X"` (or `'X'`) substring |
-| `line-is-section-header?` | `(line-is-section-header? LINE)` | True iff line contains `[` |
+| `line-is-section-header?` | `(line-is-section-header? LINE)` | True iff the text before the first `[` trims to empty **and** the line has no `=`. **This row used to read "True iff line contains `[`" — that was the OLD, broken rule**, which mis-read `keywords = ["a","b"]` and a comment like `# see [lib]` as section headers and exited the `[package]` walker early (→ spurious "package.version not found") |
+| `line-assigns-field?` | `(line-assigns-field? LINE FIELD)` | True iff the trimmed text left of the first `=` byte-equals FIELD (so `rust-version` never matches `version`) |
 | `toml-read-field` | `(toml-read-field PATH SECTION FIELD)` | Read a quoted field value from a TOML section |
+| `toml-line-in-section` | `(toml-line-in-section PATH SECTION FIELD)` | The **verbatim** line assigning FIELD in SECTION, `""` if absent. Use this instead of re-synthesizing a line you mean to patch |
+| `toml-inline-table-line?` | `(toml-inline-table-line? LINE)` | True iff LINE is a single-line `key = { … }` inline table |
+| `toml-inline-table-add-key` | `(toml-inline-table-add-key LINE KEY VALUE)` | Insert `, KEY = "VALUE"` before the closing brace, preserving every other byte (notably a `=`/`^` version requirement). `""` when LINE is a shape it will not mangle |
 | `cargo-workspace-version` | `()` | Read `[workspace.package].version` from `./Cargo.toml` |
 | `cargo-package-version` | `()` | Read `[package].version` |
 | `cargo-package-name` | `()` | Read `[package].name` |
+
+### Verified text mutation — the mutate-and-report-success-regardless seal
+
+`(write-file path (string-replace (read-file path) needle repl))` **cannot
+fail**. MEASURED: `(string-replace "abc" "ZZZ" "Q")` returns `"abc"`, so an
+absent needle rewrites the file byte-identically, `write-file` returns normally,
+and the caller cannot tell "I patched the line" from "I did nothing". That shape
+made `rust-workspace-publish`'s `rename-crate` log `renamed 'X' -> 'Y'` while
+changing zero bytes. Never hand-roll it again — use these.
+
+| Fn | Signature | Purpose |
+|---|---|---|
+| `replace-once-in-file-verified` | `(… PATH NEEDLE REPL)` | Mutate and return a typed outcome: `'replaced` · `'needle-absent` · `'needle-ambiguous` · `'unchanged` · `'write-mismatch`. Writes **nothing** unless the needle occurs exactly once; verifies `'replaced` by re-reading |
+| `replace-once-in-file-or-die` | `(… PATH NEEDLE REPL)` | Same, but logs the diagnosis and `(exit 1)` on anything but `'replaced`. Use wherever the rewrite landing is a precondition for what follows (i.e. every manifest rewrite before a commit) |
+| `replace-outcome-reason` | `(… OUTCOME PATH NEEDLE)` | The shared human diagnosis, so every caller reports the same wording |
+| `string-occurrence-count` | `(string-occurrence-count S NEEDLE)` | Exact match count. `string-replace` replaces **all** occurrences, so "once" has to be enforced, not intended |
+| `string-suffix?` | `(string-suffix? S SUFFIX)` | True iff S ends with SUFFIX. Do **not** write this by splitting on `""` — MEASURED, `(string-split "ab}" "")` is `("" "a" "b" "}" "")`, sentinels at both ends, so a "last character" test reads the sentinel |
+
+**Tier: only-mitigated.** The illegal state is still representable — a caller can
+ignore the returned symbol. `replace-once-in-file-or-die` removes the ignore path
+for callers whose mutation must land; genuine unrepresentability would need the
+interpreter to not offer a `string-replace` + `write-file` pair at all.
 
 ### Git introspection
 

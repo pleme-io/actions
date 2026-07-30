@@ -147,6 +147,190 @@
   (toml-read-field "Cargo.toml" "[package]" "name"))
 
 ;; ────────────────────────────────────────────────────────────────
+;; VERIFIED TEXT MUTATION — the mutate-and-report-success-regardless seal
+;; ────────────────────────────────────────────────────────────────
+;; `(write-file path (string-replace (read-file path) needle repl))` is the
+;; single most dangerous shape in this repo, and it CANNOT FAIL.
+;;
+;; MEASURED (tatara-script, 2026-07-29):
+;;   (string-replace "abc" "ZZZ" "Q")  ⇒  "abc"      ; unchanged, no error
+;; So when the needle is absent the file is rewritten BYTE-IDENTICALLY,
+;; `write-file` returns normally (it only throws on real I/O failure), and the
+;; caller has no way to tell "I rewrote the line" from "I did nothing". That is
+;; how `rust-workspace-publish`'s `rename-crate` logged
+;; "renamed 'X' -> 'Y'" while changing not one byte — its needle had been
+;; correct once and the manifest shape had since moved underneath it.
+;;
+;; Same class, three prior instances in this repo alone: a `git push` whose
+;; status was discarded left a rename UNPUSHED while the loop treated it as
+;; done; a `sed -i` reported success on syntactically broken output; a stream
+;; editor's exit status describes whether it RAN, never whether what it WROTE
+;; is valid. The one place already doing it right is `caixa-bump` — it mutates,
+;; then RE-READS and asserts the effect. This is that discipline, lifted into a
+;; primitive so the third caller does not re-invent it.
+;;
+;; The typed outcome vocabulary, closed:
+;;   'replaced         — needle occurred EXACTLY once, changed, disk now matches
+;;   'needle-absent    — needle NOT in the file; NOTHING was written
+;;   'needle-ambiguous — needle occurs MORE THAN ONCE; NOTHING was written
+;;   'unchanged        — needle present but replacement is byte-identical to it
+;;   'write-mismatch   — we wrote, re-read, and disk does NOT match our intent
+;;
+;; MEASURED: `(string-replace "a X b X c" "X" "Y")` ⇒ "a Y b Y c" — it replaces
+;; EVERY occurrence. So a function named `replace-ONCE` that hands a 2-match
+;; needle to `string-replace` quietly rewrites both, which is the same
+;; report-success-regardless class one level down. Hence 'needle-ambiguous:
+;; "once" is enforced, not merely intended. Occurrence count is
+;; `(length (string-split contents needle))` − 1.
+;;
+;; NOTE the ordering: the needle is checked BEFORE any write. A miss leaves the
+;; file untouched, so a caller that red-fails on 'needle-absent has not
+;; half-mutated the manifest it is about to give up on.
+;;
+;; TIER: only-mitigated → the illegal state is still *representable* (a caller
+;; can ignore the returned symbol). `replace-once-in-file-or-die` below removes
+;; the ignore path for callers whose mutation MUST land; a truly-unrepresentable
+;; version needs the interpreter to have no `string-replace`+`write-file` pair
+;; at all, which is not on offer. Do NOT round this up.
+
+;; Occurrences of NEEDLE in S. Splitting on the needle yields one more piece
+;; than there are matches. A "" needle would be meaningless here, so it is
+;; reported as 0 matches rather than the split's sentinel count.
+(define (string-occurrence-count s needle)
+  (if (equal? needle "") 0 (- (length (string-split s needle)) 1)))
+
+(define (replace-once-in-file-verified path needle replacement)
+  (cond
+    ((not (path-exists? path)) 'needle-absent)
+    ((equal? needle "") 'needle-absent)
+    (else
+      (let ((contents (read-file path)))
+        (cond
+          ;; (1) needle absent → write NOTHING. A no-op write is the lie.
+          ((not (string-contains? contents needle)) 'needle-absent)
+          ;; (2) more than one match → `string-replace` would rewrite them ALL.
+          ;;     Refuse; the caller asked for ONCE and cannot get it here.
+          ((> (string-occurrence-count contents needle) 1) 'needle-ambiguous)
+          ;; (3) needle present but the edit is a tautology
+          ((equal? needle replacement) 'unchanged)
+          (else
+            (let ((wanted (string-replace contents needle replacement)))
+              (cond
+                ((equal? wanted contents) 'unchanged)
+                (else
+                  (write-file path wanted)
+                  ;; (4) verify by RE-READING — the caixa-bump discipline. A
+                  ;; write that silently truncated, or a path that is really a
+                  ;; symlink into a read-only store, is caught here and only
+                  ;; here.
+                  (if (equal? (read-file path) wanted) 'replaced 'write-mismatch))))))))))
+
+;; Human-readable reason for a non-'replaced outcome, so every caller reports
+;; the SAME diagnosis instead of inventing its own wording.
+(define (replace-outcome-reason outcome path needle)
+  (cond
+    ((equal? outcome 'needle-absent)
+     (string-append "needle not found in " path " — nothing was written. "
+                    "The file's shape has moved out from under this rewrite. "
+                    "Needle was: " needle))
+    ((equal? outcome 'needle-ambiguous)
+     (string-append "needle occurs MORE THAN ONCE in " path
+                    " — nothing was written, because string-replace would have "
+                    "rewritten every occurrence. Needle was: " needle))
+    ((equal? outcome 'unchanged)
+     (string-append "needle found in " path
+                    " but the replacement is byte-identical — no-op rewrite"))
+    ((equal? outcome 'write-mismatch)
+     (string-append "wrote " path
+                    " but re-reading it does NOT match what we wrote"))
+    (else (string-append "unexpected replace outcome in " path))))
+
+;; Mutate-or-abort. Use this wherever the rewrite landing is a PRECONDITION of
+;; everything after it — which is every manifest rewrite followed by a commit.
+;; Returns 'replaced or exits 1; there is no third path a caller can fumble.
+(define (replace-once-in-file-or-die path needle replacement)
+  (let ((outcome (replace-once-in-file-verified path needle replacement)))
+    (cond
+      ((equal? outcome 'replaced) 'replaced)
+      (else
+        (log-error (string-append "replace-once-in-file-or-die: "
+                                 (replace-outcome-reason outcome path needle)))
+        (exit 1)))))
+
+;; ────────────────────────────────────────────────────────────────
+;; TOML inline-table surgery — preserve what you did not come to change
+;; ────────────────────────────────────────────────────────────────
+;; The reason `rename-crate` broke is that it RE-SYNTHESIZED the dependency
+;; line it meant to patch:
+;;     X = { path = "X", version = "<cargo-workspace-version>" }
+;; That guesses the version REQUIREMENT from the workspace VERSION, and the two
+;; are not the same string. tatara-lisp/Cargo.toml carries, verbatim:
+;;     tatara-lisp-derive     = { path = "…", version = "=0.3.3" }   ← EXACT pin
+;;     tatara-closed-set-derive = { path = "…", version = "=0.3.3" } ← EXACT pin
+;;     tatara-lisp            = { path = "…", version = "0.3.3"  }
+;; The `=` prefix is a deliberate lib↔derive seal. A synthesized needle misses
+;; every exact-pinned row, and rewriting one into a caret would ERASE the seal.
+;;
+;; So: never synthesize the line — LOCATE it and edit it in place. The version
+;; requirement is then preserved byte-for-byte because it is never re-typed,
+;; whether it is `=0.3.3`, `^0.3.3`, `0.3.3`, or a shape nobody has met yet.
+
+;; The verbatim line assigning FIELD inside SECTION, or "" if there is none.
+(define (toml-walk-line-in-section section field lines in-section)
+  (cond
+    ((null? lines) "")
+    ((line-is-named-section? (car lines) section)
+     (toml-walk-line-in-section section field (cdr lines) #t))
+    ((and in-section (line-is-section-header? (car lines))) "")
+    ((and in-section (line-assigns-field? (car lines) field)) (car lines))
+    (else (toml-walk-line-in-section section field (cdr lines) in-section))))
+
+(define (toml-line-in-section path section field)
+  (if (path-exists? path)
+    (toml-walk-line-in-section section field
+                              (string-split (read-file path) "\n") #f)
+    ""))
+
+;; #t iff S ends with SUFFIX. MEASURED: `(string-split "ab}" "")` yields
+;; ("" "a" "b" "}" "") — sentinel elements at BOTH ends — so a "last character"
+;; test written by splitting on "" reads the sentinel, not the character. This
+;; is the honest formulation: S ends with SUFFIX exactly when splitting on
+;; SUFFIX leaves a trailing empty piece.
+(define (string-suffix? s suffix)
+  (let ((parts (string-split s suffix)))
+    (and (>= (length parts) 2)
+         (equal? (car (reverse parts)) ""))))
+
+;; #t iff the trimmed line is a single-line inline table — `key = { … }`.
+;; A multi-line table, or a bare `dep = "1.0"` string form, is NOT this shape
+;; and must be refused LOUDLY rather than silently mangled.
+(define (toml-inline-table-line? line)
+  (let ((t (string-trim line)))
+    (and (string-contains? t "{")
+         (string-suffix? t "}"))))
+
+;; Add `, <key> = "<value>"` before the closing brace of an inline table line,
+;; preserving every other byte — crucially the version requirement's `=`/`^`.
+;; Returns "" when LINE is not a single-line inline table (caller must refuse).
+(define (toml-inline-table-add-key line key value)
+  (cond
+    ((not (toml-inline-table-line? line)) "")
+    (else
+      (let* ((t (string-trim line))
+             ;; drop the final `}` then re-trim, so `… "0.3.3" }` and
+             ;; `… "0.3.3"}` both normalize to the same body.
+             (body (string-trim
+                     (string-join "}" (reverse (cdr (reverse (string-split t "}")))))))
+             ;; a trailing comma inside the table would double up
+             (body2 (if (string-suffix? body ",")
+                      (string-trim
+                        (string-join "," (reverse (cdr (reverse (string-split body ","))))))
+                      body))
+             ;; keep the original leading indentation byte-for-byte
+             (indent (car (string-split line t))))
+        (string-append indent body2 ", " key " = \"" value "\" }")))))
+
+;; ────────────────────────────────────────────────────────────────
 ;; Cargo.gen.lock D2 freshness gate
 ;; ────────────────────────────────────────────────────────────────
 ;; Delta-only repos commit Cargo.gen.lock, byte-tied to Cargo.lock via
