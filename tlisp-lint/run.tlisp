@@ -247,12 +247,166 @@
      0)
     (else (shadow-errors files (define-names-in stdlib-src-path) 0))))
 
+;; ── Layer 5: differently-named stdlib reimplementation ─────────────────
+;; THE OPEN HALF OF LAYER 4, now closed enough to catch the historical defect.
+;;
+;; Layer 4 intersects define NAMES. The defect it was built for never collided
+;; on a name: the local predicate was `dep-missing-on-line?` and the stdlib's is
+;; `cargo-publish-dep-missing-line?`. Layer 4 caught that FILE only by accident
+;; (it also re-declared `any-line-matches?`). A fresh file carrying the exact
+;; historical body under its original name passed clean — MEASURED.
+;;
+;; The observation that closes it: a predicate over a FOREIGN TOOL'S DIAGNOSTIC
+;; TEXT is identified not by its name but by the diagnostic string it matches.
+;; Two functions that both test cargo's "failed to select a version" are the
+;; same predicate no matter what they are called. So: a long, sentence-shaped
+;; string literal that the stdlib already owns must not be re-typed inside an
+;; action. If you need that match, call the stdlib predicate.
+;;
+;; A phrase rule was tried and rejected once before, correctly — a bare
+;; `"version"` hits 8 actions and a noisy gate gets deleted. This one is
+;; narrowed on THREE axes, and the narrowing was measured, not guessed:
+;;   (a) COMMENTS ARE STRIPPED. Un-stripped, this rule flags 14 rows, and 6 of
+;;       them are prose in `rust-workspace-publish`'s own comments explaining
+;;       the historical bug. Stripped: 8 rows.
+;;   (b) length ≥ 16 AND contains a space — a diagnostic sentence, not a word.
+;;   (c) no shell/interpolation metacharacter (> | & $). That drops the
+;;       `' >/dev/null 2>&1'` family (5 of the 8 remaining rows), which is
+;;       shell plumbing every action legitimately writes, not a diagnostic.
+;; Matching is CONTAINMENT in either direction, because the historical local
+;; literal was `"failed to select a version"` — a strict PREFIX of the stdlib's
+;; `"failed to select a version for"`. Equality alone would have missed it.
+;;
+;; TIER: CI-caught, and only a HEURISTIC even then. It catches a reimplementation
+;; that re-types the diagnostic; it does NOT catch one that reconstructs the
+;; same match from shorter fragments, computes it, or duplicates a stdlib
+;; function whose body contains no long literal at all. Do not round this up to
+;; "the class is sealed" — the honest claim is "the historical instance, and
+;; anything shaped like it, is now caught".
+;;
+;; KNOWN LIMIT in the extractor: literals are recovered per LINE by splitting on
+;; `"`, so a string containing an escaped `\"` or spanning lines is mis-parsed
+;; (a false NEGATIVE — it under-reports, never over-reports). Layer 1 already
+;; owns unterminated-string detection.
+
+(define literal-baseline-path "tlisp-lint/stdlib-literal-baseline.txt")
+
+;; Pieces of a line split on `"` alternate code / literal / code / literal…
+;; A `;` inside a CODE piece starts a comment: stop the line there. This is
+;; what makes prose about a bug distinguishable from the bug.
+(define (line-literals-walk pieces in-str acc)
+  (cond
+    ((null? pieces) (reverse acc))
+    (in-str (line-literals-walk (cdr pieces) #f (cons (car pieces) acc)))
+    ((string-contains? (car pieces) ";") (reverse acc))
+    (else (line-literals-walk (cdr pieces) #t acc))))
+
+(define (line-code-literals line)
+  (line-literals-walk (string-split line "\"") #f (list)))
+
+;; A diagnostic-shaped literal: a sentence, not a word, and not shell plumbing.
+(define (diagnostic-literal? s)
+  (and (>= (string-length s) 16)
+       (string-contains? s " ")
+       (not (string-contains? s ">"))
+       (not (string-contains? s "|"))
+       (not (string-contains? s "&"))
+       (not (string-contains? s "$"))))
+
+(define (collect-diagnostic-literals lines acc)
+  (cond
+    ((null? lines) acc)
+    (else
+      (collect-diagnostic-literals
+        (cdr lines)
+        (append acc (filter diagnostic-literal? (line-code-literals (car lines))))))))
+
+(define (diagnostic-literals-in path)
+  (if (path-exists? path)
+    (collect-diagnostic-literals (string-split (read-file path) "\n") (list))
+    (list)))
+
+;; #t iff either literal contains the other — the prefix case is the one that
+;; matters (`"failed to select a version"` ⊂ `"failed to select a version for"`).
+(define (literal-kin? a b)
+  (or (equal? a b) (string-contains? a b) (string-contains? b a)))
+
+(define (kin-stdlib-literal lit stdlib-lits)
+  (cond
+    ((null? stdlib-lits) "")
+    ((literal-kin? lit (car stdlib-lits)) (car stdlib-lits))
+    (else (kin-stdlib-literal lit (cdr stdlib-lits)))))
+
+(define literal-baselined
+  (if (path-exists? literal-baseline-path)
+    (filter (lambda (l) (and (not (equal? (string-trim l) ""))
+                             (not (string-prefix? (string-trim l) "#"))))
+            (string-split (read-file literal-baseline-path) "\n"))
+    (list)))
+
+;; The baseline key trims the literal: leading/trailing whitespace is never the
+;; identifying part of a diagnostic, and a row ending in a space is a file even
+;; a careful editor will silently "clean". Found by running the gate — the
+;; `"Authorization: token "` row has a trailing space and never matched.
+(define (literal-row path lit)
+  (string-append (repo-relative path) "\t" (string-trim lit)))
+
+;; `*.test.tlisp` is EXEMPT, and this is a rule not an oversight. A test file's
+;; job is to hold a foreign tool's VERBATIM output as evidence — the whole point
+;; of rust-workspace-publish's fixtures is that they are the real cargo log and
+;; not a paraphrase. Flagging them would flag exactly the thing we want authors
+;; to do, and the first person to hit it would delete the layer. MEASURED: with
+;; test files included the gate reported 20 errors, essentially all of them
+;; fixtures and `deftest` titles; excluded, it reports the real duplication.
+(define (literal-exempt-file? path) (string-suffix? path ".test.tlisp"))
+
+(define (literal-errors-for path stdlib-lits)
+  (let* ((kin (if (literal-exempt-file? path)
+                (list)
+                (filter (lambda (l) (not (equal? (kin-stdlib-literal l stdlib-lits) "")))
+                        (diagnostic-literals-in path))))
+         (rows (map (lambda (l) (literal-row path l)) kin))
+         (new (filter (lambda (r) (not (name-member? r literal-baselined))) rows)))
+    (cond
+      ((null? kin) 0)
+      ((null? new)
+       (log-info (string-append "  stdlib literal (baselined) " path " — "
+                                (string-join "," kin)))
+       0)
+      (else
+        (log-error
+          (string-append
+            "  STDLIB DIAGNOSTIC LITERAL RE-TYPED " path " — "
+            (string-join " | " new)
+            " : this literal already lives in " stdlib-src-path
+            " (as " (kin-stdlib-literal (car kin) stdlib-lits)
+            "). A predicate over a foreign tool's diagnostic text belongs in the "
+            "stdlib exactly once — call the stdlib's predicate instead of "
+            "re-typing its match. That is the differently-named reimplementation "
+            "that stalled tatara-lisp 0.3.x. If this really is unrelated, add the "
+            "row to " literal-baseline-path))
+        (length new)))))
+
+(define (literal-errors files stdlib-lits acc)
+  (cond
+    ((null? files) acc)
+    (else (literal-errors (cdr files) stdlib-lits
+                          (+ acc (literal-errors-for (car files) stdlib-lits))))))
+
+(define (stdlib-literal-errors)
+  (cond
+    ((not (path-exists? stdlib-src-path))
+     (log-info "  stdlib literal check skipped (no _tlisp-stdlib/stdlib.tlisp here)")
+     0)
+    (else (literal-errors files (diagnostic-literals-in stdlib-src-path) 0))))
+
 (define (lint-main)
   (log-info (string-append "scanning " (string-format "{}" file-count)
                            " .tlisp files under " paths-input))
   (let ((total-errors (+ (lint-all files 0)
                          (semantic-rule-errors)
-                         (stdlib-shadow-errors))))
+                         (stdlib-shadow-errors)
+                         (stdlib-literal-errors))))
     (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
     (append-output (string-append "errors-found=" (string-format "{}" total-errors)))
     (cond

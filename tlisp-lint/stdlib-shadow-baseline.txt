@@ -33,7 +33,31 @@
 # phrase-level rule — "cargo error strings live only in the stdlib" — was
 # measured and rejected: the literals are too generic (`"version"` alone hits 8
 # actions), so it would have been a noisy gate, and a noisy gate gets deleted.
-# The differently-named-reimplementation half of this class is OPEN.
+#
+# UPDATE 2026-07-29 — the differently-named half is now COVERED, by LAYER 5
+# (`tlisp-lint/stdlib-literal-baseline.txt`), and the phrase rule was NOT
+# rejected outright but re-narrowed on three MEASURED axes until it was quiet:
+# comments stripped (the biggest win — 6 of 14 raw rows were prose in
+# rust-workspace-publish's own comments about this very bug), literals ≥16 chars
+# containing a space, and no shell metacharacter (dropping the `>/dev/null 2>&1`
+# family). `*.test.tlisp` is exempt, because a test file's job is to hold a
+# foreign tool's verbatim output. Result: 4 baselined rows, 353 files clean.
+#
+# PROVEN against the exact historical shape: a file containing only
+#   (define (dep-missing-on-line? line)
+#     (and (string-contains? line "failed to select a version")
+#          (string-contains? line "which is not on the registry")))
+# passes Layers 1-4 (Layer 1 even logs `OK`) and is CAUGHT by Layer 5 —
+# "failed to select a version" is a strict prefix of the stdlib's
+# "failed to select a version for", which is why matching is CONTAINMENT in
+# either direction rather than equality.
+#
+# STILL OPEN, stated so nobody reads the above as more than it is: Layer 5 is a
+# CI-caught HEURISTIC over re-typed literals. A reimplementation that reassembles
+# the match from short fragments, computes it, or duplicates a stdlib function
+# with no long literal in it remains invisible to both layers. "The class is
+# sealed" would be a round-up; "the historical instance and anything shaped like
+# it are caught" is the honest claim.
 ansible-collection-build/run.tlisp	append-output
 cargo-publish-crate/run.tlisp	append-output
 cargo-publish-crate/run.tlisp	status-of

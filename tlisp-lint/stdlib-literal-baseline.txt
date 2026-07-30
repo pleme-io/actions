@@ -1,0 +1,45 @@
+# tlisp-lint/stdlib-literal-baseline.txt
+#
+# Pre-existing STDLIB DIAGNOSTIC LITERAL re-types, one "<path>\t<literal>" row.
+#
+# Layer 5's rule: a long, sentence-shaped string literal that the stdlib already
+# owns must not be re-typed inside an action, because a predicate over a foreign
+# tool's diagnostic text IS that literal — two functions matching cargo's
+# "failed to select a version" are the same predicate whatever they are named.
+# That is the half of the stdlib-shadow class Layer 4 (name intersection) cannot
+# see, and the half that actually cost a release line.
+#
+# Every row is REPORTED on every run, never silently accepted. Only a NEW row
+# fails the build. Removing a row — call the stdlib's predicate instead of
+# re-typing its literal — is the tracked path to zero.
+#
+# Counted 2026-07-29: 3 rows across 3 actions. The rule was narrowed on three
+# measured axes (comments stripped, ≥16 chars with a space, no shell
+# metacharacter) precisely so this list is short: un-narrowed the same rule
+# produced 14 rows, 6 of them prose inside rust-workspace-publish's own comments
+# describing the historical bug, and 5 of them the `>/dev/null 2>&1` shell
+# family. A noisy gate gets deleted, so the narrowing is load-bearing.
+#
+# WHY EACH ROW IS HERE (a row without a reason is debt nobody can retire):
+#
+#   helm-publish / python-publish — "Too Many Requests"
+#     A rate-limit test against a DIFFERENT registry (ChartMuseum / PyPI). The
+#     stdlib's `cargo-publish-rate-limited?` is cargo/crates.io-specific, so
+#     these are not reimplementations of it; they share only the HTTP 429 reason
+#     phrase, which HTTP itself owns. Retiring these rows means promoting a
+#     registry-agnostic `http-rate-limited?` to the stdlib and calling it from
+#     all three — worth doing, not done here.
+#
+#   zot-push — "Authorization: token "
+#     An HTTP request header, not a diagnostic being matched. Retiring this row
+#     means a typed header builder in the stdlib.
+#
+# TIER: CI-caught HEURISTIC. It catches a reimplementation that RE-TYPES the
+# diagnostic; it does NOT catch one that reassembles the match from shorter
+# fragments, computes it, or duplicates a stdlib function containing no long
+# literal. The historical instance and anything shaped like it are caught. That
+# is the claim — nothing wider.
+helm-publish/run.tlisp	Too Many Requests
+python-publish/run.tlisp	Too Many Requests
+zot-push/run.tlisp	Authorization: token
+zot-pull-scan/pull.tlisp	Authorization: token
