@@ -13,6 +13,19 @@ inputs:
     description: "Skip the verification compile step"
     required: false
     default: "true"
+  crate-path:
+    description: >-
+      Directory containing the crate's Cargo.toml, relative to the repo
+      root. Defaults to "." so every existing caller is unaffected.
+
+      Mirrors cargo-bump's input of the same name, and must be set to the
+      SAME value: run.tlisp reads ./Cargo.toml to learn the crate name and
+      version, so without this it published from the repo root no matter
+      what the caller asked for. For a repo whose crate is not at the root
+      — e.g. forge, whose CLI is at cli/ — that meant the bump succeeded
+      and the ship silently skipped, reporting a green run either way.
+    required: false
+    default: "."
 
 outputs:
   shipped:
@@ -54,6 +67,7 @@ runs:
       id: ship
       uses: pleme-io/actions/tatara-script@main
       with:
+        working-directory: ${{ inputs.crate-path }}
         script: ${{ steps.src.outputs.script }}
       env:
         DRY_RUN: ${{ inputs.dry-run }}
