@@ -51,24 +51,33 @@
       (null? (filter (fn (c) (not (string-contains? ident-chars c)))
                      (string-split s ""))))))
 
-(define (key-of line)
-  (let* ((eq-parts (string-split line "="))
-         (hd-parts (string-split line "<<")))
-    (cond
-      ;; heredoc first: `key<<EOF` also contains no `=`, but a `key=a<<b` value
-      ;; must be read as the `=` form, so prefer whichever delimiter appears
-      ;; first by checking the `=` split's head for the `<<` marker.
-      ((and (> (length hd-parts) 1)
-            (all-ident-chars? (car hd-parts)))
-       (car hd-parts))
-      ((and (> (length eq-parts) 1)
-            (all-ident-chars? (car eq-parts)))
-       (car eq-parts))
-      (else ""))))
+;; A stateful walk, not a per-line map: inside a heredoc body every line is
+;; opaque payload, and a body line such as `not-a-key=value` must NOT be read as
+;; a key. Caught by the test suite once its assertions were made to actually
+;; raise — the map-only version reported this file's own heredoc bodies as
+;; undeclared keys.
+(define (scan-written lines delim acc)
+  (cond
+    ((null? lines) acc)
+    (else
+      (let* ((line (car lines))
+             (rest (cdr lines))
+             (hd (string-split line "<<"))
+             (eq (string-split line "=")))
+        (cond
+          ;; in a heredoc: only its closing delimiter is meaningful
+          ((not (equal? delim ""))
+           (scan-written rest (if (equal? line delim) "" delim) acc))
+          ;; heredoc opener — record the key, remember the delimiter
+          ((and (> (length hd) 1) (all-ident-chars? (car hd)))
+           (scan-written rest (car (cdr hd)) (cons (car hd) acc)))
+          ;; plain key=value
+          ((and (> (length eq) 1) (all-ident-chars? (car eq)))
+           (scan-written rest "" (cons (car eq) acc)))
+          (else (scan-written rest "" acc)))))))
 
 (define written
-  (filter (fn (k) (not (equal? k "")))
-          (map key-of (string-split (read-file out-file) "\n"))))
+  (scan-written (string-split (read-file out-file) "\n") "" (list)))
 
 ;; ── keys the action declares ─────────────────────────────────────────────
 ;;
@@ -110,8 +119,12 @@
 
 ;; ── the gate ─────────────────────────────────────────────────────────────
 
+;; No elem?/member in this runtime — a length-0 filter is the membership test.
+(define (declared? k)
+  (> (length (filter (fn (d) (equal? d k)) declared)) 0))
+
 (define dropped
-  (filter (fn (k) (not (elem? k declared))) written))
+  (filter (fn (k) (not (declared? k))) written))
 
 (cond
   ((null? dropped)
