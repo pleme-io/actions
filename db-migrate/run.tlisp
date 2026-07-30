@@ -42,7 +42,17 @@
   ((= (status-of r) 0)
    (let ((count-r (exec-capture "sh" "-c"
                     (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
-                                   "' | grep -c 'Applied\|migration\|up to date' || echo 0"))))
+                                   ;; -E, because the reader DROPS an unknown
+                                   ;; escape: `\|` in this source becomes a
+                                   ;; bare `|` in the string grep receives
+                                   ;; (verified against the reader). Under
+                                   ;; BRE that is a LITERAL pipe, so this
+                                   ;; counted only lines containing the exact
+                                   ;; text "Applied|migration|up to date" —
+                                   ;; i.e. always 0. -E makes `|` the
+                                   ;; alternation the author meant, without
+                                   ;; relying on escapes surviving the reader.
+                                   "' | grep -cE 'Applied|migration|up to date' || echo 0"))))
      (append-output (string-append "applied-count=" (string-trim (stdout-of count-r))))
      (exit 0)))
   (else (append-output "applied-count=0") (exit 1)))
