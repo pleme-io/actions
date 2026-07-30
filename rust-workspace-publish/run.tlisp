@@ -261,32 +261,140 @@
 ;; Rename on conflict                                              ;;
 ;; -------------------------------------------------------------- ;;
 
-(define (replace-once-in-file path needle replacement)
-  (let ((contents (read-file path)))
-    (write-file path (string-replace contents needle replacement))))
+;; `replace-once-in-file` used to live HERE, as:
+;;
+;;     (define (replace-once-in-file path needle replacement)
+;;       (let ((contents (read-file path)))
+;;         (write-file path (string-replace contents needle replacement))))
+;;
+;; It COULD NOT FAIL. MEASURED: `string-replace` with an absent needle returns
+;; the contents unchanged, so `write-file` rewrote the file BYTE-IDENTICALLY,
+;; returned normally, and `rename-crate` went on to log "renamed 'X' -> 'Y'"
+;; having changed nothing. It is now the stdlib's
+;; `replace-once-in-file-or-die` / `replace-once-in-file-verified` pair, which
+;; returns a typed outcome and refuses on 'needle-absent / 'needle-ambiguous.
+;; Deliberately NOT re-declared locally — a local copy would shadow the
+;; stdlib's, which is the exact class tlisp-lint Layer 4 gates.
+;;
+;; ── Why the old needle was WRONG, not merely unguarded ──────────────────
+;;
+;; The old code SYNTHESIZED the dependency line it meant to patch:
+;;     X = { path = "X", version = "<cargo-workspace-version>" }
+;; guessing the version REQUIREMENT from the workspace VERSION. Those are
+;; different strings. tatara-lisp/Cargo.toml carries, verbatim:
+;;     tatara-lisp-derive       = { path = "…", version = "=0.3.3" }  ← EXACT
+;;     tatara-closed-set-derive = { path = "…", version = "=0.3.3" }  ← EXACT
+;;     tatara-lisp              = { path = "…", version = "0.3.3"  }
+;; so the synthesized needle missed BOTH exact-pinned rows, and had it
+;; "matched" by being rewritten into a caret it would have ERASED the
+;; lib↔derive seal that stops a published lib failing to compile against a
+;; floated derive.
+;;
+;; The fix is to stop synthesizing: LOCATE the line, edit it in place. The
+;; requirement is then preserved byte-for-byte because it is never re-typed —
+;; `=0.3.3`, `^0.3.3`, `0.3.3`, or a shape nobody has met yet.
+;;
+;; ── Shape coverage, stated honestly ────────────────────────────────────
+;;
+;; SUPPORTED (all four route through the ONE [workspace.dependencies] row):
+;;   exact        `X = { path = "X", version = "=1.2.3" }`
+;;   caret        `X = { path = "X", version = "^1.2.3" }`
+;;   plain        `X = { path = "X", version = "1.2.3"  }`
+;;   inheritance  member has `X.workspace = true`; the real pin is the
+;;                [workspace.dependencies] row. Cargo inherits the WHOLE spec
+;;                including `package`, so patching that one row renames the
+;;                dep for every inheriting member and NO member file changes.
+;;
+;; REFUSED LOUDLY (never silently skipped):
+;;   - no [workspace.dependencies] row for X (members declare X inline). A
+;;     correct fix needs the member set and would have to rewrite N manifests;
+;;     a PARTIAL rewrite across N members is strictly worse than a refusal, so
+;;     this returns #f and the caller red-fails the crate.
+;;   - a multi-line inline table, or a bare `X = "1.2"` string dep — shapes
+;;     `toml-inline-table-add-key` will not mangle.
+;; Tier: only-mitigated. The refusal is a runtime `#f` → ("fail" name), not a
+;; type error. Do not round up.
+
+;; ── The PURE decision, split out so it is provable ─────────────────────
+;; Given the VERBATIM [workspace.dependencies] row for the crate (or "" when
+;; there is none) and the target name, return either the NEW row (a string) or
+;; a typed refusal symbol. Every real judgement lives here, so the whole
+;; exact-pin-preservation contract is unit-testable with no cargo, no git and
+;; no filesystem — which is the only reason the old version's wrongness could
+;; sit undetected: its decision was welded to its I/O.
+;;
+;;   'no-workspace-dep-row  — nothing to patch; caller must refuse
+;;   'already-renamed       — a `package =` key is already present (idempotent)
+;;   'unsupported-dep-shape — not a single-line inline table
+(define (rename-dep-row-plan dep-line new-name)
+  (cond
+    ((equal? (string-trim dep-line) "") 'no-workspace-dep-row)
+    ((string-contains? dep-line "package =") 'already-renamed)
+    (else
+      (let ((new-row (toml-inline-table-add-key dep-line "package" new-name)))
+        (if (equal? new-row "") 'unsupported-dep-shape new-row)))))
 
 (define (rename-crate original)
   (let* ((new-name (string-append rename-prefix original))
-         (crate-toml (string-append original "/Cargo.toml")))
+         (crate-toml (string-append original "/Cargo.toml"))
+         (dep-line (toml-line-in-section "Cargo.toml"
+                                        "[workspace.dependencies]" original))
+         (plan (rename-dep-row-plan dep-line new-name)))
     (cond
       ((not (path-exists? crate-toml))
        (log-error (string-append "no crate dir for '" original "'"))
        #f)
+
+      ;; No workspace-level pin to patch → refuse, do not half-rename.
+      ((equal? plan 'no-workspace-dep-row)
+       (log-error
+         (string-append
+           "rename of '" original "' REFUSED: no `" original
+           " = { … }` row under [workspace.dependencies] in the root Cargo.toml. "
+           "The old code would have rewritten nothing here and reported success. "
+           "Supported shapes are an inline table with an exact/caret/plain "
+           "version (members may inherit it via `" original
+           ".workspace = true`); an inline per-member declaration is not "
+           "auto-renamed because a partial rewrite across members is worse "
+           "than this refusal."))
+       #f)
+
+      ;; Idempotent: a previous pass already renamed it.
+      ((equal? plan 'already-renamed)
+       (log-info (string-append "'" original "' already carries a `package =` "
+                                "rename in [workspace.dependencies]; nothing to do"))
+       #t)
+
+      ((equal? plan 'unsupported-dep-shape)
+       (log-error
+         (string-append
+           "rename of '" original "' REFUSED: its [workspace.dependencies] "
+           "row is not a single-line inline table this action can edit "
+           "without mangling it. Verbatim row: " dep-line))
+       #f)
+
       (else
-        (replace-once-in-file crate-toml
-          (string-append "name = \"" original "\"")
-          (string-append "name = \"" new-name "\""))
-        (let* ((ver (cargo-workspace-version))
-               (old-line (string-append original
-                          " = { path = \"" original
-                          "\", version = \"" ver "\" }"))
-               (new-line (string-append original
-                          " = { path = \"" original
-                          "\", version = \"" ver "\", package = \""
-                          new-name "\" }")))
-          (replace-once-in-file "Cargo.toml" old-line new-line))
-        (log-info (string-append "renamed '" original "' -> '" new-name "'"))
-        #t))))
+        ;; (a) the member's own [package] name. LOCATED, not synthesized, so a
+        ;; `[[bin]] name = "X"` line cannot be caught in the blast radius — and
+        ;; if the located line somehow occurs twice, the primitive refuses
+        ;; rather than rewriting both.
+        (let ((name-line (toml-line-in-section crate-toml "[package]" "name")))
+          (cond
+            ((equal? name-line "")
+             (log-error (string-append "rename of '" original
+                                       "' REFUSED: no `name = …` under "
+                                       "[package] in " crate-toml))
+             #f)
+            (else
+              (replace-once-in-file-or-die
+                crate-toml name-line
+                (string-append "name = \"" new-name "\""))
+              ;; (b) the workspace pin — requirement preserved verbatim.
+              (replace-once-in-file-or-die "Cargo.toml" dep-line plan)
+              (log-info (string-append "renamed '" original "' -> '" new-name
+                                       "' (workspace pin now: "
+                                       (string-trim plan) ")"))
+              #t)))))))
 
 (define (commit-and-push original)
   (let ((new-name (string-append rename-prefix original)))
@@ -313,20 +421,49 @@
 
 (define version (if tlisp-test-mode "" (cargo-workspace-version)))
 
-;; Pure classification of a cargo-publish log into a typed outcome symbol, so
-;; the verdict is unit-testable against real cargo output — a classifier that
-;; only exists inside an I/O-bound loop is a classifier nobody can prove.
+;; ── A DELIBERATE SIBLING OF THE STDLIB'S CLASSIFIER — read this first ──
 ;;
-;; Arm order: already-uploaded first (the most specific success), then the
-;; structural sibling-dep test, then rate-limit, then conflict LAST — the
-;; stdlib's conflict arm deliberately matches broad auth words ("denied",
-;; "Unauthorized") to catch crates.io's 403-on-foreign-name, and those can
-;; appear inside other error bodies, so it must never pre-empt a narrower arm.
+;; This is a NAMED VARIANT of `classify-cargo-publish-outcome`
+;; (_tlisp-stdlib/stdlib.tlisp). The name says so on purpose: the last time an
+;; action carried a differently-named near-duplicate of a stdlib predicate, the
+;; kinship was ACCIDENTAL and invisible — a local `dep-missing-on-line?` was
+;; narrowed until it matched nothing cargo emits while the stdlib's
+;; `cargo-publish-dep-missing-line?` sat one concatenation away, never called,
+;; and the whole tatara-lisp 0.3.x line stalled at 0.2.5. tlisp-lint's Layer 4
+;; cannot see that class by name-intersection (no name collided), so the only
+;; defense for a JUSTIFIED variant is to make the relationship explicit in the
+;; code. That is what the `-with-siblings` suffix and this block are for.
+;;
+;; WHY IT CANNOT DELEGATE — two structural differences, both load-bearing:
+;;
+;;   (1) EXTRA INPUT. It needs `members`, the workspace sibling set, to split
+;;       the stdlib's single 'dep-missing verdict in two: a sibling that simply
+;;       is not on the registry YET (defer — we are mid-ship) versus an
+;;       external requirement that can never resolve (fail loudly, the escriba
+;;       shape). The stdlib's signature is (log status) and has no way to know.
+;;
+;;   (2) DIFFERENT ARM ORDER, on purpose. The stdlib tests conflict BEFORE
+;;       dep-missing. Here conflict must be LAST, because the stdlib's conflict
+;;       arm deliberately matches broad auth words ("denied", "Unauthorized")
+;;       to catch crates.io's 403-on-foreign-name, and those words appear
+;;       inside other error bodies — so it must never pre-empt the narrower
+;;       sibling-dep test. Reordering the stdlib's arms to match would change
+;;       every other consumer's verdicts; that is why this is a variant rather
+;;       than an edit upstream.
+;;
+;; What it MUST NOT do, and does not: re-implement any of the stdlib's line
+;; predicates. Every arm below calls a `cargo-publish-*?` from the stdlib, so a
+;; stdlib fix reaches this action. The ONLY local logic is the sibling
+;; discriminator (`sibling-dep-missing?`) and the arm order.
+;;
+;; Pure by construction, so the verdict is unit-testable against real cargo
+;; output — a classifier that only exists inside an I/O-bound loop is a
+;; classifier nobody can prove.
 ;;
 ;; Returns one of:
 ;;   'published   'already-uploaded   'dep-missing   'rate-limited
 ;;   'conflict    'failed
-(define (classify-publish-log log members code)
+(define (classify-cargo-publish-outcome-with-siblings log members code)
   (cond
     ((= code 0) 'published)
     ((cargo-publish-already-uploaded? log) 'already-uploaded)
@@ -436,7 +573,7 @@
       (let* ((r (do-publish name))
              (code (status-of r))
              (log (string-append (stdout-of r) "\n" (stderr-of r)))
-             (outcome (classify-publish-log log siblings code)))
+             (outcome (classify-cargo-publish-outcome-with-siblings log siblings code)))
         (cond
           ((equal? outcome 'published)
            (log-info (string-append "published '" name "'"))
