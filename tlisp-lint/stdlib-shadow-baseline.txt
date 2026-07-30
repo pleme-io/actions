@@ -60,11 +60,6 @@
 # it are caught" is the honest claim.
 ansible-collection-build/run.tlisp	append-output
 cargo-publish-crate/run.tlisp	append-output
-cargo-publish-crate/run.tlisp	status-of
-cargo-publish-crate/run.tlisp	stdout-of
-cargo-publish-crate/run.tlisp	stderr-of
-cargo-publish-crate/run.tlisp	extract-quoted-value
-cargo-publish-crate/run.tlisp	line-is-section-header?
 derive-version-from-tag/run.tlisp	append-output
 detect-repo-type/run.tlisp	append-output
 gem-publish/run.tlisp	extract-quoted-value
@@ -78,4 +73,3 @@ rust-workspace-bump/run.tlisp	stdout-of
 rust-workspace-bump/run.tlisp	last-tag
 spec-watch/run.tlisp	append-output
 substrate-bump/run.tlisp	append-output
-substrate-bump/run.tlisp	extract-quoted-value
