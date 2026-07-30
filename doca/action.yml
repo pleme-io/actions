@@ -21,7 +21,7 @@ branding:
 
 inputs:
   operation:
-    description: "Operation: push | transfer | inspect | tag | list | resolve | delete. Sole positional arg."
+    description: "Operation: push | transfer | inspect | pull | tag | list | resolve | delete. Sole positional arg."
     required: true
   registry:
     description: "Destination registry host (push). Flag: --registry. Env: INPUT_REGISTRY."
@@ -110,6 +110,26 @@ inputs:
     description: "resolve only: fail unless the winning tag starts with this string (e.g. '1.0.'). Keeps a promotion that publishes into one release line from silently republishing a build from another. Flag: --require-prefix. Env: INPUT_REQUIRE_PREFIX."
     required: false
     default: ""
+  out:
+    description: "pull only: path to write the docker-archive tarball to. Flag: --out. Env: INPUT_OUT."
+    required: false
+    default: ""
+  image-name:
+    description: "pull only: repository name to record in the archive's RepoTags. An archive without RepoTags loads as a dangling image, so the caller must be able to name what it will load. Defaults to the source repository. Flag: --image-name. Env: INPUT_IMAGE_NAME."
+    required: false
+    default: ""
+  image-tag:
+    description: "pull only: tag to record in the archive's RepoTags. Flag: --image-tag. Env: INPUT_IMAGE_TAG."
+    required: false
+    default: ""
+  arch:
+    description: "pull only: architecture to select from a multi-arch index (e.g. amd64, arm64). EXPLICIT on purpose -- the default resolver picks the HOST platform, which silently makes the output runner-dependent. An index with no matching instance fails naming the platform. Flag: --arch. Env: INPUT_ARCH."
+    required: false
+    default: ""
+  os:
+    description: "pull only: OS to select from a multi-arch index. Defaults to linux. Flag: --os. Env: INPUT_OS."
+    required: false
+    default: ""
   digest-only:
     description: "inspect only: print just the immutable digest to stdout and nothing else, instead of the pretty manifest. Lets a caller resolve a mutable tag to a digest in one call and then copy by digest, so a tag that moves underneath cannot silently swap the bytes. Flag: --digest-only. Env: INPUT_DIGEST_ONLY."
     required: false
@@ -165,3 +185,8 @@ runs:
         INPUT_DIGEST_ONLY: ${{ inputs.digest-only }}
         INPUT_EXCLUDE_TAGS: ${{ inputs.exclude-tags }}
         INPUT_REQUIRE_PREFIX: ${{ inputs.require-prefix }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_IMAGE_NAME: ${{ inputs.image-name }}
+        INPUT_IMAGE_TAG: ${{ inputs.image-tag }}
+        INPUT_ARCH: ${{ inputs.arch }}
+        INPUT_OS: ${{ inputs.os }}
