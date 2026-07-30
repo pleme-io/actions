@@ -48,6 +48,12 @@ outputs:
   new-version:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: new-version)"
     value: ${{ steps.exec.outputs.new-version }}
+  repo-type:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: repo-type) — detect-repo-type's typed identifier. Without this entry the key is silently dropped at the composite boundary and every consumer reads an empty string."
+    value: ${{ steps.exec.outputs.repo-type }}
+  manifest-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: manifest-path) — the manifest that drove detect-repo-type's answer."
+    value: ${{ steps.exec.outputs.manifest-path }}
   result:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
     value: ${{ steps.exec.outputs.result }}
