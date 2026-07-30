@@ -88,6 +88,25 @@ inputs:
     required: false
     default: ""
 
+  # Added 2026-07-29. The binary has understood --dest-ca-cert and --insecure on
+  # `push`/`inspect` for a while, and `list` gained them in the same change, but
+  # none of the three was reachable through `with:` — so from a workflow's point
+  # of view doca simply could not talk to a registry serving a self-signed
+  # certificate. That is the common case for a cluster-internal scan-and-admit
+  # registry, i.e. exactly where tag/digest discovery is most useful.
+  dest-ca-cert:
+    description: "Path to a PEM certificate to trust as an EXTRA root, for a registry with a self-signed cert (e.g. an in-cluster one). Real verification against a known cert — NOT a blanket accept-any-cert toggle, which is deliberately not exposed. Flag: --dest-ca-cert. Env: INPUT_DEST_CA_CERT."
+    required: false
+    default: ""
+  insecure:
+    description: "Force plain HTTP instead of HTTPS. An explicit escape hatch, never the default — prefer dest-ca-cert, which keeps verification on. Flag: --insecure. Env: INPUT_INSECURE."
+    required: false
+    default: ""
+  digest-only:
+    description: "inspect only: print just the immutable digest to stdout and nothing else, instead of the pretty manifest. Lets a caller resolve a mutable tag to a digest in one call and then copy by digest, so a tag that moves underneath cannot silently swap the bytes. Flag: --digest-only. Env: INPUT_DIGEST_ONLY."
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -120,3 +139,6 @@ runs:
         INPUT_NEW_TAG: ${{ inputs.new-tag }}
         INPUT_USER: ${{ inputs.user }}
         INPUT_PASS: ${{ inputs.pass }}
+        INPUT_DEST_CA_CERT: ${{ inputs.dest-ca-cert }}
+        INPUT_INSECURE: ${{ inputs.insecure }}
+        INPUT_DIGEST_ONLY: ${{ inputs.digest-only }}
