@@ -34,7 +34,22 @@
       ((>= (length sq-parts) 2) (car (cdr sq-parts)))
       (else ""))))
 
-(define (line-is-section-header? line) (and (> (string-length line) 0) (string-contains? line "[")))
+;; `line-is-section-header?` is DELIBERATELY NOT DEFINED HERE. It used to be,
+;; as `(and (> (string-length line) 0) (string-contains? line "["))` — any line
+;; containing a bracket. action.yml prepends the stdlib, so this local copy was
+;; defined SECOND and WON, exactly the shadowing this file's header describes
+;; for the publish-failure predicates. The stdlib's version is strict (the text
+;; before the first `[` must be blank) precisely because the naive test was
+;; already found to break `[package]` walks on manifests with array fields —
+;; num-traits, and kazari on 2026-07-21.
+;;
+;; It silently broke the publish=false preflight: mado carries
+;; `categories = [...]` and `keywords = [...]` above `publish = false`, so the
+;; walker "left" [package] at the categories line and never saw the field. The
+;; run then took the structurally-UNPUBLISHABLE arm and went red — for a crate
+;; that had correctly declared it does not publish. Deleting the shadow is the
+;; dedup the header called for; it also un-breaks `walk-for-field` below, which
+;; would mis-read name/version on any manifest with an array above them.
 
 (define
   (walk-for-field field lines in-section)
