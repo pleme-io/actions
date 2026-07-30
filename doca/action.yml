@@ -21,7 +21,7 @@ branding:
 
 inputs:
   operation:
-    description: "Operation: push | transfer | inspect | tag | list | delete. Sole positional arg."
+    description: "Operation: push | transfer | inspect | tag | list | resolve | delete. Sole positional arg."
     required: true
   registry:
     description: "Destination registry host (push). Flag: --registry. Env: INPUT_REGISTRY."
@@ -102,10 +102,30 @@ inputs:
     description: "Force plain HTTP instead of HTTPS. An explicit escape hatch, never the default — prefer dest-ca-cert, which keeps verification on. Flag: --insecure. Env: INPUT_INSECURE."
     required: false
     default: ""
+  exclude-tags:
+    description: "resolve only: comma-separated tags to exclude from the candidate set. Use it to drop a rolling pointer that is no longer maintained -- such a tag is still a valid semver, so on a repo where it is the newest one it would otherwise win and publish older bytes under a fresh label. Flag: --exclude-tag (repeatable). Env: INPUT_EXCLUDE_TAGS."
+    required: false
+    default: ""
+  require-prefix:
+    description: "resolve only: fail unless the winning tag starts with this string (e.g. '1.0.'). Keeps a promotion that publishes into one release line from silently republishing a build from another. Flag: --require-prefix. Env: INPUT_REQUIRE_PREFIX."
+    required: false
+    default: ""
   digest-only:
     description: "inspect only: print just the immutable digest to stdout and nothing else, instead of the pretty manifest. Lets a caller resolve a mutable tag to a digest in one call and then copy by digest, so a tag that moves underneath cannot silently swap the bytes. Flag: --digest-only. Env: INPUT_DIGEST_ONLY."
     required: false
     default: ""
+
+outputs:
+  # `resolve` writes these to GITHUB_OUTPUT itself; a composite action must
+  # DECLARE them or they stop at the action boundary and the caller sees
+  # nothing -- written-but-unreadable, which is the same shape of defect as an
+  # input nothing consumes. Empty for every other operation.
+  tag:
+    description: "resolve: the winning tag (numerically highest pure X.Y.Z after exclusions)."
+    value: ${{ steps.doca.outputs.tag }}
+  digest:
+    description: "resolve: that tag's immutable digest. Copy by this rather than by the tag, so a tag that later moves cannot swap the bytes."
+    value: ${{ steps.doca.outputs.digest }}
 
 runs:
   using: composite
@@ -120,6 +140,7 @@ runs:
           sandbox = relaxed
 
     - name: doca dispatch
+      id: doca
       shell: bash
       run: nix run github:pleme-io/substrate#oci-push -- ${{ inputs.operation }}
       env:
@@ -142,3 +163,5 @@ runs:
         INPUT_DEST_CA_CERT: ${{ inputs.dest-ca-cert }}
         INPUT_INSECURE: ${{ inputs.insecure }}
         INPUT_DIGEST_ONLY: ${{ inputs.digest-only }}
+        INPUT_EXCLUDE_TAGS: ${{ inputs.exclude-tags }}
+        INPUT_REQUIRE_PREFIX: ${{ inputs.require-prefix }}
