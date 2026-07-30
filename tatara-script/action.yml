@@ -34,425 +34,39 @@ inputs:
     required: false
     default: "."
 
-# Composite-action outputs are explicit forwards, not wildcards.
-# Tatara-script declares the well-known output names that callers
-# may consume from a tlisp script's $GITHUB_OUTPUT writes. If a new
-# output key is needed, add it here so the forward exists.
+# Composite-action outputs are explicit forwards, not wildcards. Tatara-script
+# is the SHARED INNER RUNNER for ~316 actions, so a key one of their scripts
+# writes reaches its caller only if it is declared BOTH here and in that
+# action's own outputs block. A key missing here is not a silent drop — it is a
+# hard failure: output-contract.tlisp runs in the same step and pre-empts the
+# script's own exit code. That is how container-boot-check's `healthy` failed
+# rabbitmq and vector images that had already BUILT and BOOTED GREEN.
+#
+# THE KEY SET BELOW IS GENERATED. Do not add a key by hand — add the
+# `append-output` to the script and regenerate, so the declaration cannot be
+# forgotten. The generator is output-contract-sync (this repo); it derives the
+# union from every .tlisp that routes through here, covering every branch of
+# every script rather than the one code path a given run happens to take.
+# Each `description:` line is PRESERVED human prose, harvested verbatim across
+# regenerations — the generated invariant is the key set, not the wording, so
+# improving a description is always safe.
+# BEGIN GENERATED OUTPUTS -- output-contract-sync; do not hand-edit below.
 outputs:
-  version:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: version)"
-    value: ${{ steps.exec.outputs.version }}
-  bumped:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: bumped)"
-    value: ${{ steps.exec.outputs.bumped }}
-  new-version:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: new-version)"
-    value: ${{ steps.exec.outputs.new-version }}
-  repo-type:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: repo-type) — detect-repo-type's typed identifier. Without this entry the key is silently dropped at the composite boundary and every consumer reads an empty string."
-    value: ${{ steps.exec.outputs.repo-type }}
-  manifest-path:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: manifest-path) — the manifest that drove detect-repo-type's answer."
-    value: ${{ steps.exec.outputs.manifest-path }}
-  result:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
-    value: ${{ steps.exec.outputs.result }}
-  matrix:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: matrix) — the build-matrix image×arch GHA matrix JSON"
-    value: ${{ steps.exec.outputs.matrix }}
-  count:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: count) — a row/item count (e.g. build-matrix rows)"
-    value: ${{ steps.exec.outputs.count }}
-  out-path:
-    description: "Forwarded from the script's GITHUB_OUTPUT (key: out-path) — nix-build's built store path. Missing since nix-build's own inception (2026-07-14 discovery: cartorio-attest's nix-closure-info-path silently received an empty string from every nix-build consumer, on both @main and @v1, because this key was never added here)"
-    value: ${{ steps.exec.outputs.out-path }}
-  # Delivery-leg keys (super-cache-ci): nix-image / ghcr-publish / zot-pull-scan
-  # (+ image-scan's severity/vuln-count). A composite action forwards only
-  # DECLARED keys, so these must live here for the scripts' outputs to reach
-  # a consumer workflow. Added per this file's own "add it here" convention.
-  tarball-amd64:
-    description: "Forwarded (key: tarball-amd64) — nix-image amd64 tarball path"
-    value: ${{ steps.exec.outputs.tarball-amd64 }}
-  tarball-arm64:
-    description: "Forwarded (key: tarball-arm64) — nix-image arm64 tarball path"
-    value: ${{ steps.exec.outputs.tarball-arm64 }}
-  tarballs:
-    description: "Forwarded (key: tarballs) — nix-image 'arch:path' list"
-    value: ${{ steps.exec.outputs.tarballs }}
-  via-service:
-    description: "Forwarded (key: via-service) — nix-image sui-served flag"
-    value: ${{ steps.exec.outputs.via-service }}
-  built:
-    description: "Forwarded (key: built) — nix-image all-arches-built flag"
-    value: ${{ steps.exec.outputs.built }}
-  tag:
-    description: "Forwarded (key: tag) — ghcr-publish exact AUTOBUMP tag"
-    value: ${{ steps.exec.outputs.tag }}
-  ref:
-    description: "Forwarded (key: ref) — ghcr-publish full pushed ref"
-    value: ${{ steps.exec.outputs.ref }}
-  ref-amd64:
-    description: "Forwarded (key: ref-amd64) — ghcr-publish amd64 ref"
-    value: ${{ steps.exec.outputs.ref-amd64 }}
-  ref-arm64:
-    description: "Forwarded (key: ref-arm64) — ghcr-publish arm64 ref"
-    value: ${{ steps.exec.outputs.ref-arm64 }}
-  pushed:
-    description: "Forwarded (key: pushed) — ghcr-publish push-success flag"
-    value: ${{ steps.exec.outputs.pushed }}
-  admitted:
-    description: "Forwarded (key: admitted) — zot-pull-scan faucet admission flag"
-    value: ${{ steps.exec.outputs.admitted }}
-  severity:
-    description: "Forwarded (key: severity) — image-scan / zot-pull-scan highest severity"
-    value: ${{ steps.exec.outputs.severity }}
-  vuln-count:
-    description: "Forwarded (key: vuln-count) — image-scan / zot-pull-scan vuln count"
-    value: ${{ steps.exec.outputs.vuln-count }}
-  local-archive:
-    description: "Forwarded (key: local-archive) — zot-pull-scan pulled archive path"
-    value: ${{ steps.exec.outputs.local-archive }}
-  # super-cache-ci preflight/attest keys: breathe-runner + tameshi-attest.
-  runner-ok:
-    description: "Forwarded (key: runner-ok) — breathe-runner posture-ok flag"
-    value: ${{ steps.exec.outputs.runner-ok }}
-  capacity-type:
-    description: "Forwarded (key: capacity-type) — breathe-runner spot|on-demand|unknown"
-    value: ${{ steps.exec.outputs.capacity-type }}
-  node-group:
-    description: "Forwarded (key: node-group) — breathe-runner camelot node-group"
-    value: ${{ steps.exec.outputs.node-group }}
-  scale-to-zero:
-    description: "Forwarded (key: scale-to-zero) — breathe-runner scale-to-zero tri-state"
-    value: ${{ steps.exec.outputs.scale-to-zero }}
-  drain-armed:
-    description: "Forwarded (key: drain-armed) — breathe-runner retirada drain-armed flag"
-    value: ${{ steps.exec.outputs.drain-armed }}
-  attested:
-    description: "Forwarded (key: attested) — tameshi-attest receipt-assembled flag"
-    value: ${{ steps.exec.outputs.attested }}
-  receipt-path:
-    description: "Forwarded (key: receipt-path) — tameshi-attest receipt JSON path"
-    value: ${{ steps.exec.outputs.receipt-path }}
-  receipt-hash:
-    description: "Forwarded (key: receipt-hash) — tameshi-attest BLAKE3 receipt hash"
-    value: ${{ steps.exec.outputs.receipt-hash }}
-  receipt-algo:
-    description: "Forwarded (key: receipt-algo) — tameshi-attest hash algorithm (blake3)"
-    value: ${{ steps.exec.outputs.receipt-algo }}
-  signed:
-    description: "Forwarded (key: signed) — tameshi-attest Ed25519-signed flag"
-    value: ${{ steps.exec.outputs.signed }}
-  outcome-chain:
-    description: "Forwarded (key: outcome-chain) — tameshi-attest kensa OutcomeChain flag"
-    value: ${{ steps.exec.outputs.outcome-chain }}
-  # super-cache-ci service + cache + spec keys: sui-service-up /
-  # super-cache-restore / super-cache-build / super-cache-save /
-  # gen-build-spec. A composite forwards only DECLARED keys, so the
-  # reference pipeline's step-to-step output threading (endpoint -> restore
-  # -> build -> save -> attest) is always-empty until these live here.
-  # Added per this file's own "add it here" convention (additive; the keys
-  # are disjoint from the delivery-leg + preflight/attest sets above).
-  endpoint:
-    description: "Forwarded (key: endpoint) — sui-service-up resolved service endpoint"
-    value: ${{ steps.exec.outputs.endpoint }}
-  store-backend:
-    description: "Forwarded (key: store-backend) — sui-service-up durable store tier"
-    value: ${{ steps.exec.outputs.store-backend }}
-  cache-backend:
-    description: "Forwarded (key: cache-backend) — sui-service-up hot cache tier"
-    value: ${{ steps.exec.outputs.cache-backend }}
-  sandbox:
-    description: "Forwarded (key: sandbox) — sui-service-up build sandbox (tmpfs|disk)"
-    value: ${{ steps.exec.outputs.sandbox }}
-  never-touch-disk:
-    description: "Forwarded (key: never-touch-disk) — computed postgres∧redis∧tmpfs predicate"
-    value: ${{ steps.exec.outputs.never-touch-disk }}
-  up:
-    description: "Forwarded (key: up) — sui-service-up endpoint-reachable flag"
-    value: ${{ steps.exec.outputs.up }}
-  reason:
-    description: "Forwarded (key: reason) — a shared typed why-string key, consumers disjoint: service/cache/spec verbs' outcome reason, OR aldrava-dispatch/aldrava-resolve's rejection/no-match/not-running reason"
-    value: ${{ steps.exec.outputs.reason }}
-  cache-hit:
-    description: "Forwarded (key: cache-hit) — super-cache-restore warm-path hit flag"
-    value: ${{ steps.exec.outputs.cache-hit }}
-  hit-tier:
-    description: "Forwarded (key: hit-tier) — super-cache-restore tier (redis|pg|object|miss)"
-    value: ${{ steps.exec.outputs.hit-tier }}
-  key:
-    description: "Forwarded (key: key) — content-addressed super-cache key threaded restore->build->save"
-    value: ${{ steps.exec.outputs.key }}
-  outputs:
-    description: "Forwarded (key: outputs) — restored/built store-path list"
-    value: ${{ steps.exec.outputs.outputs }}
-  from-cache:
-    description: "Forwarded (key: from-cache) — super-cache-build served-from-cache flag"
-    value: ${{ steps.exec.outputs.from-cache }}
-  output-hashes:
-    description: "Forwarded (key: output-hashes) — super-cache-build BLAKE3 output hashes"
-    value: ${{ steps.exec.outputs.output-hashes }}
-  eval-ms:
-    description: "Forwarded (key: eval-ms) — super-cache-build RAM eval time"
-    value: ${{ steps.exec.outputs.eval-ms }}
-  build-ms:
-    description: "Forwarded (key: build-ms) — super-cache-build derive time"
-    value: ${{ steps.exec.outputs.build-ms }}
-  saved:
-    description: "Forwarded (key: saved) — super-cache-save newly-persisted flag"
-    value: ${{ steps.exec.outputs.saved }}
-  skipped:
-    description: "Forwarded (key: skipped) — super-cache-save write-if-absent idempotent skip"
-    value: ${{ steps.exec.outputs.skipped }}
-  tier:
-    description: "Forwarded (key: tier) — super-cache-save durable tier that accepted the write"
-    value: ${{ steps.exec.outputs.tier }}
-  lang:
-    description: "Forwarded (key: lang) — gen-build-spec resolved language"
-    value: ${{ steps.exec.outputs.lang }}
-  spec-path:
-    description: "Forwarded (key: spec-path) — gen-build-spec typed build-spec path"
-    value: ${{ steps.exec.outputs.spec-path }}
-  spec-hash:
-    description: "Forwarded (key: spec-hash) — gen-build-spec build-spec content-address"
-    value: ${{ steps.exec.outputs.spec-hash }}
-  regenerated:
-    description: "Forwarded (key: regenerated) — gen-build-spec did-gen-run flag"
-    value: ${{ steps.exec.outputs.regenerated }}
-  stale:
-    description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
-    value: ${{ steps.exec.outputs.stale }}
-  changed:
-    description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag; also spec-watch's own upstream-sha-differs flag (same key, disjoint consumers)"
-    value: ${{ steps.exec.outputs.changed }}
-  new-sha:
-    description: "Forwarded (key: new-sha) — spec-watch sha256 of the upstream spec fetched this run"
-    value: ${{ steps.exec.outputs.new-sha }}
-  cached-sha:
-    description: "Forwarded (key: cached-sha) — spec-watch sha256 previously stored in the cache file"
-    value: ${{ steps.exec.outputs.cached-sha }}
-  # super-cache-ci warm + remote-execution leg: sui-warm-hydrate /
-  # sui-remote-build. A composite forwards only DECLARED keys; these are
-  # disjoint from the sets above. Added per this file's "add it here"
-  # convention. (endpoint / never-touch-disk / hit-tier / reason / built /
-  # from-cache / outputs / output-hashes / eval-ms / build-ms already live
-  # above.)
-  warmed:
-    description: "Forwarded (key: warmed) — sui-warm-hydrate real-warm flag (false until TieredBackend + warm-set RPC)"
-    value: ${{ steps.exec.outputs.warmed }}
-  warm-count:
-    description: "Forwarded (key: warm-count) — sui-warm-hydrate count of keys actually warmed"
-    value: ${{ steps.exec.outputs.warm-count }}
-  worker:
-    description: "Forwarded (key: worker) — sui-remote-build execution plane (reapi|local; local until the REAPI worker ships)"
-    value: ${{ steps.exec.outputs.worker }}
-  # super-cache-ci delivery/manifest/attest leg: zot-push +
-  # manifest-list-join + cartorio-attest. A composite forwards only
-  # DECLARED keys; these are disjoint from the sets above (tag / ref* /
-  # pushed / reason and attested / receipt-* / signed / outcome-chain
-  # already live above). Added per this file's "add it here" convention.
-  digest:
-    description: "Forwarded (key: digest) — zot-push pushed repository digest (exact deploy coord)"
-    value: ${{ steps.exec.outputs.digest }}
-  index-ref:
-    description: "Forwarded (key: index-ref) — manifest-list-join multi-arch index ref"
-    value: ${{ steps.exec.outputs.index-ref }}
-  index-digest:
-    description: "Forwarded (key: index-digest) — manifest-list-join index digest (exact multi-arch coord)"
-    value: ${{ steps.exec.outputs.index-digest }}
-  arches:
-    description: "Forwarded (key: arches) — manifest-list-join arches folded into the index"
-    value: ${{ steps.exec.outputs.arches }}
-  joined:
-    description: "Forwarded (key: joined) — manifest-list-join index-composed flag"
-    value: ${{ steps.exec.outputs.joined }}
-  sbom-path:
-    description: "Forwarded (key: sbom-path) — cartorio-attest CycloneDX SBOM path"
-    value: ${{ steps.exec.outputs.sbom-path }}
-  sbom-format:
-    description: "Forwarded (key: sbom-format) — cartorio-attest SBOM format (CycloneDX-1.5)"
-    value: ${{ steps.exec.outputs.sbom-format }}
-  sbom-components:
-    description: "Forwarded (key: sbom-components) — cartorio-attest Nix-closure component count"
-    value: ${{ steps.exec.outputs.sbom-components }}
-  slsa-path:
-    description: "Forwarded (key: slsa-path) — cartorio-attest SLSA provenance predicate path"
-    value: ${{ steps.exec.outputs.slsa-path }}
-  slsa-predicate-type:
-    description: "Forwarded (key: slsa-predicate-type) — cartorio-attest SLSA predicate type"
-    value: ${{ steps.exec.outputs.slsa-predicate-type }}
-  # super-cache-ci per-package materializability gate: ferrite-check. A
-  # composite forwards only DECLARED keys; these are disjoint from the sets
-  # above (signed / outcome-chain / reason already live above; attr is
-  # ferrite-specific). Added per this file's "add it here" convention.
-  materializable:
-    description: "Forwarded (key: materializable) — ferrite-check package-materializable verdict"
-    value: ${{ steps.exec.outputs.materializable }}
-  cached:
-    description: "Forwarded (key: cached) — ferrite-check by-source-hash PoMS cache-hit flag (derive skippable)"
-    value: ${{ steps.exec.outputs.cached }}
-  source-hash:
-    description: "Forwarded (key: source-hash) — ferrite-check content-addressed source/cache key"
-    value: ${{ steps.exec.outputs.source-hash }}
-  drv-path:
-    description: "Forwarded (key: drv-path) — ferrite-check resolved .drv store path"
-    value: ${{ steps.exec.outputs.drv-path }}
-  attr:
-    description: "Forwarded (key: attr) — ferrite-check resolved flake attr (template rendered)"
-    value: ${{ steps.exec.outputs.attr }}
-  poms-path:
-    description: "Forwarded (key: poms-path) — ferrite-check emitted PoMS JSON path"
-    value: ${{ steps.exec.outputs.poms-path }}
-  poms-hash:
-    description: "Forwarded (key: poms-hash) — ferrite-check real BLAKE3 PoMS receipt hash"
-    value: ${{ steps.exec.outputs.poms-hash }}
-  poms-algo:
-    description: "Forwarded (key: poms-algo) — ferrite-check PoMS hash algorithm (blake3)"
-    value: ${{ steps.exec.outputs.poms-algo }}
-  # aldrava — comment-command dispatch (aldrava-dispatch / aldrava-resolve).
-  dispatched:
-    description: "Forwarded (key: dispatched) — aldrava-dispatch trusted-knock-matched flag"
-    value: ${{ steps.exec.outputs.dispatched }}
-  outcome:
-    description: "Forwarded (key: outcome) — aldrava-dispatch dispatched|rejected|no-match|not-on-pull-request"
-    value: ${{ steps.exec.outputs.outcome }}
-  command:
-    description: "Forwarded (key: command) — aldrava-dispatch matched command name"
-    value: ${{ steps.exec.outputs.command }}
-  args:
-    description: "Forwarded (key: args) — aldrava-dispatch captured args, JSON array"
-    value: ${{ steps.exec.outputs.args }}
-  commenter:
-    description: "Forwarded (key: commenter) — aldrava-dispatch knock author login"
-    value: ${{ steps.exec.outputs.commenter }}
-  checkout-ref:
-    description: "Forwarded (key: checkout-ref) — aldrava-dispatch/aldrava-resolve resolved PR head SHA"
-    value: ${{ steps.exec.outputs.checkout-ref }}
-  branch-ref:
-    description: "Forwarded (key: branch-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<head>"
-    value: ${{ steps.exec.outputs.branch-ref }}
-  base-ref:
-    description: "Forwarded (key: base-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<base>"
-    value: ${{ steps.exec.outputs.base-ref }}
-  pr-author:
-    description: "Forwarded (key: pr-author) — aldrava-dispatch/aldrava-resolve PR author login"
-    value: ${{ steps.exec.outputs.pr-author }}
-  is-develop:
-    description: "Forwarded (key: is-develop) — aldrava-dispatch/aldrava-resolve head-branch-is-develop flag"
-    value: ${{ steps.exec.outputs.is-develop }}
-  target-kind:
-    description: "Forwarded (key: target-kind) — aldrava-dispatch label|workflow-dispatch|repository-dispatch"
-    value: ${{ steps.exec.outputs.target-kind }}
-  target-detail:
-    description: "Forwarded (key: target-detail) — aldrava-dispatch dispatched target's identifying value"
-    value: ${{ steps.exec.outputs.target-detail }}
-  should-run:
-    description: "Forwarded (key: should-run) — aldrava-resolve run-context-resolved flag"
-    value: ${{ steps.exec.outputs.should-run }}
-  ok:
-    description: "Forwarded (key: ok) — aldrava-lint catalog-parsed-cleanly flag"
-    value: ${{ steps.exec.outputs.ok }}
-  commands:
-    description: "Forwarded (key: commands) — aldrava-lint registered command names, JSON array"
-    value: ${{ steps.exec.outputs.commands }}
-  error:
-    description: "Forwarded (key: error) — aldrava-lint syntax/semantic error"
-    value: ${{ steps.exec.outputs.error }}
-  builder:
-    description: "Forwarded (key: builder) — bigorna the buildx builder name that was set up"
-    value: ${{ steps.exec.outputs.builder }}
-  native-platforms:
-    description: "Forwarded (key: native-platforms) — bigorna comma-joined platforms covered by a native node"
-    value: ${{ steps.exec.outputs.native-platforms }}
-  emulation:
-    description: "Forwarded (key: emulation) — bigorna native-for-all | needs-native-node"
-    value: ${{ steps.exec.outputs.emulation }}
-  cache-from:
-    description: "Forwarded (key: cache-from) — bigorna a --cache-from token fronting the sui store ('' when no cache front)"
-    value: ${{ steps.exec.outputs.cache-from }}
-  cache-to:
-    description: "Forwarded (key: cache-to) — bigorna a --cache-to token fronting the sui store ('' when no cache front)"
-    value: ${{ steps.exec.outputs.cache-to }}
-  # runner-resolve — typed runs-on precedence resolver (override >
-  # repo-committed config file > caller default). Added per this file's
-  # own "add it here" convention.
-  runner:
-    description: "Forwarded (key: runner) — runner-resolve's resolved runs-on label"
-    value: ${{ steps.exec.outputs.runner }}
-  provenance:
-    description: "Forwarded (key: provenance) — runner-resolve's winning tier (override|file|default)"
-    value: ${{ steps.exec.outputs.provenance }}
-  # ── baseline-debt lint family ───────────────────────────────────────
-  # action-shell-lint / no-cve-suppression / runtime-install-lint /
-  # breathe-band-lint (+ commitlint, conftest, conventional-commit-lint,
-  # license-finder) all declare `violations` and forward it from
-  # `steps.<id>.outputs.violations` — but the key was never declared HERE,
-  # so every one of them has been resolving to an EMPTY STRING since it was
-  # written. Exactly the same latent class as the `out-path` gap documented
-  # above (a composite action forwards only DECLARED keys). Their exit codes
-  # were always correct, so the gates themselves worked; only a workflow
-  # trying to READ the count got nothing. Declaring the keys here repairs
-  # all of them at the cause. Purely additive — adding an output declaration
-  # cannot change any existing job's behaviour.
-  violations:
-    description: "Forwarded (key: violations) — count of NEW, non-baselined findings from a baseline-debt lint"
-    value: ${{ steps.exec.outputs.violations }}
-  baselined:
-    description: "Forwarded (key: baselined) — count of findings matched against the tracked-debt baseline"
-    value: ${{ steps.exec.outputs.baselined }}
-  files-scanned:
-    description: "Forwarded (key: files-scanned) — count of files a lint scanned"
-    value: ${{ steps.exec.outputs.files-scanned }}
-  workloads-scanned:
-    description: "Forwarded (key: workloads-scanned) — breathe-band-lint: Deployments/StatefulSets/DaemonSets found in the tree"
-    value: ${{ steps.exec.outputs.workloads-scanned }}
-  bands-scanned:
-    description: "Forwarded (key: bands-scanned) — breathe-band-lint: Cpu/Memory/StorageBands found in the tree"
-    value: ${{ steps.exec.outputs.bands-scanned }}
-  healthy:
-    description: "Forwarded (key: healthy) — container-boot-check: did the image boot and pass its health check"
-    value: ${{ steps.exec.outputs.healthy }}
-  # ── rust-workspace-publish ──────────────────────────────────────────
-  # Its `steps.ship` IS a tatara-script call, and its own action.yml
-  # forwards all five of these from `steps.ship.outputs.<key>` — but they
-  # were never declared HERE, so every one resolved to an EMPTY STRING.
-  # The same latent class as `out-path` and the `violations` family above.
-  # Receipt (2026-07-30): tatara-lisp v0.3.3 published all 17 members
-  # successfully and the job STILL went red, because the script's own
-  # output-contract guard correctly refused to let the drop pass silently
-  # ("the script wrote output key(s) this action does not declare").
-  # A green publish that reports red is the failure this repairs; the
-  # publish itself was never broken. Purely additive.
-  shipped-count:
-    description: "Forwarded (key: shipped-count) — rust-workspace-publish: members successfully shipped"
-    value: ${{ steps.exec.outputs.shipped-count }}
-  renamed-crates:
-    description: "Forwarded (key: renamed-crates) — rust-workspace-publish: crates auto-renamed on a name collision"
-    value: ${{ steps.exec.outputs.renamed-crates }}
-  pending-crates:
-    description: "Forwarded (key: pending-crates) — rust-workspace-publish: crates left for the next capacity window (rate-limited / dep-deferred); empty when the bootstrap is complete"
-    value: ${{ steps.exec.outputs.pending-crates }}
-  failed-crates:
-    description: "Forwarded (key: failed-crates) — rust-workspace-publish: crates that failed PERMANENTLY; a non-empty value means the step exited red"
-    value: ${{ steps.exec.outputs.failed-crates }}
-  bootstrap-complete:
-    description: "Forwarded (key: bootstrap-complete) — rust-workspace-publish: true when every member is on the registry AND nothing failed permanently"
-    value: ${{ steps.exec.outputs.bootstrap-complete }}
-
-  # ── bulk declaration: every remaining key a sibling run.tlisp writes ──
-  # A composite forwards ONLY declared keys, and tatara-script/action.yml's own
-  # output-contract guard (line ~622, `|| exit 1`) is FATAL — so an undeclared
-  # key does not merely resolve to "", it fails the step outright. Measured
-  # 2026-07-30: 221 sibling dirs wrote 130 undeclared keys; 72 of those dirs are
-  # real implementations (incl. cargo-publish-crate, cargo-publish-each-member,
-  # super-cache-save, release-promote, attestation-gate), the other 149 are
-  # `=stub` scaffolding that would fail the moment it was implemented.
-  # Declared in bulk here rather than one incident at a time; this is the 5th
-  # occurrence of the class (after out-path, the violations family, and
-  # rust-workspace-publish's five). Purely additive.
   action-taken:
     description: "Forwarded (key: action-taken) — written by 2 action dir(s): issue-create, pr-comment"
     value: ${{ steps.exec.outputs.action-taken }}
+  actions-scanned:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: actions-scanned)"
+    value: ${{ steps.exec.outputs.actions-scanned }}
+  admitted:
+    description: "Forwarded (key: admitted) — zot-pull-scan faucet admission flag"
+    value: ${{ steps.exec.outputs.admitted }}
+  adopted-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: adopted-count)"
+    value: ${{ steps.exec.outputs.adopted-count }}
+  adoption-pct:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: adoption-pct)"
+    value: ${{ steps.exec.outputs.adoption-pct }}
   annotation-id:
     description: "Forwarded (key: annotation-id) — written by 1 action dir(s): grafana-annotation"
     value: ${{ steps.exec.outputs.annotation-id }}
@@ -462,12 +76,24 @@ outputs:
   applied-count:
     description: "Forwarded (key: applied-count) — written by 2 action dir(s): db-migrate, kubectl-apply"
     value: ${{ steps.exec.outputs.applied-count }}
+  arches:
+    description: "Forwarded (key: arches) — manifest-list-join arches folded into the index"
+    value: ${{ steps.exec.outputs.arches }}
+  args:
+    description: "Forwarded (key: args) — aldrava-dispatch captured args, JSON array"
+    value: ${{ steps.exec.outputs.args }}
   artifact-path:
     description: "Forwarded (key: artifact-path) — written by 3 action dir(s): flutter-build, godot-export, unity-build"
     value: ${{ steps.exec.outputs.artifact-path }}
   attestation-path:
     description: "Forwarded (key: attestation-path) — written by 2 action dir(s): slsa-attest, syft-attest"
     value: ${{ steps.exec.outputs.attestation-path }}
+  attested:
+    description: "Forwarded (key: attested) — tameshi-attest receipt-assembled flag"
+    value: ${{ steps.exec.outputs.attested }}
+  attr:
+    description: "Forwarded (key: attr) — ferrite-check resolved flake attr (template rendered)"
+    value: ${{ steps.exec.outputs.attr }}
   backup-name:
     description: "Forwarded (key: backup-name) — written by 1 action dir(s): velero-backup"
     value: ${{ steps.exec.outputs.backup-name }}
@@ -477,6 +103,21 @@ outputs:
   badge-path:
     description: "Forwarded (key: badge-path) — written by 1 action dir(s): status-badge"
     value: ${{ steps.exec.outputs.badge-path }}
+  badge-url:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: badge-url)"
+    value: ${{ steps.exec.outputs.badge-url }}
+  bands-scanned:
+    description: "Forwarded (key: bands-scanned) — breathe-band-lint: Cpu/Memory/StorageBands found in the tree"
+    value: ${{ steps.exec.outputs.bands-scanned }}
+  base-ref:
+    description: "Forwarded (key: base-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<base>"
+    value: ${{ steps.exec.outputs.base-ref }}
+  baseline-violations:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: baseline-violations)"
+    value: ${{ steps.exec.outputs.baseline-violations }}
+  baselined:
+    description: "Forwarded (key: baselined) — count of findings matched against the tracked-debt baseline"
+    value: ${{ steps.exec.outputs.baselined }}
   batch-id:
     description: "Forwarded (key: batch-id) — written by 1 action dir(s): openai-embeddings-batch"
     value: ${{ steps.exec.outputs.batch-id }}
@@ -486,12 +127,48 @@ outputs:
   binary-path:
     description: "Forwarded (key: binary-path) — written by 2 action dir(s): arduino-cli-build, esp-idf-build"
     value: ${{ steps.exec.outputs.binary-path }}
+  bootstrap-complete:
+    description: "Forwarded (key: bootstrap-complete) — rust-workspace-publish: true when every member is on the registry AND nothing failed permanently"
+    value: ${{ steps.exec.outputs.bootstrap-complete }}
+  branch-ref:
+    description: "Forwarded (key: branch-ref) — aldrava-dispatch/aldrava-resolve resolved refs/heads/<head>"
+    value: ${{ steps.exec.outputs.branch-ref }}
   breaking-count:
     description: "Forwarded (key: breaking-count) — written by 1 action dir(s): api-spec-diff"
     value: ${{ steps.exec.outputs.breaking-count }}
+  build-ms:
+    description: "Forwarded (key: build-ms) — super-cache-build derive time"
+    value: ${{ steps.exec.outputs.build-ms }}
   build-url:
     description: "Forwarded (key: build-url) — written by 1 action dir(s): eas-build"
     value: ${{ steps.exec.outputs.build-url }}
+  builder:
+    description: "Forwarded (key: builder) — bigorna the buildx builder name that was set up"
+    value: ${{ steps.exec.outputs.builder }}
+  built:
+    description: "Forwarded (key: built) — nix-image all-arches-built flag"
+    value: ${{ steps.exec.outputs.built }}
+  bumped:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: bumped)"
+    value: ${{ steps.exec.outputs.bumped }}
+  cache-backend:
+    description: "Forwarded (key: cache-backend) — sui-service-up hot cache tier"
+    value: ${{ steps.exec.outputs.cache-backend }}
+  cache-from:
+    description: "Forwarded (key: cache-from) — bigorna a --cache-from token fronting the sui store ('' when no cache front)"
+    value: ${{ steps.exec.outputs.cache-from }}
+  cache-hit:
+    description: "Forwarded (key: cache-hit) — super-cache-restore warm-path hit flag"
+    value: ${{ steps.exec.outputs.cache-hit }}
+  cache-to:
+    description: "Forwarded (key: cache-to) — bigorna a --cache-to token fronting the sui store ('' when no cache front)"
+    value: ${{ steps.exec.outputs.cache-to }}
+  cached:
+    description: "Forwarded (key: cached) — ferrite-check by-source-hash PoMS cache-hit flag (derive skippable)"
+    value: ${{ steps.exec.outputs.cached }}
+  cached-sha:
+    description: "Forwarded (key: cached-sha) — spec-watch sha256 previously stored in the cache file"
+    value: ${{ steps.exec.outputs.cached-sha }}
   caixa-kind:
     description: "Forwarded (key: caixa-kind) — written by 1 action dir(s): caixa-detect"
     value: ${{ steps.exec.outputs.caixa-kind }}
@@ -501,15 +178,45 @@ outputs:
   caixa-path:
     description: "Forwarded (key: caixa-path) — written by 1 action dir(s): caixa-detect"
     value: ${{ steps.exec.outputs.caixa-path }}
+  capacity-type:
+    description: "Forwarded (key: capacity-type) — breathe-runner spot|on-demand|unknown"
+    value: ${{ steps.exec.outputs.capacity-type }}
   captured:
     description: "Forwarded (key: captured) — written by 1 action dir(s): puppeteer-screenshot"
     value: ${{ steps.exec.outputs.captured }}
   certificate-path:
     description: "Forwarded (key: certificate-path) — written by 1 action dir(s): provenance-attest"
     value: ${{ steps.exec.outputs.certificate-path }}
+  changed:
+    description: "Forwarded (key: changed) — gen-build-spec spec-content-changed flag; also spec-watch's own upstream-sha-differs flag (same key, disjoint consumers)"
+    value: ${{ steps.exec.outputs.changed }}
+  changelog:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: changelog)"
+    value: ${{ steps.exec.outputs.changelog }}
+  checkout-ref:
+    description: "Forwarded (key: checkout-ref) — aldrava-dispatch/aldrava-resolve resolved PR head SHA"
+    value: ${{ steps.exec.outputs.checkout-ref }}
+  clippy-passed:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: clippy-passed)"
+    value: ${{ steps.exec.outputs.clippy-passed }}
+  closed-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: closed-count)"
+    value: ${{ steps.exec.outputs.closed-count }}
+  command:
+    description: "Forwarded (key: command) — aldrava-dispatch matched command name"
+    value: ${{ steps.exec.outputs.command }}
+  commands:
+    description: "Forwarded (key: commands) — aldrava-lint registered command names, JSON array"
+    value: ${{ steps.exec.outputs.commands }}
   comment-id:
     description: "Forwarded (key: comment-id) — written by 1 action dir(s): pr-comment"
     value: ${{ steps.exec.outputs.comment-id }}
+  commenter:
+    description: "Forwarded (key: commenter) — aldrava-dispatch knock author login"
+    value: ${{ steps.exec.outputs.commenter }}
+  commit-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: commit-count)"
+    value: ${{ steps.exec.outputs.commit-count }}
   committed:
     description: "Forwarded (key: committed) — written by 1 action dir(s): release-promote"
     value: ${{ steps.exec.outputs.committed }}
@@ -531,6 +238,9 @@ outputs:
   copied:
     description: "Forwarded (key: copied) — written by 1 action dir(s): skopeo-copy"
     value: ${{ steps.exec.outputs.copied }}
+  count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: count) — a row/item count (e.g. build-matrix rows)"
+    value: ${{ steps.exec.outputs.count }}
   coverage-pct:
     description: "Forwarded (key: coverage-pct) — written by 1 action dir(s): coverage-upload"
     value: ${{ steps.exec.outputs.coverage-pct }}
@@ -540,6 +250,9 @@ outputs:
   decision:
     description: "Forwarded (key: decision) — written by 1 action dir(s): attestation-gate"
     value: ${{ steps.exec.outputs.decision }}
+  dedup-key:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: dedup-key)"
+    value: ${{ steps.exec.outputs.dedup-key }}
   deferred:
     description: "Forwarded (key: deferred) — written by 1 action dir(s): cargo-publish-crate"
     value: ${{ steps.exec.outputs.deferred }}
@@ -558,21 +271,63 @@ outputs:
   deployment-url:
     description: "Forwarded (key: deployment-url) — written by 1 action dir(s): deno-deploy"
     value: ${{ steps.exec.outputs.deployment-url }}
+  digest:
+    description: "Forwarded (key: digest) — zot-push pushed repository digest (exact deploy coord)"
+    value: ${{ steps.exec.outputs.digest }}
+  dispatched:
+    description: "Forwarded (key: dispatched) — aldrava-dispatch trusted-knock-matched flag"
+    value: ${{ steps.exec.outputs.dispatched }}
   distributed:
     description: "Forwarded (key: distributed) — written by 1 action dir(s): nx-cloud-distribute"
     value: ${{ steps.exec.outputs.distributed }}
+  drain-armed:
+    description: "Forwarded (key: drain-armed) — breathe-runner retirada drain-armed flag"
+    value: ${{ steps.exec.outputs.drain-armed }}
+  drift:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: drift)"
+    value: ${{ steps.exec.outputs.drift }}
   drift-detected:
     description: "Forwarded (key: drift-detected) — written by 1 action dir(s): caixa-render-pr"
     value: ${{ steps.exec.outputs.drift-detected }}
+  drv-path:
+    description: "Forwarded (key: drv-path) — ferrite-check resolved .drv store path"
+    value: ${{ steps.exec.outputs.drv-path }}
+  dry-run:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: dry-run)"
+    value: ${{ steps.exec.outputs.dry-run }}
+  ecosystem:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: ecosystem)"
+    value: ${{ steps.exec.outputs.ecosystem }}
+  emulation:
+    description: "Forwarded (key: emulation) — bigorna native-for-all | needs-native-node"
+    value: ${{ steps.exec.outputs.emulation }}
+  endpoint:
+    description: "Forwarded (key: endpoint) — sui-service-up resolved service endpoint"
+    value: ${{ steps.exec.outputs.endpoint }}
+  error:
+    description: "Forwarded (key: error) — aldrava-lint syntax/semantic error"
+    value: ${{ steps.exec.outputs.error }}
   errors:
     description: "Forwarded (key: errors) — written by 2 action dir(s): json-schema-check, yaml-lint"
     value: ${{ steps.exec.outputs.errors }}
+  errors-found:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: errors-found)"
+    value: ${{ steps.exec.outputs.errors-found }}
+  eval-ms:
+    description: "Forwarded (key: eval-ms) — super-cache-build RAM eval time"
+    value: ${{ steps.exec.outputs.eval-ms }}
   event-id:
     description: "Forwarded (key: event-id) — written by 1 action dir(s): google-calendar-event-create"
     value: ${{ steps.exec.outputs.event-id }}
   failed-count:
     description: "Forwarded (key: failed-count) — written by 1 action dir(s): cargo-publish-each-member"
     value: ${{ steps.exec.outputs.failed-count }}
+  failed-crates:
+    description: "Forwarded (key: failed-crates) — rust-workspace-publish: crates that failed PERMANENTLY; a non-empty value means the step exited red"
+    value: ${{ steps.exec.outputs.failed-crates }}
+  failed-files:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: failed-files)"
+    value: ${{ steps.exec.outputs.failed-files }}
   fetched:
     description: "Forwarded (key: fetched) — written by 2 action dir(s): crates-mirror-pull, npm-mirror-pull"
     value: ${{ steps.exec.outputs.fetched }}
@@ -582,6 +337,15 @@ outputs:
   files-rendered:
     description: "Forwarded (key: files-rendered) — written by 1 action dir(s): caixa-render-pr"
     value: ${{ steps.exec.outputs.files-rendered }}
+  files-scanned:
+    description: "Forwarded (key: files-scanned) — count of files a lint scanned"
+    value: ${{ steps.exec.outputs.files-scanned }}
+  files-skipped:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: files-skipped)"
+    value: ${{ steps.exec.outputs.files-skipped }}
+  files-written:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: files-written)"
+    value: ${{ steps.exec.outputs.files-written }}
   findings:
     description: "Forwarded (key: findings) — written by 2 action dir(s): golangci-lint, trivy-fs-scan"
     value: ${{ steps.exec.outputs.findings }}
@@ -591,12 +355,39 @@ outputs:
   flushed:
     description: "Forwarded (key: flushed) — written by 1 action dir(s): redis-flush"
     value: ${{ steps.exec.outputs.flushed }}
+  fmt-passed:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: fmt-passed)"
+    value: ${{ steps.exec.outputs.fmt-passed }}
   found-count:
     description: "Forwarded (key: found-count) — written by 1 action dir(s): secrets-scan"
     value: ${{ steps.exec.outputs.found-count }}
+  from-cache:
+    description: "Forwarded (key: from-cache) — super-cache-build served-from-cache flag"
+    value: ${{ steps.exec.outputs.from-cache }}
+  gap-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: gap-count)"
+    value: ${{ steps.exec.outputs.gap-count }}
+  gate-receipt-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: gate-receipt-path)"
+    value: ${{ steps.exec.outputs.gate-receipt-path }}
   generated:
     description: "Forwarded (key: generated) — written by 1 action dir(s): git-cliff"
     value: ${{ steps.exec.outputs.generated }}
+  ghost-steps:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: ghost-steps)"
+    value: ${{ steps.exec.outputs.ghost-steps }}
+  has-changes:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: has-changes)"
+    value: ${{ steps.exec.outputs.has-changes }}
+  healthy:
+    description: "Forwarded (key: healthy) — container-boot-check: did the image boot and pass its health check"
+    value: ${{ steps.exec.outputs.healthy }}
+  hit-tier:
+    description: "Forwarded (key: hit-tier) — super-cache-restore tier (redis|pg|object|miss)"
+    value: ${{ steps.exec.outputs.hit-tier }}
+  hostname:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: hostname)"
+    value: ${{ steps.exec.outputs.hostname }}
   image:
     description: "Forwarded (key: image) — written by 1 action dir(s): ko-build"
     value: ${{ steps.exec.outputs.image }}
@@ -609,6 +400,12 @@ outputs:
   imported:
     description: "Forwarded (key: imported) — written by 2 action dir(s): keycloak-realm-import, typesense-import"
     value: ${{ steps.exec.outputs.imported }}
+  index-digest:
+    description: "Forwarded (key: index-digest) — manifest-list-join index digest (exact multi-arch coord)"
+    value: ${{ steps.exec.outputs.index-digest }}
+  index-ref:
+    description: "Forwarded (key: index-ref) — manifest-list-join multi-arch index ref"
+    value: ${{ steps.exec.outputs.index-ref }}
   injected:
     description: "Forwarded (key: injected) — written by 1 action dir(s): linkerd-inject"
     value: ${{ steps.exec.outputs.injected }}
@@ -618,6 +415,12 @@ outputs:
   interface:
     description: "Forwarded (key: interface) — written by 1 action dir(s): wireguard-up"
     value: ${{ steps.exec.outputs.interface }}
+  invalid-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: invalid-count)"
+    value: ${{ steps.exec.outputs.invalid-count }}
+  is-develop:
+    description: "Forwarded (key: is-develop) — aldrava-dispatch/aldrava-resolve head-branch-is-develop flag"
+    value: ${{ steps.exec.outputs.is-develop }}
   issue-id:
     description: "Forwarded (key: issue-id) — written by 1 action dir(s): linear-issue-create"
     value: ${{ steps.exec.outputs.issue-id }}
@@ -630,24 +433,57 @@ outputs:
   job-id:
     description: "Forwarded (key: job-id) — written by 2 action dir(s): openai-fine-tune-trigger, qiskit-job-submit"
     value: ${{ steps.exec.outputs.job-id }}
+  joined:
+    description: "Forwarded (key: joined) — manifest-list-join index-composed flag"
+    value: ${{ steps.exec.outputs.joined }}
+  key:
+    description: "Forwarded (key: key) — content-addressed super-cache key threaded restore->build->save"
+    value: ${{ steps.exec.outputs.key }}
+  keys-checked:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: keys-checked)"
+    value: ${{ steps.exec.outputs.keys-checked }}
   kind:
     description: "Forwarded (key: kind) — written by 1 action dir(s): release-promote"
     value: ${{ steps.exec.outputs.kind }}
+  lang:
+    description: "Forwarded (key: lang) — gen-build-spec resolved language"
+    value: ${{ steps.exec.outputs.lang }}
+  lint-passed:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: lint-passed)"
+    value: ${{ steps.exec.outputs.lint-passed }}
+  local-archive:
+    description: "Forwarded (key: local-archive) — zot-pull-scan pulled archive path"
+    value: ${{ steps.exec.outputs.local-archive }}
   logged-in:
     description: "Forwarded (key: logged-in) — written by 1 action dir(s): skopeo-login"
     value: ${{ steps.exec.outputs.logged-in }}
+  manifest-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: manifest-path) — the manifest that drove detect-repo-type's answer."
+    value: ${{ steps.exec.outputs.manifest-path }}
   marker-id:
     description: "Forwarded (key: marker-id) — written by 2 action dir(s): honeycomb-marker, newrelic-deploy-marker"
     value: ${{ steps.exec.outputs.marker-id }}
+  materializable:
+    description: "Forwarded (key: materializable) — ferrite-check package-materializable verdict"
+    value: ${{ steps.exec.outputs.materializable }}
   materialized:
     description: "Forwarded (key: materialized) — written by 1 action dir(s): dagster-materialize"
     value: ${{ steps.exec.outputs.materialized }}
+  matrix:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: matrix) — the build-matrix image×arch GHA matrix JSON"
+    value: ${{ steps.exec.outputs.matrix }}
   merged-count:
     description: "Forwarded (key: merged-count) — written by 1 action dir(s): changelog-fragments-merge"
     value: ${{ steps.exec.outputs.merged-count }}
   message-id:
     description: "Forwarded (key: message-id) — written by 1 action dir(s): ses-email-send"
     value: ${{ steps.exec.outputs.message-id }}
+  missing-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: missing-count)"
+    value: ${{ steps.exec.outputs.missing-count }}
+  model:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: model)"
+    value: ${{ steps.exec.outputs.model }}
   monthly-diff:
     description: "Forwarded (key: monthly-diff) — written by 1 action dir(s): infracost-comment"
     value: ${{ steps.exec.outputs.monthly-diff }}
@@ -660,33 +496,96 @@ outputs:
   mutated:
     description: "Forwarded (key: mutated) — written by 1 action dir(s): crane-mutate"
     value: ${{ steps.exec.outputs.mutated }}
+  native-platforms:
+    description: "Forwarded (key: native-platforms) — bigorna comma-joined platforms covered by a native node"
+    value: ${{ steps.exec.outputs.native-platforms }}
+  never-touch-disk:
+    description: "Forwarded (key: never-touch-disk) — computed postgres∧redis∧tmpfs predicate"
+    value: ${{ steps.exec.outputs.never-touch-disk }}
+  new-sha:
+    description: "Forwarded (key: new-sha) — spec-watch sha256 of the upstream spec fetched this run"
+    value: ${{ steps.exec.outputs.new-sha }}
+  new-version:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: new-version)"
+    value: ${{ steps.exec.outputs.new-version }}
+  node-group:
+    description: "Forwarded (key: node-group) — breathe-runner camelot node-group"
+    value: ${{ steps.exec.outputs.node-group }}
+  ok:
+    description: "Forwarded (key: ok) — aldrava-lint catalog-parsed-cleanly flag"
+    value: ${{ steps.exec.outputs.ok }}
   old-version:
     description: "Forwarded (key: old-version) — written by 1 action dir(s): caixa-bump"
     value: ${{ steps.exec.outputs.old-version }}
+  out-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: out-path) — nix-build's built store path. Missing since nix-build's own inception (2026-07-14 discovery: cartorio-attest's nix-closure-info-path silently received an empty string from every nix-build consumer, on both @main and @v1, because this key was never added here)"
+    value: ${{ steps.exec.outputs.out-path }}
+  outcome:
+    description: "Forwarded (key: outcome) — aldrava-dispatch dispatched|rejected|no-match|not-on-pull-request"
+    value: ${{ steps.exec.outputs.outcome }}
+  outcome-chain:
+    description: "Forwarded (key: outcome-chain) — tameshi-attest kensa OutcomeChain flag"
+    value: ${{ steps.exec.outputs.outcome-chain }}
+  output-hashes:
+    description: "Forwarded (key: output-hashes) — super-cache-build BLAKE3 output hashes"
+    value: ${{ steps.exec.outputs.output-hashes }}
   output-path:
     description: "Forwarded (key: output-path) — written by 4 action dir(s): cyclonedx-merge, ffmpeg-transcode, jupyter-notebook-render …"
     value: ${{ steps.exec.outputs.output-path }}
+  outputs:
+    description: "Forwarded (key: outputs) — restored/built store-path list"
+    value: ${{ steps.exec.outputs.outputs }}
   page-id:
     description: "Forwarded (key: page-id) — written by 3 action dir(s): confluence-page-create, notion-db-row-add, notion-page-create"
     value: ${{ steps.exec.outputs.page-id }}
+  parity-violations:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: parity-violations)"
+    value: ${{ steps.exec.outputs.parity-violations }}
   passed:
     description: "Forwarded (key: passed) — written by 15 action dir(s): attestation-gate, browserstack-test, cypress-test …"
     value: ${{ steps.exec.outputs.passed }}
+  paths:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: paths)"
+    value: ${{ steps.exec.outputs.paths }}
+  pending-crates:
+    description: "Forwarded (key: pending-crates) — rust-workspace-publish: crates left for the next capacity window (rate-limited / dep-deferred); empty when the bootstrap is complete"
+    value: ${{ steps.exec.outputs.pending-crates }}
+  plan-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: plan-path)"
+    value: ${{ steps.exec.outputs.plan-path }}
+  poms-algo:
+    description: "Forwarded (key: poms-algo) — ferrite-check PoMS hash algorithm (blake3)"
+    value: ${{ steps.exec.outputs.poms-algo }}
+  poms-hash:
+    description: "Forwarded (key: poms-hash) — ferrite-check real BLAKE3 PoMS receipt hash"
+    value: ${{ steps.exec.outputs.poms-hash }}
+  poms-path:
+    description: "Forwarded (key: poms-path) — ferrite-check emitted PoMS JSON path"
+    value: ${{ steps.exec.outputs.poms-path }}
   posted:
     description: "Forwarded (key: posted) — written by 1 action dir(s): datadog-event"
     value: ${{ steps.exec.outputs.posted }}
+  pr-author:
+    description: "Forwarded (key: pr-author) — aldrava-dispatch/aldrava-resolve PR author login"
+    value: ${{ steps.exec.outputs.pr-author }}
   pr-url:
     description: "Forwarded (key: pr-url) — written by 3 action dir(s): caixa-render-pr, dependency-update, nix-flake-update"
     value: ${{ steps.exec.outputs.pr-url }}
   prediction-id:
     description: "Forwarded (key: prediction-id) — written by 1 action dir(s): replicate-run"
     value: ${{ steps.exec.outputs.prediction-id }}
+  preseeded:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: preseeded)"
+    value: ${{ steps.exec.outputs.preseeded }}
   program-id:
     description: "Forwarded (key: program-id) — written by 1 action dir(s): anchor-build"
     value: ${{ steps.exec.outputs.program-id }}
   promoted:
     description: "Forwarded (key: promoted) — written by 1 action dir(s): release-promote"
     value: ${{ steps.exec.outputs.promoted }}
+  provenance:
+    description: "Forwarded (key: provenance) — runner-resolve's winning tier (override|file|default)"
+    value: ${{ steps.exec.outputs.provenance }}
   published:
     description: "Forwarded (key: published) — written by 8 action dir(s): bun-publish, caixa-publish-to-git, cloudflare-queue-publish …"
     value: ${{ steps.exec.outputs.published }}
@@ -699,18 +598,54 @@ outputs:
   purged:
     description: "Forwarded (key: purged) — written by 2 action dir(s): cloudflare-cache-purge, fastly-cache-purge"
     value: ${{ steps.exec.outputs.purged }}
+  pushed:
+    description: "Forwarded (key: pushed) — ghcr-publish push-success flag"
+    value: ${{ steps.exec.outputs.pushed }}
   put:
     description: "Forwarded (key: put) — written by 1 action dir(s): cloudflare-kv-put"
     value: ${{ steps.exec.outputs.put }}
+  reason:
+    description: "Forwarded (key: reason) — a shared typed why-string key, consumers disjoint: service/cache/spec verbs' outcome reason, OR aldrava-dispatch/aldrava-resolve's rejection/no-match/not-running reason"
+    value: ${{ steps.exec.outputs.reason }}
+  receipt-algo:
+    description: "Forwarded (key: receipt-algo) — tameshi-attest hash algorithm (blake3)"
+    value: ${{ steps.exec.outputs.receipt-algo }}
+  receipt-hash:
+    description: "Forwarded (key: receipt-hash) — tameshi-attest BLAKE3 receipt hash"
+    value: ${{ steps.exec.outputs.receipt-hash }}
+  receipt-path:
+    description: "Forwarded (key: receipt-path) — tameshi-attest receipt JSON path"
+    value: ${{ steps.exec.outputs.receipt-path }}
   reconciled:
     description: "Forwarded (key: reconciled) — written by 1 action dir(s): flux-reconcile"
     value: ${{ steps.exec.outputs.reconciled }}
   record-id:
     description: "Forwarded (key: record-id) — written by 2 action dir(s): airtable-record-create, salesforce-record-create"
     value: ${{ steps.exec.outputs.record-id }}
+  ref:
+    description: "Forwarded (key: ref) — ghcr-publish full pushed ref"
+    value: ${{ steps.exec.outputs.ref }}
+  ref-aarch64:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: ref-aarch64)"
+    value: ${{ steps.exec.outputs.ref-aarch64 }}
+  ref-amd64:
+    description: "Forwarded (key: ref-amd64) — ghcr-publish amd64 ref"
+    value: ${{ steps.exec.outputs.ref-amd64 }}
+  ref-arm64:
+    description: "Forwarded (key: ref-arm64) — ghcr-publish arm64 ref"
+    value: ${{ steps.exec.outputs.ref-arm64 }}
+  ref-x86_64:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: ref-x86_64)"
+    value: ${{ steps.exec.outputs.ref-x86_64 }}
+  regenerated:
+    description: "Forwarded (key: regenerated) — gen-build-spec did-gen-run flag"
+    value: ${{ steps.exec.outputs.regenerated }}
   release-pr-url:
     description: "Forwarded (key: release-pr-url) — written by 1 action dir(s): release-please"
     value: ${{ steps.exec.outputs.release-pr-url }}
+  release-url:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: release-url)"
+    value: ${{ steps.exec.outputs.release-url }}
   release-version:
     description: "Forwarded (key: release-version) — written by 1 action dir(s): sentry-release"
     value: ${{ steps.exec.outputs.release-version }}
@@ -720,18 +655,30 @@ outputs:
   released-version:
     description: "Forwarded (key: released-version) — written by 1 action dir(s): semantic-release"
     value: ${{ steps.exec.outputs.released-version }}
+  renamed-crates:
+    description: "Forwarded (key: renamed-crates) — rust-workspace-publish: crates auto-renamed on a name collision"
+    value: ${{ steps.exec.outputs.renamed-crates }}
   rendered:
     description: "Forwarded (key: rendered) — written by 1 action dir(s): step-summary-publish"
     value: ${{ steps.exec.outputs.rendered }}
+  repo-type:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: repo-type) — detect-repo-type's typed identifier. Without this entry the key is silently dropped at the composite boundary and every consumer reads an empty string."
+    value: ${{ steps.exec.outputs.repo-type }}
   report-path:
     description: "Forwarded (key: report-path) — written by 1 action dir(s): adoption-audit"
     value: ${{ steps.exec.outputs.report-path }}
+  requested:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: requested)"
+    value: ${{ steps.exec.outputs.requested }}
   resolved-count:
     description: "Forwarded (key: resolved-count) — written by 1 action dir(s): caixa-deps-resolve"
     value: ${{ steps.exec.outputs.resolved-count }}
   response:
     description: "Forwarded (key: response) — written by 1 action dir(s): anthropic-message"
     value: ${{ steps.exec.outputs.response }}
+  result:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: result) — generic catch-all"
+    value: ${{ steps.exec.outputs.result }}
   revision:
     description: "Forwarded (key: revision) — written by 1 action dir(s): helm-deploy"
     value: ${{ steps.exec.outputs.revision }}
@@ -747,36 +694,105 @@ outputs:
   run-id:
     description: "Forwarded (key: run-id) — written by 2 action dir(s): airflow-trigger, retool-workflow-run"
     value: ${{ steps.exec.outputs.run-id }}
+  runner:
+    description: "Forwarded (key: runner) — runner-resolve's resolved runs-on label"
+    value: ${{ steps.exec.outputs.runner }}
+  runner-ok:
+    description: "Forwarded (key: runner-ok) — breathe-runner posture-ok flag"
+    value: ${{ steps.exec.outputs.runner-ok }}
   s3-uri:
     description: "Forwarded (key: s3-uri) — written by 1 action dir(s): aws-s3-upload"
     value: ${{ steps.exec.outputs.s3-uri }}
+  sandbox:
+    description: "Forwarded (key: sandbox) — sui-service-up build sandbox (tmpfs|disk)"
+    value: ${{ steps.exec.outputs.sandbox }}
+  saved:
+    description: "Forwarded (key: saved) — super-cache-save newly-persisted flag"
+    value: ${{ steps.exec.outputs.saved }}
+  sbom-components:
+    description: "Forwarded (key: sbom-components) — cartorio-attest Nix-closure component count"
+    value: ${{ steps.exec.outputs.sbom-components }}
+  sbom-format:
+    description: "Forwarded (key: sbom-format) — cartorio-attest SBOM format (CycloneDX-1.5)"
+    value: ${{ steps.exec.outputs.sbom-format }}
+  sbom-path:
+    description: "Forwarded (key: sbom-path) — cartorio-attest CycloneDX SBOM path"
+    value: ${{ steps.exec.outputs.sbom-path }}
+  scale-to-zero:
+    description: "Forwarded (key: scale-to-zero) — breathe-runner scale-to-zero tri-state"
+    value: ${{ steps.exec.outputs.scale-to-zero }}
   scan-id:
     description: "Forwarded (key: scan-id) — written by 1 action dir(s): sonarqube-scan"
     value: ${{ steps.exec.outputs.scan-id }}
+  scan-outcome:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: scan-outcome)"
+    value: ${{ steps.exec.outputs.scan-outcome }}
   sent:
     description: "Forwarded (key: sent) — written by 8 action dir(s): apprise-notify, matrix-notify, mattermost-notify …"
     value: ${{ steps.exec.outputs.sent }}
+  severity:
+    description: "Forwarded (key: severity) — image-scan / zot-pull-scan highest severity"
+    value: ${{ steps.exec.outputs.severity }}
   shipped:
     description: "Forwarded (key: shipped) — written by 4 action dir(s): cargo-publish-crate, helm-publish, npm-publish …"
     value: ${{ steps.exec.outputs.shipped }}
+  shipped-count:
+    description: "Forwarded (key: shipped-count) — rust-workspace-publish: members successfully shipped"
+    value: ${{ steps.exec.outputs.shipped-count }}
+  should-run:
+    description: "Forwarded (key: should-run) — aldrava-resolve run-context-resolved flag"
+    value: ${{ steps.exec.outputs.should-run }}
   sid:
     description: "Forwarded (key: sid) — written by 2 action dir(s): twilio-sms, twilio-voice-call"
     value: ${{ steps.exec.outputs.sid }}
   signature-path:
     description: "Forwarded (key: signature-path) — written by 1 action dir(s): provenance-attest"
     value: ${{ steps.exec.outputs.signature-path }}
+  signed:
+    description: "Forwarded (key: signed) — tameshi-attest Ed25519-signed flag"
+    value: ${{ steps.exec.outputs.signed }}
   signed-verified:
     description: "Forwarded (key: signed-verified) — written by 1 action dir(s): attestation-gate"
     value: ${{ steps.exec.outputs.signed-verified }}
   site-path:
     description: "Forwarded (key: site-path) — written by 6 action dir(s): docusaurus-build, hugo-build, mdbook-build …"
     value: ${{ steps.exec.outputs.site-path }}
+  skipped:
+    description: "Forwarded (key: skipped) — super-cache-save write-if-absent idempotent skip"
+    value: ${{ steps.exec.outputs.skipped }}
+  skipped-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: skipped-count)"
+    value: ${{ steps.exec.outputs.skipped-count }}
+  slsa-path:
+    description: "Forwarded (key: slsa-path) — cartorio-attest SLSA provenance predicate path"
+    value: ${{ steps.exec.outputs.slsa-path }}
+  slsa-predicate-type:
+    description: "Forwarded (key: slsa-predicate-type) — cartorio-attest SLSA predicate type"
+    value: ${{ steps.exec.outputs.slsa-predicate-type }}
   snapshot-id:
     description: "Forwarded (key: snapshot-id) — written by 2 action dir(s): elasticsearch-snapshot, restic-backup"
     value: ${{ steps.exec.outputs.snapshot-id }}
   snapshots-count:
     description: "Forwarded (key: snapshots-count) — written by 1 action dir(s): percy-snapshot"
     value: ${{ steps.exec.outputs.snapshots-count }}
+  source-hash:
+    description: "Forwarded (key: source-hash) — ferrite-check content-addressed source/cache key"
+    value: ${{ steps.exec.outputs.source-hash }}
+  spec-hash:
+    description: "Forwarded (key: spec-hash) — gen-build-spec build-spec content-address"
+    value: ${{ steps.exec.outputs.spec-hash }}
+  spec-path:
+    description: "Forwarded (key: spec-path) — gen-build-spec typed build-spec path"
+    value: ${{ steps.exec.outputs.spec-path }}
+  spec-violations:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: spec-violations)"
+    value: ${{ steps.exec.outputs.spec-violations }}
+  stale:
+    description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
+    value: ${{ steps.exec.outputs.stale }}
+  store-backend:
+    description: "Forwarded (key: store-backend) — sui-service-up durable store tier"
+    value: ${{ steps.exec.outputs.store-backend }}
   summary-path:
     description: "Forwarded (key: summary-path) — written by 1 action dir(s): k6-load-test"
     value: ${{ steps.exec.outputs.summary-path }}
@@ -786,12 +802,54 @@ outputs:
   synced-count:
     description: "Forwarded (key: synced-count) — written by 4 action dir(s): gh-secrets-sync, okta-app-sync, readme-sync …"
     value: ${{ steps.exec.outputs.synced-count }}
+  tag:
+    description: "Forwarded (key: tag) — ghcr-publish exact AUTOBUMP tag"
+    value: ${{ steps.exec.outputs.tag }}
+  tarball-aarch64:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: tarball-aarch64)"
+    value: ${{ steps.exec.outputs.tarball-aarch64 }}
+  tarball-amd64:
+    description: "Forwarded (key: tarball-amd64) — nix-image amd64 tarball path"
+    value: ${{ steps.exec.outputs.tarball-amd64 }}
+  tarball-arm64:
+    description: "Forwarded (key: tarball-arm64) — nix-image arm64 tarball path"
+    value: ${{ steps.exec.outputs.tarball-arm64 }}
+  tarball-path:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: tarball-path)"
+    value: ${{ steps.exec.outputs.tarball-path }}
+  tarball-x86_64:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: tarball-x86_64)"
+    value: ${{ steps.exec.outputs.tarball-x86_64 }}
+  tarballs:
+    description: "Forwarded (key: tarballs) — nix-image 'arch:path' list"
+    value: ${{ steps.exec.outputs.tarballs }}
+  target-detail:
+    description: "Forwarded (key: target-detail) — aldrava-dispatch dispatched target's identifying value"
+    value: ${{ steps.exec.outputs.target-detail }}
+  target-kind:
+    description: "Forwarded (key: target-kind) — aldrava-dispatch label|workflow-dispatch|repository-dispatch"
+    value: ${{ steps.exec.outputs.target-kind }}
   task-id:
     description: "Forwarded (key: task-id) — written by 3 action dir(s): asana-task-create, clickup-task-create, meilisearch-index"
     value: ${{ steps.exec.outputs.task-id }}
+  test-files:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: test-files)"
+    value: ${{ steps.exec.outputs.test-files }}
+  test-passed:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: test-passed)"
+    value: ${{ steps.exec.outputs.test-passed }}
+  tier:
+    description: "Forwarded (key: tier) — super-cache-save durable tier that accepted the write"
+    value: ${{ steps.exec.outputs.tier }}
+  token:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: token)"
+    value: ${{ steps.exec.outputs.token }}
   tool:
     description: "Forwarded (key: tool) — written by 1 action dir(s): docs-publish"
     value: ${{ steps.exec.outputs.tool }}
+  total-repos:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: total-repos)"
+    value: ${{ steps.exec.outputs.total-repos }}
   total-usd:
     description: "Forwarded (key: total-usd) — written by 1 action dir(s): aws-cost-report"
     value: ${{ steps.exec.outputs.total-usd }}
@@ -804,6 +862,9 @@ outputs:
   unowned-count:
     description: "Forwarded (key: unowned-count) — written by 1 action dir(s): codeowners-validate"
     value: ${{ steps.exec.outputs.unowned-count }}
+  up:
+    description: "Forwarded (key: up) — sui-service-up endpoint-reachable flag"
+    value: ${{ steps.exec.outputs.up }}
   updated:
     description: "Forwarded (key: updated) — written by 2 action dir(s): linear-issue-update, pulumi-up"
     value: ${{ steps.exec.outputs.updated }}
@@ -819,6 +880,9 @@ outputs:
   valid:
     description: "Forwarded (key: valid) — written by 1 action dir(s): envoy-config-validate"
     value: ${{ steps.exec.outputs.valid }}
+  valid-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: valid-count)"
+    value: ${{ steps.exec.outputs.valid-count }}
   value:
     description: "Forwarded (key: value) — written by 1 action dir(s): cloudflare-kv-get"
     value: ${{ steps.exec.outputs.value }}
@@ -831,15 +895,49 @@ outputs:
   verified-algo:
     description: "Forwarded (key: verified-algo) — written by 1 action dir(s): attestation-gate"
     value: ${{ steps.exec.outputs.verified-algo }}
+  version:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: version)"
+    value: ${{ steps.exec.outputs.version }}
+  via-service:
+    description: "Forwarded (key: via-service) — nix-image sui-served flag"
+    value: ${{ steps.exec.outputs.via-service }}
+  violations:
+    description: "Forwarded (key: violations) — count of NEW, non-baselined findings from a baseline-debt lint"
+    value: ${{ steps.exec.outputs.violations }}
+  vuln-count:
+    description: "Forwarded (key: vuln-count) — image-scan / zot-pull-scan vuln count"
+    value: ${{ steps.exec.outputs.vuln-count }}
+  vulns-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: vulns-count)"
+    value: ${{ steps.exec.outputs.vulns-count }}
+  warm-count:
+    description: "Forwarded (key: warm-count) — sui-warm-hydrate count of keys actually warmed"
+    value: ${{ steps.exec.outputs.warm-count }}
+  warmed:
+    description: "Forwarded (key: warmed) — sui-warm-hydrate real-warm flag (false until TieredBackend + warm-set RPC)"
+    value: ${{ steps.exec.outputs.warmed }}
+  worker:
+    description: "Forwarded (key: worker) — sui-remote-build execution plane (reapi|local; local until the REAPI worker ships)"
+    value: ${{ steps.exec.outputs.worker }}
   workflow-id:
     description: "Forwarded (key: workflow-id) — written by 1 action dir(s): temporal-trigger"
     value: ${{ steps.exec.outputs.workflow-id }}
+  workloads-scanned:
+    description: "Forwarded (key: workloads-scanned) — breathe-band-lint: Deployments/StatefulSets/DaemonSets found in the tree"
+    value: ${{ steps.exec.outputs.workloads-scanned }}
+  wrapper-baselined:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: wrapper-baselined)"
+    value: ${{ steps.exec.outputs.wrapper-baselined }}
+  wrapper-violations:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: wrapper-violations)"
+    value: ${{ steps.exec.outputs.wrapper-violations }}
   written:
     description: "Forwarded (key: written) — written by 1 action dir(s): influxdb-write"
     value: ${{ steps.exec.outputs.written }}
   yanked:
     description: "Forwarded (key: yanked) — written by 1 action dir(s): yank-version"
     value: ${{ steps.exec.outputs.yanked }}
+# END GENERATED OUTPUTS -- output-contract-sync.
 
 runs:
   using: composite
