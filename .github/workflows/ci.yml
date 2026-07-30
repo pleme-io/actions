@@ -130,6 +130,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # pleme-doc-gen is a PRIVATE repo, so the `cargo install --git` below
+      # clones over authenticated https. Without this the job died at install
+      # with "failed to authenticate when downloading repository" — which is
+      # why this job was red, NOT anything about the catalog it renders. That
+      # red had been standing since at least 2026-07-24 and was masking the
+      # one genuine failure beside it (the tlisp-lint Layer 5 error, fixed in
+      # b94d2c7).
+      #
+      # Local `./git-credentials` rather than `pleme-io/actions/…@main`, to
+      # match the sibling jobs in this file and to exercise the checked-out
+      # copy. BOT_PAT is an org secret with ALL-repo visibility and is already
+      # used by this repo's auto-bump.yml.
+      - uses: ./git-credentials
+        with:
+          bot-pat: ${{ secrets.BOT_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install pleme-doc-gen
         run: cargo install --locked --git https://github.com/pleme-io/pleme-doc-gen pleme-doc-gen
       # NOTE: this job CANNOT FAIL and therefore enforces nothing. It renders
