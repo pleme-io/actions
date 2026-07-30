@@ -52,16 +52,11 @@
   ;; Convention: lib/<gem-name>/version.rb. Kebab-case repo dir name.
   (string-append "lib/" gem-name "/version.rb"))
 
-(define
-  (extract-quoted-value line)
-  ;; Given a `VERSION = "0.1.0"` line (single or double quotes),
-  ;; return "0.1.0". Returns "" if no quoted value found.
-  (let*
-    ((dq-parts (string-split line "\"")) (sq-parts (string-split line "'")))
-    (cond
-      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
-      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
-      (else ""))))
+;; `extract-quoted-value` comes from the STDLIB. A byte-identical local copy
+;; lived here and shadowed it (the prepend makes the later define win), which
+;; Layer 4 baselined and Layer 5 then flagged as a re-typed diagnostic literal.
+;; Deleted rather than re-baselined: the baseline file's own instruction is that
+;; removing a row by deleting the copy is the tracked path to zero.
 
 (define
   (first-version-line ls)
