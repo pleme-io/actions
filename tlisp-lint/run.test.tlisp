@@ -94,3 +94,75 @@
   (assert (not (name-member? "rust-workspace-publish/run.tlisp\tconfigure-git-bot"
                              baselined-shadows))
           "not baselined for configure-git-bot"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Layer 5 — differently-named stdlib reimplementation
+;;
+;; The half Layer 4 (name intersection) structurally cannot see. Each test
+;; drives the REAL rule functions; the end-to-end proof (the historical body in
+;; a fresh file turning the run red while Layer 1 logs OK) is in the commit.
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "line-code-literals: a literal in a COMMENT is not a literal"
+  ;; This is the single most load-bearing narrowing. Un-stripped, 6 of 14 raw
+  ;; rows were rust-workspace-publish's own prose EXPLAINING the historical bug
+  ;; — a gate that fails you for documenting the defect you fixed gets deleted.
+  (assert (equal? (line-code-literals ";; the old needle was \"failed to select a version\"")
+                  (list))
+          "prose about a diagnostic is not a use of it")
+  (assert (equal? (line-code-literals "(string-contains? line \"failed to select a version\")")
+                  (list "failed to select a version"))
+          "but the real call site IS")
+  (assert (equal? (line-code-literals "(f \"a\") ; note \"b\"")
+                  (list "a"))
+          "a trailing comment is cut, its quotes do not leak in")
+  (assert (equal? (line-code-literals "(f \"a\" \"b\")") (list "a" "b"))
+          "two literals on one line both extract"))
+
+(deftest "diagnostic-literal?: a sentence, not a word, and not shell plumbing"
+  (assert (diagnostic-literal? "failed to select a version")
+          "a cargo diagnostic sentence qualifies")
+  (assert (not (diagnostic-literal? "version")) "a bare word never qualifies")
+  (assert (not (diagnostic-literal? "no-spaces-but-quite-long-indeed"))
+          "length alone is not enough — it must read as a sentence")
+  (assert (not (diagnostic-literal? " >/dev/null 2>&1"))
+          "shell redirect plumbing is excluded — 5 of 8 rows were this family")
+  (assert (not (diagnostic-literal? "echo $HOME is a home"))
+          "interpolation is shell, not diagnostic"))
+
+(deftest "literal-kin?: CONTAINMENT either way — equality would MISS the defect"
+  ;; The historical local literal was a strict PREFIX of the stdlib's.
+  (assert (literal-kin? "failed to select a version" "failed to select a version for")
+          "local ⊂ stdlib — THE historical shape")
+  (assert (literal-kin? "error: failed to select a version for x" "failed to select a version for")
+          "stdlib ⊂ local — the other direction")
+  (assert (literal-kin? "same string" "same string") "equality still counts")
+  (assert (not (literal-kin? "failed to select a version" "no matching package named"))
+          "unrelated diagnostics are not kin"))
+
+(deftest "kin-stdlib-literal names WHICH stdlib literal was re-typed"
+  (let ((std (list "no matching package named" "failed to select a version for")))
+    (assert (equal? (kin-stdlib-literal "failed to select a version" std)
+                    "failed to select a version for")
+            "the error message can point the author at the stdlib predicate to call")
+    (assert (equal? (kin-stdlib-literal "totally unrelated text here" std) "")
+            "and \"\" means no kinship")))
+
+(deftest "literal-exempt-file?: *.test.tlisp holds VERBATIM tool output by design"
+  ;; MEASURED: including test files the gate reported 20 errors, essentially all
+  ;; fixtures and deftest titles. A fixture that is the real cargo log is the
+  ;; thing we want authors to write.
+  (assert (literal-exempt-file? "./rust-workspace-publish/run.test.tlisp")
+          "a test file is exempt")
+  (assert (not (literal-exempt-file? "./rust-workspace-publish/run.tlisp"))
+          "the action itself is NOT exempt")
+  (assert (not (literal-exempt-file? "./zot-pull-scan/pull.tlisp"))
+          "a non-run entrypoint is still scanned"))
+
+(deftest "literal-row TRIMS the literal — a trailing-space baseline row never matches"
+  ;; Found by RUNNING the gate: the "Authorization: token " literal has a
+  ;; trailing space, so its untrimmed baseline row silently never matched and
+  ;; the row read as NEW forever.
+  (assert (equal? (literal-row "./zot-push/run.tlisp" "Authorization: token ")
+                  "zot-push/run.tlisp\tAuthorization: token")
+          "the row is whitespace-stable, and the path is repo-relative"))
