@@ -574,8 +574,21 @@ runs:
         TATARA_SCRIPT_SRC: ${{ inputs.script }}
         TATARA_SCRIPT_ARGS: ${{ inputs.args }}
       run: |
-        set -euo pipefail
+        set -uo pipefail
         TMP=$(mktemp -t tatara-action-XXXXXX.tlisp)
         printf '%s\n' "$TATARA_SCRIPT_SRC" > "$TMP"
         # shellcheck disable=SC2086 — splitting on whitespace is intentional
-        exec tatara-script "$TMP" $TATARA_SCRIPT_ARGS
+        rc=0
+        tatara-script "$TMP" $TATARA_SCRIPT_ARGS || rc=$?
+        # Output contract gate. GITHUB_OUTPUT is per-step, so this MUST run in
+        # this step — a later one cannot read what the script wrote. `exec` is
+        # gone for the same reason: it would replace the shell and nothing after
+        # could run. Logic lives in output-contract.tlisp, not here.
+        #
+        # A key this action does not declare is dropped at the composite
+        # boundary and every consumer reads an empty string. That is how
+        # detect-repo-type's repo-type went missing org-wide for months, with
+        # the polymorphic auto-release dispatcher unable to route anything and
+        # not one failing run to show it.
+        tatara-script "$GITHUB_ACTION_PATH/output-contract.tlisp" || exit 1
+        exit $rc
