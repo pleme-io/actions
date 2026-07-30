@@ -14,7 +14,16 @@ inputs:
 
 outputs:
   found-count:
+    # "0", a positive count, or the literal "unknown". A consumer must NOT read
+    # this as a number without checking scan-outcome first: the old version
+    # emitted 0 for a scan that never ran, which is the false-green this action
+    # was fixed to eliminate.
     value: ${{ steps.scan.outputs.found-count }}
+  scan-outcome:
+    # clean | findings | scan-error | report-unparseable. The last two mean
+    # "we do not know", and the action exits 1 for them regardless of
+    # fail-on-found — a broken scanner is not a passing scan.
+    value: ${{ steps.scan.outputs.scan-outcome }}
 
 runs:
   using: composite
