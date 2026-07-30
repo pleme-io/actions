@@ -26,14 +26,14 @@
   (string-append "curl -sS -X POST "
                  "-H 'Authorization: Bearer " token "' "
                  "-H 'Content-Type: application/json' "
-                 "-d '" (string-replace payload "'" "'"'"'")
+                 "-d '" (string-replace payload "'" "'\"'\"'")
                  "' '" url "/api/annotations'"))
 
 (define r (exec-capture "sh" "-c" curl-cmd))
 (cond
   ((= (status-of r) 0)
    (let* ((jq-r (exec-capture "sh" "-c"
-                  (string-append "echo '" (string-replace (stdout-of r) "'" "'"'"'")
+                  (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
                                  "' | jq -r '.id'")))
           (id (string-trim (stdout-of jq-r))))
      (append-output (string-append "annotation-id=" id))

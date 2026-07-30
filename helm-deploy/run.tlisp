@@ -15,14 +15,14 @@
 
 (define (split-flag-args input flag)
   ;; Turn "a b c" into (flag "a" flag "b" flag "c")
+  (define (fold-flag-parts parts acc)
+    (cond
+      ((null? parts) acc)
+      ((equal? (car parts) "") (fold-flag-parts (cdr parts) acc))
+      (else (fold-flag-parts (cdr parts) (append acc (list flag (car parts)))))))
   (cond
     ((equal? input "") (list))
-    (else
-      (let loop ((parts (string-split input " ")) (acc (list)))
-        (cond
-          ((null? parts) acc)
-          ((equal? (car parts) "") (loop (cdr parts) acc))
-          (else (loop (cdr parts) (append acc (list flag (car parts))))))))))
+    (else (fold-flag-parts (string-split input " ") (list)))))
 
 (define args
   (append base-args

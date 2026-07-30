@@ -21,7 +21,7 @@
 
 (define count-r
   (exec-capture "sh" "-c"
-    (string-append "echo '" (string-replace out "'" "'"'"'")
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
                    "' | grep -c '^breaking' || echo 0")))
 (define cnt (string-trim (stdout-of count-r)))
 

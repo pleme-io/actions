@@ -41,7 +41,7 @@
 (cond
   ((= (status-of r) 0)
    (let ((count-r (exec-capture "sh" "-c"
-                    (string-append "echo '" (string-replace (stdout-of r) "'" "'"'"'")
+                    (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
                                    "' | grep -c 'Applied\|migration\|up to date' || echo 0"))))
      (append-output (string-append "applied-count=" (string-trim (stdout-of count-r))))
      (exit 0)))

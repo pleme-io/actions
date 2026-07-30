@@ -27,7 +27,7 @@
 
 (define unowned-r
   (exec-capture "sh" "-c"
-    (string-append "echo '" (string-replace out "'" "'"'"'")
+    (string-append "echo '" (string-replace out "'" "'\"'\"'")
                    "' | grep -c 'unowned' || echo 0")))
 (define unowned (string-trim (stdout-of unowned-r)))
 

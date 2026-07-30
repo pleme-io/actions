@@ -33,10 +33,10 @@
 ;; For each, run pleme-doc-gen caixa
 (define force-flag (if (equal? force "true") "--force" ""))
 (define rendered-total 0)
-(let render-loop ((srcs sources))
+(define (render-sources srcs)
   (cond
     ((null? srcs) #t)
-    ((equal? (car srcs) "") (render-loop (cdr srcs)))
+    ((equal? (car srcs) "") (render-sources (cdr srcs)))
     (else
       (let* ((cmd (string-append "pleme-doc-gen caixa --source '"
                                  (car srcs) "' --out . " force-flag))
@@ -48,7 +48,9 @@
           (else
            (log-info (string-append "rendered " (car srcs)))
            (set! rendered-total (+ rendered-total 1))))
-        (render-loop (cdr srcs))))))
+        (render-sources (cdr srcs))))))
+
+(render-sources sources)
 
 (append-output (string-append "files-rendered=" (string-format "{}" rendered-total)))
 

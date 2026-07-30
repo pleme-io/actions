@@ -30,6 +30,25 @@
    (log-info "wait=false — skipping rollout wait")
    (exit 0)))
 
+;; Wait on each rollout in turn. `ns` and `timeout` are top-level, so this is a
+;; plain top-level recursion — tatara-script has NO named `let`, and a
+;; `(let loop ((ts …)) …)` here was a hard `bad let: bindings must be a list`
+;; the moment control reached it (gated by tlisp-lint Layer 6).
+(define (wait-rollouts ts all-ok)
+  (cond
+    ((null? ts)
+     (cond (all-ok (exit 0)) (else (exit 1))))
+    (else
+      (let ((r4 (exec-capture "kubectl" "rollout" "status" "-n" ns
+                              (car ts) "--timeout" timeout)))
+        (cond
+          ((= (status-of r4) 0)
+           (log-info (string-append "  ✓ " (car ts)))
+           (wait-rollouts (cdr ts) all-ok))
+          (else
+            (log-error (string-append "  ✗ " (car ts) " timed out"))
+            (wait-rollouts (cdr ts) #f)))))))
+
 ;; Extract any deployment/statefulset/daemonset names + wait for rollout.
 (let* ((rollout-cmd
          (string-append
@@ -44,17 +63,4 @@
      (exit 0))
     (else
       (log-info (string-append "waiting on " (string-format "{}" (length targets)) " resource(s)"))
-      (let loop ((ts targets) (all-ok #t))
-        (cond
-          ((null? ts)
-           (cond (all-ok (exit 0)) (else (exit 1))))
-          (else
-            (let ((r4 (exec-capture "kubectl" "rollout" "status" "-n" ns
-                                    (car ts) "--timeout" timeout)))
-              (cond
-                ((= (status-of r4) 0)
-                 (log-info (string-append "  ✓ " (car ts)))
-                 (loop (cdr ts) all-ok))
-                (else
-                  (log-error (string-append "  ✗ " (car ts) " timed out"))
-                  (loop (cdr ts) #f))))))))))
+      (wait-rollouts targets #t))))

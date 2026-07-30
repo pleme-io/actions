@@ -14,10 +14,10 @@
 (define keys (string-split (string-trim (stdout-of keys-r)) "\n"))
 
 (define synced 0)
-(let loop ((ks keys))
+(define (sync-secrets ks)
   (cond
     ((null? ks) #t)
-    ((equal? (car ks) "") (loop (cdr ks)))
+    ((equal? (car ks) "") (sync-secrets (cdr ks)))
     (else
       (let* ((val-r (exec-capture "sh" "-c"
                       (string-append "yq '.secrets.\"" (car ks) "\"' " spec " | tr -d '\"'")))
@@ -25,7 +25,7 @@
         (cond
           ((or (equal? val "") (equal? val "null"))
            (log-info (string-append "  skip " (car ks) " — no value"))
-           (loop (cdr ks)))
+           (sync-secrets (cdr ks)))
           (else
             ;; exec-or-die: a failed `gh secret set` must abort, not silently
             ;; bump the synced count (the old bare call reported a secret as
@@ -34,7 +34,9 @@
                                "--repo" repo))
             (log-info (string-append "  synced " (car ks)))
             (set! synced (+ synced 1))
-            (loop (cdr ks))))))))
+            (sync-secrets (cdr ks))))))))
+
+(sync-secrets keys)
 
 (append-output (string-append "synced-count=" (string-format "{}" synced)))
 (exit 0)

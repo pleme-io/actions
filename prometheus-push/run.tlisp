@@ -5,7 +5,7 @@
 (define metrics (env-required "METRICS"))
 
 (define push-cmd
-  (string-append "printf '%s' '" (string-replace metrics "'" "'"'"'")
+  (string-append "printf '%s' '" (string-replace metrics "'" "'\"'\"'")
                  "' | curl -sS --data-binary @- '" url "/metrics/job/" job "'"))
 
 (define r (exec-capture "sh" "-c" push-cmd))

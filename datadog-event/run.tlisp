@@ -23,7 +23,7 @@
   (string-append "curl -sS -o /dev/null -w '%{http_code}' "
                  "-X POST -H 'Content-Type: application/json' "
                  "-H 'DD-API-KEY: " key "' "
-                 "-d '" (string-replace payload "'" "'"'"'") "' '" url "'"))
+                 "-d '" (string-replace payload "'" "'\"'\"'") "' '" url "'"))
 
 (define r (exec-capture "sh" "-c" curl-cmd))
 (define code (string-trim (stdout-of r)))

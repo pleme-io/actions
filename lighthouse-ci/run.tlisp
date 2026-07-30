@@ -14,14 +14,14 @@
 (log-info "==> installing lhci (nix profile install, pleme-io/hardened-images)")
 (exec-check "nix" "profile" "install" "github:pleme-io/hardened-images#lhciCli")
 
-(let loop ((us (string-split urls " ")) (all-pass #t))
+(define (run-lighthouse-urls us all-pass)
   (cond
     ((null? us)
      (cond (all-pass
             (append-output "passed=true") (exit 0))
            (else
             (append-output "passed=false") (exit 1))))
-    ((equal? (car us) "") (loop (cdr us) all-pass))
+    ((equal? (car us) "") (run-lighthouse-urls (cdr us) all-pass))
     (else
       (let ((r (exec-capture "sh" "-c"
                  (string-append "lhci collect --url=" (car us)
@@ -30,7 +30,9 @@
         (cond
           ((= (status-of r) 0)
            (log-info (string-append "  PASS " (car us)))
-           (loop (cdr us) all-pass))
+           (run-lighthouse-urls (cdr us) all-pass))
           (else
            (log-error (string-append "  FAIL " (car us)))
-           (loop (cdr us) #f)))))))
+           (run-lighthouse-urls (cdr us) #f)))))))
+
+(run-lighthouse-urls (string-split urls " ") #t)
