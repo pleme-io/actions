@@ -1,11 +1,13 @@
 ;; license-finder/run.tlisp — tlisp+stdlib body
 
 (define permitted (env-get "PERMITTED_LICENSES" "MIT,Apache-2.0,BSD-3-Clause"))
+
 (define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
 
 (exec-check "gem" "install" "license_finder" "--no-document")
 
-(define (add-permitted-licenses licenses)
+(define
+  (add-permitted-licenses licenses)
   (cond
     ((null? licenses) #t)
     (else
@@ -15,16 +17,21 @@
 (add-permitted-licenses (string-split permitted ","))
 
 (define r (exec-capture "license_finder" "--format" "json"))
+
 (define out (stdout-of r))
 
-(define viol-r
-  (exec-capture "sh" "-c"
-    (string-append "echo '" (string-replace out "'" "'\"'\"'")
-                   "' | jq '.unapproved + .restricted | length' 2>/dev/null || echo 0")))
+(define
+  viol-r
+  (exec-capture
+    "sh"
+    "-c"
+    (string-append
+      "echo '"
+      (string-replace out "'" "'\"'\"'")
+      "' | jq '.unapproved + .restricted | length' 2>/dev/null || echo 0")))
+
 (define viol (string-trim (stdout-of viol-r)))
 
 (append-output (string-append "violations=" viol))
 
-(cond
-  ((and (equal? fail-on "true") (not (equal? viol "0"))) (exit 1))
-  (else (exit 0)))
+(cond ((and (equal? fail-on "true") (not (equal? viol "0"))) (exit 1)) (else (exit 0)))

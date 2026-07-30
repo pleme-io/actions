@@ -1,4 +1,6 @@
 ;; dagster-materialize/run.tlisp — typed schema locked, body lands on consumer demand
 (log-info "::warning::dagster-materialize not yet implemented")
+
 (append-output "materialized=stub")
+
 (exit 0)

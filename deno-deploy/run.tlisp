@@ -1,4 +1,6 @@
 ;; deno-deploy/run.tlisp — typed schema locked, body lands on consumer demand
 (log-info "::warning::deno-deploy not yet implemented")
+
 (append-output "deployment-url=stub")
+
 (exit 0)

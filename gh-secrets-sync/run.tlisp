@@ -1,37 +1,47 @@
 ;; gh-secrets-sync/run.tlisp
 
 (define spec (env-get "SPEC_FILE" ".github/secrets.yaml"))
+
 (define scope (env-get "SCOPE" "repo"))
+
 (define repo (env-required "GITHUB_REPOSITORY"))
 
 (cond
   ((not (path-exists? spec))
-   (log-error (string-append "spec not found: " spec))
-   (append-output "synced-count=0") (exit 1)))
+    (log-error (string-append "spec not found: " spec))
+    (append-output "synced-count=0")
+    (exit 1)))
 
-(define keys-r (exec-capture "sh" "-c"
-                 (string-append "yq '.secrets | keys | .[]' " spec " | tr -d '\"'")))
+(define
+  keys-r
+  (exec-capture "sh" "-c" (string-append "yq '.secrets | keys | .[]' " spec " | tr -d '\"'")))
+
 (define keys (string-split (string-trim (stdout-of keys-r)) "\n"))
 
 (define synced 0)
-(define (sync-secrets ks)
+
+(define
+  (sync-secrets ks)
   (cond
     ((null? ks) #t)
     ((equal? (car ks) "") (sync-secrets (cdr ks)))
     (else
-      (let* ((val-r (exec-capture "sh" "-c"
-                      (string-append "yq '.secrets.\"" (car ks) "\"' " spec " | tr -d '\"'")))
-             (val (string-trim (stdout-of val-r))))
+      (let*
+        ((val-r
+           (exec-capture
+             "sh"
+             "-c"
+             (string-append "yq '.secrets.\"" (car ks) "\"' " spec " | tr -d '\"'")))
+          (val (string-trim (stdout-of val-r))))
         (cond
           ((or (equal? val "") (equal? val "null"))
-           (log-info (string-append "  skip " (car ks) " — no value"))
-           (sync-secrets (cdr ks)))
+            (log-info (string-append "  skip " (car ks) " — no value"))
+            (sync-secrets (cdr ks)))
           (else
             ;; exec-or-die: a failed `gh secret set` must abort, not silently
             ;; bump the synced count (the old bare call reported a secret as
             ;; synced even when the set failed).
-            (exec-or-die (list "gh" "secret" "set" (car ks) "--body" val
-                               "--repo" repo))
+            (exec-or-die (list "gh" "secret" "set" (car ks) "--body" val "--repo" repo))
             (log-info (string-append "  synced " (car ks)))
             (set! synced (+ synced 1))
             (sync-secrets (cdr ks))))))))
@@ -39,4 +49,5 @@
 (sync-secrets keys)
 
 (append-output (string-append "synced-count=" (string-format "{}" synced)))
+
 (exit 0)

@@ -14,12 +14,16 @@
 ;; the target registry (skopeo reads ~/.docker/config.json).
 
 ;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
-(define registry  (env-get "INPUT_REGISTRY"  (env-get "REGISTRY"  "")))
-(define image     (env-get "INPUT_IMAGE"     (env-get "IMAGE"     "")))
-(define tag       (env-get "INPUT_TAG"       (env-get "TAG"       "")))
-(define tarball   (env-get "INPUT_TARBALL"   (env-get "TARBALL"   "./result")))
+(define registry (env-get "INPUT_REGISTRY" (env-get "REGISTRY" "")))
 
-(when (or (equal? registry "") (equal? image "") (equal? tag ""))
+(define image (env-get "INPUT_IMAGE" (env-get "IMAGE" "")))
+
+(define tag (env-get "INPUT_TAG" (env-get "TAG" "")))
+
+(define tarball (env-get "INPUT_TARBALL" (env-get "TARBALL" "./result")))
+
+(when
+  (or (equal? registry "") (equal? image "") (equal? tag ""))
   (log-error "oci-image-push: missing INPUT_REGISTRY, INPUT_IMAGE, or INPUT_TAG")
   (exit 1))
 
@@ -36,14 +40,20 @@
 ;; is a separate, purely-transient network failure). skopeo's own
 ;; --retry-times uses exponential backoff by default (no --retry-delay
 ;; override needed).
-(define status
-  (exec-check "skopeo" "--insecure-policy" "copy" "--retry-times" "5"
-              (string-append "docker-archive:" tarball)
-              (string-append "docker://"      target)))
+(define
+  status
+  (exec-check
+    "skopeo"
+    "--insecure-policy"
+    "copy"
+    "--retry-times"
+    "5"
+    (string-append "docker-archive:" tarball)
+    (string-append "docker://" target)))
 
-(when (not (= status 0))
-  (log-error (string-append "skopeo copy failed (status "
-                            (string-format "{}" status) ")"))
+(when
+  (not (= status 0))
+  (log-error (string-append "skopeo copy failed (status " (string-format "{}" status) ")"))
   (exit status))
 
 (log-info (string-append "pushed " target))

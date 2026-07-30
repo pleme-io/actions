@@ -65,16 +65,20 @@
 ;; `Authorization: token <PAT>` header IS honored by raw.githubusercontent.com
 ;; for private repos (same as zot-push) — an empty token keeps the original
 ;; unauthenticated path, a non-empty one adds the header.
-(define (pull:ca-cert-curl-args url path token)
-  (if (equal? token "")
+(define
+  (pull:ca-cert-curl-args url path token)
+  (if
+    (equal? token "")
     (list "curl" "-sL" "-f" "-o" path url)
     (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
 
 ;; Fetch the pinned CA cert to a local path via curl (always present on
 ;; these runners — this action's own loader already relies on it). Returns
 ;; the path on success, "" on failure (an honest miss, not a silent lie).
-(define (pull:fetch-ca-cert url path token)
-  (let ((r (apply exec-capture (pull:ca-cert-curl-args url path token))))
+(define
+  (pull:fetch-ca-cert url path token)
+  (let
+    ((r (apply exec-capture (pull:ca-cert-curl-args url path token))))
     (if (= (status-of r) 0) path "")))
 
 ;; skopeo copy docker://<ref> -> docker-archive:<dest>. `--insecure-policy`
@@ -83,22 +87,25 @@
 ;; cert-dir non-empty => pin the fetched CA; else insecure => skip verify;
 ;; else plain (publicly-trusted source). Auth to the zot registry is a
 ;; pre-condition (the consumer workflow logs in before this action runs).
-(define (pull-image ref dest cert-dir insecure)
-  (let* ((tls-args
-           (cond
-             ((not (equal? cert-dir "")) (list "--src-cert-dir" cert-dir))
-             (insecure (list "--src-tls-verify=false"))
-             (else (list))))
-         (args (append
-                 (list "skopeo" "--insecure-policy" "copy")
-                 tls-args
-                 (list (string-append "docker://" ref)
-                       (string-append "docker-archive:" dest)))))
+(define
+  (pull-image ref dest cert-dir insecure)
+  (let*
+    ((tls-args
+       (cond
+         ((not (equal? cert-dir "")) (list "--src-cert-dir" cert-dir))
+         (insecure (list "--src-tls-verify=false"))
+         (else (list))))
+      (args
+        (append
+          (list "skopeo" "--insecure-policy" "copy")
+          tls-args
+          (list (string-append "docker://" ref) (string-append "docker-archive:" dest)))))
     (status-of (apply exec-capture args))))
 
 ;; The full public output contract this action must emit itself on a
 ;; terminal pull-side failure (the scan + verdict steps never run).
-(define (emit-pull-failed dest)
+(define
+  (emit-pull-failed dest)
   (append-output "pulled=false")
   (append-output (string-append "local-archive=" dest))
   (append-output "admitted=false")
@@ -106,52 +113,55 @@
   (append-output "vuln-count=0")
   (append-output "result=pull-failed"))
 
-(define (main)
-  (let* ((ref (env-required "REF"))
-         (dest (env-get "DEST" "zot-pull.tar"))
-         ;; Default "" => opt-out (plain copy). Non-empty => fetch + pin, so
-         ;; the self-signed-zot-source case is opt-in and the GHCR-source
-         ;; consumers (vendor-image-mirror) are unaffected.
-         (ca-cert-url (env-get "SRC_CA_CERT_URL" ""))
-         (ca-cert-dir (env-get "SRC_CA_CERT_DIR" "/tmp/zot-pull-certs"))
-         (ca-cert-token (env-get "SRC_CA_CERT_TOKEN" ""))
-         (allow-insecure (oci:flag-true? (env-get "SRC_INSECURE" "false")))
-         ;; skopeo pins a DIR of certs; the CA file must live inside it.
-         (ca-cert-path (string-append ca-cert-dir "/zot-ca.crt"))
-         ;; When SRC_CA_CERT_URL is empty the consumer opted out of CA trust
-         ;; (public source registry) -> keep the original plain-copy path.
-         (fetched
-           (if (equal? ca-cert-url "")
-             ""
-             (begin
-               (exec-capture "mkdir" "-p" ca-cert-dir)
-               (pull:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token))))
-         (effective-cert-dir (if (equal? fetched "") "" ca-cert-dir)))
+(define
+  (main)
+  (let*
+    ((ref (env-required "REF"))
+      (dest (env-get "DEST" "zot-pull.tar"))
+      ;; Default "" => opt-out (plain copy). Non-empty => fetch + pin, so
+      ;; the self-signed-zot-source case is opt-in and the GHCR-source
+      ;; consumers (vendor-image-mirror) are unaffected.
+      (ca-cert-url (env-get "SRC_CA_CERT_URL" ""))
+      (ca-cert-dir (env-get "SRC_CA_CERT_DIR" "/tmp/zot-pull-certs"))
+      (ca-cert-token (env-get "SRC_CA_CERT_TOKEN" ""))
+      (allow-insecure (oci:flag-true? (env-get "SRC_INSECURE" "false")))
+      ;; skopeo pins a DIR of certs; the CA file must live inside it.
+      (ca-cert-path (string-append ca-cert-dir "/zot-ca.crt"))
+      ;; When SRC_CA_CERT_URL is empty the consumer opted out of CA trust
+      ;; (public source registry) -> keep the original plain-copy path.
+      (fetched
+        (if
+          (equal? ca-cert-url "")
+          ""
+          (begin
+            (exec-capture "mkdir" "-p" ca-cert-dir)
+            (pull:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token))))
+      (effective-cert-dir (if (equal? fetched "") "" ca-cert-dir)))
     (cond
       ;; The CA was REQUESTED (non-empty URL) but couldn't be fetched, and no
       ;; insecure fallback is enabled -> refuse rather than pull over an
       ;; unverified/plaintext connection (matches zot-push).
-      ((and (not (equal? ca-cert-url ""))
-            (equal? fetched "")
-            (not allow-insecure))
-       (log-error "zot-pull-scan: could not fetch the pinned CA cert (SRC_CA_CERT_TOKEN may be required for the private default URL) and SRC_INSECURE fallback is not enabled -- refusing to pull over an unverified or plaintext connection")
-       (emit-pull-failed dest)
-       1)
+      ((and (not (equal? ca-cert-url "")) (equal? fetched "") (not allow-insecure))
+        (log-error
+          "zot-pull-scan: could not fetch the pinned CA cert (SRC_CA_CERT_TOKEN may be required for the private default URL) and SRC_INSECURE fallback is not enabled -- refusing to pull over an unverified or plaintext connection")
+        (emit-pull-failed dest)
+        1)
       (else
-       (when (and (not (equal? ca-cert-url "")) (equal? fetched ""))
-         (log-info "::warning::zot-pull-scan: CA cert fetch failed, falling back to --src-tls-verify=false -- this is a real, tracked degradation, not silent"))
-       (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))
-       (cond
-         ((= (pull-image ref dest effective-cert-dir allow-insecure) 0)
-          (append-output "pulled=true")
-          0)
-         (else
-          (log-error (string-append "zot-pull-scan: skopeo pull failed for " ref))
-          (emit-pull-failed dest)
-          1))))))
+        (when
+          (and (not (equal? ca-cert-url "")) (equal? fetched ""))
+          (log-info
+            "::warning::zot-pull-scan: CA cert fetch failed, falling back to --src-tls-verify=false -- this is a real, tracked degradation, not silent"))
+        (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))
+        (cond
+          ((= (pull-image ref dest effective-cert-dir allow-insecure) 0)
+            (append-output "pulled=true")
+            0)
+          (else
+            (log-error (string-append "zot-pull-scan: skopeo pull failed for " ref))
+            (emit-pull-failed dest)
+            1))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — zot-pull-scan pull.tlisp helpers loaded; main skipped"))
-  (else
-   (exit (main))))
+    (log-info "TLISP_TEST=1 — zot-pull-scan pull.tlisp helpers loaded; main skipped"))
+  (else (exit (main))))

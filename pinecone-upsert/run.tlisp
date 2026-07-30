@@ -1,4 +1,6 @@
 ;; pinecone-upsert/run.tlisp — typed schema locked
 (log-info "::warning::pinecone-upsert not yet implemented")
+
 (append-output "upserted=stub")
+
 (exit 0)

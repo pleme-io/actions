@@ -1,4 +1,6 @@
 ;; wasmer-publish/run.tlisp — typed schema locked
 (log-info "::warning::wasmer-publish not yet implemented")
+
 (append-output "published=stub")
+
 (exit 0)

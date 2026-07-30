@@ -19,51 +19,51 @@
 ;; fails this the same way it would fail a health-cmd poll.
 
 (define image (env-required "IMAGE"))
+
 (define health-cmd (env-get "HEALTH_CMD" ""))
+
 (define container-env (env-get "CONTAINER_ENV" ""))
+
 (define container-name "boot-check-target")
 
 ;; tatara-lisp has no string->number; bridge a numeric env string to an
 ;; Int via json-parse (a bare integer is valid JSON) -- the proven
 ;; nix-image/run.tlisp pattern.
-(define (parse-int s fallback)
-  (let ((t (string-trim s)))
-    (cond
-      ((equal? t "") fallback)
-      (else (json-parse t)))))
+(define
+  (parse-int s fallback)
+  (let ((t (string-trim s))) (cond ((equal? t "") fallback) (else (json-parse t)))))
 
 (define max-attempts (parse-int (env-get "MAX_ATTEMPTS" "30") 30))
+
 (define poll-interval (string-trim (env-get "POLL_INTERVAL_SECONDS" "3")))
 
-(define (env-pairs)
-  (filter (lambda (l) (not (equal? l "")))
-          (string-split (string-trim container-env) "\n")))
+(define
+  (env-pairs)
+  (filter (lambda (l) (not (equal? l ""))) (string-split (string-trim container-env) "\n")))
 
-(define (env-flags pairs)
-  (cond
-    ((null? pairs) (list))
-    (else (append (list "-e" (car pairs)) (env-flags (cdr pairs))))))
+(define
+  (env-flags pairs)
+  (cond ((null? pairs) (list)) (else (append (list "-e" (car pairs)) (env-flags (cdr pairs))))))
 
 ;; Best-effort cleanup of a stale container from a previous attempt in
 ;; this same job -- ignored if none exists.
 (exec-capture "docker" "rm" "-f" container-name)
 
-(define run-args
-  (append (list "run" "-d" "--name" container-name)
-          (env-flags (env-pairs))
-          (list image)))
+(define
+  run-args
+  (append (list "run" "-d" "--name" container-name) (env-flags (env-pairs)) (list image)))
 
 (log-info (string-append "==> starting " image))
+
 (define start-result (apply exec-capture (cons "docker" run-args)))
 
-(define (cleanup)
-  (exec-capture "docker" "rm" "-f" container-name))
+(define (cleanup) (exec-capture "docker" "rm" "-f" container-name))
 
 (cond
   ((not (= (status-of start-result) 0))
-   (log-error (string-append "docker run failed: " (stderr-of start-result)))
-   (append-output "healthy=false")
-   (exit 1))
+    (log-error (string-append "docker run failed: " (stderr-of start-result)))
+    (append-output "healthy=false")
+    (exit 1))
   (else 'started))
 
 ;; Poll loop (recursion is tatara-lisp's loop construct -- no native
@@ -73,44 +73,54 @@
 ;; RUNNER's own shell (always present), never inside the target
 ;; container -- the exec-into-target only happens for the health-cmd
 ;; branch below.
-(define (poll attempt)
+(define
+  (poll attempt)
   (cond
     ((> attempt max-attempts) 'timeout)
     (else
-     (let ((r (exec-capture "docker" "exec" container-name "sh" "-c" health-cmd)))
-       (cond
-         ((= (status-of r) 0) 'healthy)
-         (else
-          (exec-capture "sh" "-c" (string-append "sleep " poll-interval))
-          (poll (+ attempt 1))))))))
+      (let
+        ((r (exec-capture "docker" "exec" container-name "sh" "-c" health-cmd)))
+        (cond
+          ((= (status-of r) 0) 'healthy)
+          (else
+            (exec-capture "sh" "-c" (string-append "sleep " poll-interval))
+            (poll (+ attempt 1))))))))
 
 ;; Shell-less fallback: wait the full window, then ask the DAEMON (not
 ;; the container) whether it's still running. No exec into the target.
 (define wait-seconds (* max-attempts (parse-int poll-interval 3)))
 
-(define (still-running-after-wait)
+(define
+  (still-running-after-wait)
   (exec-capture "sh" "-c" (string-append "sleep " (string-format "{}" wait-seconds)))
-  (let ((r (exec-capture "docker" "inspect" "--format" "{{.State.Running}}" container-name)))
-    (if (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true"))
-      'healthy
-      'timeout)))
+  (let
+    ((r (exec-capture "docker" "inspect" "--format" "{{.State.Running}}" container-name)))
+    (if (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true")) 'healthy 'timeout)))
 
 (define result (if (equal? health-cmd "") (still-running-after-wait) (poll 1)))
 
 (cond
   ((equal? result 'healthy)
-   (log-info (string-append image " booted and passed health check ("
-                             (string-format "{}" max-attempts) " attempts allowed)"))
-   (append-output "healthy=true")
-   (cleanup)
-   (exit 0))
+    (log-info
+      (string-append
+        image
+        " booted and passed health check ("
+        (string-format "{}" max-attempts)
+        " attempts allowed)"))
+    (append-output "healthy=true")
+    (cleanup)
+    (exit 0))
   (else
-   (log-error (string-append image " never became healthy after "
-                             (string-format "{}" max-attempts)
-                             " attempts -- container logs follow"))
-   (let ((logs (exec-capture "docker" "logs" container-name)))
-     (log-info (stdout-of logs))
-     (log-info (stderr-of logs)))
-   (append-output "healthy=false")
-   (cleanup)
-   (exit 1)))
+    (log-error
+      (string-append
+        image
+        " never became healthy after "
+        (string-format "{}" max-attempts)
+        " attempts -- container logs follow"))
+    (let
+      ((logs (exec-capture "docker" "logs" container-name)))
+      (log-info (stdout-of logs))
+      (log-info (stderr-of logs)))
+    (append-output "healthy=false")
+    (cleanup)
+    (exit 1)))

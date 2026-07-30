@@ -32,21 +32,23 @@
 ;; Map a lang + file-presence flags to the detected language. An explicit
 ;; lang wins; "auto" resolves by manifest precedence (rust > go > node >
 ;; python), matching detect-repo-type's ordering.
-(define (gbs:lang-from-flags lang cargo? gomod? npm? pip?)
+(define
+  (gbs:lang-from-flags lang cargo? gomod? npm? pip?)
   (cond
     ((not (equal? lang "auto")) lang)
     (cargo? "cargo")
     (gomod? "gomod")
-    (npm?   "npm")
-    (pip?   "pip")
-    (else   "unknown")))
+    (npm? "npm")
+    (pip? "pip")
+    (else "unknown")))
 
 ;; The build-spec filename a language emits.
-(define (gbs:spec-path-for lang)
+(define
+  (gbs:spec-path-for lang)
   (cond
     ((equal? lang "cargo") "Cargo.build-spec.json")
-    ((equal? lang "npm")   "npm.build-spec.json")
-    ((equal? lang "pip")   "pip.build-spec.json")
+    ((equal? lang "npm") "npm.build-spec.json")
+    ((equal? lang "pip") "pip.build-spec.json")
     ((equal? lang "gomod") "gomod.build-spec.json")
     (else "")))
 
@@ -55,26 +57,25 @@
 
 ;; A stale committed spec: a non-empty before-hash that changed after the
 ;; regen. An absent before (before="") is a first-generation, not stale.
-(define (gbs:stale? before after)
-  (and (not (equal? before ""))
-       (not (equal? after ""))
-       (not (equal? before after))))
+(define
+  (gbs:stale? before after)
+  (and (not (equal? before "")) (not (equal? after "")) (not (equal? before after))))
 
 ;; No-shell PATH lookup: is <bin> an existing file under any $PATH dir?
 ;; (exec-capture raises on an absent binary, so presence MUST be settled
 ;; before `gen` is invoked.)
-(define (gbs:any-dir-has? dirs bin)
+(define
+  (gbs:any-dir-has? dirs bin)
   (cond
     ((null? dirs) #f)
-    ((and (not (equal? (car dirs) ""))
-          (path-exists? (string-append (car dirs) "/" bin))) #t)
+    ((and (not (equal? (car dirs) "")) (path-exists? (string-append (car dirs) "/" bin))) #t)
     (else (gbs:any-dir-has? (cdr dirs) bin))))
 
-(define (gbs:on-path? bin)
-  (gbs:any-dir-has? (string-split (env-get "PATH" "") ":") bin))
+(define (gbs:on-path? bin) (gbs:any-dir-has? (string-split (env-get "PATH" "") ":") bin))
 
 ;; ── side-effecting emit helpers ──────────────────────────────────
-(define (gbs:emit lang spec spec-hash regenerated stale reason)
+(define
+  (gbs:emit lang spec spec-hash regenerated stale reason)
   (append-output (string-append "lang=" lang))
   (append-output (string-append "spec-path=" spec))
   (append-output (string-append "spec-hash=" spec-hash))
@@ -84,40 +85,54 @@
   (append-output (string-append "reason=" reason)))
 
 ;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
-(define (main)
-  (let* ((lang-arg    (env-get "LANG_ARG" "auto"))
-         (spec-in     (env-get "SPEC_PATH" ""))
-         (stale-check (env-get "CI_STALE_CHECK" "true"))
-         (require-gen (env-get "REQUIRE_GEN" "false"))
-         (lang (gbs:lang-from-flags lang-arg
-                 (path-exists? "Cargo.toml")
-                 (path-exists? "go.mod")
-                 (path-exists? "package.json")
-                 (path-exists? "pyproject.toml")))
-         (spec (cond ((not (equal? spec-in "")) spec-in)
-                     (else (gbs:spec-path-for lang)))))
+(define
+  (main)
+  (let*
+    ((lang-arg (env-get "LANG_ARG" "auto"))
+      (spec-in (env-get "SPEC_PATH" ""))
+      (stale-check (env-get "CI_STALE_CHECK" "true"))
+      (require-gen (env-get "REQUIRE_GEN" "false"))
+      (lang
+        (gbs:lang-from-flags
+          lang-arg
+          (path-exists? "Cargo.toml")
+          (path-exists? "go.mod")
+          (path-exists? "package.json")
+          (path-exists? "pyproject.toml")))
+      (spec (cond ((not (equal? spec-in "")) spec-in) (else (gbs:spec-path-for lang)))))
     (cond
       ;; ── non-cargo language: interpreter is a LiveTODO (row 10) ──
       ((not (gbs:cargo-now? lang))
-       (log-info (string-append
-                  "gen-build-spec: lang=" lang
-                  " — pending-super-cache-ci row 10 (gen-" lang
-                  " interpreter designed, not shipped); reporting the committed spec, no regen"))
-       (gbs:emit lang spec (supercache:content-key spec) "false" "unknown" "lang-livetodo")
-       0)
+        (log-info
+          (string-append
+            "gen-build-spec: lang="
+            lang
+            " — pending-super-cache-ci row 10 (gen-"
+            lang
+            " interpreter designed, not shipped); reporting the committed spec, no regen"))
+        (gbs:emit lang spec (supercache:content-key spec) "false" "unknown" "lang-livetodo")
+        0)
       ;; ── cargo but `gen` absent on PATH ──
       ((not (gbs:on-path? "gen"))
-       (cond
-         ((equal? require-gen "true")
-          (log-error "gen-build-spec: `gen` not on PATH and require-gen=true — failing (no faked green)")
-          (gbs:emit lang spec (supercache:content-key spec) "false" "unknown" "gen-absent")
-          1)
-         (else
-          (log-info (string-append
-                     "gen-build-spec: `gen` not on PATH — pending-super-cache-ci row 9 "
-                     "(gen-cargo shipped; the runner must bake it). Reporting the committed spec, no regen"))
-          (gbs:emit lang spec (supercache:content-key spec) "false" "unknown" "gen-absent-livetodo")
-          0)))
+        (cond
+          ((equal? require-gen "true")
+            (log-error
+              "gen-build-spec: `gen` not on PATH and require-gen=true — failing (no faked green)")
+            (gbs:emit lang spec (supercache:content-key spec) "false" "unknown" "gen-absent")
+            1)
+          (else
+            (log-info
+              (string-append
+                "gen-build-spec: `gen` not on PATH — pending-super-cache-ci row 9 "
+                "(gen-cargo shipped; the runner must bake it). Reporting the committed spec, no regen"))
+            (gbs:emit
+              lang
+              spec
+              (supercache:content-key spec)
+              "false"
+              "unknown"
+              "gen-absent-livetodo")
+            0)))
       ;; ── cargo NOW path: real `gen build .` + the stale gate ──
       ;;
       ;; `gen build` shells out to the literal `cargo metadata` binary (not
@@ -127,40 +142,59 @@
       ;; `nix shell nixpkgs#cargo` supplies it hermetically regardless of
       ;; what the runner ships with (same fix as stdlib's regen-gen-lock).
       (else
-       (let* ((before (supercache:content-key spec))
-              (r      (exec-capture "nix" "shell" "nixpkgs#cargo" "--command" "gen" "build" "."))
-              (rc     (status-of r)))
-         (cond
-           ((not (= rc 0))
-            (log-error (string-append "gen-build-spec: `gen build .` failed (rc=" (string-format "{}" rc) ")"))
-            (log-info (stderr-of r))
-            (gbs:emit lang spec before "false" "unknown" "gen-build-failed")
-            1)
-           (else
-            (let ((after (supercache:content-key spec)))
-              (cond
-                ((equal? after "")
-                 (log-error (string-append "gen-build-spec: `gen build .` produced no " spec
-                                           " — GEN-TYPED-SPEC-CONTRACT violation"))
-                 (gbs:emit lang spec "" "true" "unknown" "no-spec")
-                 1)
-                (else
-                 (let ((stale (if (gbs:stale? before after) "true" "false")))
-                   (cond
-                     ((and (equal? stale "true") (equal? stale-check "true"))
-                      (log-error (string-append
-                                  "gen-build-spec: committed " spec
-                                  " is STALE vs `gen build .` — commit the regen "
-                                  "(GEN-TYPED-SPEC-CONTRACT: a stale spec is a CI failure, not a runtime fetch)"))
-                      (gbs:emit lang spec after "true" "true" "stale-spec")
-                      1)
-                     (else
-                      (log-info (string-append "gen-build-spec: " spec " fresh (lang=" lang ", hash=" after ")"))
-                      (gbs:emit lang spec after "true" stale "ok")
-                      0)))))))))))))
+        (let*
+          ((before (supercache:content-key spec))
+            (r (exec-capture "nix" "shell" "nixpkgs#cargo" "--command" "gen" "build" "."))
+            (rc (status-of r)))
+          (cond
+            ((not (= rc 0))
+              (log-error
+                (string-append
+                  "gen-build-spec: `gen build .` failed (rc="
+                  (string-format "{}" rc)
+                  ")"))
+              (log-info (stderr-of r))
+              (gbs:emit lang spec before "false" "unknown" "gen-build-failed")
+              1)
+            (else
+              (let
+                ((after (supercache:content-key spec)))
+                (cond
+                  ((equal? after "")
+                    (log-error
+                      (string-append
+                        "gen-build-spec: `gen build .` produced no "
+                        spec
+                        " — GEN-TYPED-SPEC-CONTRACT violation"))
+                    (gbs:emit lang spec "" "true" "unknown" "no-spec")
+                    1)
+                  (else
+                    (let
+                      ((stale (if (gbs:stale? before after) "true" "false")))
+                      (cond
+                        ((and (equal? stale "true") (equal? stale-check "true"))
+                          (log-error
+                            (string-append
+                              "gen-build-spec: committed "
+                              spec
+                              " is STALE vs `gen build .` — commit the regen "
+                              "(GEN-TYPED-SPEC-CONTRACT: a stale spec is a CI failure, not a runtime fetch)"))
+                          (gbs:emit lang spec after "true" "true" "stale-spec")
+                          1)
+                        (else
+                          (log-info
+                            (string-append
+                              "gen-build-spec: "
+                              spec
+                              " fresh (lang="
+                              lang
+                              ", hash="
+                              after
+                              ")"))
+                          (gbs:emit lang spec after "true" stale "ok")
+                          0)))))))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — gen-build-spec helpers loaded; main skipped"))
-  (else
-   (exit (main))))
+    (log-info "TLISP_TEST=1 — gen-build-spec helpers loaded; main skipped"))
+  (else (exit (main))))

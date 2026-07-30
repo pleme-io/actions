@@ -20,8 +20,11 @@
 ;;   errors-found     integer (0 on success)
 
 (define paths-input (env-get "PATHS" "**/*.tlisp"))
+
 (define fail-flag (env-get "FAIL_ON_UNBALANCED" "true"))
+
 (define parser-flag (env-get "RUN_PARSER_CHECK" "true"))
+
 ;; append-output comes from the STDLIB — a local copy would shadow it, which is
 ;; precisely the class Layer 4 below now gates. The linter holds itself to it.
 
@@ -29,7 +32,8 @@
 ;; File discovery — glob the input patterns                        ;;
 ;; -------------------------------------------------------------- ;;
 
-(define (find-tlisp-files patterns)
+(define
+  (find-tlisp-files patterns)
   ;; Use shell `find` for simplicity. `glob` exists in tatara-lisp
   ;; for single patterns, but `find -name *.tlisp` is the broadest
   ;; sweep + handles nested dirs uniformly.
@@ -41,12 +45,14 @@
   ;;   _*/           — leading-underscore dirs (e.g. _tlisp-stdlib);
   ;;                   these hold fragment libraries that aren't
   ;;                   self-contained programs.
-  (let* ((r (exec-capture "sh" "-c"
-              "find . -type f -name '*.tlisp' -not -path './.git/*' -not -path './node_modules/*' -not -path './target/*' -not -path './_*/*' | sort"))
-         (out (alist-get r "stdout" "")))
-    (cond
-      ((equal? (string-trim out) "") (list))
-      (else (string-split (string-trim out) "\n")))))
+  (let*
+    ((r
+       (exec-capture
+         "sh"
+         "-c"
+         "find . -type f -name '*.tlisp' -not -path './.git/*' -not -path './node_modules/*' -not -path './target/*' -not -path './_*/*' | sort"))
+      (out (alist-get r "stdout" "")))
+    (cond ((equal? (string-trim out) "") (list)) (else (string-split (string-trim out) "\n")))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Balance scan — char-by-char with state                          ;;
@@ -55,48 +61,55 @@
 ;; paren depth (0 = balanced); L is the line of an unterminated
 ;; string literal if any (0 = none).
 
-(define (scan-file path)
-  (let ((bal-result (exec-capture "python3" "-c"
-                       (string-append
-                         "import sys\n"
-                         "s=open('" path "').read()\n"
-                         "in_str=False; in_comment=False; balance=0; first_neg=0; str_line=0; line=1\n"
-                         "i=0\n"
-                         "while i<len(s):\n"
-                         "    c=s[i]\n"
-                         "    if c=='\\n':\n"
-                         "        in_comment=False; line+=1\n"
-                         "    elif in_comment: pass\n"
-                         "    elif in_str:\n"
-                         "        if c=='\\\\' and i+1<len(s): i+=1\n"
-                         "        elif c=='\"': in_str=False; str_line=0\n"
-                         "    elif c==';': in_comment=True\n"
-                         "    elif c=='\"': in_str=True; str_line=line\n"
-                         "    elif c=='(': balance+=1\n"
-                         "    elif c==')':\n"
-                         "        balance-=1\n"
-                         "        if balance<0 and first_neg==0: first_neg=line\n"
-                         "    i+=1\n"
-                         "print(f'balance={balance} first_neg={first_neg} unterminated_string_line={str_line}')\n"))))
+(define
+  (scan-file path)
+  (let
+    ((bal-result
+       (exec-capture
+         "python3"
+         "-c"
+         (string-append
+           "import sys\n"
+           "s=open('"
+           path
+           "').read()\n"
+           "in_str=False; in_comment=False; balance=0; first_neg=0; str_line=0; line=1\n"
+           "i=0\n"
+           "while i<len(s):\n"
+           "    c=s[i]\n"
+           "    if c=='\\n':\n"
+           "        in_comment=False; line+=1\n"
+           "    elif in_comment: pass\n"
+           "    elif in_str:\n"
+           "        if c=='\\\\' and i+1<len(s): i+=1\n"
+           "        elif c=='\"': in_str=False; str_line=0\n"
+           "    elif c==';': in_comment=True\n"
+           "    elif c=='\"': in_str=True; str_line=line\n"
+           "    elif c=='(': balance+=1\n"
+           "    elif c==')':\n"
+           "        balance-=1\n"
+           "        if balance<0 and first_neg==0: first_neg=line\n"
+           "    i+=1\n"
+           "print(f'balance={balance} first_neg={first_neg} unterminated_string_line={str_line}')\n"))))
     (string-trim (alist-get bal-result "stdout" ""))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Per-file lint                                                   ;;
 ;; -------------------------------------------------------------- ;;
 
-(define (lint-file path)
+(define
+  (lint-file path)
   ;; Returns the number of errors for this file (0 = clean).
-  (let* ((report (scan-file path))
-         (balance-zero? (string-contains? report "balance=0"))
-         (no-extra-close? (string-contains? report "first_neg=0"))
-         (no-unterminated? (string-contains? report "unterminated_string_line=0")))
+  (let*
+    ((report (scan-file path))
+      (balance-zero? (string-contains? report "balance=0"))
+      (no-extra-close? (string-contains? report "first_neg=0"))
+      (no-unterminated? (string-contains? report "unterminated_string_line=0")))
     (cond
       ((and balance-zero? no-extra-close? no-unterminated?)
-       (log-info (string-append "  OK   " path))
-       0)
-      (else
-       (log-error (string-append "  FAIL " path " — " report))
-       1))))
+        (log-info (string-append "  OK   " path))
+        0)
+      (else (log-error (string-append "  FAIL " path " — " report)) 1))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Main                                                            ;;
@@ -108,14 +121,14 @@
 (define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
 
 (define files (if tlisp-test-mode (list) (find-tlisp-files paths-input)))
+
 (define file-count (length files))
 
-(define (lint-all files acc-errors)
+(define
+  (lint-all files acc-errors)
   (cond
     ((null? files) acc-errors)
-    (else
-     (lint-all (cdr files)
-               (+ acc-errors (lint-file (car files)))))))
+    (else (lint-all (cdr files) (+ acc-errors (lint-file (car files)))))))
 
 ;; ── Layer 3: semantic rule lint ────────────────────────────────
 ;; Re-invoke this tatara-script binary's `lint` subcommand (the
@@ -125,22 +138,21 @@
 ;; via --help so it no-ops cleanly on a tatara-script that predates
 ;; the `lint` subcommand (no shell — exec-capture is the typed
 ;; subprocess surface).
-(define (semantic-rule-errors)
-  (let* ((help (exec-capture "tatara-script" "--help"))
-         (help-text (string-append (stdout-of help) (stderr-of help))))
+(define
+  (semantic-rule-errors)
+  (let*
+    ((help (exec-capture "tatara-script" "--help"))
+      (help-text (string-append (stdout-of help) (stderr-of help))))
     (cond
       ((not (string-contains? help-text "lint [path"))
-       (log-info "  semantic rule lint skipped (tatara-script has no lint subcommand yet)")
-       0)
+        (log-info "  semantic rule lint skipped (tatara-script has no lint subcommand yet)")
+        0)
       (else
-       (let ((r (exec-capture "tatara-script" "lint" ".")))
-         (cond
-           ((= (status-of r) 0)
-            (log-info "  semantic rule lint: clean")
-            0)
-           (else
-            (log-error (string-trim (stdout-of r)))
-            1)))))))
+        (let
+          ((r (exec-capture "tatara-script" "lint" ".")))
+          (cond
+            ((= (status-of r) 0) (log-info "  semantic rule lint: clean") 0)
+            (else (log-error (string-trim (stdout-of r))) 1)))))))
 
 ;; ── Layer 4: stdlib shadowing ──────────────────────────────────
 ;; action.yml concatenates `_tlisp-stdlib/stdlib.tlisp` FIRST and the action's
@@ -164,87 +176,105 @@
 ;; a baseline row — delete the local copy, use the stdlib — is the path to zero.
 
 (define stdlib-src-path "_tlisp-stdlib/stdlib.tlisp")
+
 (define shadow-baseline-path "tlisp-lint/stdlib-shadow-baseline.txt")
 
 ;; "(define (foo a b)" → "foo" ; "(define bar 1)" → "bar" ; else "".
 ;; Only column-0 defines count: an inner `(define …)` is scoped to its body and
 ;; shadows nothing at top level.
-(define (top-level-define-name line)
+(define
+  (top-level-define-name line)
   (cond
     ((not (string-prefix? line "(define ")) "")
     (else
-      (let* ((rest (string-replace line "(define " ""))
-             (bare (if (string-prefix? rest "(") (string-replace rest "(" "") rest))
-             (head (car (string-split (string-trim bare) " "))))
+      (let*
+        ((rest (string-replace line "(define " ""))
+          (bare (if (string-prefix? rest "(") (string-replace rest "(" "") rest))
+          (head (car (string-split (string-trim bare) " "))))
         (car (string-split (car (string-split head ")")) "\t"))))))
 
-(define (collect-define-names lines acc)
+(define
+  (collect-define-names lines acc)
   (cond
     ((null? lines) (reverse acc))
     (else
-      (let ((n (top-level-define-name (car lines))))
+      (let
+        ((n (top-level-define-name (car lines))))
         (collect-define-names (cdr lines) (if (equal? n "") acc (cons n acc)))))))
 
-(define (define-names-in path)
-  (if (path-exists? path)
-    (collect-define-names (string-split (read-file path) "\n") (list))
-    (list)))
+(define
+  (define-names-in path)
+  (if (path-exists? path) (collect-define-names (string-split (read-file path) "\n") (list)) (list)))
 
-(define (name-member? x xs)
+(define
+  (name-member? x xs)
   (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (name-member? x (cdr xs)))))
 
 ;; every name in `names` that the stdlib also defines at top level
-(define (shadowed-names names stdlib-names)
+(define
+  (shadowed-names names stdlib-names)
   (filter (lambda (n) (name-member? n stdlib-names)) names))
 
 ;; one baseline row per shadow: "<path>\t<name>", path repo-relative.
 ;; `find .` yields "./x/run.tlisp"; the baseline stores "x/run.tlisp", so the
 ;; row must not depend on how the file was discovered — an un-normalized path
 ;; makes every baselined row read as NEW and the gate is red for everyone.
-(define (repo-relative path)
-  (if (string-prefix? path "./") (string-replace path "./" "") path))
+(define (repo-relative path) (if (string-prefix? path "./") (string-replace path "./" "") path))
 
 (define (shadow-row path name) (string-append (repo-relative path) "\t" name))
 
-(define baselined-shadows
-  (if (path-exists? shadow-baseline-path)
-    (filter (lambda (l) (and (not (equal? (string-trim l) ""))
-                             (not (string-prefix? (string-trim l) "#"))))
-            (string-split (read-file shadow-baseline-path) "\n"))
+(define
+  baselined-shadows
+  (if
+    (path-exists? shadow-baseline-path)
+    (filter
+      (lambda
+        (l)
+        (and (not (equal? (string-trim l) "")) (not (string-prefix? (string-trim l) "#"))))
+      (string-split (read-file shadow-baseline-path) "\n"))
     (list)))
 
-(define (new-shadow-rows path names stdlib-names)
-  (filter (lambda (row) (not (name-member? row baselined-shadows)))
-          (map (lambda (n) (shadow-row path n))
-               (shadowed-names names stdlib-names))))
+(define
+  (new-shadow-rows path names stdlib-names)
+  (filter
+    (lambda (row) (not (name-member? row baselined-shadows)))
+    (map (lambda (n) (shadow-row path n)) (shadowed-names names stdlib-names))))
 
-(define (shadow-errors-for path stdlib-names)
-  (let* ((all (shadowed-names (define-names-in path) stdlib-names))
-         (new (new-shadow-rows path (define-names-in path) stdlib-names)))
+(define
+  (shadow-errors-for path stdlib-names)
+  (let*
+    ((all (shadowed-names (define-names-in path) stdlib-names))
+      (new (new-shadow-rows path (define-names-in path) stdlib-names)))
     (cond
       ((null? all) 0)
       ((null? new)
-       (log-info (string-append "  shadow (baselined) " path " — "
-                                (string-join "," all)))
-       0)
+        (log-info (string-append "  shadow (baselined) " path " — " (string-join "," all)))
+        0)
       (else
-        (log-error (string-append "  NEW STDLIB SHADOW " path " — "
-                                  (string-join "," new)
-                                  " : delete the local copy and use the stdlib's, "
-                                  "or add the row to " shadow-baseline-path))
+        (log-error
+          (string-append
+            "  NEW STDLIB SHADOW "
+            path
+            " — "
+            (string-join "," new)
+            " : delete the local copy and use the stdlib's, "
+            "or add the row to "
+            shadow-baseline-path))
         (length new)))))
 
-(define (shadow-errors files stdlib-names acc)
+(define
+  (shadow-errors files stdlib-names acc)
   (cond
     ((null? files) acc)
-    (else (shadow-errors (cdr files) stdlib-names
-                         (+ acc (shadow-errors-for (car files) stdlib-names))))))
+    (else
+      (shadow-errors (cdr files) stdlib-names (+ acc (shadow-errors-for (car files) stdlib-names))))))
 
-(define (stdlib-shadow-errors)
+(define
+  (stdlib-shadow-errors)
   (cond
     ((not (path-exists? stdlib-src-path))
-     (log-info "  stdlib shadow check skipped (no _tlisp-stdlib/stdlib.tlisp here)")
-     0)
+      (log-info "  stdlib shadow check skipped (no _tlisp-stdlib/stdlib.tlisp here)")
+      0)
     (else (shadow-errors files (define-names-in stdlib-src-path) 0))))
 
 ;; ── Layer 5: differently-named stdlib reimplementation ─────────────────
@@ -294,26 +324,29 @@
 ;; Pieces of a line split on `"` alternate code / literal / code / literal…
 ;; A `;` inside a CODE piece starts a comment: stop the line there. This is
 ;; what makes prose about a bug distinguishable from the bug.
-(define (line-literals-walk pieces in-str acc)
+(define
+  (line-literals-walk pieces in-str acc)
   (cond
     ((null? pieces) (reverse acc))
     (in-str (line-literals-walk (cdr pieces) #f (cons (car pieces) acc)))
     ((string-contains? (car pieces) ";") (reverse acc))
     (else (line-literals-walk (cdr pieces) #t acc))))
 
-(define (line-code-literals line)
-  (line-literals-walk (string-split line "\"") #f (list)))
+(define (line-code-literals line) (line-literals-walk (string-split line "\"") #f (list)))
 
 ;; A diagnostic-shaped literal: a sentence, not a word, and not shell plumbing.
-(define (diagnostic-literal? s)
-  (and (>= (string-length s) 16)
-       (string-contains? s " ")
-       (not (string-contains? s ">"))
-       (not (string-contains? s "|"))
-       (not (string-contains? s "&"))
-       (not (string-contains? s "$"))))
+(define
+  (diagnostic-literal? s)
+  (and
+    (>= (string-length s) 16)
+    (string-contains? s " ")
+    (not (string-contains? s ">"))
+    (not (string-contains? s "|"))
+    (not (string-contains? s "&"))
+    (not (string-contains? s "$"))))
 
-(define (collect-diagnostic-literals lines acc)
+(define
+  (collect-diagnostic-literals lines acc)
   (cond
     ((null? lines) acc)
     (else
@@ -321,35 +354,40 @@
         (cdr lines)
         (append acc (filter diagnostic-literal? (line-code-literals (car lines))))))))
 
-(define (diagnostic-literals-in path)
-  (if (path-exists? path)
+(define
+  (diagnostic-literals-in path)
+  (if
+    (path-exists? path)
     (collect-diagnostic-literals (string-split (read-file path) "\n") (list))
     (list)))
 
 ;; #t iff either literal contains the other — the prefix case is the one that
 ;; matters (`"failed to select a version"` ⊂ `"failed to select a version for"`).
-(define (literal-kin? a b)
-  (or (equal? a b) (string-contains? a b) (string-contains? b a)))
+(define (literal-kin? a b) (or (equal? a b) (string-contains? a b) (string-contains? b a)))
 
-(define (kin-stdlib-literal lit stdlib-lits)
+(define
+  (kin-stdlib-literal lit stdlib-lits)
   (cond
     ((null? stdlib-lits) "")
     ((literal-kin? lit (car stdlib-lits)) (car stdlib-lits))
     (else (kin-stdlib-literal lit (cdr stdlib-lits)))))
 
-(define literal-baselined
-  (if (path-exists? literal-baseline-path)
-    (filter (lambda (l) (and (not (equal? (string-trim l) ""))
-                             (not (string-prefix? (string-trim l) "#"))))
-            (string-split (read-file literal-baseline-path) "\n"))
+(define
+  literal-baselined
+  (if
+    (path-exists? literal-baseline-path)
+    (filter
+      (lambda
+        (l)
+        (and (not (equal? (string-trim l) "")) (not (string-prefix? (string-trim l) "#"))))
+      (string-split (read-file literal-baseline-path) "\n"))
     (list)))
 
 ;; The baseline key trims the literal: leading/trailing whitespace is never the
 ;; identifying part of a diagnostic, and a row ending in a space is a file even
 ;; a careful editor will silently "clean". Found by running the gate — the
 ;; `"Authorization: token "` row has a trailing space and never matched.
-(define (literal-row path lit)
-  (string-append (repo-relative path) "\t" (string-trim lit)))
+(define (literal-row path lit) (string-append (repo-relative path) "\t" (string-trim lit)))
 
 ;; `*.test.tlisp` is EXEMPT, and this is a rule not an oversight. A test file's
 ;; job is to hold a foreign tool's VERBATIM output as evidence — the whole point
@@ -360,44 +398,56 @@
 ;; fixtures and `deftest` titles; excluded, it reports the real duplication.
 (define (literal-exempt-file? path) (string-suffix? path ".test.tlisp"))
 
-(define (literal-errors-for path stdlib-lits)
-  (let* ((kin (if (literal-exempt-file? path)
-                (list)
-                (filter (lambda (l) (not (equal? (kin-stdlib-literal l stdlib-lits) "")))
-                        (diagnostic-literals-in path))))
-         (rows (map (lambda (l) (literal-row path l)) kin))
-         (new (filter (lambda (r) (not (name-member? r literal-baselined))) rows)))
+(define
+  (literal-errors-for path stdlib-lits)
+  (let*
+    ((kin
+       (if
+         (literal-exempt-file? path)
+         (list)
+         (filter
+           (lambda (l) (not (equal? (kin-stdlib-literal l stdlib-lits) "")))
+           (diagnostic-literals-in path))))
+      (rows (map (lambda (l) (literal-row path l)) kin))
+      (new (filter (lambda (r) (not (name-member? r literal-baselined))) rows)))
     (cond
       ((null? kin) 0)
       ((null? new)
-       (log-info (string-append "  stdlib literal (baselined) " path " — "
-                                (string-join "," kin)))
-       0)
+        (log-info
+          (string-append "  stdlib literal (baselined) " path " — " (string-join "," kin)))
+        0)
       (else
         (log-error
           (string-append
-            "  STDLIB DIAGNOSTIC LITERAL RE-TYPED " path " — "
+            "  STDLIB DIAGNOSTIC LITERAL RE-TYPED "
+            path
+            " — "
             (string-join " | " new)
-            " : this literal already lives in " stdlib-src-path
-            " (as " (kin-stdlib-literal (car kin) stdlib-lits)
+            " : this literal already lives in "
+            stdlib-src-path
+            " (as "
+            (kin-stdlib-literal (car kin) stdlib-lits)
             "). A predicate over a foreign tool's diagnostic text belongs in the "
             "stdlib exactly once — call the stdlib's predicate instead of "
             "re-typing its match. That is the differently-named reimplementation "
             "that stalled tatara-lisp 0.3.x. If this really is unrelated, add the "
-            "row to " literal-baseline-path))
+            "row to "
+            literal-baseline-path))
         (length new)))))
 
-(define (literal-errors files stdlib-lits acc)
+(define
+  (literal-errors files stdlib-lits acc)
   (cond
     ((null? files) acc)
-    (else (literal-errors (cdr files) stdlib-lits
-                          (+ acc (literal-errors-for (car files) stdlib-lits))))))
+    (else
+      (literal-errors (cdr files) stdlib-lits (+ acc (literal-errors-for (car files) stdlib-lits))))))
 
-(define (stdlib-literal-errors)
+(define
+  (stdlib-literal-errors)
   (cond
     ((not (path-exists? stdlib-src-path))
-     (log-info "  stdlib literal check skipped (no _tlisp-stdlib/stdlib.tlisp here)")
-     0)
+      (log-info "  stdlib literal check skipped (no _tlisp-stdlib/stdlib.tlisp here)")
+      0)
     (else (literal-errors files (diagnostic-literals-in stdlib-src-path) 0))))
 
 ;; ── Layer 6: crash-certain forms ───────────────────────────────────────
@@ -470,56 +520,71 @@
 ;; `ACTION_PATH` is exported by action.yml (`${{ github.action_path }}`), because
 ;; on a runner this script is a STRING passed to the tatara-script action and has
 ;; no idea where its own sidecar lives. Locally (repo root) the fallback holds.
-(define crash-reader-script
-  (let ((ap (env-get "ACTION_PATH" "")))
-    (if (equal? ap "")
+(define
+  crash-reader-script
+  (let
+    ((ap (env-get "ACTION_PATH" "")))
+    (if
+      (equal? ap "")
       "tlisp-lint/crash-certain-reader.py"
       (string-append ap "/crash-certain-reader.py"))))
 
 (define lint-tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
+
 (define crash-files-list (string-append lint-tmp-dir "/tlisp-lint-files.txt"))
+
 (define crash-probe-path (string-append lint-tmp-dir "/tlisp-lint-arity-probe.tlisp"))
+
 (define crash-arity-path (string-append lint-tmp-dir "/tlisp-lint-arity.txt"))
 
-(define crash-baselined
-  (if (path-exists? crash-baseline-path)
-    (filter (lambda (l) (and (not (equal? (string-trim l) ""))
-                             (not (string-prefix? (string-trim l) "#"))))
-            (string-split (read-file crash-baseline-path) "\n"))
+(define
+  crash-baselined
+  (if
+    (path-exists? crash-baseline-path)
+    (filter
+      (lambda
+        (l)
+        (and (not (equal? (string-trim l) "")) (not (string-prefix? (string-trim l) "#"))))
+      (string-split (read-file crash-baseline-path) "\n"))
     (list)))
 
 ;; A reader row is TSV. `row-field` is 0-indexed and total about which field is
 ;; which, so a format change is a visible edit rather than a silent off-by-one.
 ;; `nth` is (index list) and returns nil past the end — the explicit length
 ;; guard keeps a short row from putting a nil into a string-append.
-(define (row-field row n)
-  (let ((parts (string-split row "\t")))
-    (if (> (length parts) n) (nth n parts) "")))
+(define
+  (row-field row n)
+  (let ((parts (string-split row "\t"))) (if (> (length parts) n) (nth n parts) "")))
 
-(define (rows-of-kind rows kind)
-  (filter (lambda (r) (equal? (row-field r 0) kind)) rows))
+(define (rows-of-kind rows kind) (filter (lambda (r) (equal? (row-field r 0) kind)) rows))
 
-(define (nonblank-lines text)
-  (filter (lambda (l) (not (equal? (string-trim l) "")))
-          (string-split text "\n")))
+(define
+  (nonblank-lines text)
+  (filter (lambda (l) (not (equal? (string-trim l) ""))) (string-split text "\n")))
 
 ;; ── 6b step 1: ask the interpreter for the arity of one head ───────────
 ;; 23 dummy arguments: absurd enough that no primitive in the fleet declares it,
 ;; so an Exact/Range primitive always answers with an arity error.
-(define arity-probe-dummies
-  "#f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f")
+(define arity-probe-dummies "#f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f")
 
-(define (arity-probe-line head)
-  (string-append "(log-info (string-append \"ARITYPROBE\\t" head "\\t\" "
-                 "(string-format \"{}\" (try (" head " " arity-probe-dummies
-                 ") (catch (e) e)))))"))
+(define
+  (arity-probe-line head)
+  (string-append
+    "(log-info (string-append \"ARITYPROBE\\t"
+    head
+    "\\t\" "
+    "(string-format \"{}\" (try ("
+    head
+    " "
+    arity-probe-dummies
+    ") (catch (e) e)))))"))
 
-(define (arity-probe-source heads)
-  (string-join "\n" (map arity-probe-line heads)))
+(define (arity-probe-source heads) (string-join "\n" (map arity-probe-line heads)))
 
 ;; "…arity-mismatch: `string-replace` expected Exact(3), got 23" -> "3".
 ;; "" for anything else: a Range, a closure, an unbound symbol, a special form.
-(define (probe-exact-arity head verdict)
+(define
+  (probe-exact-arity head verdict)
   (cond
     ((not (string-contains? verdict "arity-mismatch")) "")
     ;; NATIVE ONLY: the verdict must name the head we probed. A `<closure>`
@@ -527,136 +592,176 @@
     ((not (string-contains? verdict (string-append "`" head "`"))) "")
     ((not (string-contains? verdict "expected Exact(")) "")
     (else
-      (let* ((tail (car (cdr (string-split verdict "expected Exact("))))
-             (num (car (string-split tail ")"))))
+      (let*
+        ((tail (car (cdr (string-split verdict "expected Exact("))))
+          (num (car (string-split tail ")"))))
         (string-trim num)))))
 
-(define (probe-row->arity-row line)
+(define
+  (probe-row->arity-row line)
   (cond
     ((not (string-contains? line "ARITYPROBE\t")) "")
     (else
-      (let* ((payload (car (cdr (string-split line "ARITYPROBE\t"))))
-             (head (row-field payload 0))
-             (verdict (row-field payload 1))
-             (n (probe-exact-arity head verdict)))
+      (let*
+        ((payload (car (cdr (string-split line "ARITYPROBE\t"))))
+          (head (row-field payload 0))
+          (verdict (row-field payload 1))
+          (n (probe-exact-arity head verdict)))
         (if (equal? n "") "" (string-append head "\t" n))))))
 
-(define (derive-arity-table heads)
+(define
+  (derive-arity-table heads)
   (write-file crash-probe-path (arity-probe-source heads))
-  (let* ((r (exec-capture "tatara-script" crash-probe-path))
-         (text (string-append (stdout-of r) (stderr-of r)))
-         (rows (filter (lambda (x) (not (equal? x "")))
-                       (map probe-row->arity-row (nonblank-lines text)))))
+  (let*
+    ((r (exec-capture "tatara-script" crash-probe-path))
+      (text (string-append (stdout-of r) (stderr-of r)))
+      (rows
+        (filter (lambda (x) (not (equal? x ""))) (map probe-row->arity-row (nonblank-lines text)))))
     rows))
 
 ;; ── 6b step 2 + 6a: report ────────────────────────────────────────────
 (define (crash-row-new? row) (not (name-member? row crash-baselined)))
 
-(define (namedlet-row row)
+(define
+  (namedlet-row row)
   ;; NAMEDLET \t path \t line \t form  ->  "<path>:<line>\tnamed-<form>"
-  (string-append (repo-relative (row-field row 1)) ":" (row-field row 2)
-                 "\tnamed-" (row-field row 3)))
+  (string-append
+    (repo-relative (row-field row 1))
+    ":"
+    (row-field row 2)
+    "\tnamed-"
+    (row-field row 3)))
 
-(define (arityviol-row row)
+(define
+  (arityviol-row row)
   ;; ARITYVIOL \t path \t line \t head \t got \t want
-  (string-append (repo-relative (row-field row 1)) ":" (row-field row 2)
-                 "\t" (row-field row 3) "/" (row-field row 4)
-                 " (wants " (row-field row 5) ")"))
+  (string-append
+    (repo-relative (row-field row 1))
+    ":"
+    (row-field row 2)
+    "\t"
+    (row-field row 3)
+    "/"
+    (row-field row 4)
+    " (wants "
+    (row-field row 5)
+    ")"))
 
-(define (report-crash-rows label rows explain)
-  (let ((new (filter crash-row-new? rows)))
+(define
+  (report-crash-rows label rows explain)
+  (let
+    ((new (filter crash-row-new? rows)))
     (cond
       ((null? rows) 0)
       ((null? new)
-       (log-info (string-append "  " label " (baselined) — "
-                                (string-join " | " rows)))
-       0)
+        (log-info (string-append "  " label " (baselined) — " (string-join " | " rows)))
+        0)
       (else
-        (log-error (string-append "  CRASH-CERTAIN " label " — "
-                                  (string-join " | " new)
-                                  " : " explain
-                                  " If this really is unreachable-and-intended, "
-                                  "add the row to " crash-baseline-path))
+        (log-error
+          (string-append
+            "  CRASH-CERTAIN "
+            label
+            " — "
+            (string-join " | " new)
+            " : "
+            explain
+            " If this really is unreachable-and-intended, "
+            "add the row to "
+            crash-baseline-path))
         (length new)))))
 
-(define (crash-certain-errors)
+(define
+  (crash-certain-errors)
   (cond
     ((not (path-exists? crash-reader-script))
-     (log-info (string-append "  crash-certain check skipped (no "
-                              crash-reader-script ")"))
-     0)
-    ((null? files)
-     0)
+      (log-info (string-append "  crash-certain check skipped (no " crash-reader-script ")"))
+      0)
+    ((null? files) 0)
     (else
       (write-file crash-files-list (string-join "\n" files))
-      (let* ((hr (exec-capture "python3" crash-reader-script "heads" crash-files-list)))
+      (let*
+        ((hr (exec-capture "python3" crash-reader-script "heads" crash-files-list)))
         (cond
           ((not (= (status-of hr) 0))
-           (log-error (string-append "  crash-certain reader failed: "
-                                     (string-trim (stderr-of hr))))
-           1)
+            (log-error
+              (string-append "  crash-certain reader failed: " (string-trim (stderr-of hr))))
+            1)
           (else
-            (let* ((rows (nonblank-lines (stdout-of hr)))
-                   (namedlets (map namedlet-row (rows-of-kind rows "NAMEDLET")))
-                   (heads (map (lambda (r) (row-field r 1)) (rows-of-kind rows "HEAD")))
-                   (namedlet-errs
-                     (report-crash-rows
-                       "named let"
-                       namedlets
-                       (string-append
-                         "tatara-script has NO named let — `(let name ((v e)) …)` "
-                         "is a hard `bad `let`: bindings must be a list` the "
-                         "moment control reaches it, and it does NOT fail at "
-                         "load. Port it to a named `(define (name v) …)` plus a "
-                         "call, exactly as the fixed actions do.")))
-                   (arity-rows (derive-arity-table heads)))
+            (let*
+              ((rows (nonblank-lines (stdout-of hr)))
+                (namedlets (map namedlet-row (rows-of-kind rows "NAMEDLET")))
+                (heads (map (lambda (r) (row-field r 1)) (rows-of-kind rows "HEAD")))
+                (namedlet-errs
+                  (report-crash-rows
+                    "named let"
+                    namedlets
+                    (string-append
+                      "tatara-script has NO named let — `(let name ((v e)) …)` "
+                      "is a hard `bad `let`: bindings must be a list` the "
+                      "moment control reaches it, and it does NOT fail at "
+                      "load. Port it to a named `(define (name v) …)` plus a "
+                      "call, exactly as the fixed actions do.")))
+                (arity-rows (derive-arity-table heads)))
               (write-file crash-arity-path (string-join "\n" arity-rows))
-              (let* ((ar (exec-capture "python3" crash-reader-script "arity"
-                                       crash-files-list crash-arity-path))
-                     (viols (map arityviol-row
-                                 (rows-of-kind (nonblank-lines (stdout-of ar))
-                                               "ARITYVIOL"))))
-                (log-info (string-append "  arity table derived from the live "
-                                         "interpreter: "
-                                         (string-format "{}" (length arity-rows))
-                                         " Exact-arity primitives over "
-                                         (string-format "{}" (length heads))
-                                         " call heads"))
-                (+ namedlet-errs
-                   (report-crash-rows
-                     "wrong arity"
-                     viols
-                     (string-append
-                       "the interpreter rejects this argument count for this "
-                       "primitive — an arity mismatch is a hard error at the "
-                       "call, so this code path can only crash. The count in "
-                       "parentheses is what the running interpreter itself "
-                       "reported.")))))))))))
+              (let*
+                ((ar
+                   (exec-capture
+                     "python3"
+                     crash-reader-script
+                     "arity"
+                     crash-files-list
+                     crash-arity-path))
+                  (viols
+                    (map arityviol-row (rows-of-kind (nonblank-lines (stdout-of ar)) "ARITYVIOL"))))
+                (log-info
+                  (string-append
+                    "  arity table derived from the live "
+                    "interpreter: "
+                    (string-format "{}" (length arity-rows))
+                    " Exact-arity primitives over "
+                    (string-format "{}" (length heads))
+                    " call heads"))
+                (+
+                  namedlet-errs
+                  (report-crash-rows
+                    "wrong arity"
+                    viols
+                    (string-append
+                      "the interpreter rejects this argument count for this "
+                      "primitive — an arity mismatch is a hard error at the "
+                      "call, so this code path can only crash. The count in "
+                      "parentheses is what the running interpreter itself "
+                      "reported.")))))))))))
 
-(define (lint-main)
-  (log-info (string-append "scanning " (string-format "{}" file-count)
-                           " .tlisp files under " paths-input))
-  (let ((total-errors (+ (lint-all files 0)
-                         (semantic-rule-errors)
-                         (stdlib-shadow-errors)
-                         (stdlib-literal-errors)
-                         (crash-certain-errors))))
+(define
+  (lint-main)
+  (log-info
+    (string-append "scanning " (string-format "{}" file-count) " .tlisp files under " paths-input))
+  (let
+    ((total-errors
+       (+
+         (lint-all files 0)
+         (semantic-rule-errors)
+         (stdlib-shadow-errors)
+         (stdlib-literal-errors)
+         (crash-certain-errors))))
     (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
     (append-output (string-append "errors-found=" (string-format "{}" total-errors)))
     (cond
       ((= total-errors 0)
-       (log-info (string-append "all " (string-format "{}" file-count) " files clean"))
-       0)
+        (log-info (string-append "all " (string-format "{}" file-count) " files clean"))
+        0)
       ((equal? fail-flag "true")
-       (log-error (string-append (string-format "{}" total-errors) " file(s) failed lint"))
-       1)
+        (log-error (string-append (string-format "{}" total-errors) " file(s) failed lint"))
+        1)
       (else
-       (log-info (string-append (string-format "{}" total-errors)
-                                " file(s) failed lint — continuing (fail-on-unbalanced=false)"))
-       0))))
+        (log-info
+          (string-append
+            (string-format "{}" total-errors)
+            " file(s) failed lint — continuing (fail-on-unbalanced=false)"))
+        0))))
 
 (cond
   (tlisp-test-mode
-   (log-info "TLISP_TEST=1 — linter loaded; main skipped (the test harness drives it)"))
-  (else
-    (exit (lint-main))))
+    (log-info "TLISP_TEST=1 — linter loaded; main skipped (the test harness drives it)"))
+  (else (exit (lint-main))))

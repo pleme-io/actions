@@ -11,7 +11,9 @@
 ;; is a violation.
 
 (define threshold-str (env-get "THRESHOLD" "10"))
+
 (define paths (env-get "PATHS" "*/action.yml"))
+
 (define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
 
 (log-info (string-append "==> scanning " paths " (threshold=" threshold-str ")"))
@@ -19,33 +21,36 @@
 ;; Awk script that detects 'shell: bash' blocks NOT containing
 ;; 'script<<TLISP_EOF' in the next 10 lines (= loader block), and
 ;; counts the run body. Emits "<file>\t<lines>" per offender.
-(define awk-prog
-  "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }
-   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }
-   in_run && /TLISP_EOF/ { is_loader=1; }
-   in_run && /run: \\|/ { in_body=1; next; }
-   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }
-   in_body { lines++; }
-   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
+(define
+  awk-prog
+  "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }\n   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }\n   in_run && /TLISP_EOF/ { is_loader=1; }\n   in_run && /run: \\|/ { in_body=1; next; }\n   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }\n   in_body { lines++; }\n   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
 
-(define find-cmd
-  (string-append "find . -path './_*' -prune -o -name 'action.yml' -print "
-                 "| xargs -I{} awk -v THRESHOLD=" threshold-str
-                 " '" awk-prog "' {}"))
+(define
+  find-cmd
+  (string-append
+    "find . -path './_*' -prune -o -name 'action.yml' -print "
+    "| xargs -I{} awk -v THRESHOLD="
+    threshold-str
+    " '"
+    awk-prog
+    "' {}"))
 
 (define r (exec-capture "sh" "-c" find-cmd))
+
 (define out (string-trim (stdout-of r)))
 
-(define files-r (exec-capture "sh" "-c"
-                  "find . -path './_*' -prune -o -name 'action.yml' -print | wc -l"))
+(define
+  files-r
+  (exec-capture "sh" "-c" "find . -path './_*' -prune -o -name 'action.yml' -print | wc -l"))
+
 (define files (string-trim (stdout-of files-r)))
 
 (cond
   ((equal? out "")
-   (log-info (string-append "all " files " action.yml files within shell threshold"))
-   (append-output "violations=0")
-   (append-output (string-append "files-scanned=" files))
-   (exit 0)))
+    (log-info (string-append "all " files " action.yml files within shell threshold"))
+    (append-output "violations=0")
+    (append-output (string-append "files-scanned=" files))
+    (exit 0)))
 
 (log-error "shell-bodied actions exceeding threshold:")
 
@@ -59,41 +64,40 @@
 ;; debt (never silent); anything NOT in the baseline is a real, new
 ;; violation and still fails the build.
 (define baseline-path "action-shell-lint/baseline.txt")
-(define baseline-lines
-  (if (path-exists? baseline-path)
-    (filter (lambda (l) (not (equal? l "")))
-            (string-split (read-file baseline-path) "\n"))
+
+(define
+  baseline-lines
+  (if
+    (path-exists? baseline-path)
+    (filter (lambda (l) (not (equal? l ""))) (string-split (read-file baseline-path) "\n"))
     (list)))
 
-(define (list-contains? lst item)
-  (cond
-    ((null? lst) #f)
-    ((equal? (car lst) item) #t)
-    (else (list-contains? (cdr lst) item))))
+(define
+  (list-contains? lst item)
+  (cond ((null? lst) #f) ((equal? (car lst) item) #t) (else (list-contains? (cdr lst) item))))
 
 ;; tatara-script's `let` has no named-let form (bindings must be a
 ;; plain list) -- a top-level `define` is the portable recursive-loop
 ;; idiom used everywhere else in this repo (see e.g.
 ;; cargo-publish-each-member/run.tlisp's resolve-member).
-(define (report-violations lines new-n baseline-n)
+(define
+  (report-violations lines new-n baseline-n)
   (cond
     ((null? lines)
-     (append-output (string-append "violations=" (string-format "{}" new-n)))
-     (append-output (string-append "baseline-violations=" (string-format "{}" baseline-n)))
-     (append-output (string-append "files-scanned=" files))
-     (cond
-       ((and (equal? fail-on "true") (> new-n 0)) (exit 1))
-       (else (exit 0))))
+      (append-output (string-append "violations=" (string-format "{}" new-n)))
+      (append-output (string-append "baseline-violations=" (string-format "{}" baseline-n)))
+      (append-output (string-append "files-scanned=" files))
+      (cond ((and (equal? fail-on "true") (> new-n 0)) (exit 1)) (else (exit 0))))
     ((equal? (car lines) "") (report-violations (cdr lines) new-n baseline-n))
     (else
-      (let* ((parts (string-split (car lines) "\t"))
-             (offending-file (car parts)))
+      (let*
+        ((parts (string-split (car lines) "\t")) (offending-file (car parts)))
         (cond
           ((list-contains? baseline-lines offending-file)
-           (log-info (string-append "  (baseline, tracked debt) " (car lines)))
-           (report-violations (cdr lines) new-n (+ baseline-n 1)))
+            (log-info (string-append "  (baseline, tracked debt) " (car lines)))
+            (report-violations (cdr lines) new-n (+ baseline-n 1)))
           (else
-           (log-error (string-append "  " (car lines)))
-           (report-violations (cdr lines) (+ new-n 1) baseline-n)))))))
+            (log-error (string-append "  " (car lines)))
+            (report-violations (cdr lines) (+ new-n 1) baseline-n)))))))
 
 (report-violations (string-split out "\n") 0 0)

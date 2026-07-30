@@ -70,32 +70,34 @@
 ;;   sbom-components slsa-path slsa-predicate-type signed outcome-chain reason
 
 ;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────
-(define (cartorio:norm-bool s)
-  (if (equal? (string-trim s) "true") "true" "false"))
+(define (cartorio:norm-bool s) (if (equal? (string-trim s) "true") "true" "false"))
 
-(define (cartorio:normalize-subject raw imgref repo)
+(define
+  (cartorio:normalize-subject raw imgref repo)
   (cond
     ((not (equal? (string-trim raw) "")) raw)
     ((not (equal? (string-trim imgref) "")) imgref)
     (else repo)))
 
 ;; Split a digest "sha256:abc" into algorithm + hex; a bare hex ⇒ sha256.
-(define (cartorio:digest-algo d)
-  (let ((parts (string-split d ":")))
-    (if (>= (length parts) 2) (car parts) "sha256")))
+(define
+  (cartorio:digest-algo d)
+  (let ((parts (string-split d ":"))) (if (>= (length parts) 2) (car parts) "sha256")))
 
-(define (cartorio:digest-hex d)
-  (let ((parts (string-split d ":")))
-    (if (>= (length parts) 2) (car (cdr parts)) (string-trim d))))
+(define
+  (cartorio:digest-hex d)
+  (let ((parts (string-split d ":"))) (if (>= (length parts) 2) (car (cdr parts)) (string-trim d))))
 
 ;; Normalize a comma/space list into a list of non-empty store paths.
-(define (cartorio:drop-empty xs)
+(define
+  (cartorio:drop-empty xs)
   (cond
     ((null? xs) (list))
     ((equal? (string-trim (car xs)) "") (cartorio:drop-empty (cdr xs)))
     (else (cons (string-trim (car xs)) (cartorio:drop-empty (cdr xs))))))
 
-(define (cartorio:store-paths raw)
+(define
+  (cartorio:store-paths raw)
   (cartorio:drop-empty (string-split (string-replace raw "," " ") " ")))
 
 ;; ── closureInfo readers (the robust path for compressed image outputs) ──
@@ -103,27 +105,27 @@
 ;; hand-building a JSON array by quote-wrapping each path is safe -- no
 ;; escaping/injection surface, and it avoids a second jq round-trip just
 ;; to turn a lisp list into JSON.
-(define (cartorio:read-closure-paths dir)
-  (let ((sp-path (string-append dir "/store-paths")))
-    (if (path-exists? sp-path)
-      (cartorio:drop-empty (string-split (read-file sp-path) "\n"))
-      (list))))
+(define
+  (cartorio:read-closure-paths dir)
+  (let
+    ((sp-path (string-append dir "/store-paths")))
+    (if (path-exists? sp-path) (cartorio:drop-empty (string-split (read-file sp-path) "\n")) (list))))
 
-(define (cartorio:read-closure-paths-all dirs)
+(define
+  (cartorio:read-closure-paths-all dirs)
   (cond
     ((null? dirs) (list))
-    (else (append (cartorio:read-closure-paths (car dirs))
-                  (cartorio:read-closure-paths-all (cdr dirs))))))
+    (else
+      (append (cartorio:read-closure-paths (car dirs)) (cartorio:read-closure-paths-all (cdr dirs))))))
 
-(define (cartorio:json-quote-join paths)
+(define
+  (cartorio:json-quote-join paths)
   (cond
     ((null? paths) "")
     ((null? (cdr paths)) (string-append "\"" (car paths) "\""))
-    (else (string-append "\"" (car paths) "\","
-                         (cartorio:json-quote-join (cdr paths))))))
+    (else (string-append "\"" (car paths) "\"," (cartorio:json-quote-join (cdr paths))))))
 
-(define (cartorio:paths->json-array paths)
-  (string-append "[" (cartorio:json-quote-join paths) "]"))
+(define (cartorio:paths->json-array paths) (string-append "[" (cartorio:json-quote-join paths) "]"))
 
 ;; ── jq programs — TYPED EMISSION, zero double-quote chars (every
 ;;    literal is passed as --arg, so each embeds in a tlisp string with
@@ -135,51 +137,106 @@
 ;;   - array-of-objects `nix path-info --json` (older nix): `map(.path)`
 ;;   - plain array of path strings (this action's own closureInfo
 ;;     `store-paths` reader, `cartorio:paths->json-array`): passed through
-(define cartorio:sbom-jq
+(define
+  cartorio:sbom-jq
   "{ bomFormat: $bomfmt, specVersion: $specver, version: 1, metadata: { timestamp: $ts, component: { type: $apptype, name: $subject } }, components: ( ( if type == $arr then (map(if type == $objtype then .path else . end)) else keys end ) | map(select(type == $str)) | map({ type: $libtype, name: (. | ltrimstr($storepfx) | sub($hashre; $empty)), purl: ($pkgnix + (. | ltrimstr($storepfx))), properties: [ { name: $spkey, value: . } ] }) ) }")
 
-(define cartorio:empty-sbom-jq
+(define
+  cartorio:empty-sbom-jq
   "{ bomFormat: $bomfmt, specVersion: $specver, version: 1, metadata: { timestamp: $ts, component: { type: $apptype, name: $subject } }, components: [] }")
 
-(define cartorio:slsa-jq
+(define
+  cartorio:slsa-jq
   "{ _type: $intoto, predicateType: $ptype, subject: [ { name: $subjref, digest: { ($digestalgo): $digesthex } } ], predicate: { buildDefinition: { buildType: $buildtype, externalParameters: { git_sha: $gitsha, git_ref: $gitref, run_id: $runid, workflow: $workflow }, internalParameters: {}, resolvedDependencies: ( [ { uri: $gituri, digest: { gitCommit: $gitsha } } ] + ( $stores | split($sep) | map(select(length > 0)) | map({ uri: ., name: (. | ltrimstr($storepfx)) }) ) ) }, runDetails: { builder: { id: $builderid }, metadata: { invocationId: $runid, startedOn: $ts } } } }")
 
-(define cartorio:receipt-jq
+(define
+  cartorio:receipt-jq
   "{ schema: $schema, subject: $subject, image: { ref: $imgref, digest: $imgdigest }, git: { sha: $gitsha, ref: $gitref }, run: { id: $runid, number: $runnum, workflow: $workflow }, timestamp: $ts, pillars: { sbom: { format: $sbomfmt, path: $sbompath, hash: $sbomhash, components: ($sbomcount | tonumber) }, provenance: { predicate_type: $ptype, path: $slsapath, hash: $slsahash }, ledger: { chain_algorithm: $algo, prev: $prev } }, attestation: { hash_algorithm: $algo, receipt_hash: $rhash, signed: $signed, signature: null, outcome_chain: $ochain } }")
 
 ;; ── SBOM builders ─────────────────────────────────────────────────
-(define (cartorio:emit-empty-sbom ts subject sbom-path)
-  (let ((r (apply exec-capture
-             (list "jq" "-n" "-S"
-               "--arg" "bomfmt" "CycloneDX"
-               "--arg" "specver" "1.5"
-               "--arg" "apptype" "application"
-               "--arg" "subject" subject
-               "--arg" "ts" ts
-               cartorio:empty-sbom-jq))))
+(define
+  (cartorio:emit-empty-sbom ts subject sbom-path)
+  (let
+    ((r
+       (apply
+         exec-capture
+         (list
+           "jq"
+           "-n"
+           "-S"
+           "--arg"
+           "bomfmt"
+           "CycloneDX"
+           "--arg"
+           "specver"
+           "1.5"
+           "--arg"
+           "apptype"
+           "application"
+           "--arg"
+           "subject"
+           subject
+           "--arg"
+           "ts"
+           ts
+           cartorio:empty-sbom-jq))))
     (cond
       ((= (status-of r) 0) (write-file sbom-path (stdout-of r)) 0)
       (else (log-info (stderr-of r)) 1))))
 
-(define (cartorio:emit-closure-sbom raw-path ts subject sbom-path)
-  (let ((r (apply exec-capture
-             (list "jq" "-S"
-               "--arg" "bomfmt" "CycloneDX"
-               "--arg" "specver" "1.5"
-               "--arg" "apptype" "application"
-               "--arg" "libtype" "library"
-               "--arg" "subject" subject
-               "--arg" "ts" ts
-               "--arg" "storepfx" "/nix/store/"
-               "--arg" "hashre" "^[0-9a-z]{32}-"
-               "--arg" "pkgnix" "pkg:nix/"
-               "--arg" "spkey" "nix:store_path"
-               "--arg" "empty" ""
-               "--arg" "arr" "array"
-               "--arg" "str" "string"
-               "--arg" "objtype" "object"
-               cartorio:sbom-jq
-               raw-path))))
+(define
+  (cartorio:emit-closure-sbom raw-path ts subject sbom-path)
+  (let
+    ((r
+       (apply
+         exec-capture
+         (list
+           "jq"
+           "-S"
+           "--arg"
+           "bomfmt"
+           "CycloneDX"
+           "--arg"
+           "specver"
+           "1.5"
+           "--arg"
+           "apptype"
+           "application"
+           "--arg"
+           "libtype"
+           "library"
+           "--arg"
+           "subject"
+           subject
+           "--arg"
+           "ts"
+           ts
+           "--arg"
+           "storepfx"
+           "/nix/store/"
+           "--arg"
+           "hashre"
+           "^[0-9a-z]{32}-"
+           "--arg"
+           "pkgnix"
+           "pkg:nix/"
+           "--arg"
+           "spkey"
+           "nix:store_path"
+           "--arg"
+           "empty"
+           ""
+           "--arg"
+           "arr"
+           "array"
+           "--arg"
+           "str"
+           "string"
+           "--arg"
+           "objtype"
+           "object"
+           cartorio:sbom-jq
+           raw-path))))
     (cond
       ((= (status-of r) 0) (write-file sbom-path (stdout-of r)) 0)
       (else (log-info (stderr-of r)) 1))))
@@ -189,102 +246,225 @@
 ;; closure-dirs (NIX_CLOSURE_INFO_PATH) takes precedence over store-paths
 ;; (NIX_STORE_PATH) — it's the robust source for a compressed dockerTools
 ;; image out-path (see the closureInfo readers above + the header note).
-(define (cartorio:build-sbom store-paths closure-dirs ts subject sbom-path tmp-dir)
+(define
+  (cartorio:build-sbom store-paths closure-dirs ts subject sbom-path tmp-dir)
   (cond
     ((not (null? closure-dirs))
-     (let ((paths (cartorio:read-closure-paths-all closure-dirs)))
-       (cond
-         ((null? paths)
-          (log-info "::warning::cartorio-attest: NIX_CLOSURE_INFO_PATH given but no store-paths lines found (bad dir? empty closure?) — emitting an honest EMPTY SBOM (sbom-components=0)")
-          (cartorio:emit-empty-sbom ts subject sbom-path))
-         (else
-          (let ((raw-path (string-append tmp-dir "/cartorio-closure.json")))
-            (write-file raw-path (cartorio:paths->json-array paths))
-            (cartorio:emit-closure-sbom raw-path ts subject sbom-path))))))
+      (let
+        ((paths (cartorio:read-closure-paths-all closure-dirs)))
+        (cond
+          ((null? paths)
+            (log-info
+              "::warning::cartorio-attest: NIX_CLOSURE_INFO_PATH given but no store-paths lines found (bad dir? empty closure?) — emitting an honest EMPTY SBOM (sbom-components=0)")
+            (cartorio:emit-empty-sbom ts subject sbom-path))
+          (else
+            (let
+              ((raw-path (string-append tmp-dir "/cartorio-closure.json")))
+              (write-file raw-path (cartorio:paths->json-array paths))
+              (cartorio:emit-closure-sbom raw-path ts subject sbom-path))))))
     ((null? store-paths)
-     (log-info "::warning::cartorio-attest: no NIX_STORE_PATH/NIX_CLOSURE_INFO_PATH — emitting an honest EMPTY SBOM (sbom-components=0) [LiveTODO: registry-attached SBOM / OCI referrers API for a digest-only SBOM]")
-     (cartorio:emit-empty-sbom ts subject sbom-path))
+      (log-info
+        "::warning::cartorio-attest: no NIX_STORE_PATH/NIX_CLOSURE_INFO_PATH — emitting an honest EMPTY SBOM (sbom-components=0) [LiveTODO: registry-attached SBOM / OCI referrers API for a digest-only SBOM]")
+      (cartorio:emit-empty-sbom ts subject sbom-path))
     (else
-     (let* ((raw-path (string-append tmp-dir "/cartorio-closure.json"))
-            (pi (apply exec-capture
-                  (append (list "nix" "path-info" "-r" "--json") store-paths))))
-       (cond
-         ((not (= (status-of pi) 0))
-          (log-info "::warning::cartorio-attest: `nix path-info -r --json` failed (store path absent?) — emitting an honest EMPTY SBOM (sbom-components=0)")
-          (cartorio:emit-empty-sbom ts subject sbom-path))
-         (else
-          (write-file raw-path (stdout-of pi))
-          (cartorio:emit-closure-sbom raw-path ts subject sbom-path)))))))
+      (let*
+        ((raw-path (string-append tmp-dir "/cartorio-closure.json"))
+          (pi (apply exec-capture (append (list "nix" "path-info" "-r" "--json") store-paths))))
+        (cond
+          ((not (= (status-of pi) 0))
+            (log-info
+              "::warning::cartorio-attest: `nix path-info -r --json` failed (store path absent?) — emitting an honest EMPTY SBOM (sbom-components=0)")
+            (cartorio:emit-empty-sbom ts subject sbom-path))
+          (else
+            (write-file raw-path (stdout-of pi))
+            (cartorio:emit-closure-sbom raw-path ts subject sbom-path)))))))
 
 ;; ── SLSA provenance predicate ─────────────────────────────────────
-(define (cartorio:emit-slsa subjref digest-algo digest-hex git-sha git-ref
-                            run-id workflow builder-id gituri stores ts slsa-path)
-  (let ((r (apply exec-capture
-             (list "jq" "-n" "-S"
-               "--arg" "intoto" "https://in-toto.io/Statement/v1"
-               "--arg" "ptype" "https://slsa.dev/provenance/v1"
-               "--arg" "subjref" subjref
-               "--arg" "digestalgo" digest-algo
-               "--arg" "digesthex" digest-hex
-               "--arg" "buildtype" "https://pleme-io/super-cache-ci/nix-image@v1"
-               "--arg" "gitsha" git-sha
-               "--arg" "gitref" git-ref
-               "--arg" "runid" run-id
-               "--arg" "workflow" workflow
-               "--arg" "builderid" builder-id
-               "--arg" "gituri" gituri
-               "--arg" "stores" stores
-               "--arg" "storepfx" "/nix/store/"
-               "--arg" "sep" " "
-               "--arg" "ts" ts
-               cartorio:slsa-jq))))
+(define
+  (cartorio:emit-slsa
+    subjref
+    digest-algo
+    digest-hex
+    git-sha
+    git-ref
+    run-id
+    workflow
+    builder-id
+    gituri
+    stores
+    ts
+    slsa-path)
+  (let
+    ((r
+       (apply
+         exec-capture
+         (list
+           "jq"
+           "-n"
+           "-S"
+           "--arg"
+           "intoto"
+           "https://in-toto.io/Statement/v1"
+           "--arg"
+           "ptype"
+           "https://slsa.dev/provenance/v1"
+           "--arg"
+           "subjref"
+           subjref
+           "--arg"
+           "digestalgo"
+           digest-algo
+           "--arg"
+           "digesthex"
+           digest-hex
+           "--arg"
+           "buildtype"
+           "https://pleme-io/super-cache-ci/nix-image@v1"
+           "--arg"
+           "gitsha"
+           git-sha
+           "--arg"
+           "gitref"
+           git-ref
+           "--arg"
+           "runid"
+           run-id
+           "--arg"
+           "workflow"
+           workflow
+           "--arg"
+           "builderid"
+           builder-id
+           "--arg"
+           "gituri"
+           gituri
+           "--arg"
+           "stores"
+           stores
+           "--arg"
+           "storepfx"
+           "/nix/store/"
+           "--arg"
+           "sep"
+           " "
+           "--arg"
+           "ts"
+           ts
+           cartorio:slsa-jq))))
     (cond
       ((= (status-of r) 0) (write-file slsa-path (stdout-of r)) 0)
       (else (log-info (stderr-of r)) 1))))
 
 ;; ── Receipt base ──────────────────────────────────────────────────
-(define (cartorio:build-receipt-base subject imgref imgdigest git-sha git-ref
-                                     run-id run-num workflow ts sbom-path sbom-hash
-                                     sbom-count slsa-path slsa-hash prev rhash)
-  (apply exec-capture
-    (list "jq" "-n" "-S"
-      "--arg" "schema" "pleme-io.cartorio.compliance-receipt/v1"
-      "--arg" "subject" subject
-      "--arg" "imgref" imgref
-      "--arg" "imgdigest" imgdigest
-      "--arg" "gitsha" git-sha
-      "--arg" "gitref" git-ref
-      "--arg" "runid" run-id
-      "--arg" "runnum" run-num
-      "--arg" "workflow" workflow
-      "--arg" "ts" ts
-      "--arg" "sbomfmt" "CycloneDX-1.5"
-      "--arg" "sbompath" sbom-path
-      "--arg" "sbomhash" sbom-hash
-      "--arg" "sbomcount" sbom-count
-      "--arg" "slsapath" slsa-path
-      "--arg" "slsahash" slsa-hash
-      "--arg" "ptype" "https://slsa.dev/provenance/v1"
-      "--arg" "prev" prev
-      "--arg" "algo" "blake3"
-      "--arg" "rhash" rhash
-      "--argjson" "signed" "false"
-      "--argjson" "ochain" "false"
+(define
+  (cartorio:build-receipt-base
+    subject
+    imgref
+    imgdigest
+    git-sha
+    git-ref
+    run-id
+    run-num
+    workflow
+    ts
+    sbom-path
+    sbom-hash
+    sbom-count
+    slsa-path
+    slsa-hash
+    prev
+    rhash)
+  (apply
+    exec-capture
+    (list
+      "jq"
+      "-n"
+      "-S"
+      "--arg"
+      "schema"
+      "pleme-io.cartorio.compliance-receipt/v1"
+      "--arg"
+      "subject"
+      subject
+      "--arg"
+      "imgref"
+      imgref
+      "--arg"
+      "imgdigest"
+      imgdigest
+      "--arg"
+      "gitsha"
+      git-sha
+      "--arg"
+      "gitref"
+      git-ref
+      "--arg"
+      "runid"
+      run-id
+      "--arg"
+      "runnum"
+      run-num
+      "--arg"
+      "workflow"
+      workflow
+      "--arg"
+      "ts"
+      ts
+      "--arg"
+      "sbomfmt"
+      "CycloneDX-1.5"
+      "--arg"
+      "sbompath"
+      sbom-path
+      "--arg"
+      "sbomhash"
+      sbom-hash
+      "--arg"
+      "sbomcount"
+      sbom-count
+      "--arg"
+      "slsapath"
+      slsa-path
+      "--arg"
+      "slsahash"
+      slsa-hash
+      "--arg"
+      "ptype"
+      "https://slsa.dev/provenance/v1"
+      "--arg"
+      "prev"
+      prev
+      "--arg"
+      "algo"
+      "blake3"
+      "--arg"
+      "rhash"
+      rhash
+      "--argjson"
+      "signed"
+      "false"
+      "--argjson"
+      "ochain"
+      "false"
       cartorio:receipt-jq)))
 
 ;; ── LiveTODO honesty for the unshipped signing / chain seams ────
-(define (cartorio:warn-livetodos sign-flag chain-flag)
+(define
+  (cartorio:warn-livetodos sign-flag chain-flag)
   (cond
     ((equal? sign-flag "true")
-     (log-info "::warning::cartorio-attest: sign=true but DSSE/cosign signing is NOT shipped — emitting attestation.signed=false [LiveTODO: cofre SecretRef + cosign attach]"))
+      (log-info
+        "::warning::cartorio-attest: sign=true but DSSE/cosign signing is NOT shipped — emitting attestation.signed=false [LiveTODO: cofre SecretRef + cosign attach]"))
     (else #t))
   (cond
     ((equal? chain-flag "true")
-     (log-info "::warning::cartorio-attest: emit-outcome-chain=true but kensa OutcomeChain append is NOT shipped — emitting attestation.outcome_chain=false [LiveTODO: kensa append]"))
+      (log-info
+        "::warning::cartorio-attest: emit-outcome-chain=true but kensa OutcomeChain append is NOT shipped — emitting attestation.outcome_chain=false [LiveTODO: kensa append]"))
     (else #t)))
 
 ;; ── Main ─────────────────────────────────────────────────────────
-(define (cartorio:emit-failure reason)
+(define
+  (cartorio:emit-failure reason)
   (log-error (string-append "cartorio-attest: " reason))
   (append-output "attested=false")
   (append-output "receipt-path=")
@@ -292,116 +472,184 @@
   (append-output "receipt-algo=")
   (append-output (string-append "reason=" reason)))
 
-(define (main)
-  (let* ((repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
-         (imgref (config-resolve "IMAGE_REF" "cartorio-attest" "image-ref" ""))
-         (imgdigest (config-resolve "IMAGE_DIGEST" "cartorio-attest" "image-digest" ""))
-         (subject (cartorio:normalize-subject
-                    (config-resolve "SUBJECT" "cartorio-attest" "subject" "") imgref repo))
-         (store-paths (cartorio:store-paths
-                        (config-resolve "NIX_STORE_PATH" "cartorio-attest" "nix-store-path" "")))
-         (closure-dirs (cartorio:store-paths
-                         (config-resolve "NIX_CLOSURE_INFO_PATH" "cartorio-attest" "nix-closure-info-path" "")))
-         (stores-joined (string-join " " store-paths))
-         (prev (config-resolve "PREV_RECEIPT_HASH" "cartorio-attest" "prev-receipt-hash" ""))
-         (builder-id (config-resolve "BUILDER_ID" "cartorio-attest" "builder-id"
-                       (env-get "GITHUB_WORKFLOW_REF" "pleme-io/super-cache-ci")))
-         (sbom-path (config-resolve "SBOM_PATH" "cartorio-attest" "sbom-path" "cartorio-sbom.cdx.json"))
-         (slsa-path (config-resolve "SLSA_PATH" "cartorio-attest" "slsa-path" "cartorio-slsa.json"))
-         (receipt-path (config-resolve "RECEIPT_PATH" "cartorio-attest" "receipt-path" "cartorio-receipt.json"))
-         (sign-flag (cartorio:norm-bool (config-resolve "SIGN" "cartorio-attest" "sign" "false")))
-         (chain-flag (cartorio:norm-bool (config-resolve "EMIT_OUTCOME_CHAIN" "cartorio-attest" "emit-outcome-chain" "false")))
-         (git-sha (env-get "GITHUB_SHA" ""))
-         (git-ref (env-get "GITHUB_REF" ""))
-         (run-id (env-get "GITHUB_RUN_ID" ""))
-         (run-num (env-get "GITHUB_RUN_NUMBER" ""))
-         (workflow (env-get "GITHUB_WORKFLOW" ""))
-         (gituri (string-append "git+https://github.com/" repo))
-         (digest-algo (cartorio:digest-algo imgdigest))
-         (digest-hex (cartorio:digest-hex imgdigest))
-         (tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
-         (base-path (string-append tmp-dir "/cartorio-base.json"))
-         (canon-path (string-append tmp-dir "/cartorio-canon.json"))
-         (ts (string-trim (stdout-of (exec-capture "date" "-u" "+%Y-%m-%dT%H:%M:%SZ")))))
+(define
+  (main)
+  (let*
+    ((repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
+      (imgref (config-resolve "IMAGE_REF" "cartorio-attest" "image-ref" ""))
+      (imgdigest (config-resolve "IMAGE_DIGEST" "cartorio-attest" "image-digest" ""))
+      (subject
+        (cartorio:normalize-subject
+          (config-resolve "SUBJECT" "cartorio-attest" "subject" "")
+          imgref
+          repo))
+      (store-paths
+        (cartorio:store-paths
+          (config-resolve "NIX_STORE_PATH" "cartorio-attest" "nix-store-path" "")))
+      (closure-dirs
+        (cartorio:store-paths
+          (config-resolve "NIX_CLOSURE_INFO_PATH" "cartorio-attest" "nix-closure-info-path" "")))
+      (stores-joined (string-join " " store-paths))
+      (prev (config-resolve "PREV_RECEIPT_HASH" "cartorio-attest" "prev-receipt-hash" ""))
+      (builder-id
+        (config-resolve
+          "BUILDER_ID"
+          "cartorio-attest"
+          "builder-id"
+          (env-get "GITHUB_WORKFLOW_REF" "pleme-io/super-cache-ci")))
+      (sbom-path
+        (config-resolve "SBOM_PATH" "cartorio-attest" "sbom-path" "cartorio-sbom.cdx.json"))
+      (slsa-path (config-resolve "SLSA_PATH" "cartorio-attest" "slsa-path" "cartorio-slsa.json"))
+      (receipt-path
+        (config-resolve "RECEIPT_PATH" "cartorio-attest" "receipt-path" "cartorio-receipt.json"))
+      (sign-flag (cartorio:norm-bool (config-resolve "SIGN" "cartorio-attest" "sign" "false")))
+      (chain-flag
+        (cartorio:norm-bool
+          (config-resolve "EMIT_OUTCOME_CHAIN" "cartorio-attest" "emit-outcome-chain" "false")))
+      (git-sha (env-get "GITHUB_SHA" ""))
+      (git-ref (env-get "GITHUB_REF" ""))
+      (run-id (env-get "GITHUB_RUN_ID" ""))
+      (run-num (env-get "GITHUB_RUN_NUMBER" ""))
+      (workflow (env-get "GITHUB_WORKFLOW" ""))
+      (gituri (string-append "git+https://github.com/" repo))
+      (digest-algo (cartorio:digest-algo imgdigest))
+      (digest-hex (cartorio:digest-hex imgdigest))
+      (tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
+      (base-path (string-append tmp-dir "/cartorio-base.json"))
+      (canon-path (string-append tmp-dir "/cartorio-canon.json"))
+      (ts (string-trim (stdout-of (exec-capture "date" "-u" "+%Y-%m-%dT%H:%M:%SZ")))))
     (cartorio:warn-livetodos sign-flag chain-flag)
-    (log-info (string-append "==> cartorio-attest: three-pillar receipt for " subject
-               (if (equal? imgdigest "") "" (string-append " @ " imgdigest))))
+    (log-info
+      (string-append
+        "==> cartorio-attest: three-pillar receipt for "
+        subject
+        (if (equal? imgdigest "") "" (string-append " @ " imgdigest))))
     ;; 1. SBOM from the Nix closure (honest empty when no store path).
     (cond
       ((not (= (cartorio:build-sbom store-paths closure-dirs ts subject sbom-path tmp-dir) 0))
-       (cartorio:emit-failure "jq-sbom-fail")
-       (exit 1))
+        (cartorio:emit-failure "jq-sbom-fail")
+        (exit 1))
       (else
-       (let ((sbom-count (let ((c (json-read-field sbom-path ".components | length")))
-                           (if (equal? c "") "0" c))))
-         (log-info (string-append "SBOM (" sbom-count " components) -> " sbom-path))
-         ;; 2. SLSA provenance predicate.
-         (cond
-           ((not (= (cartorio:emit-slsa subject digest-algo digest-hex git-sha git-ref
-                                        run-id workflow builder-id gituri stores-joined ts slsa-path) 0))
-            (cartorio:emit-failure "jq-slsa-fail")
-            (exit 1))
-           (else
-            (log-info (string-append "SLSA provenance -> " slsa-path))
-            ;; 3. content-address the two pillars (real BLAKE3).
-            (let ((sbom-hash (hash:blake3-file sbom-path))
-                  (slsa-hash (hash:blake3-file slsa-path)))
-              (cond
-                ((or (equal? sbom-hash "") (equal? slsa-hash ""))
-                 (cartorio:emit-failure "no-blake3-tool")
-                 (exit 1))
-                (else
-                 ;; 4. build the receipt base (receipt_hash="").
-                 (let ((base (cartorio:build-receipt-base subject imgref imgdigest git-sha git-ref
-                                                          run-id run-num workflow ts sbom-path sbom-hash
-                                                          sbom-count slsa-path slsa-hash prev "")))
-                   (cond
-                     ((not (= (status-of base) 0))
-                      (log-info (stderr-of base))
-                      (cartorio:emit-failure "jq-receipt-fail")
-                      (exit 1))
-                     (else
-                      (write-file base-path (stdout-of base))
-                      ;; 5. canonicalize (sorted, compact) for a stable pre-image.
-                      (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
-                        (cond
-                          ((not (= (status-of canon) 0))
-                           (cartorio:emit-failure "jq-canon-fail")
-                           (exit 1))
-                          (else
-                           (write-file canon-path (string-trim (stdout-of canon)))
-                           ;; 6. real BLAKE3 over the canonical pre-image.
-                           (let ((rhash (hash:blake3-file canon-path)))
-                             (cond
-                               ((equal? rhash "")
-                                (cartorio:emit-failure "no-blake3-tool")
+        (let
+          ((sbom-count
+             (let ((c (json-read-field sbom-path ".components | length"))) (if (equal? c "") "0" c))))
+          (log-info (string-append "SBOM (" sbom-count " components) -> " sbom-path))
+          ;; 2. SLSA provenance predicate.
+          (cond
+            ((not
+               (=
+                 (cartorio:emit-slsa
+                   subject
+                   digest-algo
+                   digest-hex
+                   git-sha
+                   git-ref
+                   run-id
+                   workflow
+                   builder-id
+                   gituri
+                   stores-joined
+                   ts
+                   slsa-path)
+                 0))
+              (cartorio:emit-failure "jq-slsa-fail")
+              (exit 1))
+            (else
+              (log-info (string-append "SLSA provenance -> " slsa-path))
+              ;; 3. content-address the two pillars (real BLAKE3).
+              (let
+                ((sbom-hash (hash:blake3-file sbom-path)) (slsa-hash (hash:blake3-file slsa-path)))
+                (cond
+                  ((or (equal? sbom-hash "") (equal? slsa-hash ""))
+                    (cartorio:emit-failure "no-blake3-tool")
+                    (exit 1))
+                  (else
+                    ;; 4. build the receipt base (receipt_hash="").
+                    (let
+                      ((base
+                         (cartorio:build-receipt-base
+                           subject
+                           imgref
+                           imgdigest
+                           git-sha
+                           git-ref
+                           run-id
+                           run-num
+                           workflow
+                           ts
+                           sbom-path
+                           sbom-hash
+                           sbom-count
+                           slsa-path
+                           slsa-hash
+                           prev
+                           "")))
+                      (cond
+                        ((not (= (status-of base) 0))
+                          (log-info (stderr-of base))
+                          (cartorio:emit-failure "jq-receipt-fail")
+                          (exit 1))
+                        (else
+                          (write-file base-path (stdout-of base))
+                          ;; 5. canonicalize (sorted, compact) for a stable pre-image.
+                          (let
+                            ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+                            (cond
+                              ((not (= (status-of canon) 0))
+                                (cartorio:emit-failure "jq-canon-fail")
                                 (exit 1))
-                               (else
-                                ;; 7. inject the receipt hash into the final receipt.
-                                (let ((final (exec-capture "jq" "-S" "--arg" "rhash" rhash
-                                               ".attestation.receipt_hash = $rhash" base-path)))
+                              (else
+                                (write-file canon-path (string-trim (stdout-of canon)))
+                                ;; 6. real BLAKE3 over the canonical pre-image.
+                                (let
+                                  ((rhash (hash:blake3-file canon-path)))
                                   (cond
-                                    ((not (= (status-of final) 0))
-                                     (cartorio:emit-failure "jq-inject-fail")
-                                     (exit 1))
+                                    ((equal? rhash "")
+                                      (cartorio:emit-failure "no-blake3-tool")
+                                      (exit 1))
                                     (else
-                                     (write-file receipt-path (stdout-of final))
-                                     (log-info (string-append "receipt -> " receipt-path
-                                                "  (chain.prev=" (if (equal? prev "") "<root>" prev) ")"))
-                                     (log-info (string-append "blake3 receipt-hash = " rhash))
-                                     (append-output "attested=true")
-                                     (append-output (string-append "receipt-path=" receipt-path))
-                                     (append-output (string-append "receipt-hash=" rhash))
-                                     (append-output "receipt-algo=blake3")
-                                     (append-output (string-append "sbom-path=" sbom-path))
-                                     (append-output "sbom-format=CycloneDX-1.5")
-                                     (append-output (string-append "sbom-components=" sbom-count))
-                                     (append-output (string-append "slsa-path=" slsa-path))
-                                     (append-output "slsa-predicate-type=https://slsa.dev/provenance/v1")
-                                     (append-output "signed=false")
-                                     (append-output "outcome-chain=false")
-                                     (append-output "reason=attested")
-                                     (exit 0)))))))))))))))))))))))
+                                      ;; 7. inject the receipt hash into the final receipt.
+                                      (let
+                                        ((final
+                                           (exec-capture
+                                             "jq"
+                                             "-S"
+                                             "--arg"
+                                             "rhash"
+                                             rhash
+                                             ".attestation.receipt_hash = $rhash"
+                                             base-path)))
+                                        (cond
+                                          ((not (= (status-of final) 0))
+                                            (cartorio:emit-failure "jq-inject-fail")
+                                            (exit 1))
+                                          (else
+                                            (write-file receipt-path (stdout-of final))
+                                            (log-info
+                                              (string-append
+                                                "receipt -> "
+                                                receipt-path
+                                                "  (chain.prev="
+                                                (if (equal? prev "") "<root>" prev)
+                                                ")"))
+                                            (log-info
+                                              (string-append "blake3 receipt-hash = " rhash))
+                                            (append-output "attested=true")
+                                            (append-output
+                                              (string-append "receipt-path=" receipt-path))
+                                            (append-output (string-append "receipt-hash=" rhash))
+                                            (append-output "receipt-algo=blake3")
+                                            (append-output (string-append "sbom-path=" sbom-path))
+                                            (append-output "sbom-format=CycloneDX-1.5")
+                                            (append-output
+                                              (string-append "sbom-components=" sbom-count))
+                                            (append-output (string-append "slsa-path=" slsa-path))
+                                            (append-output
+                                              "slsa-predicate-type=https://slsa.dev/provenance/v1")
+                                            (append-output "signed=false")
+                                            (append-output "outcome-chain=false")
+                                            (append-output "reason=attested")
+                                            (exit 0)))))))))))))))))))))))
 
 ;; Gated on TLISP_TEST so the tlisp-test harness loads the pure helpers
 ;; (norm-bool / normalize-subject / digest-algo / digest-hex /
@@ -409,5 +657,5 @@
 ;; running the real jq / nix / b3sum pipeline.
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — cartorio-attest helpers loaded; main skipped"))
+    (log-info "TLISP_TEST=1 — cartorio-attest helpers loaded; main skipped"))
   (else (main)))

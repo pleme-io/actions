@@ -23,42 +23,58 @@
 ;;   count=<n>   the commit count (always emitted on success)
 
 (define gpcc-path (env-get "GPCC_PATH" ""))
+
 (define gpcc-ref (env-get "GPCC_REF" "HEAD"))
 
 (exec-capture "git" "config" "--global" "--add" "safe.directory" "*")
 
-(define (main)
+(define
+  (main)
   (cond
-    ((equal? gpcc-path "")
-     (log-error "git-path-commit-count: PATH input is required")
-     1)
+    ((equal? gpcc-path "") (log-error "git-path-commit-count: PATH input is required") 1)
     (else
-     (let ((shallow (exec-capture "git" "rev-parse" "--is-shallow-repository")))
-       (if (equal? (string-trim (stdout-of shallow)) "true")
-           (begin
-             (log-error
-               (string-append
-                 "git-path-commit-count: this checkout is shallow -- "
-                 "a commit count from a shallow clone silently "
-                 "under-counts (git rev-list only sees fetched history). "
-                 "Use `actions/checkout` with `fetch-depth: 0`."))
-             1)
-           (let ((r (exec-capture "git" "rev-list" "--count" gpcc-ref "--" gpcc-path)))
-             (if (not (= 0 (status-of r)))
-                 (begin
-                   (log-error
-                     (string-append "git-path-commit-count: `git rev-list --count "
-                                     gpcc-ref " -- " gpcc-path "` failed (exit "
-                                     (string-format "{}" (status-of r)) ")"))
-                   1)
-                 (let ((count (string-trim (stdout-of r))))
-                   (log-info (string-append "==> " count " commit(s) touched " gpcc-path
-                                             " (reachable from " gpcc-ref ")"))
-                   (append-output (string-append "count=" count))
-                   0))))))))
+      (let
+        ((shallow (exec-capture "git" "rev-parse" "--is-shallow-repository")))
+        (if
+          (equal? (string-trim (stdout-of shallow)) "true")
+          (begin
+            (log-error
+              (string-append
+                "git-path-commit-count: this checkout is shallow -- "
+                "a commit count from a shallow clone silently "
+                "under-counts (git rev-list only sees fetched history). "
+                "Use `actions/checkout` with `fetch-depth: 0`."))
+            1)
+          (let
+            ((r (exec-capture "git" "rev-list" "--count" gpcc-ref "--" gpcc-path)))
+            (if
+              (not (= 0 (status-of r)))
+              (begin
+                (log-error
+                  (string-append
+                    "git-path-commit-count: `git rev-list --count "
+                    gpcc-ref
+                    " -- "
+                    gpcc-path
+                    "` failed (exit "
+                    (string-format "{}" (status-of r))
+                    ")"))
+                1)
+              (let
+                ((count (string-trim (stdout-of r))))
+                (log-info
+                  (string-append
+                    "==> "
+                    count
+                    " commit(s) touched "
+                    gpcc-path
+                    " (reachable from "
+                    gpcc-ref
+                    ")"))
+                (append-output (string-append "count=" count))
+                0))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — git-path-commit-count helpers loaded; main skipped"))
-  (else
-   (exit (main))))
+    (log-info "TLISP_TEST=1 — git-path-commit-count helpers loaded; main skipped"))
+  (else (exit (main))))

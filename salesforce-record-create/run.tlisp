@@ -1,4 +1,6 @@
 ;; salesforce-record-create/run.tlisp — typed schema locked
 (log-info "::warning::salesforce-record-create not yet implemented")
+
 (append-output "record-id=stub")
+
 (exit 0)

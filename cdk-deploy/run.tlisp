@@ -1,4 +1,6 @@
 ;; cdk-deploy/run.tlisp — typed schema locked, body lands on consumer demand
 (log-info "::warning::cdk-deploy not yet implemented")
+
 (append-output "deployed=stub")
+
 (exit 0)

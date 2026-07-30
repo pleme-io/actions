@@ -3,7 +3,9 @@
 ;; cofre/ESO/KMS-held key. The L-sign layer of the per-derivation stack.
 
 (define image-ref (env-required "IMAGE_REF"))
+
 (define key-ref (env-get "KEY_REF" ""))
+
 (define recursive (env-get "RECURSIVE" "false"))
 
 ;; Digest-binding: cosign ALWAYS signs the resolved digest, even when passed
@@ -13,36 +15,49 @@
 ;; Refuse only a :latest-style moving pointer — never a signing subject.
 (cond
   ((string-contains? image-ref ":latest")
-   (log-error (string-append "cosign-sign refuses a :latest moving pointer (sign an exact AUTOBUMP tag or a @sha256: digest): " image-ref))
-   (append-output "signed=false")
-   (exit 1)))
+    (log-error
+      (string-append
+        "cosign-sign refuses a :latest moving pointer (sign an exact AUTOBUMP tag or a @sha256: digest): "
+        image-ref))
+    (append-output "signed=false")
+    (exit 1)))
+
 (cond
   ((not (string-contains? image-ref "@sha256:"))
-   (log-info (string-append "::warning::cosign-sign given a tag ref; cosign will resolve + sign the digest: " image-ref))))
+    (log-info
+      (string-append
+        "::warning::cosign-sign given a tag ref; cosign will resolve + sign the digest: "
+        image-ref))))
 
 (define keyless (equal? key-ref ""))
 
-(log-info (string-append "==> cosign sign "
-            (if keyless "(keyless Fulcio+Rekor) " (string-append "--key " key-ref " "))
-            image-ref))
+(log-info
+  (string-append
+    "==> cosign sign "
+    (if keyless "(keyless Fulcio+Rekor) " (string-append "--key " key-ref " "))
+    image-ref))
 
-(define r
-  (if keyless
-    (if (equal? recursive "true")
+(define
+  r
+  (if
+    keyless
+    (if
+      (equal? recursive "true")
       (exec-capture "cosign" "sign" "--yes" "--recursive" image-ref)
       (exec-capture "cosign" "sign" "--yes" image-ref))
-    (if (equal? recursive "true")
+    (if
+      (equal? recursive "true")
       (exec-capture "cosign" "sign" "--yes" "--recursive" "--key" key-ref image-ref)
       (exec-capture "cosign" "sign" "--yes" "--key" key-ref image-ref))))
 
 (cond
   ((= (status-of r) 0)
-   (log-info (string-append "signed " image-ref))
-   (append-output "signed=true")
-   (exit 0))
+    (log-info (string-append "signed " image-ref))
+    (append-output "signed=true")
+    (exit 0))
   (else
-   (log-error "cosign sign failed")
-   (log-info (stdout-of r))
-   (log-info (stderr-of r))
-   (append-output "signed=false")
-   (exit 1)))
+    (log-error "cosign sign failed")
+    (log-info (stdout-of r))
+    (log-info (stderr-of r))
+    (append-output "signed=false")
+    (exit 1)))
