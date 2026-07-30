@@ -1,5 +1,5 @@
 name: 'pleme-io · rust-workspace-publish'
-description: 'Ship every workspace member to the Rust registry in topological dependency order. Auto-renames any conflicting crate to pleme-io-<original> + commits the rename back to main + retries. Pure tlisp logic, no shell beyond install glue.'
+description: 'Ship every workspace member to the Rust registry in topological (leaves-first) dependency order, derived from cargo metadata with dev-deps excluded and exact-pinned targets leading their batch. Auto-renames any conflicting crate to pleme-io-<original> + commits the rename back to main + retries. A member that fails permanently costs exactly that member; the rest still ship and the run reports red at the end. Pure tlisp logic, no shell beyond install glue.'
 branding:
   icon: 'upload'
   color: 'blue'
@@ -36,8 +36,11 @@ outputs:
   pending-crates:
     description: "Comma-separated crates left for the next capacity window (rate-limited / dep-deferred). Empty when the bootstrap is complete."
     value: ${{ steps.ship.outputs.pending-crates }}
+  failed-crates:
+    description: "Comma-separated crates that failed PERMANENTLY (unrecognized error / rename failure). A failure no longer aborts the pass — every other member still ships — so this names exactly which members did not, and a non-empty value means the step exited red."
+    value: ${{ steps.ship.outputs.failed-crates }}
   bootstrap-complete:
-    description: "true when every workspace member is on the registry (nothing left to drip)."
+    description: "true when every workspace member is on the registry (nothing left to drip) AND nothing failed permanently."
     value: ${{ steps.ship.outputs.bootstrap-complete }}
 
 runs:
