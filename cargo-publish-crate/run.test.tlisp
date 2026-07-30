@@ -88,3 +88,79 @@
   (assert
     (not (equal? (classify-cargo-publish-outcome tear-403-log 101) 'rate-limited))
     "'conflict is not retryable"))
+
+;; ────────────────────────────────────────────────────────────────
+;; publish = false — the declared non-publisher
+;; ────────────────────────────────────────────────────────────────
+;; The remedy the 'conflict arm above RECOMMENDS (rename, or publish = false)
+;; was itself unusable: cargo refuses a publish=false crate, no classifier arm
+;; matches that refusal, and the run reds. These pin the preflight that makes
+;; the recommended remedy actually safe to adopt.
+
+(define
+  bevy-fork-manifest
+  (string-append
+    "[package]\n"
+    "name = \"bevy_scene\"\n"
+    "version = \"0.19.0-dev\"\n"
+    "publish = false\n"
+    "edition = \"2024\"\n"
+    "\n"
+    "[dependencies]\n"
+    "bevy_ecs = { path = \"../bevy_ecs\", version = \"0.19.0-dev\" }\n"))
+
+(define
+  ordinary-manifest
+  (string-append
+    "[package]\n"
+    "name = \"shikumi\"\n"
+    "version = \"0.1.437\"\n"
+    "edition = \"2024\"\n"))
+
+(deftest
+  "publish = false is detected on the manifest, before cargo runs"
+  (assert
+    (manifest-declares-no-publish? bevy-fork-manifest)
+    "a fork declaring publish = false is recognized as a declared non-publisher")
+  (assert
+    (not (manifest-declares-no-publish? ordinary-manifest))
+    "a normal crate is NOT mistaken for a non-publisher"))
+
+(deftest
+  "the detector reads [package], not any section that mentions publish"
+  ;; publish belongs to [package] alone. A key of the same name under another
+  ;; table must not silently disable a real crate's release — that would be a
+  ;; false GREEN, the exact class this action exists to remove.
+  (assert
+    (not
+      (manifest-declares-no-publish?
+        (string-append
+          "[package]\n"
+          "name = \"real\"\n"
+          "version = \"1.0.0\"\n"
+          "\n"
+          "[package.metadata.release]\n"
+          "publish = false\n")))
+    "publish = false under [package.metadata.release] does not disable the crate")
+  (assert
+    (not
+      (manifest-declares-no-publish?
+        (string-append "[package]\n" "name = \"real\"\n" "# publish = false\n")))
+    "a commented-out publish = false is not honoured"))
+
+(deftest
+  "publish = false outranks a structural blocker"
+  ;; A fork carries versionless path deps and would trip the blocker preflight.
+  ;; It never publishes, so those deps are irrelevant and the honest verdict is
+  ;; the green skip — which is why run.tlisp checks this arm FIRST.
+  (assert
+    (manifest-declares-no-publish?
+      (string-append
+        "[package]\n"
+        "name = \"bevy_render\"\n"
+        "version = \"0.19.0-dev\"\n"
+        "publish = false\n"
+        "\n"
+        "[dependencies]\n"
+        "bevy_utils = { path = \"../bevy_utils\" }\n"))
+    "a publish=false fork with a versionless path dep is still a clean skip"))
