@@ -1,0 +1,63 @@
+;; secrets-scan/run.test.tlisp — (deftest …) unit tests for the scan verdict.
+;; Run by the tlisp-test action as
+;;   <stdlib> + run.tlisp + run.test.tlisp   with TLISP_TEST=1
+;; so the real classifier is driven with no gitleaks, no jq and no repo.
+
+;; ─────────────────────────────────────────────────────────────────────
+;; THE DEFECT: a secret-leak gate that reported "no secrets found" and exit 0
+;; whenever gitleaks exited non-zero for any reason OTHER than findings.
+;;
+;;   (cond ((= (status-of r) 0) "0")
+;;         (else (jq 'length' /tmp/gitleaks.json 2>/dev/null || echo 0)))
+;;
+;; On an operational failure the report was never written, jq failed,
+;; `2>/dev/null` hid it, `|| echo 0` supplied "0", and count-str=="0" hit the
+;; "no secrets found" arm. The old comment asserted the false binary that
+;; licensed it: "gitleaks exits 1 on findings, 0 on clean."
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "gitleaks-outcome: THE defect — non-zero exit with NO report is 'scan-error"
+  ;; The historical false-green. Trigger: a CONFIG_PATH typo — one input away.
+  (assert (equal? (gitleaks-outcome 1 #f #f) 'scan-error)
+          "no report means the scan never ran; it is NOT a clean result")
+  (assert (equal? (gitleaks-outcome 2 #f #f) 'scan-error)
+          "any non-zero code with no report is the same verdict")
+  (assert (gitleaks-outcome-unknown? (gitleaks-outcome 1 #f #f))
+          "and it is classified as UNKNOWN, not as zero findings"))
+
+(deftest "gitleaks-outcome: exit 0 is the ONLY route to 'clean"
+  (assert (equal? (gitleaks-outcome 0 #f #f) 'clean)
+          "gitleaks exited 0 — clean, and no report is needed to say so")
+  (assert (not (gitleaks-outcome-unknown? 'clean)) "'clean is a known result"))
+
+(deftest "gitleaks-outcome: a report that exists but cannot be counted is UNKNOWN"
+  (assert (equal? (gitleaks-outcome 1 #t #f) 'report-unparseable)
+          "a truncated or unexpected report is not zero findings")
+  (assert (gitleaks-outcome-unknown? (gitleaks-outcome 1 #t #f))
+          "so it fails loudly rather than passing"))
+
+(deftest "gitleaks-outcome: 'findings requires BOTH a report and a readable count"
+  (assert (equal? (gitleaks-outcome 1 #t #t) 'findings)
+          "non-zero exit + readable report = real findings")
+  (assert (not (gitleaks-outcome-unknown? 'findings)) "'findings is a known result"))
+
+(deftest "the UNKNOWN outcomes ignore fail-on-found — THE inversion"
+  ;; fail-on-found=false means "I accept known findings". It has never meant
+  ;; "I accept not knowing". This is the single most important property here:
+  ;; a repo that sets fail-on-found=false must still go red on a broken scan.
+  (assert (gitleaks-outcome-unknown? 'scan-error) "a dead scanner is never a pass")
+  (assert (gitleaks-outcome-unknown? 'report-unparseable) "nor is an unreadable report")
+  (assert (not (gitleaks-outcome-unknown? 'clean)) "only real verdicts consult the flag")
+  (assert (not (gitleaks-outcome-unknown? 'findings)) "only real verdicts consult the flag"))
+
+(deftest "gitleaks-outcome-message names the LIKELY CAUSE, not just the failure"
+  (let ((m (gitleaks-outcome-message 'scan-error 1)))
+    (assert (string-contains? m "NOT a clean result")
+            "it says out loud that this is not a pass")
+    (assert (string-contains? m "CONFIG_PATH")
+            "and it names the most reachable trigger so the operator can fix it"))
+  (assert (string-contains? (gitleaks-outcome-message 'report-unparseable 1)
+                            "NOT a clean result")
+          "the unparseable case is equally explicit")
+  (assert (equal? (gitleaks-outcome-message 'clean 0) "")
+          "a known-good outcome has no error message"))

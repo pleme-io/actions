@@ -14,21 +14,35 @@
 ;; fleet-wide by pangea-operator on rio via the ExternalContributorPolicy
 ;; typed primitive (Phase 2).
 
-(define event-path        (env-required "GITHUB_EVENT_PATH"))
-(define repo              (env-required "GITHUB_REPOSITORY"))
+;; TLISP_TEST gate — same shape as rust-workspace-publish/secrets-scan. Under
+;; the harness the definitions load but the decision tree is SKIPPED and the
+;; required env vars are not demanded, so run.test.tlisp can drive the pure
+;; enforcement-verdict surface with no event payload, no gh and no network.
+;; Before this, the file had no test harness at all — which is part of why four
+;; discarded `gh` statuses sat here unnoticed.
+(define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
+
+(define event-path        (if tlisp-test-mode "" (env-required "GITHUB_EVENT_PATH")))
+(define repo              (if tlisp-test-mode "" (env-required "GITHUB_REPOSITORY")))
 (define allowlist         (env-get     "ALLOWLIST" ""))
 (define bot-allowlist     (env-get     "BOT_ALLOWLIST" ""))
 (define restricted-pred   (env-get     "RESTRICTED_PATHS_JQ_PREDICATE"
                                        ". == \"README.md\" or . == \"LICENSE\" or startswith(\".github/\") or startswith(\"docs/\") or endswith(\".md\")"))
 (define rejection-action  (env-get     "REJECTION_ACTION" "close_and_lock"))
 
-(define pr-number      (json-read-field event-path ".pull_request.number"))
-(define pr-author      (json-read-field event-path ".pull_request.user.login"))
-(define pr-association (json-read-field event-path ".pull_request.author_association"))
+(define pr-number
+  (if tlisp-test-mode "0" (json-read-field event-path ".pull_request.number")))
+(define pr-author
+  (if tlisp-test-mode "" (json-read-field event-path ".pull_request.user.login")))
+(define pr-association
+  (if tlisp-test-mode "" (json-read-field event-path ".pull_request.author_association")))
 
-(log-info (string-append "pull-request-gate: PR #" pr-number
-                         " from '" pr-author
-                         "' (author_association=" pr-association ")"))
+(cond
+  (tlisp-test-mode #t)
+  (else
+    (log-info (string-append "pull-request-gate: PR #" pr-number
+                             " from '" pr-author
+                             "' (author_association=" pr-association ")"))))
 
 ;; ── predicates ────────────────────────────────────────────────────────
 
@@ -70,50 +84,132 @@
     "code contributions from new external accounts are gated for "
     "CODEOWNERS review, not auto-closed."))
 
+;; ── ENFORCEMENT MUST BE VERIFIED, NOT ANNOUNCED ────────────────────────
+;; This block used to issue four bare `exec-check` gh mutations and discard
+;; every status, after which the caller unconditionally `(exit 0)`. `exec-check`
+;; returns the child's exit code and never raises (stdlib §"Fail-loud
+;; subprocess"), so the ONLY trace of a failure was the pre-emptive log line
+;; "→ external drive-by detected; commenting, labeling, closing, locking".
+;;
+;; And the COMMON case was a failure. `gh pr edit --add-label external-drive-by`
+;; fails outright when that label does not exist in the repo, which is the
+;; DEFAULT state of a fresh repo — so the badge-trojan / SEO-spam defense
+;; reported enforcement it had not performed: the spam PR stayed open,
+;; unlabelled and unlocked, with a green check on it. `gh pr close` fails on an
+;; insufficient token scope and the lock PUT fails without issues:write, both
+;; equally invisible.
+;;
+;; Two changes: (1) the missing label is CREATED, so the most likely trigger is
+;; removed at its cause rather than guarded; (2) every mutation's status is
+;; collected and the gate goes red naming exactly which enforcement steps did
+;; not land. Announcing an intent is not evidence of an effect.
+;;
+;; Tier: only-mitigated. These are foreign `gh` subprocesses — the honest floor
+;; is "checked and reported", not "unrepresentable".
+
+;; Run one gh mutation. Returns "" on success, else the step's label.
+(define (gh-mutation label cmd-list)
+  (let ((status (apply exec-check cmd-list)))
+    (cond
+      ((= status 0) (log-info (string-append "   [ok] " label)) "")
+      (else
+        (log-error (string-append "   [FAILED] " label " (exit "
+                                  (string-format "{}" status) ")"))
+        label))))
+
+;; `gh label create --force` upserts, but its status is still deliberately NOT
+;; fatal here: this is the single tolerated discard in the file, and it is
+;; tolerated because the NEXT step is the real check — if the label still does
+;; not exist, `--add-label` fails and the gate goes red.
+(define (ensure-label label color description)
+  (exec-check "gh" "label" "create" label "--repo" repo
+              "--color" color "--description" description "--force"))
+
+;; #t iff every mutation landed. Never announces success it cannot show.
+(define (enforcement-complete? failures)
+  (let ((bad (filter (lambda (f) (not (equal? f ""))) failures)))
+    (cond
+      ((null? bad) #t)
+      (else
+        (log-error
+          (string-append
+            "pull-request-gate did NOT complete enforcement on PR #" pr-number
+            " — these steps failed: " (string-join ", " bad)
+            ". The PR may still be open, unlabelled or unlocked. This action "
+            "used to exit 0 here, reporting enforcement it never performed."))
+        #f))))
+
 (define (close-and-lock-drive-by)
   (log-info "→ external drive-by detected; commenting, labeling, closing, locking")
-  (exec-check "gh" "pr" "comment" pr-number "--repo" repo
-              "--body" drive-by-comment-body)
-  (exec-check "gh" "pr" "edit" pr-number "--repo" repo
-              "--add-label" "external-drive-by")
-  (exec-check "gh" "pr" "close" pr-number "--repo" repo)
-  (exec-check "gh" "api" "--method" "PUT"
+  (ensure-label "external-drive-by" "B60205"
+                "Auto-closed drive-by PR (pleme-io/actions/pull-request-gate)")
+  (enforcement-complete?
+    (list
+      (gh-mutation "comment"
+        (list "gh" "pr" "comment" pr-number "--repo" repo
+              "--body" drive-by-comment-body))
+      (gh-mutation "add-label external-drive-by"
+        (list "gh" "pr" "edit" pr-number "--repo" repo
+              "--add-label" "external-drive-by"))
+      (gh-mutation "close"
+        (list "gh" "pr" "close" pr-number "--repo" repo))
+      (gh-mutation "lock"
+        (list "gh" "api" "--method" "PUT"
               (string-append "/repos/" repo "/issues/" pr-number "/lock")
-              "-f" "lock_reason=spam"))
+              "-f" "lock_reason=spam")))))
 
 (define (label-and-request-review label)
   (log-info (string-append "→ labeling PR '" label "'"))
-  (exec-check "gh" "pr" "edit" pr-number "--repo" repo
-              "--add-label" label))
+  (ensure-label label "FBCA04" "Set by pleme-io/actions/pull-request-gate")
+  (enforcement-complete?
+    (list
+      (gh-mutation (string-append "add-label " label)
+        (list "gh" "pr" "edit" pr-number "--repo" repo "--add-label" label)))))
 
 ;; ── decision tree ─────────────────────────────────────────────────────
+;; Every enforcing branch now EXITS ON ITS OWN VERDICT. Branches (3) and (4)
+;; used to run their enforcement and then `(exit 0)` unconditionally, so a
+;; wholly failed enforcement was indistinguishable from a completed one.
+;;
+;; Branch (1) is the one legitimate unconditional pass: it performs no mutation,
+;; so there is nothing whose success could be misreported.
+
+(define (exit-on-enforcement ok?) (if ok? (exit 0) (exit 1)))
 
 (cond
-  ;; (1) Allowlisted author
+  (tlisp-test-mode
+   (log-info "TLISP_TEST=1 — gate loaded; decision tree skipped (the harness drives it)"))
+
+  ;; (1) Allowlisted author — no mutation, nothing to verify
   ((author-in-list? pr-author allowlist)
    (log-info (string-append "Author '" pr-author "' is in allowlist; passing through."))
    (exit 0))
 
-  ;; (2) Bot
+  ;; (2) Bot — a label that does not land is a label we must not claim
   ((looks-like-bot? pr-author)
    (log-info (string-append "Author '" pr-author "' is a known bot; labeling 'bot-pr'."))
-   (exec-check "gh" "pr" "edit" pr-number "--repo" repo "--add-label" "bot-pr")
-   (exit 0))
+   (ensure-label "bot-pr" "EDEDED" "Set by pleme-io/actions/pull-request-gate")
+   (exit-on-enforcement
+     (enforcement-complete?
+       (list (gh-mutation "add-label bot-pr"
+               (list "gh" "pr" "edit" pr-number "--repo" repo
+                     "--add-label" "bot-pr"))))))
 
   ;; (3) First-time external + restricted-only diff
   ((and (equal? pr-association "FIRST_TIME_CONTRIBUTOR")
         (all-files-restricted?))
    (cond
-     ((equal? rejection-action "close_and_lock")    (close-and-lock-drive-by))
-     ((equal? rejection-action "label_only")        (label-and-request-review "external-drive-by"))
-     ((equal? rejection-action "request_approval")  (label-and-request-review "external-review-required"))
+     ((equal? rejection-action "close_and_lock")
+      (exit-on-enforcement (close-and-lock-drive-by)))
+     ((equal? rejection-action "label_only")
+      (exit-on-enforcement (label-and-request-review "external-drive-by")))
+     ((equal? rejection-action "request_approval")
+      (exit-on-enforcement (label-and-request-review "external-review-required")))
      (else
       (log-error (string-append "Unknown rejection-action: '" rejection-action
                                 "' — expected close_and_lock | label_only | request_approval"))
-      (exit 1)))
-   (exit 0))
+      (exit 1))))
 
   ;; (4) External with substantive diff
   (else
-   (label-and-request-review "external-review-required")
-   (exit 0)))
+   (exit-on-enforcement (label-and-request-review "external-review-required"))))
