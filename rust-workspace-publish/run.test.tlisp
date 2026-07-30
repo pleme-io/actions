@@ -1,0 +1,266 @@
+;; rust-workspace-publish/run.test.tlisp — (deftest …) unit tests for the ship
+;; loop's PURE surfaces: the failure classifier and the topological order.
+;; Run by the tlisp-test action as
+;;   <stdlib> + run.tlisp + run.test.tlisp   with TLISP_TEST=1
+;; so the real functions are driven with no cargo, no git, no registry.
+
+;; ─────────────────────────────────────────────────────────────────────
+;; The verbatim cargo output from the tatara-lisp v0.3.3 ship failure
+;; (run 30487440989, 2026-07-29). This is the evidence, not a paraphrase:
+;; the leaf sibling `tatara-cilium@0.3.3` was not on the registry yet
+;; because `tatara` (the CLI, 11 intra-workspace deps) was attempted FIRST.
+;; ─────────────────────────────────────────────────────────────────────
+(define tatara-dep-missing-log
+  (string-append
+    "    Updating crates.io index\n"
+    "error: failed to select a version for the requirement `tatara-cilium = \"^0.3.3\"`\n"
+    "candidate versions found which didn't match: 0.2.5, 0.2.4, 0.2.2, ...\n"
+    "location searched: crates.io index\n"
+    "required by package `tatara v0.3.3 (/home/runner/work/tatara-lisp/tatara-lisp/tatara)`\n"))
+
+;; The escriba shape the local predicate was narrowed to exclude: an
+;; unsatisfiable requirement on a crate that is NOT a workspace sibling.
+;; This one must stay 'failed — deferring it forever and then aborting with
+;; "no progress this pass" named a cause that was provably false.
+(define escriba-external-conflict-log
+  (string-append
+    "    Updating crates.io index\n"
+    "error: failed to select a version for the requirement `serde = \"^2.0\"`\n"
+    "candidate versions found which didn't match: 1.0.219, 1.0.218, ...\n"
+    "location searched: crates.io index\n"
+    "required by package `escriba v0.1.7 (/home/runner/work/escriba/escriba/escriba)`\n"))
+
+(define tatara-workspace-members
+  (list "tatara" "tatara-lisp" "tatara-lisp-derive" "tatara-eval" "tatara-source"
+        "tatara-domain-forge" "tatara-platform-checks" "tatara-ebpf"
+        "tatara-gateway-api" "tatara-cilium" "tatara-prometheus-operator"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Defect 1 — classification
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "classify-publish-log: the VERBATIM tatara-lisp v0.3.3 failure is dep-missing, not failed"
+  ;; This is the whole bug. Cargo said a sibling at the version being
+  ;; published is absent from the index; the runner logged "no recognizable
+  ;; signature" → permanent failure → exit 1, and crates.io stayed at 0.2.5.
+  (assert (equal? (classify-publish-log tatara-dep-missing-log tatara-workspace-members 101)
+                  'dep-missing)
+          "sibling-at-our-version unsatisfiable => dep-missing (defer), NOT failed"))
+
+(deftest "classify-publish-log: an unsatisfiable NON-sibling requirement stays failed (escriba)"
+  (assert (equal? (classify-publish-log escriba-external-conflict-log tatara-workspace-members 101)
+                  'failed)
+          "serde is not a workspace member => a real resolution failure, never laundered to defer"))
+
+(deftest "classify-publish-log: 'no matching package named' for a sibling is dep-missing"
+  (assert (equal? (classify-publish-log
+                    "error: no matching package named `tatara-cilium` found\nlocation searched: crates.io index\n"
+                    tatara-workspace-members 101)
+                  'dep-missing)
+          "the unambiguous sibling-absent shape"))
+
+(deftest "classify-publish-log: 'no matching package named' for a NON-sibling is failed"
+  (assert (equal? (classify-publish-log
+                    "error: no matching package named `totally-not-ours` found\nlocation searched: crates.io index\n"
+                    tatara-workspace-members 101)
+                  'failed)
+          "a typo'd or unpublished external dep must fail loudly, not defer forever"))
+
+(deftest "classify-publish-log: a rename-prefixed sibling still counts as a sibling"
+  ;; The conflict path republishes as pleme-io-<name>; a dependent then resolves
+  ;; against that name, which is NOT in the pre-rename member list.
+  (assert (equal? (classify-publish-log
+                    "error: no matching package named `pleme-io-tatara-cilium` found\n"
+                    tatara-workspace-members 101)
+                  'dep-missing)
+          "pleme-io-<member> is the same sibling under its renamed identity"))
+
+(deftest "classify-publish-log: the other outcomes are unchanged"
+  (assert (equal? (classify-publish-log "" tatara-workspace-members 0) 'published)
+          "exit 0 => published")
+  (assert (equal? (classify-publish-log "error: crate version 0.3.3 already exists on crates.io index"
+                                        tatara-workspace-members 101)
+                  'already-uploaded)
+          "already-uploaded wins over everything")
+  (assert (equal? (classify-publish-log "error: failed to get a 200 OK response, got 429 Too Many Requests"
+                                        tatara-workspace-members 101)
+                  'rate-limited)
+          "429 => rate-limited")
+  (assert (equal? (classify-publish-log "error: the crate name `tear` is already in use"
+                                        tatara-workspace-members 101)
+                  'conflict)
+          "name taken => conflict (rename path)")
+  (assert (equal? (classify-publish-log "error: you do not seem to be an owner of the crate `tear`"
+                                        tatara-workspace-members 101)
+                  'conflict)
+          "403 not-an-owner => conflict — the stdlib fix must reach this action")
+  (assert (equal? (classify-publish-log "error: something nobody has ever seen"
+                                        tatara-workspace-members 101)
+                  'failed)
+          "genuinely unknown stays failed"))
+
+(deftest "requirement-name-on-line: extracts the crate name cargo names"
+  (assert (equal? (requirement-name-on-line
+                    "error: failed to select a version for the requirement `tatara-cilium = \"^0.3.3\"`")
+                  "tatara-cilium")
+          "strips the ` = \"^ver\"` tail")
+  (assert (equal? (requirement-name-on-line "error: no matching package named `tatara-eval` found")
+                  "tatara-eval")
+          "bare backticked name")
+  (assert (equal? (requirement-name-on-line "location searched: crates.io index") "")
+          "a line with no backticked name yields the empty string"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Defect 2 — topological order
+;; ─────────────────────────────────────────────────────────────────────
+
+;; The real tatara-lisp shape, reduced to the load-bearing edges. `tatara`
+;; (the CLI) depends on everything; `tatara-lisp` exact-pins `tatara-lisp-derive`
+;; (the deliberate lib<->derive SEAL), so the derive MUST be first of all.
+(define tatara-deps
+  (list (cons "tatara" (list "tatara-lisp" "tatara-eval" "tatara-source" "tatara-cilium"))
+        (cons "tatara-lisp" (list "tatara-lisp-derive"))
+        (cons "tatara-eval" (list "tatara-lisp"))
+        (cons "tatara-source" (list))
+        (cons "tatara-lisp-derive" (list))
+        (cons "tatara-cilium" (list "tatara-lisp"))))
+
+(define (index-of x xs n)
+  (cond ((null? xs) -1)
+        ((equal? (car xs) x) n)
+        (else (index-of x (cdr xs) (+ n 1)))))
+
+(define (before? ordered a b)
+  (let ((ia (index-of a ordered 0)) (ib (index-of b ordered 0)))
+    (and (>= ia 0) (>= ib 0) (< ia ib))))
+
+(define tatara-manifest-order
+  (list "tatara" "tatara-lisp" "tatara-eval" "tatara-source"
+        "tatara-lisp-derive" "tatara-cilium"))
+
+(deftest "topo-order: leaves first — derive before lib before dependents before the CLI"
+  ;; cargo metadata lists members alphabetically, which put `tatara` (the CLI
+  ;; with 11 sibling deps) FIRST. That ordering is what made every dependent
+  ;; fail before its leaf existed.
+  (let ((ordered (topo-order tatara-manifest-order tatara-deps)))
+    (assert (= (length ordered) 6) "every member is still present exactly once")
+    (assert (before? ordered "tatara-lisp-derive" "tatara-lisp") "derive before lib")
+    (assert (before? ordered "tatara-lisp" "tatara-eval") "lib before eval")
+    (assert (before? ordered "tatara-lisp" "tatara-cilium") "lib before cilium")
+    (assert (before? ordered "tatara-cilium" "tatara") "cilium before the CLI")
+    (assert (equal? (car (reverse ordered)) "tatara") "the CLI is LAST")))
+
+(deftest "topo-order-with: the EXACT-pinned derive leads its ready batch (the seal)"
+  ;; tatara-lisp pins tatara-lisp-derive at `= "=0.3.3"`. Nothing else can
+  ;; satisfy that requirement, so the derive is the least forgiving of index
+  ;; lag and goes first of all — ahead of the equally-ready tatara-source.
+  (let ((ordered (topo-order-with tatara-manifest-order tatara-deps
+                                  (list "tatara-lisp-derive"))))
+    (assert (equal? (car ordered) "tatara-lisp-derive")
+            "the exact-pinned target is FIRST")
+    (assert (before? ordered "tatara-lisp-derive" "tatara-source")
+            "it outranks an equally-ready, caret-only leaf")
+    (assert (= (length ordered) 6) "no member lost to the reordering"))
+  ;; With no exact pins the order is plain manifest-order-within-batch.
+  (let ((ordered (topo-order-with tatara-manifest-order tatara-deps (list))))
+    (assert (equal? (car ordered) "tatara-source")
+            "without a seal, the first ready member in manifest order leads")))
+
+(deftest "parse-dep-line / parse-exact-line read the cargo-metadata tab shape"
+  (let ((line "tatara-lisp\ttatara-lisp-derive,serde\ttatara-lisp-derive"))
+    (assert (equal? (parse-dep-line line)
+                    (list "tatara-lisp" "tatara-lisp-derive" "serde"))
+            "name + shipped deps")
+    (assert (equal? (parse-exact-line line) (list "tatara-lisp-derive"))
+            "only the '=' pinned dep"))
+  (let ((leaf "tatara-source\t\t"))
+    (assert (equal? (parse-dep-line leaf) (list "tatara-source")) "a leaf has no deps")
+    (assert (null? (parse-exact-line leaf)) "a leaf pins nothing")))
+
+(deftest "topo-order: a dep on a non-member is ignored, not treated as an edge"
+  (let ((ordered (topo-order (list "a" "b")
+                             (list (cons "a" (list "serde" "b")) (cons "b" (list "tokio"))))))
+    (assert (equal? ordered (list "b" "a")) "only intra-workspace edges order the members")))
+
+(deftest "topo-order: a cycle degrades to original order, never drops or loops"
+  ;; dev-dependencies are filtered out before this point, so a real cycle is
+  ;; not expected — but a dropped member would be a silent non-publish, which
+  ;; is exactly the false-green class this whole fix exists to kill.
+  (let ((ordered (topo-order (list "x" "y" "z")
+                             (list (cons "x" (list "y")) (cons "y" (list "x"))
+                                   (cons "z" (list))))))
+    (assert (= (length ordered) 3) "all three members survive a cycle")
+    (assert (equal? (car ordered) "z") "the acyclic member still goes first")))
+
+(deftest "topo-order: an empty workspace and a single member are handled"
+  (assert (null? (topo-order (list) (list))) "empty stays empty")
+  (assert (equal? (topo-order (list "solo") (list (cons "solo" (list)))) (list "solo"))
+          "single member"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Defect 3 — one permanent failure must not cancel the other members
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "publish-pass collects failures and keeps going (no mid-pass exit)"
+  ;; The old code called (exit 1) the instant one member failed, so a single
+  ;; misclassified crate aborted the remaining 16. publish-pass now returns a
+  ;; fifth bucket and the driver decides the exit code once, at the end.
+  (let ((attempted (list)))
+    (let ((ops (list (cons "publish-one"
+                           (lambda (name attempt)
+                             (set! attempted (cons name attempted))
+                             (if (equal? name "bad") (list "fail" name) (list "done" name)))))))
+      (let* ((out (publish-pass-with ops (list "a" "bad" "c") (list) (list) (list) (list) (list)))
+             (shipped (car out))
+             (failed (car (cdr (cdr (cdr (cdr out)))))))
+        (assert (= (length attempted) 3) "all three members were attempted despite the failure")
+        (assert (= (length shipped) 2) "a and c still shipped")
+        (assert (equal? failed (list "bad")) "the failure is reported, once, by name")))))
+
+(deftest "drive-passes exits RED when a member permanently failed, GREEN when only deferred"
+  (assert (= (pass-exit-code (list "bad")) 1) "a permanent failure is a red run")
+  (assert (= (pass-exit-code (list)) 0) "no permanent failure is a green run"))
+
+(deftest "drive-passes end-to-end: 1 bad member costs exactly 1 member, red at the END"
+  ;; The tatara-lisp v0.3.3 run in miniature: a 17-member workspace where the
+  ;; first-attempted crate dies. Every other member must still ship, and the
+  ;; run must still be red — green-with-a-hole is the false-green class, and
+  ;; abort-on-first-failure is what actually happened.
+  (let ((attempted (list)) (slept (list)))
+    (let ((ops (list (cons "publish-one"
+                           (lambda (name attempt)
+                             (set! attempted (cons name attempted))
+                             (if (equal? name "m00") (list "fail" name) (list "done" name))))
+                     (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
+      (let* ((names (list "m00" "m01" "m02" "m03" "m04" "m05" "m06" "m07" "m08"
+                          "m09" "m10" "m11" "m12" "m13" "m14" "m15" "m16"))
+             (code (drive-passes-with ops names (list) (list) (list) (list) 1)))
+        (assert (= (length attempted) 17) "every one of the 17 members was attempted")
+        (assert (= code 1) "the run is RED — the failure is reported, not swallowed")
+        (assert (null? slept) "nothing was deferred, so no index-settle wait")))))
+
+(deftest "drive-passes: a dep-deferred member waits for the index, then ships next pass"
+  (let ((slept (list)) (tries 0))
+    (let ((ops (list (cons "publish-one"
+                           (lambda (name attempt)
+                             (cond
+                               ((equal? name "dependent")
+                                (set! tries (+ tries 1))
+                                (if (= tries 1) (list "defer" name) (list "done" name)))
+                               (else (list "done" name)))))
+                     (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
+      (let ((code (drive-passes-with ops (list "leaf" "dependent")
+                                     (list) (list) (list) (list) 1)))
+        (assert (= code 0) "green — a sibling that was not indexed yet is not a failure")
+        (assert (equal? slept (list 15)) "waited the pass-1 index-settle window exactly once")))))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Defect 4 — index-propagation backoff
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "index-settle-secs: bounded backoff, never unbounded, never zero"
+  (assert (= (index-settle-secs 1) 15) "first inter-pass wait")
+  (assert (= (index-settle-secs 2) 30) "doubles")
+  (assert (= (index-settle-secs 3) 60) "doubles again")
+  (assert (= (index-settle-secs 4) 120) "reaches the cap")
+  (assert (= (index-settle-secs 9) 120) "and stays capped — the pass budget bounds the total"))
