@@ -13,7 +13,12 @@ inputs:
 
 outputs:
   output-path:
-    value: ${{ steps.render.outputs.output-path }}
+    # `steps.render` never existed — this action's steps are `src` and `run`, so
+    # the forward resolved to '' on every run since the file was written. The
+    # detect-repo-type failure mode at the OUTER boundary, which the runtime
+    # gate cannot see (it reads tatara-script's own manifest, not this one).
+    description: "Path of the rendered manifest, or empty when kustomize build failed"
+    value: ${{ steps.run.outputs.output-path }}
 
 runs:
   using: composite

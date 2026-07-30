@@ -64,6 +64,12 @@ outputs:
   result:
     description: "'admitted' | 'rejected' | 'pull-failed'"
     value: ${{ steps.verdict.outputs.result || steps.pull.outputs.result }}
+  pulled:
+    # No verdict fallback: `pulled` is written ONLY by pull.tlisp (both the
+    # false and true terminals), never by verdict.tlisp, so there is no second
+    # side to fall back to.
+    description: "'true' iff the archive was pulled from the registry"
+    value: ${{ steps.pull.outputs.pulled }}
 
 runs:
   using: composite

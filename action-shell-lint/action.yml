@@ -20,6 +20,9 @@ outputs:
     value: ${{ steps.run.outputs.violations }}
   files-scanned:
     value: ${{ steps.run.outputs.files-scanned }}
+  baseline-violations:
+    description: "Count of already-tracked baseline violations found (reported, never failed)."
+    value: ${{ steps.run.outputs.baseline-violations }}
 
 runs:
   using: composite

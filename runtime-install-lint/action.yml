@@ -25,6 +25,9 @@ outputs:
   baselined:
     description: "Count of already-tracked baseline violations found (reported, not failed)."
     value: ${{ steps.scan.outputs.baselined }}
+  files-scanned:
+    description: "Count of action.yml files the scan examined — a zero here means the gate proved nothing."
+    value: ${{ steps.scan.outputs.files-scanned }}
 
 runs:
   using: composite
