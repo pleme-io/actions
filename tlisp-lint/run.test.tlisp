@@ -1,0 +1,96 @@
+;; tlisp-lint/run.test.tlisp — (deftest …) unit tests for the Layer-4
+;; stdlib-shadowing rule. Run by the tlisp-test action as
+;;   <stdlib> + run.tlisp + run.test.tlisp   with TLISP_TEST=1
+;; so no `find`, no python and no repo walk happens.
+
+(deftest "top-level-define-name: reads the defined name, ignores non-defines"
+  (assert (equal? (top-level-define-name "(define (dep-missing-on-line? line)")
+                  "dep-missing-on-line?")
+          "function define")
+  (assert (equal? (top-level-define-name "(define max-retries 20)") "max-retries")
+          "value define")
+  (assert (equal? (top-level-define-name "(define (configure-git-bot)") "configure-git-bot")
+          "zero-arg define — the closing paren is not part of the name")
+  (assert (equal? (top-level-define-name "  (define (inner x)") "")
+          "an INDENTED define is inner-scoped and shadows nothing at top level")
+  (assert (equal? (top-level-define-name ";; (define (commented x)") "")
+          "a commented-out define is not a define")
+  (assert (equal? (top-level-define-name "(cond ((null? xs) 0))") "")
+          "a non-define line yields \"\""))
+
+(deftest "collect-define-names: only column-0 defines, in order"
+  (let ((src (list "(define alpha 1)"
+                   ";; (define ghost 2)"
+                   "(define (beta x)"
+                   "  (define inner 3)"
+                   "  inner)"
+                   "(define (gamma))")))
+    (assert (equal? (collect-define-names src (list)) (list "alpha" "beta" "gamma"))
+            "alpha/beta/gamma only — ghost is a comment, inner is indented")))
+
+(deftest "shadowed-names: the intersection with the stdlib, nothing else"
+  (let ((stdlib-names (list "append-output" "status-of" "cargo-publish-dep-missing-line?")))
+    (assert (equal? (shadowed-names (list "publish-args" "append-output" "do-publish")
+                                    stdlib-names)
+                    (list "append-output"))
+            "only the name the stdlib also defines")
+    (assert (null? (shadowed-names (list "publish-args" "do-publish") stdlib-names))
+            "a clean action shadows nothing")))
+
+(deftest "the REAL regression: a local dep-missing predicate is caught as a shadow"
+  ;; This is the exact defect the rule exists for. rust-workspace-publish
+  ;; re-defined the stdlib's cargo-publish predicate family; the local copies
+  ;; won, diverged, and stalled the tatara-lisp 0.3.x line at 0.2.5.
+  (let ((stdlib-names (list "cargo-publish-dep-missing-line?" "cargo-publish-conflict-line?"
+                            "cargo-publish-rate-limited-line?" "any-line-matches?"))
+        (action-names (list "publish-args" "cargo-publish-dep-missing-line?"
+                            "any-line-matches?" "topo-order")))
+    (assert (equal? (shadowed-names action-names stdlib-names)
+                    (list "cargo-publish-dep-missing-line?" "any-line-matches?"))
+            "both re-declared predicates are reported")))
+
+(deftest "shadow-row: the baseline row format is path TAB name, path normalized"
+  (assert (equal? (shadow-row "some-action/run.tlisp" "append-output")
+                  "some-action/run.tlisp\tappend-output")
+          "tab-separated, so a path containing a space is still parseable")
+  ;; Caught by running the real linter end-to-end: `find .` emits "./x/run.tlisp"
+  ;; while the baseline stores "x/run.tlisp", so without normalization EVERY
+  ;; baselined row read as a new violation and the gate was red for everyone —
+  ;; the fastest possible route to a gate getting deleted.
+  (assert (equal? (shadow-row "./some-action/run.tlisp" "append-output")
+                  "some-action/run.tlisp\tappend-output")
+          "a find-style leading ./ is stripped before the baseline lookup")
+  (assert (equal? (repo-relative "x/run.tlisp") "x/run.tlisp")
+          "an already-relative path is untouched"))
+
+(deftest "the shipped baseline is loaded, non-empty, and comment-free"
+  ;; A baseline that silently fails to load would make the gate VACUOUS in the
+  ;; other direction — every existing shadow would read as new and CI would be
+  ;; permanently red, which is the pressure that gets a gate deleted.
+  (assert (> (length baselined-shadows) 0) "the baseline file was found and parsed")
+  (assert (not (name-member? "" baselined-shadows)) "no blank rows survive the filter")
+  (assert (name-member? "cargo-publish-crate/run.tlisp\tappend-output" baselined-shadows)
+          "a known pre-existing shadow is baselined"))
+
+(deftest "new-shadow-rows: baselined shadows pass, an unlisted one is NEW"
+  (let ((stdlib-names (list "append-output" "status-of")))
+    (assert (null? (new-shadow-rows "cargo-publish-crate/run.tlisp"
+                                    (list "append-output") stdlib-names))
+            "a baselined row is not a new violation")
+    (assert (equal? (new-shadow-rows "brand-new-action/run.tlisp"
+                                     (list "append-output") stdlib-names)
+                    (list "brand-new-action/run.tlisp\tappend-output"))
+            "an unlisted shadow IS a new violation")))
+
+(deftest "rust-workspace-publish is at ZERO stdlib shadows (it is not baselined)"
+  ;; The action the whole fix is about must not be carrying any private copy —
+  ;; and must not have been quietly baselined instead of cleaned.
+  (assert (not (name-member? "rust-workspace-publish/run.tlisp\tappend-output"
+                             baselined-shadows))
+          "not baselined for append-output")
+  (assert (not (name-member? "rust-workspace-publish/run.tlisp\tstatus-of"
+                             baselined-shadows))
+          "not baselined for status-of")
+  (assert (not (name-member? "rust-workspace-publish/run.tlisp\tconfigure-git-bot"
+                             baselined-shadows))
+          "not baselined for configure-git-bot"))
