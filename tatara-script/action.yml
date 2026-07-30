@@ -439,6 +439,408 @@ outputs:
     description: "Forwarded (key: bootstrap-complete) — rust-workspace-publish: true when every member is on the registry AND nothing failed permanently"
     value: ${{ steps.exec.outputs.bootstrap-complete }}
 
+  # ── bulk declaration: every remaining key a sibling run.tlisp writes ──
+  # A composite forwards ONLY declared keys, and tatara-script/action.yml's own
+  # output-contract guard (line ~622, `|| exit 1`) is FATAL — so an undeclared
+  # key does not merely resolve to "", it fails the step outright. Measured
+  # 2026-07-30: 221 sibling dirs wrote 130 undeclared keys; 72 of those dirs are
+  # real implementations (incl. cargo-publish-crate, cargo-publish-each-member,
+  # super-cache-save, release-promote, attestation-gate), the other 149 are
+  # `=stub` scaffolding that would fail the moment it was implemented.
+  # Declared in bulk here rather than one incident at a time; this is the 5th
+  # occurrence of the class (after out-path, the violations family, and
+  # rust-workspace-publish's five). Purely additive.
+  action-taken:
+    description: "Forwarded (key: action-taken) — written by 2 action dir(s): issue-create, pr-comment"
+    value: ${{ steps.exec.outputs.action-taken }}
+  annotation-id:
+    description: "Forwarded (key: annotation-id) — written by 1 action dir(s): grafana-annotation"
+    value: ${{ steps.exec.outputs.annotation-id }}
+  applied:
+    description: "Forwarded (key: applied) — written by 12 action dir(s): atlas-migrate, branch-protect-sync, cloudflare-d1-migrate …"
+    value: ${{ steps.exec.outputs.applied }}
+  applied-count:
+    description: "Forwarded (key: applied-count) — written by 2 action dir(s): db-migrate, kubectl-apply"
+    value: ${{ steps.exec.outputs.applied-count }}
+  artifact-path:
+    description: "Forwarded (key: artifact-path) — written by 3 action dir(s): flutter-build, godot-export, unity-build"
+    value: ${{ steps.exec.outputs.artifact-path }}
+  attestation-path:
+    description: "Forwarded (key: attestation-path) — written by 2 action dir(s): slsa-attest, syft-attest"
+    value: ${{ steps.exec.outputs.attestation-path }}
+  backup-name:
+    description: "Forwarded (key: backup-name) — written by 1 action dir(s): velero-backup"
+    value: ${{ steps.exec.outputs.backup-name }}
+  backup-path:
+    description: "Forwarded (key: backup-path) — written by 1 action dir(s): db-backup"
+    value: ${{ steps.exec.outputs.backup-path }}
+  badge-path:
+    description: "Forwarded (key: badge-path) — written by 1 action dir(s): status-badge"
+    value: ${{ steps.exec.outputs.badge-path }}
+  batch-id:
+    description: "Forwarded (key: batch-id) — written by 1 action dir(s): openai-embeddings-batch"
+    value: ${{ steps.exec.outputs.batch-id }}
+  binaries:
+    description: "Forwarded (key: binaries) — written by 1 action dir(s): go-build"
+    value: ${{ steps.exec.outputs.binaries }}
+  binary-path:
+    description: "Forwarded (key: binary-path) — written by 2 action dir(s): arduino-cli-build, esp-idf-build"
+    value: ${{ steps.exec.outputs.binary-path }}
+  breaking-count:
+    description: "Forwarded (key: breaking-count) — written by 1 action dir(s): api-spec-diff"
+    value: ${{ steps.exec.outputs.breaking-count }}
+  build-url:
+    description: "Forwarded (key: build-url) — written by 1 action dir(s): eas-build"
+    value: ${{ steps.exec.outputs.build-url }}
+  caixa-kind:
+    description: "Forwarded (key: caixa-kind) — written by 1 action dir(s): caixa-detect"
+    value: ${{ steps.exec.outputs.caixa-kind }}
+  caixa-name:
+    description: "Forwarded (key: caixa-name) — written by 1 action dir(s): caixa-detect"
+    value: ${{ steps.exec.outputs.caixa-name }}
+  caixa-path:
+    description: "Forwarded (key: caixa-path) — written by 1 action dir(s): caixa-detect"
+    value: ${{ steps.exec.outputs.caixa-path }}
+  captured:
+    description: "Forwarded (key: captured) — written by 1 action dir(s): puppeteer-screenshot"
+    value: ${{ steps.exec.outputs.captured }}
+  certificate-path:
+    description: "Forwarded (key: certificate-path) — written by 1 action dir(s): provenance-attest"
+    value: ${{ steps.exec.outputs.certificate-path }}
+  comment-id:
+    description: "Forwarded (key: comment-id) — written by 1 action dir(s): pr-comment"
+    value: ${{ steps.exec.outputs.comment-id }}
+  committed:
+    description: "Forwarded (key: committed) — written by 1 action dir(s): release-promote"
+    value: ${{ steps.exec.outputs.committed }}
+  component-count:
+    description: "Forwarded (key: component-count) — written by 1 action dir(s): sbom-generate"
+    value: ${{ steps.exec.outputs.component-count }}
+  config-path:
+    description: "Forwarded (key: config-path) — written by 1 action dir(s): akeyless-export-config"
+    value: ${{ steps.exec.outputs.config-path }}
+  conflict:
+    description: "Forwarded (key: conflict) — written by 1 action dir(s): cargo-publish-crate"
+    value: ${{ steps.exec.outputs.conflict }}
+  contact-id:
+    description: "Forwarded (key: contact-id) — written by 1 action dir(s): hubspot-contact-upsert"
+    value: ${{ steps.exec.outputs.contact-id }}
+  converged:
+    description: "Forwarded (key: converged) — written by 1 action dir(s): pangea-grafana-converge"
+    value: ${{ steps.exec.outputs.converged }}
+  copied:
+    description: "Forwarded (key: copied) — written by 1 action dir(s): skopeo-copy"
+    value: ${{ steps.exec.outputs.copied }}
+  coverage-pct:
+    description: "Forwarded (key: coverage-pct) — written by 1 action dir(s): coverage-upload"
+    value: ${{ steps.exec.outputs.coverage-pct }}
+  created:
+    description: "Forwarded (key: created) — written by 2 action dir(s): gh-release-create, qdrant-collection-create"
+    value: ${{ steps.exec.outputs.created }}
+  decision:
+    description: "Forwarded (key: decision) — written by 1 action dir(s): attestation-gate"
+    value: ${{ steps.exec.outputs.decision }}
+  deferred:
+    description: "Forwarded (key: deferred) — written by 1 action dir(s): cargo-publish-crate"
+    value: ${{ steps.exec.outputs.deferred }}
+  delivered:
+    description: "Forwarded (key: delivered) — written by 2 action dir(s): discord-notify, slack-notify"
+    value: ${{ steps.exec.outputs.delivered }}
+  deploy-id:
+    description: "Forwarded (key: deploy-id) — written by 1 action dir(s): render-deploy"
+    value: ${{ steps.exec.outputs.deploy-id }}
+  deployed:
+    description: "Forwarded (key: deployed) — written by 14 action dir(s): auth0-rule-deploy, azure-deploy, cdk-deploy …"
+    value: ${{ steps.exec.outputs.deployed }}
+  deployed-address:
+    description: "Forwarded (key: deployed-address) — written by 1 action dir(s): hardhat-deploy"
+    value: ${{ steps.exec.outputs.deployed-address }}
+  deployment-url:
+    description: "Forwarded (key: deployment-url) — written by 1 action dir(s): deno-deploy"
+    value: ${{ steps.exec.outputs.deployment-url }}
+  distributed:
+    description: "Forwarded (key: distributed) — written by 1 action dir(s): nx-cloud-distribute"
+    value: ${{ steps.exec.outputs.distributed }}
+  drift-detected:
+    description: "Forwarded (key: drift-detected) — written by 1 action dir(s): caixa-render-pr"
+    value: ${{ steps.exec.outputs.drift-detected }}
+  errors:
+    description: "Forwarded (key: errors) — written by 2 action dir(s): json-schema-check, yaml-lint"
+    value: ${{ steps.exec.outputs.errors }}
+  event-id:
+    description: "Forwarded (key: event-id) — written by 1 action dir(s): google-calendar-event-create"
+    value: ${{ steps.exec.outputs.event-id }}
+  failed-count:
+    description: "Forwarded (key: failed-count) — written by 1 action dir(s): cargo-publish-each-member"
+    value: ${{ steps.exec.outputs.failed-count }}
+  fetched:
+    description: "Forwarded (key: fetched) — written by 2 action dir(s): crates-mirror-pull, npm-mirror-pull"
+    value: ${{ steps.exec.outputs.fetched }}
+  fetched-path:
+    description: "Forwarded (key: fetched-path) — written by 1 action dir(s): artifact-fetch"
+    value: ${{ steps.exec.outputs.fetched-path }}
+  files-rendered:
+    description: "Forwarded (key: files-rendered) — written by 1 action dir(s): caixa-render-pr"
+    value: ${{ steps.exec.outputs.files-rendered }}
+  findings:
+    description: "Forwarded (key: findings) — written by 2 action dir(s): golangci-lint, trivy-fs-scan"
+    value: ${{ steps.exec.outputs.findings }}
+  findings-count:
+    description: "Forwarded (key: findings-count) — written by 5 action dir(s): bandit, checkov, gosec …"
+    value: ${{ steps.exec.outputs.findings-count }}
+  flushed:
+    description: "Forwarded (key: flushed) — written by 1 action dir(s): redis-flush"
+    value: ${{ steps.exec.outputs.flushed }}
+  found-count:
+    description: "Forwarded (key: found-count) — written by 1 action dir(s): secrets-scan"
+    value: ${{ steps.exec.outputs.found-count }}
+  generated:
+    description: "Forwarded (key: generated) — written by 1 action dir(s): git-cliff"
+    value: ${{ steps.exec.outputs.generated }}
+  image:
+    description: "Forwarded (key: image) — written by 1 action dir(s): ko-build"
+    value: ${{ steps.exec.outputs.image }}
+  image-id:
+    description: "Forwarded (key: image-id) — written by 3 action dir(s): buildah-build, devcontainer-build, podman-build"
+    value: ${{ steps.exec.outputs.image-id }}
+  image-ref:
+    description: "Forwarded (key: image-ref) — written by 1 action dir(s): docker-build-and-push"
+    value: ${{ steps.exec.outputs.image-ref }}
+  imported:
+    description: "Forwarded (key: imported) — written by 2 action dir(s): keycloak-realm-import, typesense-import"
+    value: ${{ steps.exec.outputs.imported }}
+  injected:
+    description: "Forwarded (key: injected) — written by 1 action dir(s): linkerd-inject"
+    value: ${{ steps.exec.outputs.injected }}
+  inputs-pushed:
+    description: "Forwarded (key: inputs-pushed) — written by 1 action dir(s): super-cache-save"
+    value: ${{ steps.exec.outputs.inputs-pushed }}
+  interface:
+    description: "Forwarded (key: interface) — written by 1 action dir(s): wireguard-up"
+    value: ${{ steps.exec.outputs.interface }}
+  issue-id:
+    description: "Forwarded (key: issue-id) — written by 1 action dir(s): linear-issue-create"
+    value: ${{ steps.exec.outputs.issue-id }}
+  issue-url:
+    description: "Forwarded (key: issue-url) — written by 1 action dir(s): issue-create"
+    value: ${{ steps.exec.outputs.issue-url }}
+  issues:
+    description: "Forwarded (key: issues) — written by 1 action dir(s): pa11y-ci"
+    value: ${{ steps.exec.outputs.issues }}
+  job-id:
+    description: "Forwarded (key: job-id) — written by 2 action dir(s): openai-fine-tune-trigger, qiskit-job-submit"
+    value: ${{ steps.exec.outputs.job-id }}
+  kind:
+    description: "Forwarded (key: kind) — written by 1 action dir(s): release-promote"
+    value: ${{ steps.exec.outputs.kind }}
+  logged-in:
+    description: "Forwarded (key: logged-in) — written by 1 action dir(s): skopeo-login"
+    value: ${{ steps.exec.outputs.logged-in }}
+  marker-id:
+    description: "Forwarded (key: marker-id) — written by 2 action dir(s): honeycomb-marker, newrelic-deploy-marker"
+    value: ${{ steps.exec.outputs.marker-id }}
+  materialized:
+    description: "Forwarded (key: materialized) — written by 1 action dir(s): dagster-materialize"
+    value: ${{ steps.exec.outputs.materialized }}
+  merged-count:
+    description: "Forwarded (key: merged-count) — written by 1 action dir(s): changelog-fragments-merge"
+    value: ${{ steps.exec.outputs.merged-count }}
+  message-id:
+    description: "Forwarded (key: message-id) — written by 1 action dir(s): ses-email-send"
+    value: ${{ steps.exec.outputs.message-id }}
+  monthly-diff:
+    description: "Forwarded (key: monthly-diff) — written by 1 action dir(s): infracost-comment"
+    value: ${{ steps.exec.outputs.monthly-diff }}
+  mutants-killed:
+    description: "Forwarded (key: mutants-killed) — written by 1 action dir(s): mutation-test"
+    value: ${{ steps.exec.outputs.mutants-killed }}
+  mutants-survived:
+    description: "Forwarded (key: mutants-survived) — written by 1 action dir(s): mutation-test"
+    value: ${{ steps.exec.outputs.mutants-survived }}
+  mutated:
+    description: "Forwarded (key: mutated) — written by 1 action dir(s): crane-mutate"
+    value: ${{ steps.exec.outputs.mutated }}
+  old-version:
+    description: "Forwarded (key: old-version) — written by 1 action dir(s): caixa-bump"
+    value: ${{ steps.exec.outputs.old-version }}
+  output-path:
+    description: "Forwarded (key: output-path) — written by 4 action dir(s): cyclonedx-merge, ffmpeg-transcode, jupyter-notebook-render …"
+    value: ${{ steps.exec.outputs.output-path }}
+  page-id:
+    description: "Forwarded (key: page-id) — written by 3 action dir(s): confluence-page-create, notion-db-row-add, notion-page-create"
+    value: ${{ steps.exec.outputs.page-id }}
+  passed:
+    description: "Forwarded (key: passed) — written by 15 action dir(s): attestation-gate, browserstack-test, cypress-test …"
+    value: ${{ steps.exec.outputs.passed }}
+  posted:
+    description: "Forwarded (key: posted) — written by 1 action dir(s): datadog-event"
+    value: ${{ steps.exec.outputs.posted }}
+  pr-url:
+    description: "Forwarded (key: pr-url) — written by 3 action dir(s): caixa-render-pr, dependency-update, nix-flake-update"
+    value: ${{ steps.exec.outputs.pr-url }}
+  prediction-id:
+    description: "Forwarded (key: prediction-id) — written by 1 action dir(s): replicate-run"
+    value: ${{ steps.exec.outputs.prediction-id }}
+  program-id:
+    description: "Forwarded (key: program-id) — written by 1 action dir(s): anchor-build"
+    value: ${{ steps.exec.outputs.program-id }}
+  promoted:
+    description: "Forwarded (key: promoted) — written by 1 action dir(s): release-promote"
+    value: ${{ steps.exec.outputs.promoted }}
+  published:
+    description: "Forwarded (key: published) — written by 8 action dir(s): bun-publish, caixa-publish-to-git, cloudflare-queue-publish …"
+    value: ${{ steps.exec.outputs.published }}
+  published-count:
+    description: "Forwarded (key: published-count) — written by 1 action dir(s): changesets"
+    value: ${{ steps.exec.outputs.published-count }}
+  pulled:
+    description: "Forwarded (key: pulled) — written by 1 action dir(s): ollama-pull"
+    value: ${{ steps.exec.outputs.pulled }}
+  purged:
+    description: "Forwarded (key: purged) — written by 2 action dir(s): cloudflare-cache-purge, fastly-cache-purge"
+    value: ${{ steps.exec.outputs.purged }}
+  put:
+    description: "Forwarded (key: put) — written by 1 action dir(s): cloudflare-kv-put"
+    value: ${{ steps.exec.outputs.put }}
+  reconciled:
+    description: "Forwarded (key: reconciled) — written by 1 action dir(s): flux-reconcile"
+    value: ${{ steps.exec.outputs.reconciled }}
+  record-id:
+    description: "Forwarded (key: record-id) — written by 2 action dir(s): airtable-record-create, salesforce-record-create"
+    value: ${{ steps.exec.outputs.record-id }}
+  release-pr-url:
+    description: "Forwarded (key: release-pr-url) — written by 1 action dir(s): release-please"
+    value: ${{ steps.exec.outputs.release-pr-url }}
+  release-version:
+    description: "Forwarded (key: release-version) — written by 1 action dir(s): sentry-release"
+    value: ${{ steps.exec.outputs.release-version }}
+  released:
+    description: "Forwarded (key: released) — written by 1 action dir(s): goreleaser"
+    value: ${{ steps.exec.outputs.released }}
+  released-version:
+    description: "Forwarded (key: released-version) — written by 1 action dir(s): semantic-release"
+    value: ${{ steps.exec.outputs.released-version }}
+  rendered:
+    description: "Forwarded (key: rendered) — written by 1 action dir(s): step-summary-publish"
+    value: ${{ steps.exec.outputs.rendered }}
+  report-path:
+    description: "Forwarded (key: report-path) — written by 1 action dir(s): adoption-audit"
+    value: ${{ steps.exec.outputs.report-path }}
+  resolved-count:
+    description: "Forwarded (key: resolved-count) — written by 1 action dir(s): caixa-deps-resolve"
+    value: ${{ steps.exec.outputs.resolved-count }}
+  response:
+    description: "Forwarded (key: response) — written by 1 action dir(s): anthropic-message"
+    value: ${{ steps.exec.outputs.response }}
+  revision:
+    description: "Forwarded (key: revision) — written by 1 action dir(s): helm-deploy"
+    value: ${{ steps.exec.outputs.revision }}
+  rolled-out:
+    description: "Forwarded (key: rolled-out) — written by 1 action dir(s): k8s-rollout-wait"
+    value: ${{ steps.exec.outputs.rolled-out }}
+  rotated:
+    description: "Forwarded (key: rotated) — written by 1 action dir(s): akeyless-rotate"
+    value: ${{ steps.exec.outputs.rotated }}
+  rows-affected:
+    description: "Forwarded (key: rows-affected) — written by 1 action dir(s): cloudflare-d1-query"
+    value: ${{ steps.exec.outputs.rows-affected }}
+  run-id:
+    description: "Forwarded (key: run-id) — written by 2 action dir(s): airflow-trigger, retool-workflow-run"
+    value: ${{ steps.exec.outputs.run-id }}
+  s3-uri:
+    description: "Forwarded (key: s3-uri) — written by 1 action dir(s): aws-s3-upload"
+    value: ${{ steps.exec.outputs.s3-uri }}
+  scan-id:
+    description: "Forwarded (key: scan-id) — written by 1 action dir(s): sonarqube-scan"
+    value: ${{ steps.exec.outputs.scan-id }}
+  sent:
+    description: "Forwarded (key: sent) — written by 8 action dir(s): apprise-notify, matrix-notify, mattermost-notify …"
+    value: ${{ steps.exec.outputs.sent }}
+  shipped:
+    description: "Forwarded (key: shipped) — written by 4 action dir(s): cargo-publish-crate, helm-publish, npm-publish …"
+    value: ${{ steps.exec.outputs.shipped }}
+  sid:
+    description: "Forwarded (key: sid) — written by 2 action dir(s): twilio-sms, twilio-voice-call"
+    value: ${{ steps.exec.outputs.sid }}
+  signature-path:
+    description: "Forwarded (key: signature-path) — written by 1 action dir(s): provenance-attest"
+    value: ${{ steps.exec.outputs.signature-path }}
+  signed-verified:
+    description: "Forwarded (key: signed-verified) — written by 1 action dir(s): attestation-gate"
+    value: ${{ steps.exec.outputs.signed-verified }}
+  site-path:
+    description: "Forwarded (key: site-path) — written by 6 action dir(s): docusaurus-build, hugo-build, mdbook-build …"
+    value: ${{ steps.exec.outputs.site-path }}
+  snapshot-id:
+    description: "Forwarded (key: snapshot-id) — written by 2 action dir(s): elasticsearch-snapshot, restic-backup"
+    value: ${{ steps.exec.outputs.snapshot-id }}
+  snapshots-count:
+    description: "Forwarded (key: snapshots-count) — written by 1 action dir(s): percy-snapshot"
+    value: ${{ steps.exec.outputs.snapshots-count }}
+  summary-path:
+    description: "Forwarded (key: summary-path) — written by 1 action dir(s): k6-load-test"
+    value: ${{ steps.exec.outputs.summary-path }}
+  synced:
+    description: "Forwarded (key: synced) — written by 4 action dir(s): argocd-sync, gcs-sync, s3-mirror …"
+    value: ${{ steps.exec.outputs.synced }}
+  synced-count:
+    description: "Forwarded (key: synced-count) — written by 4 action dir(s): gh-secrets-sync, okta-app-sync, readme-sync …"
+    value: ${{ steps.exec.outputs.synced-count }}
+  task-id:
+    description: "Forwarded (key: task-id) — written by 3 action dir(s): asana-task-create, clickup-task-create, meilisearch-index"
+    value: ${{ steps.exec.outputs.task-id }}
+  tool:
+    description: "Forwarded (key: tool) — written by 1 action dir(s): docs-publish"
+    value: ${{ steps.exec.outputs.tool }}
+  total-usd:
+    description: "Forwarded (key: total-usd) — written by 1 action dir(s): aws-cost-report"
+    value: ${{ steps.exec.outputs.total-usd }}
+  trace-id:
+    description: "Forwarded (key: trace-id) — written by 1 action dir(s): opentelemetry-trace-emit"
+    value: ${{ steps.exec.outputs.trace-id }}
+  triggered:
+    description: "Forwarded (key: triggered) — written by 5 action dir(s): dependabot-trigger, make-scenario-run, n8n-trigger-workflow …"
+    value: ${{ steps.exec.outputs.triggered }}
+  unowned-count:
+    description: "Forwarded (key: unowned-count) — written by 1 action dir(s): codeowners-validate"
+    value: ${{ steps.exec.outputs.unowned-count }}
+  updated:
+    description: "Forwarded (key: updated) — written by 2 action dir(s): linear-issue-update, pulumi-up"
+    value: ${{ steps.exec.outputs.updated }}
+  uploaded:
+    description: "Forwarded (key: uploaded) — written by 4 action dir(s): app-store-connect, codacy-coverage-upload, coverage-upload …"
+    value: ${{ steps.exec.outputs.uploaded }}
+  upserted:
+    description: "Forwarded (key: upserted) — written by 1 action dir(s): pinecone-upsert"
+    value: ${{ steps.exec.outputs.upserted }}
+  url:
+    description: "Forwarded (key: url) — written by 4 action dir(s): netlify-deploy, spin-deploy, storybook-deploy …"
+    value: ${{ steps.exec.outputs.url }}
+  valid:
+    description: "Forwarded (key: valid) — written by 1 action dir(s): envoy-config-validate"
+    value: ${{ steps.exec.outputs.valid }}
+  value:
+    description: "Forwarded (key: value) — written by 1 action dir(s): cloudflare-kv-get"
+    value: ${{ steps.exec.outputs.value }}
+  values-file:
+    description: "Forwarded (key: values-file) — written by 1 action dir(s): release-promote"
+    value: ${{ steps.exec.outputs.values-file }}
+  verified:
+    description: "Forwarded (key: verified) — written by 1 action dir(s): cosign-verify"
+    value: ${{ steps.exec.outputs.verified }}
+  verified-algo:
+    description: "Forwarded (key: verified-algo) — written by 1 action dir(s): attestation-gate"
+    value: ${{ steps.exec.outputs.verified-algo }}
+  workflow-id:
+    description: "Forwarded (key: workflow-id) — written by 1 action dir(s): temporal-trigger"
+    value: ${{ steps.exec.outputs.workflow-id }}
+  written:
+    description: "Forwarded (key: written) — written by 1 action dir(s): influxdb-write"
+    value: ${{ steps.exec.outputs.written }}
+  yanked:
+    description: "Forwarded (key: yanked) — written by 1 action dir(s): yank-version"
+    value: ${{ steps.exec.outputs.yanked }}
+
 runs:
   using: composite
   steps:
