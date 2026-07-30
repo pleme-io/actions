@@ -1,0 +1,81 @@
+name: 'pleme-io · output-contract-sync'
+description: 'Generate the two-boundary output contract for pleme-io/actions and gate it — byte-diffs the generated tatara-script outputs block + catalog against what is committed, and catches the wrapper-side gap the runtime gate cannot see.'
+branding: { icon: 'git-merge', color: 'red' }
+
+inputs:
+  mode:
+    description: >-
+      "check" (default) regenerates in memory and byte-compares against the
+      committed artifacts, writing nothing. "write" applies the generation.
+      CI runs check; a human runs write and commits the result.
+    required: false
+    default: "check"
+  fail-on-drift:
+    description: "Fail the build when any layer reports a violation"
+    required: false
+    default: "true"
+  inner-manifest:
+    description: "The shared inner runner whose outputs block is generated"
+    required: false
+    default: "tatara-script/action.yml"
+  catalog:
+    description: "Path of the generated flow-schema catalog"
+    required: false
+    default: "output-contract-catalog.tsv"
+
+outputs:
+  drift:
+    description: "1 when a generated artifact differs from the committed one (always 0 in write mode)"
+    value: ${{ steps.run.outputs.drift }}
+  wrapper-violations:
+    description: "Count of NEW outer-boundary gaps: a key a script writes that the action's own outputs block never forwards"
+    value: ${{ steps.run.outputs.wrapper-violations }}
+  wrapper-baselined:
+    description: "Count of already-tracked outer-boundary gaps (reported, never failed)"
+    value: ${{ steps.run.outputs.wrapper-baselined }}
+  spec-violations:
+    description: "Count of unreconciled dynamic-key sites — a detected site with no spec row, or a spec row matching no site"
+    value: ${{ steps.run.outputs.spec-violations }}
+  ghost-steps:
+    description: "Count of outputs values forwarding steps.<id>.outputs.<key> where no step with that id exists"
+    value: ${{ steps.run.outputs.ghost-steps }}
+  parity-violations:
+    description: "Count of manifests where yaml-parse and output-contract.tlisp's line scanner disagree about the declared set"
+    value: ${{ steps.run.outputs.parity-violations }}
+  actions-scanned:
+    description: "Count of action dirs examined — a zero here fails the run rather than reporting green"
+    value: ${{ steps.run.outputs.actions-scanned }}
+  keys-checked:
+    description: "Size of the generated inner key union"
+    value: ${{ steps.run.outputs.keys-checked }}
+  reason:
+    description: "Typed discriminant: ok | written | drift | dynamic-spec-unreconciled | outer-boundary-gap | ghost-step | parser-parity"
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        MODE: ${{ inputs.mode }}
+        FAIL_ON_DRIFT: ${{ inputs.fail-on-drift }}
+        INNER_MANIFEST: ${{ inputs.inner-manifest }}
+        CATALOG: ${{ inputs.catalog }}
+        # The spec + baseline are read from the CHECKOUT, not from
+        # github.action_path: this action lints the repo it ships in, and when
+        # self-hosted as `- uses: ./output-contract-sync` the two coincide.
+        DYNAMIC_KEYS: output-contract-sync/dynamic-keys.tsv
+        WRAPPER_BASELINE: output-contract-sync/wrapper-baseline.txt

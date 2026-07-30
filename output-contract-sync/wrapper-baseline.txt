@@ -1,0 +1,18 @@
+# output-contract-sync/wrapper-baseline.txt
+#
+# OUTER-boundary tracked debt: <action><TAB><key> pairs where a script writes a
+# key that the action's OWN outputs block never forwards. Baselined rows are
+# reported every run as tracked debt and never fail the build; anything NOT
+# listed here is a new violation and fails.
+#
+# This baseline exists ONLY for the outer boundary, and it is deliberately
+# tiny. It must never be used for the INNER boundary: an undeclared inner key
+# is a hard `exit 1` in every consumer job (output-contract.tlisp runs in the
+# same step and pre-empts the script's own exit code), so a large baseline
+# there would ship a green gate over hundreds of still-broken actions. Inner
+# keys get DECLARED, by generation, not baselined.
+#
+# The path to zero is graduation: add the key to the action's own `outputs:`
+# block as `value: ${{ steps.<id>.outputs.<key> }}` and delete the row.
+#
+# Rows are repo-relative action names with NO leading `./`.
