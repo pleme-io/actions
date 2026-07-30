@@ -400,13 +400,247 @@
      0)
     (else (literal-errors files (diagnostic-literals-in stdlib-src-path) 0))))
 
+;; ── Layer 6: crash-certain forms ───────────────────────────────────────
+;; THE CLASS: a form that is not a parse error, not an unbalanced paren, not a
+;; stdlib duplication — and is a GUARANTEED hard error the moment control
+;; reaches it. Layers 1–5 all certify these files clean, and so does
+;; `tatara-script lint`.
+;;
+;; The mechanism matters, because it dictates the shape of the fix. These do NOT
+;; fail at load. MEASURED 2026-07-30:
+;;
+;;     $ cat > /tmp/x.tlisp <<'EOF'
+;;     (define (never-called) (let loop ((x 1)) x))
+;;     (log-info "loaded fine")
+;;     EOF
+;;     $ tatara-script /tmp/x.tlisp
+;;     [..] INFO loaded fine        ← exit 0
+;;
+;; The error `bad `let`: bindings must be a list` fires only when
+;; `never-called` is CALLED. So you cannot catch this by loading the file; it
+;; needs STATIC detection. `helm-deploy` was the textbook instance: its
+;; `split-flag-args` returned early on empty input, so the action ran green
+;; forever and died the first time anybody passed `--set`.
+;;
+;; Two forms, both fully derived — nothing about the language is hand-listed
+;; here:
+;;
+;;   6a NAMED LET.  `(let loop ((x 1)) …)`. tatara-script has no named let, and
+;;      neither do `let*`/`letrec` — all three reject an atom where the bindings
+;;      list must be. Found by `crash-certain-reader.py`, which is a real
+;;      s-expression reader, so a named let quoted inside a COMMENT or a STRING
+;;      is not a hit.
+;;
+;;   6b WRONG ARITY ON AN INTERPRETER PRIMITIVE.  The arity table is READ OUT OF
+;;      THE LIVE INTERPRETER, not typed in. `Interpreter::apply` checks arity
+;;      BEFORE it invokes the callable, and the caught error value carries the
+;;      whole verdict:
+;;
+;;        (try (string-replace #f #f #f #f) (catch (e) e))
+;;        => Error(arity-mismatch: `string-replace` expected Exact(3), got 4)
+;;
+;;      So probing every call head in the repo at a deliberately absurd
+;;      argument count yields the interpreter's own table. Because the arity
+;;      check precedes invocation, a probe that lands on an arity error CANNOT
+;;      run the primitive's body — and a probe that misses (a variadic) hits the
+;;      argument marshaller first: `(exec-capture #f ×23)` returns
+;;      `expected string, got bool`, it does not execute anything. That is why
+;;      the dummy argument is `#f` and not `""`.
+;;
+;; SCOPE, stated honestly rather than rounded up:
+;;   * Only `Exact(n)` is gated. `Range(a, b)` is reported by the interpreter
+;;     too, but this script has no string→number primitive (`string->number`,
+;;     `parse-int`: both unbound — measured), so the check is a string equality
+;;     against n and a range cannot be compared. Range-arity primitives are
+;;     UNGATED.
+;;   * Only NATIVE primitives are gated — a probe whose error names a
+;;     `<closure>` instead of the probed name is dropped. stdlib closures are
+;;     legitimately rebound by actions (Layer 4's baseline is the evidence), so
+;;     gating them would fight a pattern this repo permits.
+;;   * A head the reader sees but the interpreter does not know (an action's own
+;;     define, a let-bound local) probes as `unbound-symbol` and is skipped, so
+;;     user functions are never arity-checked.
+;;
+;; TIER: CI-caught. Both forms stay perfectly writable — nothing in the type
+;; system or the parser stops you. This gate is the only thing that objects,
+;; and it objects only where it runs.
+
+(define crash-baseline-path "tlisp-lint/crash-certain-baseline.txt")
+
+;; `ACTION_PATH` is exported by action.yml (`${{ github.action_path }}`), because
+;; on a runner this script is a STRING passed to the tatara-script action and has
+;; no idea where its own sidecar lives. Locally (repo root) the fallback holds.
+(define crash-reader-script
+  (let ((ap (env-get "ACTION_PATH" "")))
+    (if (equal? ap "")
+      "tlisp-lint/crash-certain-reader.py"
+      (string-append ap "/crash-certain-reader.py"))))
+
+(define lint-tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
+(define crash-files-list (string-append lint-tmp-dir "/tlisp-lint-files.txt"))
+(define crash-probe-path (string-append lint-tmp-dir "/tlisp-lint-arity-probe.tlisp"))
+(define crash-arity-path (string-append lint-tmp-dir "/tlisp-lint-arity.txt"))
+
+(define crash-baselined
+  (if (path-exists? crash-baseline-path)
+    (filter (lambda (l) (and (not (equal? (string-trim l) ""))
+                             (not (string-prefix? (string-trim l) "#"))))
+            (string-split (read-file crash-baseline-path) "\n"))
+    (list)))
+
+;; A reader row is TSV. `row-field` is 0-indexed and total about which field is
+;; which, so a format change is a visible edit rather than a silent off-by-one.
+;; `nth` is (index list) and returns nil past the end — the explicit length
+;; guard keeps a short row from putting a nil into a string-append.
+(define (row-field row n)
+  (let ((parts (string-split row "\t")))
+    (if (> (length parts) n) (nth n parts) "")))
+
+(define (rows-of-kind rows kind)
+  (filter (lambda (r) (equal? (row-field r 0) kind)) rows))
+
+(define (nonblank-lines text)
+  (filter (lambda (l) (not (equal? (string-trim l) "")))
+          (string-split text "\n")))
+
+;; ── 6b step 1: ask the interpreter for the arity of one head ───────────
+;; 23 dummy arguments: absurd enough that no primitive in the fleet declares it,
+;; so an Exact/Range primitive always answers with an arity error.
+(define arity-probe-dummies
+  "#f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f")
+
+(define (arity-probe-line head)
+  (string-append "(log-info (string-append \"ARITYPROBE\\t" head "\\t\" "
+                 "(string-format \"{}\" (try (" head " " arity-probe-dummies
+                 ") (catch (e) e)))))"))
+
+(define (arity-probe-source heads)
+  (string-join "\n" (map arity-probe-line heads)))
+
+;; "…arity-mismatch: `string-replace` expected Exact(3), got 23" -> "3".
+;; "" for anything else: a Range, a closure, an unbound symbol, a special form.
+(define (probe-exact-arity head verdict)
+  (cond
+    ((not (string-contains? verdict "arity-mismatch")) "")
+    ;; NATIVE ONLY: the verdict must name the head we probed. A `<closure>`
+    ;; verdict means a stdlib lisp function, which an action may rebind.
+    ((not (string-contains? verdict (string-append "`" head "`"))) "")
+    ((not (string-contains? verdict "expected Exact(")) "")
+    (else
+      (let* ((tail (car (cdr (string-split verdict "expected Exact("))))
+             (num (car (string-split tail ")"))))
+        (string-trim num)))))
+
+(define (probe-row->arity-row line)
+  (cond
+    ((not (string-contains? line "ARITYPROBE\t")) "")
+    (else
+      (let* ((payload (car (cdr (string-split line "ARITYPROBE\t"))))
+             (head (row-field payload 0))
+             (verdict (row-field payload 1))
+             (n (probe-exact-arity head verdict)))
+        (if (equal? n "") "" (string-append head "\t" n))))))
+
+(define (derive-arity-table heads)
+  (write-file crash-probe-path (arity-probe-source heads))
+  (let* ((r (exec-capture "tatara-script" crash-probe-path))
+         (text (string-append (stdout-of r) (stderr-of r)))
+         (rows (filter (lambda (x) (not (equal? x "")))
+                       (map probe-row->arity-row (nonblank-lines text)))))
+    rows))
+
+;; ── 6b step 2 + 6a: report ────────────────────────────────────────────
+(define (crash-row-new? row) (not (name-member? row crash-baselined)))
+
+(define (namedlet-row row)
+  ;; NAMEDLET \t path \t line \t form  ->  "<path>:<line>\tnamed-<form>"
+  (string-append (repo-relative (row-field row 1)) ":" (row-field row 2)
+                 "\tnamed-" (row-field row 3)))
+
+(define (arityviol-row row)
+  ;; ARITYVIOL \t path \t line \t head \t got \t want
+  (string-append (repo-relative (row-field row 1)) ":" (row-field row 2)
+                 "\t" (row-field row 3) "/" (row-field row 4)
+                 " (wants " (row-field row 5) ")"))
+
+(define (report-crash-rows label rows explain)
+  (let ((new (filter crash-row-new? rows)))
+    (cond
+      ((null? rows) 0)
+      ((null? new)
+       (log-info (string-append "  " label " (baselined) — "
+                                (string-join " | " rows)))
+       0)
+      (else
+        (log-error (string-append "  CRASH-CERTAIN " label " — "
+                                  (string-join " | " new)
+                                  " : " explain
+                                  " If this really is unreachable-and-intended, "
+                                  "add the row to " crash-baseline-path))
+        (length new)))))
+
+(define (crash-certain-errors)
+  (cond
+    ((not (path-exists? crash-reader-script))
+     (log-info (string-append "  crash-certain check skipped (no "
+                              crash-reader-script ")"))
+     0)
+    ((null? files)
+     0)
+    (else
+      (write-file crash-files-list (string-join "\n" files))
+      (let* ((hr (exec-capture "python3" crash-reader-script "heads" crash-files-list)))
+        (cond
+          ((not (= (status-of hr) 0))
+           (log-error (string-append "  crash-certain reader failed: "
+                                     (string-trim (stderr-of hr))))
+           1)
+          (else
+            (let* ((rows (nonblank-lines (stdout-of hr)))
+                   (namedlets (map namedlet-row (rows-of-kind rows "NAMEDLET")))
+                   (heads (map (lambda (r) (row-field r 1)) (rows-of-kind rows "HEAD")))
+                   (namedlet-errs
+                     (report-crash-rows
+                       "named let"
+                       namedlets
+                       (string-append
+                         "tatara-script has NO named let — `(let name ((v e)) …)` "
+                         "is a hard `bad `let`: bindings must be a list` the "
+                         "moment control reaches it, and it does NOT fail at "
+                         "load. Port it to a named `(define (name v) …)` plus a "
+                         "call, exactly as the fixed actions do.")))
+                   (arity-rows (derive-arity-table heads)))
+              (write-file crash-arity-path (string-join "\n" arity-rows))
+              (let* ((ar (exec-capture "python3" crash-reader-script "arity"
+                                       crash-files-list crash-arity-path))
+                     (viols (map arityviol-row
+                                 (rows-of-kind (nonblank-lines (stdout-of ar))
+                                               "ARITYVIOL"))))
+                (log-info (string-append "  arity table derived from the live "
+                                         "interpreter: "
+                                         (string-format "{}" (length arity-rows))
+                                         " Exact-arity primitives over "
+                                         (string-format "{}" (length heads))
+                                         " call heads"))
+                (+ namedlet-errs
+                   (report-crash-rows
+                     "wrong arity"
+                     viols
+                     (string-append
+                       "the interpreter rejects this argument count for this "
+                       "primitive — an arity mismatch is a hard error at the "
+                       "call, so this code path can only crash. The count in "
+                       "parentheses is what the running interpreter itself "
+                       "reported.")))))))))))
+
 (define (lint-main)
   (log-info (string-append "scanning " (string-format "{}" file-count)
                            " .tlisp files under " paths-input))
   (let ((total-errors (+ (lint-all files 0)
                          (semantic-rule-errors)
                          (stdlib-shadow-errors)
-                         (stdlib-literal-errors))))
+                         (stdlib-literal-errors)
+                         (crash-certain-errors))))
     (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
     (append-output (string-append "errors-found=" (string-format "{}" total-errors)))
     (cond
