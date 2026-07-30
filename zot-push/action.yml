@@ -83,6 +83,15 @@ outputs:
   ref-arm64:
     description: "Full pushed ref when arch=arm64 (empty otherwise)"
     value: ${{ steps.run.outputs.ref-arm64 }}
+  # The key is built as "ref-" + arch at runtime, and `arch` is an unvalidated
+  # input, so the alias spellings are reachable and were dropped here. Domain is
+  # declared in output-contract-sync/dynamic-keys.tsv.
+  ref-aarch64:
+    description: "Full pushed ref when arch=aarch64 (the arm64 alias; empty otherwise)"
+    value: ${{ steps.run.outputs.ref-aarch64 }}
+  ref-x86_64:
+    description: "Full pushed ref when arch=x86_64 (the amd64 alias; empty otherwise)"
+    value: ${{ steps.run.outputs.ref-x86_64 }}
   digest:
     description: "The pushed repository digest (sha256:…) — the exact deploy coordinate"
     value: ${{ steps.run.outputs.digest }}

@@ -57,6 +57,16 @@ outputs:
   tarball-arm64:
     description: "arm64 docker-archive out-path (empty if not requested / failed)"
     value: ${{ steps.run.outputs.tarball-arm64 }}
+  # The key is built as "tarball-" + arch at runtime, and run.tlisp's own
+  # arch->system cond accepts FOUR aliases, so `arches: x86_64` produced
+  # tarball-x86_64 and dropped it here. Domain is declared in
+  # output-contract-sync/dynamic-keys.tsv.
+  tarball-aarch64:
+    description: "aarch64 docker-archive out-path (the arm64 alias; empty if not requested / failed)"
+    value: ${{ steps.run.outputs.tarball-aarch64 }}
+  tarball-x86_64:
+    description: "x86_64 docker-archive out-path (the amd64 alias; empty if not requested / failed)"
+    value: ${{ steps.run.outputs.tarball-x86_64 }}
   tarballs:
     description: "Semicolon-joined 'arch:path' list of every built tarball"
     value: ${{ steps.run.outputs.tarballs }}
