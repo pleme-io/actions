@@ -1,0 +1,47 @@
+;; shadow-gate.test.tlisp — the assertions. The corpus scan, the allowlists and
+;; the name extraction live in the sibling unit `shadow-gate.tlisp`, which
+;; tlisp-test prepends automatically: a *.test.tlisp with no matching unit is a
+;; HARD FAILURE of the whole gate ("no unit-under-test"), not a skip.
+
+(deftest
+  "no action redefines a stdlib name it has not been allowlisted for"
+  ;; The whole point: a shadow is invisible at author time — the file reads as
+  ;; if it defines a helper, and nothing says the stdlib already had one. This
+  ;; names every offender at once so the fix is a deletion, not an
+  ;; investigation.
+  (let*
+    ((offenders (dedup (flatten (map shadows-in action-dirs)))))
+    (assert
+      (null? offenders)
+      (string-append
+        "these actions redefine a stdlib name (delete the local copy, or add an "
+        "allowlist row in shadow-gate.tlisp stating why it differs): "
+        (string-join ", " offenders)))))
+
+(deftest
+  "the allowlist itself is not stale"
+  ;; An allowlist row for a shadow that no longer exists is a lie that makes the
+  ;; next reader trust a specialization that was already deleted. Checked in the
+  ;; consumed direction so the list can only shrink by accident, never grow.
+  (let*
+    ((live
+       (dedup
+         (flatten
+           (map
+             (fn (dir)
+               (let*
+                 ((action (path-basename dir))
+                   (locals (names-defined-in (read-file (path-join dir "run.tlisp")))))
+                 (map
+                   (fn (n) (string-append action " :: " n))
+                   (filter (fn (n) (member? n stdlib-names)) locals))))
+             action-dirs))))
+      (declared
+        (dedup
+          (map (fn (row) (string-append (car row) " :: " (car (cdr row)))) permitted-shadows)))
+      (stale (filter (fn (d) (not (member? d live))) declared)))
+    (assert
+      (null? stale)
+      (string-append
+        "allowlist rows with no corresponding local define — remove them: "
+        (string-join ", " stale)))))

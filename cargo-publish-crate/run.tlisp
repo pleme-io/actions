@@ -2,6 +2,13 @@
 ;; to crates.io. Skips when (name, version) already exists.
 ;; Sleeps + retries on 429 rate-limit (max 20 retries).
 
+;; `status-of` / `stdout-of` / `stderr-of` / `extract-quoted-value` are NOT
+;; defined here either. They were, byte-identical to the stdlib's, which the
+;; prepend then shadowed with an exact copy -- harmless until the day one side
+;; is fixed and the other is not. That is precisely how
+;; `line-is-section-header?` above became a live bug. Deleted rather than
+;; allowlisted; see _tlisp-stdlib/shadow-gate.test.tlisp.
+
 (define dry-run (env-get "DRY_RUN" "false"))
 
 (define no-verify (env-get "NO_VERIFY" "true"))
@@ -15,24 +22,10 @@
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
-(define (status-of result) (alist-get result "status" -1))
-
-(define (stdout-of result) (alist-get result "stdout" ""))
-
-(define (stderr-of result) (alist-get result "stderr" ""))
-
 ;; -------------------------------------------------------------- ;;
 ;; Read package.name + version from Cargo.toml                     ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (extract-quoted-value line)
-  (let*
-    ((dq-parts (string-split line "\"")) (sq-parts (string-split line "'")))
-    (cond
-      ((>= (length dq-parts) 2) (car (cdr dq-parts)))
-      ((>= (length sq-parts) 2) (car (cdr sq-parts)))
-      (else ""))))
 
 ;; `line-is-section-header?` is DELIBERATELY NOT DEFINED HERE. It used to be,
 ;; as `(and (> (string-length line) 0) (string-contains? line "["))` — any line
