@@ -88,19 +88,36 @@
 ;; else plain (publicly-trusted source). Auth to the zot registry is a
 ;; pre-condition (the consumer workflow logs in before this action runs).
 (define
-  (pull-image ref dest cert-dir insecure)
+  (pull-image ref dest cert-dir insecure user pass)
   (let*
     ((tls-args
        (cond
          ((not (equal? cert-dir "")) (list "--src-cert-dir" cert-dir))
          (insecure (list "--src-tls-verify=false"))
          (else (list))))
+      ;; --src-creds ONLY when a username is supplied, so a public source
+      ;; (GHCR) keeps the anonymous path. skopeo reads no authfile here and
+      ;; the consumer never logs in, so without this an authenticated
+      ;; registry rejects the copy outright.
+      (cred-args
+        (if (equal? user "")
+          (list)
+          (list "--src-creds" (string-append user ":" pass))))
       (args
         (append
           (list "skopeo" "--insecure-policy" "copy")
           tls-args
-          (list (string-append "docker://" ref) (string-append "docker-archive:" dest)))))
-    (status-of (apply exec-capture args))))
+          cred-args
+          (list (string-append "docker://" ref) (string-append "docker-archive:" dest))))
+      (r (apply exec-capture args)))
+    ;; Surface skopeo's OWN stderr on failure. Returning a bare status threw
+    ;; the reason away, so a 401, a DNS miss and a TLS refusal were one
+    ;; indistinguishable "skopeo pull failed" line -- which is exactly how an
+    ;; unauthenticated pull looked for as long as this action has existed.
+    (when
+      (not (= (status-of r) 0))
+      (log-error (string-append "skopeo: " (string-trim (stderr-of r)))))
+    (status-of r)))
 
 ;; The full public output contract this action must emit itself on a
 ;; terminal pull-side failure (the scan + verdict steps never run).
@@ -125,6 +142,8 @@
       (ca-cert-dir (env-get "SRC_CA_CERT_DIR" "/tmp/zot-pull-certs"))
       (ca-cert-token (env-get "SRC_CA_CERT_TOKEN" ""))
       (allow-insecure (oci:flag-true? (env-get "SRC_INSECURE" "false")))
+      (src-user (env-get "SRC_USER" ""))
+      (src-pass (env-get "SRC_PASS" ""))
       ;; skopeo pins a DIR of certs; the CA file must live inside it.
       (ca-cert-path (string-append ca-cert-dir "/zot-ca.crt"))
       ;; When SRC_CA_CERT_URL is empty the consumer opted out of CA trust
@@ -153,7 +172,7 @@
             "::warning::zot-pull-scan: CA cert fetch failed, falling back to --src-tls-verify=false -- this is a real, tracked degradation, not silent"))
         (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))
         (cond
-          ((= (pull-image ref dest effective-cert-dir allow-insecure) 0)
+          ((= (pull-image ref dest effective-cert-dir allow-insecure src-user src-pass) 0)
             (append-output "pulled=true")
             0)
           (else

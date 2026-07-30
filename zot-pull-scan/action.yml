@@ -40,6 +40,14 @@ inputs:
     description: "Fall back to plain --src-tls-verify=false if the CA cert fetch fails (real degradation, logged loudly -- never the default path when the cert is reachable)."
     required: false
     default: "false"
+  src-user:
+    description: "Username for the SOURCE registry. Required when it demands auth. This action previously had no credential input at all and its header asserted auth was 'a pre-condition (the consumer workflow logs in before this action runs)' -- an assumption no consumer met: skopeo was invoked with no --src-creds and no authfile, so an authenticated Zot rejected it in under a second and the only log line was this action's own 'skopeo pull failed'. Empty keeps the anonymous path for a public source like GHCR."
+    required: false
+    default: ""
+  src-pass:
+    description: "Password/token for the SOURCE registry. Passed to skopeo as --src-creds user:pass, never echoed. Empty (with src-user empty) keeps the anonymous path."
+    required: false
+    default: ""
 
 outputs:
   # Each output falls back from steps.verdict -> steps.pull: on a
@@ -112,6 +120,8 @@ runs:
         SRC_CA_CERT_DIR: ${{ inputs.src-ca-cert-dir }}
         SRC_CA_CERT_TOKEN: ${{ inputs.src-ca-cert-token }}
         SRC_INSECURE: ${{ inputs.src-insecure }}
+        SRC_USER: ${{ inputs.src-user }}
+        SRC_PASS: ${{ inputs.src-pass }}
 
     # ── Stage 2: scan the PULLED bytes via image-scan -- the fleet's one
     # canonical severity classification + fail-on-severity gate (real
