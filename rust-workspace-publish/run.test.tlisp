@@ -10,7 +10,8 @@
 ;; the leaf sibling `tatara-cilium@0.3.3` was not on the registry yet
 ;; because `tatara` (the CLI, 11 intra-workspace deps) was attempted FIRST.
 ;; ─────────────────────────────────────────────────────────────────────
-(define tatara-dep-missing-log
+(define
+  tatara-dep-missing-log
   (string-append
     "    Updating crates.io index\n"
     "error: failed to select a version for the requirement `tatara-cilium = \"^0.3.3\"`\n"
@@ -22,7 +23,8 @@
 ;; unsatisfiable requirement on a crate that is NOT a workspace sibling.
 ;; This one must stay 'failed — deferring it forever and then aborting with
 ;; "no progress this pass" named a cause that was provably false.
-(define escriba-external-conflict-log
+(define
+  escriba-external-conflict-log
   (string-append
     "    Updating crates.io index\n"
     "error: failed to select a version for the requirement `serde = \"^2.0\"`\n"
@@ -30,85 +32,147 @@
     "location searched: crates.io index\n"
     "required by package `escriba v0.1.7 (/home/runner/work/escriba/escriba/escriba)`\n"))
 
-(define tatara-workspace-members
-  (list "tatara" "tatara-lisp" "tatara-lisp-derive" "tatara-eval" "tatara-source"
-        "tatara-domain-forge" "tatara-platform-checks" "tatara-ebpf"
-        "tatara-gateway-api" "tatara-cilium" "tatara-prometheus-operator"))
+(define
+  tatara-workspace-members
+  (list
+    "tatara"
+    "tatara-lisp"
+    "tatara-lisp-derive"
+    "tatara-eval"
+    "tatara-source"
+    "tatara-domain-forge"
+    "tatara-platform-checks"
+    "tatara-ebpf"
+    "tatara-gateway-api"
+    "tatara-cilium"
+    "tatara-prometheus-operator"))
 
 ;; ─────────────────────────────────────────────────────────────────────
 ;; Defect 1 — classification
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest "classify-cargo-publish-outcome-with-siblings: the VERBATIM tatara-lisp v0.3.3 failure is dep-missing, not failed"
+(deftest
+  "classify-cargo-publish-outcome-with-siblings: the VERBATIM tatara-lisp v0.3.3 failure is dep-missing, not failed"
   ;; This is the whole bug. Cargo said a sibling at the version being
   ;; published is absent from the index; the runner logged "no recognizable
   ;; signature" → permanent failure → exit 1, and crates.io stayed at 0.2.5.
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings tatara-dep-missing-log tatara-workspace-members 101)
-                  'dep-missing)
-          "sibling-at-our-version unsatisfiable => dep-missing (defer), NOT failed"))
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        tatara-dep-missing-log
+        tatara-workspace-members
+        101)
+      'dep-missing)
+    "sibling-at-our-version unsatisfiable => dep-missing (defer), NOT failed"))
 
-(deftest "classify-cargo-publish-outcome-with-siblings: an unsatisfiable NON-sibling requirement stays failed (escriba)"
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings escriba-external-conflict-log tatara-workspace-members 101)
-                  'failed)
-          "serde is not a workspace member => a real resolution failure, never laundered to defer"))
+(deftest
+  "classify-cargo-publish-outcome-with-siblings: an unsatisfiable NON-sibling requirement stays failed (escriba)"
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        escriba-external-conflict-log
+        tatara-workspace-members
+        101)
+      'failed)
+    "serde is not a workspace member => a real resolution failure, never laundered to defer"))
 
-(deftest "classify-cargo-publish-outcome-with-siblings: 'no matching package named' for a sibling is dep-missing"
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings
-                    "error: no matching package named `tatara-cilium` found\nlocation searched: crates.io index\n"
-                    tatara-workspace-members 101)
-                  'dep-missing)
-          "the unambiguous sibling-absent shape"))
+(deftest
+  "classify-cargo-publish-outcome-with-siblings: 'no matching package named' for a sibling is dep-missing"
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: no matching package named `tatara-cilium` found\nlocation searched: crates.io index\n"
+        tatara-workspace-members
+        101)
+      'dep-missing)
+    "the unambiguous sibling-absent shape"))
 
-(deftest "classify-cargo-publish-outcome-with-siblings: 'no matching package named' for a NON-sibling is failed"
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings
-                    "error: no matching package named `totally-not-ours` found\nlocation searched: crates.io index\n"
-                    tatara-workspace-members 101)
-                  'failed)
-          "a typo'd or unpublished external dep must fail loudly, not defer forever"))
+(deftest
+  "classify-cargo-publish-outcome-with-siblings: 'no matching package named' for a NON-sibling is failed"
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: no matching package named `totally-not-ours` found\nlocation searched: crates.io index\n"
+        tatara-workspace-members
+        101)
+      'failed)
+    "a typo'd or unpublished external dep must fail loudly, not defer forever"))
 
-(deftest "classify-cargo-publish-outcome-with-siblings: a rename-prefixed sibling still counts as a sibling"
+(deftest
+  "classify-cargo-publish-outcome-with-siblings: a rename-prefixed sibling still counts as a sibling"
   ;; The conflict path republishes as pleme-io-<name>; a dependent then resolves
   ;; against that name, which is NOT in the pre-rename member list.
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings
-                    "error: no matching package named `pleme-io-tatara-cilium` found\n"
-                    tatara-workspace-members 101)
-                  'dep-missing)
-          "pleme-io-<member> is the same sibling under its renamed identity"))
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: no matching package named `pleme-io-tatara-cilium` found\n"
+        tatara-workspace-members
+        101)
+      'dep-missing)
+    "pleme-io-<member> is the same sibling under its renamed identity"))
 
-(deftest "classify-cargo-publish-outcome-with-siblings: the other outcomes are unchanged"
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings "" tatara-workspace-members 0) 'published)
-          "exit 0 => published")
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings "error: crate version 0.3.3 already exists on crates.io index"
-                                        tatara-workspace-members 101)
-                  'already-uploaded)
-          "already-uploaded wins over everything")
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings "error: failed to get a 200 OK response, got 429 Too Many Requests"
-                                        tatara-workspace-members 101)
-                  'rate-limited)
-          "429 => rate-limited")
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings "error: the crate name `tear` is already in use"
-                                        tatara-workspace-members 101)
-                  'conflict)
-          "name taken => conflict (rename path)")
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings "error: you do not seem to be an owner of the crate `tear`"
-                                        tatara-workspace-members 101)
-                  'conflict)
-          "403 not-an-owner => conflict — the stdlib fix must reach this action")
-  (assert (equal? (classify-cargo-publish-outcome-with-siblings "error: something nobody has ever seen"
-                                        tatara-workspace-members 101)
-                  'failed)
-          "genuinely unknown stays failed"))
+(deftest
+  "classify-cargo-publish-outcome-with-siblings: the other outcomes are unchanged"
+  (assert
+    (equal? (classify-cargo-publish-outcome-with-siblings "" tatara-workspace-members 0) 'published)
+    "exit 0 => published")
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: crate version 0.3.3 already exists on crates.io index"
+        tatara-workspace-members
+        101)
+      'already-uploaded)
+    "already-uploaded wins over everything")
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: failed to get a 200 OK response, got 429 Too Many Requests"
+        tatara-workspace-members
+        101)
+      'rate-limited)
+    "429 => rate-limited")
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: the crate name `tear` is already in use"
+        tatara-workspace-members
+        101)
+      'conflict)
+    "name taken => conflict (rename path)")
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: you do not seem to be an owner of the crate `tear`"
+        tatara-workspace-members
+        101)
+      'conflict)
+    "403 not-an-owner => conflict — the stdlib fix must reach this action")
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: something nobody has ever seen"
+        tatara-workspace-members
+        101)
+      'failed)
+    "genuinely unknown stays failed"))
 
-(deftest "requirement-name-on-line: extracts the crate name cargo names"
-  (assert (equal? (requirement-name-on-line
-                    "error: failed to select a version for the requirement `tatara-cilium = \"^0.3.3\"`")
-                  "tatara-cilium")
-          "strips the ` = \"^ver\"` tail")
-  (assert (equal? (requirement-name-on-line "error: no matching package named `tatara-eval` found")
-                  "tatara-eval")
-          "bare backticked name")
-  (assert (equal? (requirement-name-on-line "location searched: crates.io index") "")
-          "a line with no backticked name yields the empty string"))
+(deftest
+  "requirement-name-on-line: extracts the crate name cargo names"
+  (assert
+    (equal?
+      (requirement-name-on-line
+        "error: failed to select a version for the requirement `tatara-cilium = \"^0.3.3\"`")
+      "tatara-cilium")
+    "strips the ` = \"^ver\"` tail")
+  (assert
+    (equal?
+      (requirement-name-on-line "error: no matching package named `tatara-eval` found")
+      "tatara-eval")
+    "bare backticked name")
+  (assert
+    (equal? (requirement-name-on-line "location searched: crates.io index") "")
+    "a line with no backticked name yields the empty string"))
 
 ;; ─────────────────────────────────────────────────────────────────────
 ;; Defect 2 — topological order
@@ -117,32 +181,37 @@
 ;; The real tatara-lisp shape, reduced to the load-bearing edges. `tatara`
 ;; (the CLI) depends on everything; `tatara-lisp` exact-pins `tatara-lisp-derive`
 ;; (the deliberate lib<->derive SEAL), so the derive MUST be first of all.
-(define tatara-deps
-  (list (cons "tatara" (list "tatara-lisp" "tatara-eval" "tatara-source" "tatara-cilium"))
-        (cons "tatara-lisp" (list "tatara-lisp-derive"))
-        (cons "tatara-eval" (list "tatara-lisp"))
-        (cons "tatara-source" (list))
-        (cons "tatara-lisp-derive" (list))
-        (cons "tatara-cilium" (list "tatara-lisp"))))
+(define
+  tatara-deps
+  (list
+    (cons "tatara" (list "tatara-lisp" "tatara-eval" "tatara-source" "tatara-cilium"))
+    (cons "tatara-lisp" (list "tatara-lisp-derive"))
+    (cons "tatara-eval" (list "tatara-lisp"))
+    (cons "tatara-source" (list))
+    (cons "tatara-lisp-derive" (list))
+    (cons "tatara-cilium" (list "tatara-lisp"))))
 
-(define (index-of x xs n)
-  (cond ((null? xs) -1)
-        ((equal? (car xs) x) n)
-        (else (index-of x (cdr xs) (+ n 1)))))
+(define
+  (index-of x xs n)
+  (cond ((null? xs) -1) ((equal? (car xs) x) n) (else (index-of x (cdr xs) (+ n 1)))))
 
-(define (before? ordered a b)
-  (let ((ia (index-of a ordered 0)) (ib (index-of b ordered 0)))
+(define
+  (before? ordered a b)
+  (let
+    ((ia (index-of a ordered 0)) (ib (index-of b ordered 0)))
     (and (>= ia 0) (>= ib 0) (< ia ib))))
 
-(define tatara-manifest-order
-  (list "tatara" "tatara-lisp" "tatara-eval" "tatara-source"
-        "tatara-lisp-derive" "tatara-cilium"))
+(define
+  tatara-manifest-order
+  (list "tatara" "tatara-lisp" "tatara-eval" "tatara-source" "tatara-lisp-derive" "tatara-cilium"))
 
-(deftest "topo-order: leaves first — derive before lib before dependents before the CLI"
+(deftest
+  "topo-order: leaves first — derive before lib before dependents before the CLI"
   ;; cargo metadata lists members alphabetically, which put `tatara` (the CLI
   ;; with 11 sibling deps) FIRST. That ordering is what made every dependent
   ;; fail before its leaf existed.
-  (let ((ordered (topo-order tatara-manifest-order tatara-deps)))
+  (let
+    ((ordered (topo-order tatara-manifest-order tatara-deps)))
     (assert (= (length ordered) 6) "every member is still present exactly once")
     (assert (before? ordered "tatara-lisp-derive" "tatara-lisp") "derive before lib")
     (assert (before? ordered "tatara-lisp" "tatara-eval") "lib before eval")
@@ -150,107 +219,160 @@
     (assert (before? ordered "tatara-cilium" "tatara") "cilium before the CLI")
     (assert (equal? (car (reverse ordered)) "tatara") "the CLI is LAST")))
 
-(deftest "topo-order-with: the EXACT-pinned derive leads its ready batch (the seal)"
+(deftest
+  "topo-order-with: the EXACT-pinned derive leads its ready batch (the seal)"
   ;; tatara-lisp pins tatara-lisp-derive at `= "=0.3.3"`. Nothing else can
   ;; satisfy that requirement, so the derive is the least forgiving of index
   ;; lag and goes first of all — ahead of the equally-ready tatara-source.
-  (let ((ordered (topo-order-with tatara-manifest-order tatara-deps
-                                  (list "tatara-lisp-derive"))))
-    (assert (equal? (car ordered) "tatara-lisp-derive")
-            "the exact-pinned target is FIRST")
-    (assert (before? ordered "tatara-lisp-derive" "tatara-source")
-            "it outranks an equally-ready, caret-only leaf")
+  (let
+    ((ordered (topo-order-with tatara-manifest-order tatara-deps (list "tatara-lisp-derive"))))
+    (assert (equal? (car ordered) "tatara-lisp-derive") "the exact-pinned target is FIRST")
+    (assert
+      (before? ordered "tatara-lisp-derive" "tatara-source")
+      "it outranks an equally-ready, caret-only leaf")
     (assert (= (length ordered) 6) "no member lost to the reordering"))
   ;; With no exact pins the order is plain manifest-order-within-batch.
-  (let ((ordered (topo-order-with tatara-manifest-order tatara-deps (list))))
-    (assert (equal? (car ordered) "tatara-source")
-            "without a seal, the first ready member in manifest order leads")))
+  (let
+    ((ordered (topo-order-with tatara-manifest-order tatara-deps (list))))
+    (assert
+      (equal? (car ordered) "tatara-source")
+      "without a seal, the first ready member in manifest order leads")))
 
-(deftest "parse-dep-line / parse-exact-line read the cargo-metadata tab shape"
-  (let ((line "tatara-lisp\ttatara-lisp-derive,serde\ttatara-lisp-derive"))
-    (assert (equal? (parse-dep-line line)
-                    (list "tatara-lisp" "tatara-lisp-derive" "serde"))
-            "name + shipped deps")
-    (assert (equal? (parse-exact-line line) (list "tatara-lisp-derive"))
-            "only the '=' pinned dep"))
-  (let ((leaf "tatara-source\t\t"))
+(deftest
+  "parse-dep-line / parse-exact-line read the cargo-metadata tab shape"
+  (let
+    ((line "tatara-lisp\ttatara-lisp-derive,serde\ttatara-lisp-derive"))
+    (assert
+      (equal? (parse-dep-line line) (list "tatara-lisp" "tatara-lisp-derive" "serde"))
+      "name + shipped deps")
+    (assert (equal? (parse-exact-line line) (list "tatara-lisp-derive")) "only the '=' pinned dep"))
+  (let
+    ((leaf "tatara-source\t\t"))
     (assert (equal? (parse-dep-line leaf) (list "tatara-source")) "a leaf has no deps")
     (assert (null? (parse-exact-line leaf)) "a leaf pins nothing")))
 
-(deftest "topo-order: a dep on a non-member is ignored, not treated as an edge"
-  (let ((ordered (topo-order (list "a" "b")
-                             (list (cons "a" (list "serde" "b")) (cons "b" (list "tokio"))))))
+(deftest
+  "topo-order: a dep on a non-member is ignored, not treated as an edge"
+  (let
+    ((ordered
+       (topo-order (list "a" "b") (list (cons "a" (list "serde" "b")) (cons "b" (list "tokio"))))))
     (assert (equal? ordered (list "b" "a")) "only intra-workspace edges order the members")))
 
-(deftest "topo-order: a cycle degrades to original order, never drops or loops"
+(deftest
+  "topo-order: a cycle degrades to original order, never drops or loops"
   ;; dev-dependencies are filtered out before this point, so a real cycle is
   ;; not expected — but a dropped member would be a silent non-publish, which
   ;; is exactly the false-green class this whole fix exists to kill.
-  (let ((ordered (topo-order (list "x" "y" "z")
-                             (list (cons "x" (list "y")) (cons "y" (list "x"))
-                                   (cons "z" (list))))))
+  (let
+    ((ordered
+       (topo-order
+         (list "x" "y" "z")
+         (list (cons "x" (list "y")) (cons "y" (list "x")) (cons "z" (list))))))
     (assert (= (length ordered) 3) "all three members survive a cycle")
     (assert (equal? (car ordered) "z") "the acyclic member still goes first")))
 
-(deftest "topo-order: an empty workspace and a single member are handled"
+(deftest
+  "topo-order: an empty workspace and a single member are handled"
   (assert (null? (topo-order (list) (list))) "empty stays empty")
-  (assert (equal? (topo-order (list "solo") (list (cons "solo" (list)))) (list "solo"))
-          "single member"))
+  (assert
+    (equal? (topo-order (list "solo") (list (cons "solo" (list)))) (list "solo"))
+    "single member"))
 
 ;; ─────────────────────────────────────────────────────────────────────
 ;; Defect 3 — one permanent failure must not cancel the other members
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest "publish-pass collects failures and keeps going (no mid-pass exit)"
+(deftest
+  "publish-pass collects failures and keeps going (no mid-pass exit)"
   ;; The old code called (exit 1) the instant one member failed, so a single
   ;; misclassified crate aborted the remaining 16. publish-pass now returns a
   ;; fifth bucket and the driver decides the exit code once, at the end.
-  (let ((attempted (list)))
-    (let ((ops (list (cons "publish-one"
-                           (lambda (name attempt)
-                             (set! attempted (cons name attempted))
-                             (if (equal? name "bad") (list "fail" name) (list "done" name)))))))
-      (let* ((out (publish-pass-with ops (list "a" "bad" "c") (list) (list) (list) (list) (list)))
-             (shipped (car out))
-             (failed (car (cdr (cdr (cdr (cdr out)))))))
+  (let
+    ((attempted (list)))
+    (let
+      ((ops
+         (list
+           (cons
+             "publish-one"
+             (lambda
+               (name attempt)
+               (set! attempted (cons name attempted))
+               (if (equal? name "bad") (list "fail" name) (list "done" name)))))))
+      (let*
+        ((out (publish-pass-with ops (list "a" "bad" "c") (list) (list) (list) (list) (list)))
+          (shipped (car out))
+          (failed (car (cdr (cdr (cdr (cdr out)))))))
         (assert (= (length attempted) 3) "all three members were attempted despite the failure")
         (assert (= (length shipped) 2) "a and c still shipped")
         (assert (equal? failed (list "bad")) "the failure is reported, once, by name")))))
 
-(deftest "drive-passes exits RED when a member permanently failed, GREEN when only deferred"
+(deftest
+  "drive-passes exits RED when a member permanently failed, GREEN when only deferred"
   (assert (= (pass-exit-code (list "bad")) 1) "a permanent failure is a red run")
   (assert (= (pass-exit-code (list)) 0) "no permanent failure is a green run"))
 
-(deftest "drive-passes end-to-end: 1 bad member costs exactly 1 member, red at the END"
+(deftest
+  "drive-passes end-to-end: 1 bad member costs exactly 1 member, red at the END"
   ;; The tatara-lisp v0.3.3 run in miniature: a 17-member workspace where the
   ;; first-attempted crate dies. Every other member must still ship, and the
   ;; run must still be red — green-with-a-hole is the false-green class, and
   ;; abort-on-first-failure is what actually happened.
-  (let ((attempted (list)) (slept (list)))
-    (let ((ops (list (cons "publish-one"
-                           (lambda (name attempt)
-                             (set! attempted (cons name attempted))
-                             (if (equal? name "m00") (list "fail" name) (list "done" name))))
-                     (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
-      (let* ((names (list "m00" "m01" "m02" "m03" "m04" "m05" "m06" "m07" "m08"
-                          "m09" "m10" "m11" "m12" "m13" "m14" "m15" "m16"))
-             (code (drive-passes-with ops names (list) (list) (list) (list) 1)))
+  (let
+    ((attempted (list)) (slept (list)))
+    (let
+      ((ops
+         (list
+           (cons
+             "publish-one"
+             (lambda
+               (name attempt)
+               (set! attempted (cons name attempted))
+               (if (equal? name "m00") (list "fail" name) (list "done" name))))
+           (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
+      (let*
+        ((names
+           (list
+             "m00"
+             "m01"
+             "m02"
+             "m03"
+             "m04"
+             "m05"
+             "m06"
+             "m07"
+             "m08"
+             "m09"
+             "m10"
+             "m11"
+             "m12"
+             "m13"
+             "m14"
+             "m15"
+             "m16"))
+          (code (drive-passes-with ops names (list) (list) (list) (list) 1)))
         (assert (= (length attempted) 17) "every one of the 17 members was attempted")
         (assert (= code 1) "the run is RED — the failure is reported, not swallowed")
         (assert (null? slept) "nothing was deferred, so no index-settle wait")))))
 
-(deftest "drive-passes: a dep-deferred member waits for the index, then ships next pass"
-  (let ((slept (list)) (tries 0))
-    (let ((ops (list (cons "publish-one"
-                           (lambda (name attempt)
-                             (cond
-                               ((equal? name "dependent")
-                                (set! tries (+ tries 1))
-                                (if (= tries 1) (list "defer" name) (list "done" name)))
-                               (else (list "done" name)))))
-                     (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
-      (let ((code (drive-passes-with ops (list "leaf" "dependent")
-                                     (list) (list) (list) (list) 1)))
+(deftest
+  "drive-passes: a dep-deferred member waits for the index, then ships next pass"
+  (let
+    ((slept (list)) (tries 0))
+    (let
+      ((ops
+         (list
+           (cons
+             "publish-one"
+             (lambda
+               (name attempt)
+               (cond
+                 ((equal? name "dependent")
+                   (set! tries (+ tries 1))
+                   (if (= tries 1) (list "defer" name) (list "done" name)))
+                 (else (list "done" name)))))
+           (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
+      (let
+        ((code (drive-passes-with ops (list "leaf" "dependent") (list) (list) (list) (list) 1)))
         (assert (= code 0) "green — a sibling that was not indexed yet is not a failure")
         (assert (equal? slept (list 15)) "waited the pass-1 index-settle window exactly once")))))
 
@@ -258,7 +380,8 @@
 ;; Defect 4 — index-propagation backoff
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest "index-settle-secs: bounded backoff, never unbounded, never zero"
+(deftest
+  "index-settle-secs: bounded backoff, never unbounded, never zero"
   (assert (= (index-settle-secs 1) 15) "first inter-pass wait")
   (assert (= (index-settle-secs 2) 30) "doubles")
   (assert (= (index-settle-secs 3) 60) "doubles again")
@@ -277,74 +400,97 @@
 ;; tatara-lisp/Cargo.toml:70,77,99 (read 2026-07-29).
 ;; ─────────────────────────────────────────────────────────────────────
 
-(define tl-derive-row
+(define
+  tl-derive-row
   "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"=0.3.3\" }")
-(define tl-closed-set-derive-row
+
+(define
+  tl-closed-set-derive-row
   "tatara-closed-set-derive = { path = \"tatara-closed-set-derive\", version = \"=0.3.3\" }")
-(define tl-plain-row
-  "tatara-lisp = { path = \"tatara-lisp\", version = \"0.3.3\" }")
 
-(deftest "rename-dep-row-plan PRESERVES the EXACT pin — the lib<->derive seal"
-  (let ((row (rename-dep-row-plan tl-derive-row "pleme-io-tatara-lisp-derive")))
-    (assert (string-contains? row "version = \"=0.3.3\"")
-            "the `=` survives — rewriting it to a caret would ERASE the seal")
-    (assert (string-contains? row "package = \"pleme-io-tatara-lisp-derive\"")
-            "and the rename lands")
-    (assert (string-contains? row "path = \"tatara-lisp-derive\"")
-            "the path is untouched"))
-  (let ((row (rename-dep-row-plan tl-closed-set-derive-row "pleme-io-tatara-closed-set-derive")))
-    (assert (string-contains? row "version = \"=0.3.3\"")
-            "the SECOND exact pin survives too")))
+(define tl-plain-row "tatara-lisp = { path = \"tatara-lisp\", version = \"0.3.3\" }")
 
-(deftest "rename-dep-row-plan: what the OLD synthesized needle could never match"
+(deftest
+  "rename-dep-row-plan PRESERVES the EXACT pin — the lib<->derive seal"
+  (let
+    ((row (rename-dep-row-plan tl-derive-row "pleme-io-tatara-lisp-derive")))
+    (assert
+      (string-contains? row "version = \"=0.3.3\"")
+      "the `=` survives — rewriting it to a caret would ERASE the seal")
+    (assert
+      (string-contains? row "package = \"pleme-io-tatara-lisp-derive\"")
+      "and the rename lands")
+    (assert (string-contains? row "path = \"tatara-lisp-derive\"") "the path is untouched"))
+  (let
+    ((row (rename-dep-row-plan tl-closed-set-derive-row "pleme-io-tatara-closed-set-derive")))
+    (assert (string-contains? row "version = \"=0.3.3\"") "the SECOND exact pin survives too")))
+
+(deftest
+  "rename-dep-row-plan: what the OLD synthesized needle could never match"
   ;; The old needle for tatara-lisp-derive at workspace version 0.3.3 was
   ;; exactly this string. It is absent from the real row, which is why the
   ;; rename silently did nothing.
-  (let ((old-needle "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"0.3.3\" }"))
-    (assert (not (equal? old-needle tl-derive-row))
-            "the synthesized needle is NOT the real row")
-    (assert (not (string-contains? tl-derive-row old-needle))
-            "and it is not even a substring of it — zero matches, zero bytes changed"))
+  (let
+    ((old-needle "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"0.3.3\" }"))
+    (assert (not (equal? old-needle tl-derive-row)) "the synthesized needle is NOT the real row")
+    (assert
+      (not (string-contains? tl-derive-row old-needle))
+      "and it is not even a substring of it — zero matches, zero bytes changed"))
   ;; The plain row is the one shape the old needle DID match — which is how the
   ;; bug hid: it worked for most members and failed for exactly the sealed ones.
-  (assert (string-contains? (rename-dep-row-plan tl-plain-row "pleme-io-tatara-lisp")
-                            "version = \"0.3.3\", package = \"pleme-io-tatara-lisp\"")
-          "a plain requirement is preserved too"))
+  (assert
+    (string-contains?
+      (rename-dep-row-plan tl-plain-row "pleme-io-tatara-lisp")
+      "version = \"0.3.3\", package = \"pleme-io-tatara-lisp\"")
+    "a plain requirement is preserved too"))
 
-(deftest "rename-dep-row-plan: caret is preserved, never normalized"
-  (assert (string-contains?
-            (rename-dep-row-plan "d = { path = \"d\", version = \"^1.2.3\" }" "pleme-io-d")
-            "version = \"^1.2.3\", package = \"pleme-io-d\" }")
-          "a caret requirement survives byte-for-byte"))
+(deftest
+  "rename-dep-row-plan: caret is preserved, never normalized"
+  (assert
+    (string-contains?
+      (rename-dep-row-plan "d = { path = \"d\", version = \"^1.2.3\" }" "pleme-io-d")
+      "version = \"^1.2.3\", package = \"pleme-io-d\" }")
+    "a caret requirement survives byte-for-byte"))
 
-(deftest "rename-dep-row-plan: every unhandled shape is a TYPED REFUSAL, never a no-op"
-  (assert (equal? (rename-dep-row-plan "" "pleme-io-x") 'no-workspace-dep-row)
-          "no [workspace.dependencies] row → refuse (members declaring inline)")
-  (assert (equal? (rename-dep-row-plan "   " "pleme-io-x") 'no-workspace-dep-row)
-          "a blank row is the same refusal")
-  (assert (equal? (rename-dep-row-plan "d.workspace = true" "pleme-io-d")
-                  'unsupported-dep-shape)
-          "an inheritance line in the WORKSPACE table is not an inline table")
-  (assert (equal? (rename-dep-row-plan "d = \"1.2\"" "pleme-io-d")
-                  'unsupported-dep-shape)
-          "a bare string dep is refused rather than mangled")
-  (assert (equal? (rename-dep-row-plan "d = {" "pleme-io-d") 'unsupported-dep-shape)
-          "a multi-line table opener is refused"))
+(deftest
+  "rename-dep-row-plan: every unhandled shape is a TYPED REFUSAL, never a no-op"
+  (assert
+    (equal? (rename-dep-row-plan "" "pleme-io-x") 'no-workspace-dep-row)
+    "no [workspace.dependencies] row → refuse (members declaring inline)")
+  (assert
+    (equal? (rename-dep-row-plan "   " "pleme-io-x") 'no-workspace-dep-row)
+    "a blank row is the same refusal")
+  (assert
+    (equal? (rename-dep-row-plan "d.workspace = true" "pleme-io-d") 'unsupported-dep-shape)
+    "an inheritance line in the WORKSPACE table is not an inline table")
+  (assert
+    (equal? (rename-dep-row-plan "d = \"1.2\"" "pleme-io-d") 'unsupported-dep-shape)
+    "a bare string dep is refused rather than mangled")
+  (assert
+    (equal? (rename-dep-row-plan "d = {" "pleme-io-d") 'unsupported-dep-shape)
+    "a multi-line table opener is refused"))
 
-(deftest "rename-dep-row-plan is IDEMPOTENT — a second pass is not a second rename"
-  (let ((once (rename-dep-row-plan tl-derive-row "pleme-io-tatara-lisp-derive")))
-    (assert (equal? (rename-dep-row-plan once "pleme-io-tatara-lisp-derive") 'already-renamed)
-            "re-planning an already-renamed row reports 'already-renamed, not a double key")))
+(deftest
+  "rename-dep-row-plan is IDEMPOTENT — a second pass is not a second rename"
+  (let
+    ((once (rename-dep-row-plan tl-derive-row "pleme-io-tatara-lisp-derive")))
+    (assert
+      (equal? (rename-dep-row-plan once "pleme-io-tatara-lisp-derive") 'already-renamed)
+      "re-planning an already-renamed row reports 'already-renamed, not a double key")))
 
-(deftest "the INHERITANCE form needs no member edit — patching the one row is enough"
+(deftest
+  "the INHERITANCE form needs no member edit — patching the one row is enough"
   ;; tatara-lisp's members carry `<crate>.workspace = true`; cargo inherits the
   ;; WHOLE workspace dep spec including `package`, so renaming the single
   ;; [workspace.dependencies] row renames the dep for every inheriting member.
   ;; This test pins the reasoning that makes the one-row patch sufficient: the
   ;; local dep NAME is unchanged (so `use tatara_lisp_derive::…` still
   ;; compiles) while the published package name is the renamed one.
-  (let ((row (rename-dep-row-plan tl-derive-row "pleme-io-tatara-lisp-derive")))
-    (assert (string-prefix? row "tatara-lisp-derive = ")
-            "the LOCAL dep name is unchanged — member source keeps compiling")
-    (assert (string-contains? row "package = \"pleme-io-tatara-lisp-derive\"")
-            "while the PUBLISHED name is the renamed one")))
+  (let
+    ((row (rename-dep-row-plan tl-derive-row "pleme-io-tatara-lisp-derive")))
+    (assert
+      (string-prefix? row "tatara-lisp-derive = ")
+      "the LOCAL dep name is unchanged — member source keeps compiling")
+    (assert
+      (string-contains? row "package = \"pleme-io-tatara-lisp-derive\"")
+      "while the PUBLISHED name is the renamed one")))

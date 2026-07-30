@@ -1,6 +1,7 @@
 ;; lighthouse-ci/run.tlisp — tlisp+stdlib body
 
 (define urls (env-required "URLS"))
+
 (define threshold (env-get "SCORE_THRESHOLD" "90"))
 
 ;; Nix-installed, not runtime-`npm install -g`'d (theory/NIX-HARDENING.md
@@ -12,27 +13,33 @@
 ;; "Install Nix" step in action.yml already ran
 ;; DeterminateSystems/nix-installer-action, wiring nix itself onto PATH).
 (log-info "==> installing lhci (nix profile install, pleme-io/hardened-images)")
+
 (exec-check "nix" "profile" "install" "github:pleme-io/hardened-images#lhciCli")
 
-(define (run-lighthouse-urls us all-pass)
+(define
+  (run-lighthouse-urls us all-pass)
   (cond
     ((null? us)
-     (cond (all-pass
-            (append-output "passed=true") (exit 0))
-           (else
-            (append-output "passed=false") (exit 1))))
+      (cond
+        (all-pass (append-output "passed=true") (exit 0))
+        (else (append-output "passed=false") (exit 1))))
     ((equal? (car us) "") (run-lighthouse-urls (cdr us) all-pass))
     (else
-      (let ((r (exec-capture "sh" "-c"
-                 (string-append "lhci collect --url=" (car us)
-                                " && lhci assert --preset=lighthouse:recommended"
-                                " --assertions.minScore=" threshold))))
+      (let
+        ((r
+           (exec-capture
+             "sh"
+             "-c"
+             (string-append
+               "lhci collect --url="
+               (car us)
+               " && lhci assert --preset=lighthouse:recommended"
+               " --assertions.minScore="
+               threshold))))
         (cond
           ((= (status-of r) 0)
-           (log-info (string-append "  PASS " (car us)))
-           (run-lighthouse-urls (cdr us) all-pass))
-          (else
-           (log-error (string-append "  FAIL " (car us)))
-           (run-lighthouse-urls (cdr us) #f)))))))
+            (log-info (string-append "  PASS " (car us)))
+            (run-lighthouse-urls (cdr us) all-pass))
+          (else (log-error (string-append "  FAIL " (car us))) (run-lighthouse-urls (cdr us) #f)))))))
 
 (run-lighthouse-urls (string-split urls " ") #t)

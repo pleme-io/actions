@@ -1,4 +1,6 @@
 ;; notion-page-create/run.tlisp — typed schema locked, body on demand
 (log-info "::warning::notion-page-create not yet implemented")
+
 (append-output "page-id=stub")
+
 (exit 0)

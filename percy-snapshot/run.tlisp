@@ -1,4 +1,6 @@
 ;; percy-snapshot/run.tlisp — STUB. Implementation lands on consumer demand.
 (log-info "::warning::percy-snapshot not yet implemented — typed schema is locked")
+
 (append-output "snapshots-count=stub")
+
 (exit 0)

@@ -5,29 +5,36 @@
 ;; IS tested is every decision that precedes it, because those are the arms
 ;; that silently did the wrong thing in the hand-copied versions.
 
-(deftest "token priority: BOT_PAT wins, GITHUB_TOKEN is the fallback"
+(deftest
+  "token priority: BOT_PAT wins, GITHUB_TOKEN is the fallback"
   (assert (equal? (gc:pick "bot" "gh") "bot") "BOT_PAT preferred")
   (assert (equal? (gc:pick "" "gh") "gh") "falls back to GITHUB_TOKEN")
   (assert (equal? (gc:pick "bot" "") "bot") "BOT_PAT alone is enough")
   (assert (equal? (gc:pick "" "") "") "neither -> empty, never a partial"))
 
-(deftest "the chosen rung is nameable for logging (a token is NEVER logged)"
+(deftest
+  "the chosen rung is nameable for logging (a token is NEVER logged)"
   (assert (equal? (gc:which "bot" "gh") "bot-pat") "bot rung named")
   (assert (equal? (gc:which "" "gh") "github-token") "fallback rung named")
   (assert (equal? (gc:which "" "") "none") "no rung named")
   ;; The name is a fixed vocabulary, never the secret itself.
-  (assert (not (equal? (gc:which "s3cr3t" "") "s3cr3t"))
-          "the rung name must not be the token value"))
+  (assert
+    (not (equal? (gc:which "s3cr3t" "") "s3cr3t"))
+    "the rung name must not be the token value"))
 
-(deftest "the two Free-plan tracks both resolve a rung"
+(deftest
+  "the two Free-plan tracks both resolve a rung"
   ;; PUBLIC consumer: the org BOT_PAT reaches it.
-  (assert (equal? (gc:which "org-bot-pat" "repo-scoped") "bot-pat")
-          "public repo takes the org PAT, which can read sibling private repos")
+  (assert
+    (equal? (gc:which "org-bot-pat" "repo-scoped") "bot-pat")
+    "public repo takes the org PAT, which can read sibling private repos")
   ;; PRIVATE consumer on Free: org secrets do NOT reach it, so BOT_PAT is
   ;; empty and the repo-scoped token is what remains. Not a defect — the
   ;; second approved track. (A private repo needing a sibling private dep
   ;; sets a REPO-level BOT_PAT, which arrives in the same input.)
-  (assert (equal? (gc:which "" "repo-scoped") "github-token")
-          "private repo on Free falls back rather than failing")
-  (assert (equal? (gc:pick "" "repo-scoped") "repo-scoped")
-          "and the fallback token is the one actually used"))
+  (assert
+    (equal? (gc:which "" "repo-scoped") "github-token")
+    "private repo on Free falls back rather than failing")
+  (assert
+    (equal? (gc:pick "" "repo-scoped") "repo-scoped")
+    "and the fallback token is the one actually used"))

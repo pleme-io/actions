@@ -86,16 +86,18 @@
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 ;; Split one "arch=ref" segment into (arch . ref). A segment with no
 ;; "=" is treated as a bare ref with an unknown ("") arch.
-(define (mlj:split-pair s)
-  (let ((parts (string-split s "=")))
+(define
+  (mlj:split-pair s)
+  (let
+    ((parts (string-split s "=")))
     (cond
-      ((>= (length parts) 2)
-       (cons (string-trim (car parts)) (string-trim (car (cdr parts)))))
+      ((>= (length parts) 2) (cons (string-trim (car parts)) (string-trim (car (cdr parts)))))
       (else (cons "" (string-trim s))))))
 
 ;; Parse a comma-separated "amd64=r1,arm64=r2" list into (arch . ref)
 ;; pairs, dropping empty segments.
-(define (mlj:parse-pairs segs)
+(define
+  (mlj:parse-pairs segs)
   (cond
     ((null? segs) (list))
     ((equal? (string-trim (car segs)) "") (mlj:parse-pairs (cdr segs)))
@@ -104,32 +106,32 @@
 ;; The refs (2nd element of each (arch ref) pair) in order. NOTE:
 ;; tatara-lisp `(cons a b)` on atoms yields the 2-element list `(a b)`,
 ;; so the ref is `(car (cdr pair))`, not `(cdr pair)`.
-(define (mlj:refs-of pairs)
-  (cond
-    ((null? pairs) (list))
-    (else (cons (car (cdr (car pairs))) (mlj:refs-of (cdr pairs))))))
+(define
+  (mlj:refs-of pairs)
+  (cond ((null? pairs) (list)) (else (cons (car (cdr (car pairs))) (mlj:refs-of (cdr pairs))))))
 
 ;; The known arches (non-empty cars), space-joined ("amd64 arm64").
-(define (mlj:arches-list pairs)
+(define
+  (mlj:arches-list pairs)
   (cond
     ((null? pairs) (list))
     ((equal? (car (car pairs)) "") (mlj:arches-list (cdr pairs)))
     (else (cons (car (car pairs)) (mlj:arches-list (cdr pairs))))))
 
-(define (mlj:arches-of pairs)
-  (string-join " " (mlj:arches-list pairs)))
+(define (mlj:arches-of pairs) (string-join " " (mlj:arches-list pairs)))
 
 ;; The multi-arch index tag: explicit TAG > composed r<run>-<sha> > "".
-(define (mlj:resolve-tag tag-in run sha)
+(define
+  (mlj:resolve-tag tag-in run sha)
   (cond
     ((not (equal? (string-trim tag-in) "")) (string-trim tag-in))
     ((and (not (equal? run "")) (not (equal? sha ""))) (oci:index-tag run sha))
     (else "")))
 
 ;; ── tool detection ────────────────────────────────────────────────
-(define (mlj:has? name)
-  (= 0 (status-of (exec-capture "sh" "-c"
-                    (string-append "command -v " name " >/dev/null 2>&1")))))
+(define
+  (mlj:has? name)
+  (= 0 (status-of (exec-capture "sh" "-c" (string-append "command -v " name " >/dev/null 2>&1")))))
 
 ;; auto → first present of regctl|buildah|podman|docker; else the
 ;; requested tool verbatim; "" when auto finds nothing. regctl FIRST
@@ -137,13 +139,14 @@
 ;; accepts per-registry TLS/CA trust without touching a shared daemon's
 ;; global config, so `auto` prefers it over docker (this action's
 ;; `Ensure regctl` action.yml step guarantees it is on PATH).
-(define (mlj:select-tool requested)
+(define
+  (mlj:select-tool requested)
   (cond
     ((not (equal? requested "auto")) requested)
-    ((mlj:has? "regctl")  "regctl")
+    ((mlj:has? "regctl") "regctl")
     ((mlj:has? "buildah") "buildah")
-    ((mlj:has? "podman")  "podman")
-    ((mlj:has? "docker")  "docker")
+    ((mlj:has? "podman") "podman")
+    ((mlj:has? "docker") "docker")
     (else "")))
 
 ;; ── per-tool index composition (returns child status; 0 = ok) ─────
@@ -163,45 +166,72 @@
 ;; it; `push` writes the joined index) -- `create` never leaves the local
 ;; store, so it never needs creds. See `mlj:creds-flag`'s header note for
 ;; why this is required, not optional, against this cluster's Zot.
-(define (mlj:oci-tool-add tool local-name refs insecure? creds)
+(define
+  (mlj:oci-tool-add tool local-name refs insecure? creds)
   (cond
     ((null? refs) 0)
     (else
-     (let ((r (apply exec-capture
-                (append (list tool "manifest" "add")
-                        (if insecure? (list "--tls-verify=false") (list))
-                        creds
-                        (list local-name (string-append "docker://" (car refs)))))))
-       (cond
-         ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure? creds))
-         (else
-          (log-error (string-append "manifest-list-join: " tool " manifest add "
-                                     (car refs) " failed: " (string-trim (stderr-of r))))
-          (status-of r)))))))
+      (let
+        ((r
+           (apply
+             exec-capture
+             (append
+               (list tool "manifest" "add")
+               (if insecure? (list "--tls-verify=false") (list))
+               creds
+               (list local-name (string-append "docker://" (car refs)))))))
+        (cond
+          ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure? creds))
+          (else
+            (log-error
+              (string-append
+                "manifest-list-join: "
+                tool
+                " manifest add "
+                (car refs)
+                " failed: "
+                (string-trim (stderr-of r))))
+            (status-of r)))))))
 
-(define (mlj:oci-tool-join tool local-name refs index-ref insecure? creds)
+(define
+  (mlj:oci-tool-join tool local-name refs index-ref insecure? creds)
   ;; best-effort clean of a stale local manifest (ignore result)
   (exec-check tool "manifest" "rm" local-name)
-  (let ((cr (exec-capture tool "manifest" "create" local-name)))
+  (let
+    ((cr (exec-capture tool "manifest" "create" local-name)))
     (cond
       ((not (= (status-of cr) 0))
-       (log-error (string-append "manifest-list-join: " tool " manifest create failed: "
-                                  (string-trim (stderr-of cr))))
-       (status-of cr))
+        (log-error
+          (string-append
+            "manifest-list-join: "
+            tool
+            " manifest create failed: "
+            (string-trim (stderr-of cr))))
+        (status-of cr))
       (else
-       (let ((a (mlj:oci-tool-add tool local-name refs insecure? creds)))
-         (cond
-           ((not (= a 0)) a)
-           (else
-            (let ((pr (apply exec-capture
-                        (append (list tool "manifest" "push" "--all")
-                                (if insecure? (list "--tls-verify=false") (list))
-                                creds
-                                (list local-name (string-append "docker://" index-ref))))))
-              (when (not (= (status-of pr) 0))
-                (log-error (string-append "manifest-list-join: " tool " manifest push failed: "
-                                           (string-trim (stderr-of pr)))))
-              (status-of pr)))))))))
+        (let
+          ((a (mlj:oci-tool-add tool local-name refs insecure? creds)))
+          (cond
+            ((not (= a 0)) a)
+            (else
+              (let
+                ((pr
+                   (apply
+                     exec-capture
+                     (append
+                       (list tool "manifest" "push" "--all")
+                       (if insecure? (list "--tls-verify=false") (list))
+                       creds
+                       (list local-name (string-append "docker://" index-ref))))))
+                (when
+                  (not (= (status-of pr) 0))
+                  (log-error
+                    (string-append
+                      "manifest-list-join: "
+                      tool
+                      " manifest push failed: "
+                      (string-trim (stderr-of pr)))))
+                (status-of pr)))))))))
 
 ;; docker buildx imagetools create -- composes the index DIRECTLY from
 ;; each source's REMOTE registry manifest and pushes in one step.
@@ -235,35 +265,50 @@
 ;; path means a real `docker login` against the target registry BEFORE
 ;; the imagetools call, the same shared-daemon-config trust model this
 ;; file's own header note already describes for TLS.
-(define (mlj:docker-login registry-host user pass)
+(define
+  (mlj:docker-login registry-host user pass)
   (status-of (exec-capture "docker" "login" registry-host "--username" user "--password" pass)))
 
-(define (mlj:docker-join refs index-ref insecure? registry-host user pass)
+(define
+  (mlj:docker-join refs index-ref insecure? registry-host user pass)
   (cond
     ((not (= (mlj:docker-login registry-host user pass) 0))
-     (log-error (string-append "manifest-list-join: docker login " registry-host " failed"))
-     1)
+      (log-error (string-append "manifest-list-join: docker login " registry-host " failed"))
+      1)
     (else
-     (let ((r (apply exec-capture
-                (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
-       (when (not (= (status-of r) 0))
-         (log-error (string-append "manifest-list-join: docker buildx imagetools create failed: "
-                                    (string-trim (stderr-of r)))))
-       (status-of r)))))
+      (let
+        ((r
+           (apply
+             exec-capture
+             (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
+        (when
+          (not (= (status-of r) 0))
+          (log-error
+            (string-append
+              "manifest-list-join: docker buildx imagetools create failed: "
+              (string-trim (stderr-of r)))))
+        (status-of r)))))
 
 ;; regctl index create <index-ref> --ref <r1> --ref <r2> …
-(define (mlj:regctl-ref-flags refs)
+(define
+  (mlj:regctl-ref-flags refs)
   (cond
     ((null? refs) (list))
     (else (append (list "--ref" (car refs)) (mlj:regctl-ref-flags (cdr refs))))))
 
-(define (mlj:regctl-join refs index-ref)
-  (let ((r (apply exec-capture
-             (append (list "regctl" "index" "create" index-ref)
-                     (mlj:regctl-ref-flags refs)))))
-    (when (not (= (status-of r) 0))
-      (log-error (string-append "manifest-list-join: regctl index create failed: "
-                                 (string-trim (stderr-of r)))))
+(define
+  (mlj:regctl-join refs index-ref)
+  (let
+    ((r
+       (apply
+         exec-capture
+         (append (list "regctl" "index" "create" index-ref) (mlj:regctl-ref-flags refs)))))
+    (when
+      (not (= (status-of r) 0))
+      (log-error
+        (string-append
+          "manifest-list-join: regctl index create failed: "
+          (string-trim (stderr-of r)))))
     (status-of r)))
 
 ;; ── regctl TLS/CA trust config ────────────────────────────────────
@@ -281,9 +326,10 @@
 ;; failed ping even though the config was written successfully; skip
 ;; that ping so an unreachable-at-config-time (but reachable-at-join-
 ;; time) registry never fails this step for the wrong reason.
-(define (mlj:regctl-set-cacert host cert-path)
-  (status-of (exec-capture "regctl" "registry" "set" host
-               "--cacert" (read-file cert-path) "--skip-check")))
+(define
+  (mlj:regctl-set-cacert host cert-path)
+  (status-of
+    (exec-capture "regctl" "registry" "set" host "--cacert" (read-file cert-path) "--skip-check")))
 
 ;; `--tls insecure` (HTTPS, certificate verification skipped) -- NOT
 ;; `--tls disabled` (plain HTTP). Confirmed live against a real
@@ -295,9 +341,9 @@
 ;; 2026-07-18 in-pod TLS migration (see the header note), so `disabled`
 ;; would never actually recover anything here -- `insecure` is the only
 ;; value that is a real fallback against the real target.
-(define (mlj:regctl-set-insecure host)
-  (status-of (exec-capture "regctl" "registry" "set" host
-               "--tls" "insecure" "--skip-check")))
+(define
+  (mlj:regctl-set-insecure host)
+  (status-of (exec-capture "regctl" "registry" "set" host "--tls" "insecure" "--skip-check")))
 
 ;; Establish trust for `host` before any `regctl index …` call. Same
 ;; precedence as zot-push's own TLS handling: real CA-pinned
@@ -306,19 +352,26 @@
 ;; named, logged fallback when `insecure?` allows it -- never a silent
 ;; downgrade. #t on success, #f when neither route is available (an
 ;; honest refusal, not a faked join).
-(define (mlj:regctl-configure-trust host ca-cert-url ca-cert-path ca-cert-token insecure?)
-  (let ((fetched (oci:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token)))
+(define
+  (mlj:regctl-configure-trust host ca-cert-url ca-cert-path ca-cert-token insecure?)
+  (let
+    ((fetched (oci:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token)))
     (cond
-      ((not (equal? fetched ""))
-       (= 0 (mlj:regctl-set-cacert host fetched)))
+      ((not (equal? fetched "")) (= 0 (mlj:regctl-set-cacert host fetched)))
       (insecure?
-       (log-info (string-append "::warning::manifest-list-join: CA cert fetch failed for "
-                  host " — falling back to regctl --tls insecure (HTTPS, cert verification skipped), a real tracked degradation, not silent"))
-       (= 0 (mlj:regctl-set-insecure host)))
+        (log-info
+          (string-append
+            "::warning::manifest-list-join: CA cert fetch failed for "
+            host
+            " — falling back to regctl --tls insecure (HTTPS, cert verification skipped), a real tracked degradation, not silent"))
+        (= 0 (mlj:regctl-set-insecure host)))
       (else
-       (log-error (string-append "manifest-list-join: could not fetch the pinned CA cert for "
-                  host " and INSECURE fallback is not enabled — refusing to trust regctl against an unverified connection"))
-       #f))))
+        (log-error
+          (string-append
+            "manifest-list-join: could not fetch the pinned CA cert for "
+            host
+            " and INSECURE fallback is not enabled — refusing to trust regctl against an unverified connection"))
+        #f))))
 
 ;; ── registry write credentials ────────────────────────────────────
 ;;
@@ -339,8 +392,7 @@
 
 ;; buildah/podman: `--creds user:pass` on any subcommand that touches
 ;; the registry (see `mlj:oci-tool-add`/`mlj:oci-tool-join` above).
-(define (mlj:creds-flag user pass)
-  (list "--creds" (string-append user ":" pass)))
+(define (mlj:creds-flag user pass) (list "--creds" (string-append user ":" pass)))
 
 ;; regctl persists creds the SAME way it persists cacert/tls trust:
 ;; `regctl registry login <host> --user <user> --pass <pass>` writes
@@ -352,93 +404,165 @@
 ;; `--skip-check` matches the trust-config calls above: skip the
 ;; connectivity ping so an unreachable-at-login-time (but reachable-at-
 ;; join-time) registry never fails this step for the wrong reason.
-(define (mlj:regctl-login host user pass)
-  (status-of (exec-capture "regctl" "registry" "login" host
-               "--user" user "--pass" pass "--skip-check")))
+(define
+  (mlj:regctl-login host user pass)
+  (status-of
+    (exec-capture "regctl" "registry" "login" host "--user" user "--pass" pass "--skip-check")))
 
-(define (mlj:join tool refs index-ref insecure? registry-host ca-cert-url ca-cert-path ca-cert-token user pass)
+(define
+  (mlj:join
+    tool
+    refs
+    index-ref
+    insecure?
+    registry-host
+    ca-cert-url
+    ca-cert-path
+    ca-cert-token
+    user
+    pass)
   (cond
-    ((equal? tool "buildah") (mlj:oci-tool-join "buildah" "mlj-index" refs index-ref insecure? (mlj:creds-flag user pass)))
-    ((equal? tool "podman")  (mlj:oci-tool-join "podman"  "mlj-index" refs index-ref insecure? (mlj:creds-flag user pass)))
-    ((equal? tool "docker")  (mlj:docker-join refs index-ref insecure? registry-host user pass))
+    ((equal? tool "buildah")
+      (mlj:oci-tool-join "buildah" "mlj-index" refs index-ref insecure? (mlj:creds-flag user pass)))
+    ((equal? tool "podman")
+      (mlj:oci-tool-join "podman" "mlj-index" refs index-ref insecure? (mlj:creds-flag user pass)))
+    ((equal? tool "docker") (mlj:docker-join refs index-ref insecure? registry-host user pass))
     ((equal? tool "regctl")
-     (cond
-       ((not (mlj:regctl-configure-trust registry-host ca-cert-url ca-cert-path ca-cert-token insecure?)) 1)
-       ((not (= (mlj:regctl-login registry-host user pass) 0))
-        (log-error (string-append "manifest-list-join: regctl registry login " registry-host " failed"))
-        1)
-       (else (mlj:regctl-join refs index-ref))))
+      (cond
+        ((not
+           (mlj:regctl-configure-trust
+             registry-host
+             ca-cert-url
+             ca-cert-path
+             ca-cert-token
+             insecure?))
+          1)
+        ((not (= (mlj:regctl-login registry-host user pass) 0))
+          (log-error
+            (string-append "manifest-list-join: regctl registry login " registry-host " failed"))
+          1)
+        (else (mlj:regctl-join refs index-ref))))
     (else 127)))
 
 ;; ── main ──────────────────────────────────────────────────────────
-(define (mlj:emit-fail reason)
+(define
+  (mlj:emit-fail reason)
   (append-output "joined=false")
   (append-output "index-ref=")
   (append-output "index-digest=")
   (append-output "arches=")
   (append-output (string-append "reason=" reason)))
 
-(define (main)
-  (let* ((registry (env-get "REGISTRY" "zot.zot-system.svc.cluster.local:5000"))
-         (repo (env-get "REPO" ""))
-         (image (env-get "IMAGE" ""))
-         (svc (env-get "SVC" ""))
-         (arch-refs (env-get "ARCH_REFS" ""))
-         (run (env-get "RUN_NUMBER" ""))
-         (sha (env-get "SHA" ""))
-         (tag-in (env-get "TAG" ""))
-         (insecure (oci:flag-true? (env-get "INSECURE" "true")))
-         (dest-user (env-required "DEST_USER"))
-         (dest-pass (env-required "DEST_PASS"))
-         (tool-req (env-get "TOOL" "auto"))
-         (ca-cert-url (env-get "CA_CERT_URL"
-           "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
-         (ca-cert-path (env-get "CA_CERT_PATH" "/tmp/manifest-list-join-ca.crt"))
-         (ca-cert-token (env-get "CA_CERT_TOKEN" ""))
-         (pairs (mlj:parse-pairs (string-split arch-refs ",")))
-         (refs (mlj:refs-of pairs))
-         (arches (mlj:arches-of pairs))
-         (base (oci:compose-base repo registry image "akeyless-" svc))
-         (tag (mlj:resolve-tag tag-in run sha)))
+(define
+  (main)
+  (let*
+    ((registry (env-get "REGISTRY" "zot.zot-system.svc.cluster.local:5000"))
+      (repo (env-get "REPO" ""))
+      (image (env-get "IMAGE" ""))
+      (svc (env-get "SVC" ""))
+      (arch-refs (env-get "ARCH_REFS" ""))
+      (run (env-get "RUN_NUMBER" ""))
+      (sha (env-get "SHA" ""))
+      (tag-in (env-get "TAG" ""))
+      (insecure (oci:flag-true? (env-get "INSECURE" "true")))
+      (dest-user (env-required "DEST_USER"))
+      (dest-pass (env-required "DEST_PASS"))
+      (tool-req (env-get "TOOL" "auto"))
+      (ca-cert-url
+        (env-get
+          "CA_CERT_URL"
+          "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+      (ca-cert-path (env-get "CA_CERT_PATH" "/tmp/manifest-list-join-ca.crt"))
+      (ca-cert-token (env-get "CA_CERT_TOKEN" ""))
+      (pairs (mlj:parse-pairs (string-split arch-refs ",")))
+      (refs (mlj:refs-of pairs))
+      (arches (mlj:arches-of pairs))
+      (base (oci:compose-base repo registry image "akeyless-" svc))
+      (tag (mlj:resolve-tag tag-in run sha)))
     (cond
-      ((null? refs) (log-error "manifest-list-join: ARCH_REFS is empty (need amd64=<ref>[,arm64=<ref>])") (mlj:emit-fail "no-refs") 1)
-      ((equal? base "") (log-error "manifest-list-join: need REPO, or IMAGE, or SVC to resolve the index repository") (mlj:emit-fail "need-target") 1)
-      ((equal? tag "") (log-error "manifest-list-join: need TAG, or RUN_NUMBER+SHA to compose r<run>-<sha>") (mlj:emit-fail "need-tag") 1)
+      ((null? refs)
+        (log-error "manifest-list-join: ARCH_REFS is empty (need amd64=<ref>[,arm64=<ref>])")
+        (mlj:emit-fail "no-refs")
+        1)
+      ((equal? base "")
+        (log-error
+          "manifest-list-join: need REPO, or IMAGE, or SVC to resolve the index repository")
+        (mlj:emit-fail "need-target")
+        1)
+      ((equal? tag "")
+        (log-error "manifest-list-join: need TAG, or RUN_NUMBER+SHA to compose r<run>-<sha>")
+        (mlj:emit-fail "need-tag")
+        1)
       (else
-       (let* ((index-ref (oci:target-ref base tag))
-              (tool (mlj:select-tool tool-req))
-              (registry-host (oci:split-registry base)))
-         (cond
-           ((equal? tool "")
-            (log-error "manifest-list-join: no manifest tool on PATH (regctl|buildah|podman|docker) — refusing to fake an index")
-            (mlj:emit-fail "no-tool") 1)
-           (else
-            (log-info (string-append "==> manifest-list-join [" tool "] "
-                       (string-format "{}" (length refs)) " arch(es) {" arches
-                       "} -> docker://" index-ref (if insecure " (insecure)" "")))
-            (when (< (length refs) 2)
-              (log-info "::warning::manifest-list-join: fewer than 2 arches — emitting a DEGENERATE single-arch index (load-bearing once arm64-native lands)"))
-            (let ((s (mlj:join tool refs index-ref insecure registry-host ca-cert-url ca-cert-path ca-cert-token dest-user dest-pass)))
-              (cond
-                ((not (= s 0))
-                 (log-error (string-append "manifest-list-join: index create/push failed (exit "
-                             (string-format "{}" s) ")"))
-                 (mlj:emit-fail "join-fail") s)
-                (else
-                 (let ((digest (oci:skopeo-remote-digest index-ref insecure)))
-                   (when (equal? digest "")
-                     (log-info "::warning::manifest-list-join: could not resolve index digest (skopeo inspect failed) — index-digest= (honest empty); the push itself succeeded"))
-                   (append-output (string-append "index-ref=" index-ref))
-                   (append-output (string-append "index-digest=" digest))
-                   (append-output (string-append "arches=" arches))
-                   (append-output "joined=true")
-                   (append-output (string-append "reason=" (if (< (length refs) 2) "single-arch" "joined")))
-                   (log-info (string-append "joined multi-arch index " index-ref
-                              (if (equal? digest "") "" (string-append " @ " digest))))
-                   0)))))))))))
+        (let*
+          ((index-ref (oci:target-ref base tag))
+            (tool (mlj:select-tool tool-req))
+            (registry-host (oci:split-registry base)))
+          (cond
+            ((equal? tool "")
+              (log-error
+                "manifest-list-join: no manifest tool on PATH (regctl|buildah|podman|docker) — refusing to fake an index")
+              (mlj:emit-fail "no-tool")
+              1)
+            (else
+              (log-info
+                (string-append
+                  "==> manifest-list-join ["
+                  tool
+                  "] "
+                  (string-format "{}" (length refs))
+                  " arch(es) {"
+                  arches
+                  "} -> docker://"
+                  index-ref
+                  (if insecure " (insecure)" "")))
+              (when
+                (< (length refs) 2)
+                (log-info
+                  "::warning::manifest-list-join: fewer than 2 arches — emitting a DEGENERATE single-arch index (load-bearing once arm64-native lands)"))
+              (let
+                ((s
+                   (mlj:join
+                     tool
+                     refs
+                     index-ref
+                     insecure
+                     registry-host
+                     ca-cert-url
+                     ca-cert-path
+                     ca-cert-token
+                     dest-user
+                     dest-pass)))
+                (cond
+                  ((not (= s 0))
+                    (log-error
+                      (string-append
+                        "manifest-list-join: index create/push failed (exit "
+                        (string-format "{}" s)
+                        ")"))
+                    (mlj:emit-fail "join-fail")
+                    s)
+                  (else
+                    (let
+                      ((digest (oci:skopeo-remote-digest index-ref insecure)))
+                      (when
+                        (equal? digest "")
+                        (log-info
+                          "::warning::manifest-list-join: could not resolve index digest (skopeo inspect failed) — index-digest= (honest empty); the push itself succeeded"))
+                      (append-output (string-append "index-ref=" index-ref))
+                      (append-output (string-append "index-digest=" digest))
+                      (append-output (string-append "arches=" arches))
+                      (append-output "joined=true")
+                      (append-output
+                        (string-append "reason=" (if (< (length refs) 2) "single-arch" "joined")))
+                      (log-info
+                        (string-append
+                          "joined multi-arch index "
+                          index-ref
+                          (if (equal? digest "") "" (string-append " @ " digest))))
+                      0)))))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — manifest-list-join helpers loaded; main skipped"))
-  (else
-   (exit (main))))
+    (log-info "TLISP_TEST=1 — manifest-list-join helpers loaded; main skipped"))
+  (else (exit (main))))

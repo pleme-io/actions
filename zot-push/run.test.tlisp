@@ -2,53 +2,82 @@
 ;; composition (akeyless repo-shape) + the AUTOBUMP tag/ref algebra
 ;; (stdlib oci:*), run via tatara-script --test by the tlisp-test action.
 
-(deftest "zot:compose-base precedence — repo > registry/image > akeyless-<svc>"
-  (assert (equal? (zot:compose-base "zot.internal/x/y" "reg:5000" "img" "auth")
-                  "zot.internal/x/y")
-          "explicit repo wins")
-  (assert (equal? (zot:compose-base "" "reg:5000" "custom/img" "auth")
-                  "reg:5000/custom/img")
-          "registry/image when no repo")
-  (assert (equal? (zot:compose-base "" "zot.zot-system.svc.cluster.local:5000" "" "auth")
-                  "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
-          "akeyless-<svc> repo-shape")
-  (assert (equal? (zot:compose-base "" "reg:5000" "" "") "")
-          "no target resolvable -> empty"))
+(deftest
+  "zot:compose-base precedence — repo > registry/image > akeyless-<svc>"
+  (assert
+    (equal? (zot:compose-base "zot.internal/x/y" "reg:5000" "img" "auth") "zot.internal/x/y")
+    "explicit repo wins")
+  (assert
+    (equal? (zot:compose-base "" "reg:5000" "custom/img" "auth") "reg:5000/custom/img")
+    "registry/image when no repo")
+  (assert
+    (equal?
+      (zot:compose-base "" "zot.zot-system.svc.cluster.local:5000" "" "auth")
+      "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
+    "akeyless-<svc> repo-shape")
+  (assert (equal? (zot:compose-base "" "reg:5000" "" "") "") "no target resolvable -> empty"))
 
-(deftest "oci:autobump-tag is the sortable exact <arch>-r<run>-<sha>"
-  (assert (equal? (oci:autobump-tag "amd64" "412" "9c1f2ab") "amd64-r412-9c1f2ab")
-          "amd64 exact tag")
-  (assert (equal? (oci:autobump-tag "arm64" "7" "deadbeef") "arm64-r7-deadbeef")
-          "arm64 exact tag"))
+(deftest
+  "oci:autobump-tag is the sortable exact <arch>-r<run>-<sha>"
+  (assert
+    (equal? (oci:autobump-tag "amd64" "412" "9c1f2ab") "amd64-r412-9c1f2ab")
+    "amd64 exact tag")
+  (assert (equal? (oci:autobump-tag "arm64" "7" "deadbeef") "arm64-r7-deadbeef") "arm64 exact tag"))
 
-(deftest "oci:target-ref appends :tag to the base"
-  (assert (equal? (oci:target-ref "reg:5000/akeyless-auth" "amd64-r1-abc")
-                  "reg:5000/akeyless-auth:amd64-r1-abc")
-          "exact ref")
-  (assert (equal? (oci:target-ref (zot:compose-base "" "reg:5000" "" "uam")
-                                  (oci:autobump-tag "amd64" "99" "cafe"))
-                  "reg:5000/akeyless-uam:amd64-r99-cafe")
-          "composed end-to-end"))
+(deftest
+  "oci:target-ref appends :tag to the base"
+  (assert
+    (equal?
+      (oci:target-ref "reg:5000/akeyless-auth" "amd64-r1-abc")
+      "reg:5000/akeyless-auth:amd64-r1-abc")
+    "exact ref")
+  (assert
+    (equal?
+      (oci:target-ref
+        (zot:compose-base "" "reg:5000" "" "uam")
+        (oci:autobump-tag "amd64" "99" "cafe"))
+      "reg:5000/akeyless-uam:amd64-r99-cafe")
+    "composed end-to-end"))
 
-(deftest "oci:moving-tag is the human <arch>-latest pointer (never a deploy source)"
+(deftest
+  "oci:moving-tag is the human <arch>-latest pointer (never a deploy source)"
   (assert (equal? (oci:moving-tag "amd64") "amd64-latest") "amd64 latest")
   (assert (equal? (oci:moving-tag "arm64") "arm64-latest") "arm64 latest"))
 
-(deftest "zot:ca-cert-curl-args -- unauthenticated by default, token adds Authorization header"
-  (assert (equal? (zot:ca-cert-curl-args "https://example.com/ca.crt" "/tmp/ca.crt" "")
-                  (list "curl" "-sL" "-f" "-o" "/tmp/ca.crt" "https://example.com/ca.crt"))
-          "empty token -> the original unauthenticated argv, unchanged")
-  (assert (equal? (zot:ca-cert-curl-args "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt" "/tmp/ca.crt" "ghp_abc123")
-                  (list "curl" "-sL" "-f" "-H" "Authorization: token ghp_abc123" "-o" "/tmp/ca.crt"
-                        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"))
-          "non-empty token -> Authorization header added (needed for the private akeyless-k8s repo)"))
+(deftest
+  "zot:ca-cert-curl-args -- unauthenticated by default, token adds Authorization header"
+  (assert
+    (equal?
+      (zot:ca-cert-curl-args "https://example.com/ca.crt" "/tmp/ca.crt" "")
+      (list "curl" "-sL" "-f" "-o" "/tmp/ca.crt" "https://example.com/ca.crt"))
+    "empty token -> the original unauthenticated argv, unchanged")
+  (assert
+    (equal?
+      (zot:ca-cert-curl-args
+        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"
+        "/tmp/ca.crt"
+        "ghp_abc123")
+      (list
+        "curl"
+        "-sL"
+        "-f"
+        "-H"
+        "Authorization: token ghp_abc123"
+        "-o"
+        "/tmp/ca.crt"
+        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"))
+    "non-empty token -> Authorization header added (needed for the private akeyless-k8s repo)"))
 
-(deftest "zot:split-registry / zot:split-image recover doca's separate --registry/--image from a composed base"
-  (assert (equal? (zot:split-registry "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
-                  "zot.zot-system.svc.cluster.local:5000")
-          "registry is everything before the first /")
-  (assert (equal? (zot:split-image "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
-                  "akeyless-auth")
-          "image is everything after the first /")
-  (assert (equal? (zot:split-image "zot.internal/x/y") "x/y")
-          "a multi-segment image path (an explicit REPO override) survives the split"))
+(deftest
+  "zot:split-registry / zot:split-image recover doca's separate --registry/--image from a composed base"
+  (assert
+    (equal?
+      (zot:split-registry "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
+      "zot.zot-system.svc.cluster.local:5000")
+    "registry is everything before the first /")
+  (assert
+    (equal? (zot:split-image "zot.zot-system.svc.cluster.local:5000/akeyless-auth") "akeyless-auth")
+    "image is everything after the first /")
+  (assert
+    (equal? (zot:split-image "zot.internal/x/y") "x/y")
+    "a multi-segment image path (an explicit REPO override) survives the split"))

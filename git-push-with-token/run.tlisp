@@ -16,13 +16,13 @@
 ;; embedded) by first stripping any existing https://<x>@ prefix.
 
 ;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
-(define token  (env-get "INPUT_TOKEN"     (env-get "GIT_PUSH_TOKEN" "")))
-(define branch (env-get "INPUT_BRANCH"    (env-get "BRANCH"    "main")))
+(define token (env-get "INPUT_TOKEN" (env-get "GIT_PUSH_TOKEN" "")))
+
+(define branch (env-get "INPUT_BRANCH" (env-get "BRANCH" "main")))
+
 (define ptags? (equal? (env-get "INPUT_PUSH_TAGS" (env-get "PUSH_TAGS" "true")) "true"))
 
-(when (equal? token "")
-  (log-error "git-push-with-token: missing INPUT_TOKEN")
-  (exit 1))
+(when (equal? token "") (log-error "git-push-with-token: missing INPUT_TOKEN") (exit 1))
 
 ;; Docker-action mode: the container's runtime UID rarely matches
 ;; the runner UID owning /github/workspace. Git refuses to operate
@@ -32,57 +32,64 @@
 
 ;; ---------- get + clean origin URL ---------- ;;
 
-(define current-url
-  (let ((cap (exec-capture "git" "remote" "get-url" "origin")))
+(define
+  current-url
+  (let
+    ((cap (exec-capture "git" "remote" "get-url" "origin")))
     (string-trim (alist-get cap :stdout))))
 
-(define (strip-userinfo url)
+(define
+  (strip-userinfo url)
   ;; Turns "https://<anything>@github.com/..." into "https://github.com/...".
   ;; Plain "https://github.com/..." passes through unchanged.
   (cond
     ((string-starts-with? url "https://")
-     ;; Split on "@" — if there's a userinfo segment, the part before
-     ;; the FIRST @ contains "://", so re-stitch using everything
-     ;; after the first @.
-     (let ((parts (string-split url "@")))
-       (if (= (length parts) 1)
-           url
-           (string-append "https://" (string-join "@" (cdr parts))))))
+      ;; Split on "@" — if there's a userinfo segment, the part before
+      ;; the FIRST @ contains "://", so re-stitch using everything
+      ;; after the first @.
+      (let
+        ((parts (string-split url "@")))
+        (if (= (length parts) 1) url (string-append "https://" (string-join "@" (cdr parts))))))
     (else url)))
 
 (define clean-url (strip-userinfo current-url))
 
 ;; ---------- rewrite + push ---------- ;;
 
-(define rearmed-url
-  (string-replace clean-url
-                  "https://"
-                  (string-append "https://x-access-token:" token "@")))
+(define
+  rearmed-url
+  (string-replace clean-url "https://" (string-append "https://x-access-token:" token "@")))
 
-(define set-url-status
-  (exec-check "git" "remote" "set-url" "origin" rearmed-url))
-(when (not (= set-url-status 0))
-  (log-error "git remote set-url failed") (exit set-url-status))
+(define set-url-status (exec-check "git" "remote" "set-url" "origin" rearmed-url))
+
+(when (not (= set-url-status 0)) (log-error "git remote set-url failed") (exit set-url-status))
 
 ;; Push the branch and (optionally) every tag in ONE transaction.
 ;; `--atomic` makes the remote accept all refs or none, so the branch +
 ;; its release tag are indivisible (no land-tag-without-commit skew).
 ;; This is a Docker action (no stdlib), so helpers stay inline.
 (define (capture-out cap) (string-trim (alist-get cap :stdout)))
+
 (define (rev-parse ref) (capture-out (exec-capture "git" "rev-parse" ref)))
-(define (tags-at commit)
-  (let ((out (capture-out (exec-capture "git" "tag" "--points-at" commit))))
+
+(define
+  (tags-at commit)
+  (let
+    ((out (capture-out (exec-capture "git" "tag" "--points-at" commit))))
     (if (equal? out "") (list) (string-split out "\n"))))
 
-(define (do-push)
-  (if ptags?
-      (exec-check "git" "push" "--atomic" "origin" branch "--tags")
-      (exec-check "git" "push" "origin" branch)))
+(define
+  (do-push)
+  (if
+    ptags?
+    (exec-check "git" "push" "--atomic" "origin" branch "--tags")
+    (exec-check "git" "push" "origin" branch)))
 
 ;; Re-point each tag to new-head (force). Lightweight is fine: the
 ;; release workflow fires on the tag REF regardless of annotation, and
 ;; `git describe --tags` (the bump's last-tag) honours lightweight tags.
-(define (move-tags tags new-head)
+(define
+  (move-tags tags new-head)
   (for-each (lambda (t) (exec-check "git" "tag" "-f" t new-head)) tags))
 
 ;; Resilient push: a non-fast-forward rejection means ANOTHER writer
@@ -97,41 +104,53 @@
 ;; rebase + surfaces (no worse than the pre-fix single-shot push). The
 ;; `-c user.*` keeps the rebase replay's committer identity self-contained
 ;; (the container may not inherit the job's git config).
-(define (push-with-retry attempts)
-  (let ((s (do-push)))
+(define
+  (push-with-retry attempts)
+  (let
+    ((s (do-push)))
     (cond
       ((= s 0) 0)
-      ((<= attempts 0)
-       (log-error "git push still rejected after rebase retries") s)
+      ((<= attempts 0) (log-error "git push still rejected after rebase retries") s)
       (else
         (log-info "push rejected (non-ff?) — fetch + rebase onto latest, then retry")
-        (let ((old-head (rev-parse "HEAD"))
-              (fetch-s (exec-check "git" "fetch" "origin" branch)))
+        (let
+          ((old-head (rev-parse "HEAD")) (fetch-s (exec-check "git" "fetch" "origin" branch)))
           (cond
             ((not (= fetch-s 0)) (log-error "git fetch failed during push retry") fetch-s)
             (else
-              (let* ((onto (string-append "origin/" branch))
-                     (saved-tags (tags-at old-head))
-                     (rebase-s (exec-check "git"
-                                 "-c" "user.email=github-actions[bot]@users.noreply.github.com"
-                                 "-c" "user.name=github-actions[bot]"
-                                 "rebase" onto)))
+              (let*
+                ((onto (string-append "origin/" branch))
+                  (saved-tags (tags-at old-head))
+                  (rebase-s
+                    (exec-check
+                      "git"
+                      "-c"
+                      "user.email=github-actions[bot]@users.noreply.github.com"
+                      "-c"
+                      "user.name=github-actions[bot]"
+                      "rebase"
+                      onto)))
                 (cond
                   ((not (= rebase-s 0))
-                   ;; lint:allow git-mutation-discard — abort-cleanup; we return rebase-s
-                   (exec-check "git" "rebase" "--abort")
-                   (log-error "rebase onto latest conflicted — manual resolution needed (push not retried)")
-                   rebase-s)
-                  (else
-                    (move-tags saved-tags (rev-parse "HEAD"))
-                    (push-with-retry (- attempts 1))))))))))))
+                    ;; lint:allow git-mutation-discard — abort-cleanup; we return rebase-s
+                    (exec-check "git" "rebase" "--abort")
+                    (log-error
+                      "rebase onto latest conflicted — manual resolution needed (push not retried)")
+                    rebase-s)
+                  (else (move-tags saved-tags (rev-parse "HEAD")) (push-with-retry (- attempts 1))))))))))))
 
 (define push-status (push-with-retry 3))
-(when (not (= push-status 0))
-  (log-error (string-append "git push"
-                            (if ptags? " --atomic" "")
-                            " origin " branch
-                            (if ptags? " --tags" "") " failed"))
+
+(when
+  (not (= push-status 0))
+  (log-error
+    (string-append
+      "git push"
+      (if ptags? " --atomic" "")
+      " origin "
+      branch
+      (if ptags? " --tags" "")
+      " failed"))
   (exit push-status))
 
 (log-info (string-append "pushed " branch (if ptags? " + tags (atomic)" "")))

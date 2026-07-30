@@ -3,12 +3,14 @@
 (define fail-on (env-get "FAIL_ON_UNOWNED" "false"))
 
 (cond
-  ((not (or (path-exists? ".github/CODEOWNERS")
-            (path-exists? "CODEOWNERS")
-            (path-exists? "docs/CODEOWNERS")))
-   (log-error "no CODEOWNERS file found")
-   (append-output "unowned-count=0")
-   (exit 1)))
+  ((not
+     (or
+       (path-exists? ".github/CODEOWNERS")
+       (path-exists? "CODEOWNERS")
+       (path-exists? "docs/CODEOWNERS")))
+    (log-error "no CODEOWNERS file found")
+    (append-output "unowned-count=0")
+    (exit 1)))
 
 ;; Nix-installed, not runtime `go install ...@latest` (theory/NIX-HARDENING.md
 ;; §VI) -- the old install target never actually resolved (upstream's go.mod
@@ -23,16 +25,18 @@
 (exec-check "nix" "profile" "install" "github:pleme-io/hardened-images#codeownersValidatorPkg")
 
 (define r (exec-capture "codeowners-validator" "--repository" "."))
+
 (define out (stdout-of r))
 
-(define unowned-r
-  (exec-capture "sh" "-c"
-    (string-append "echo '" (string-replace out "'" "'\"'\"'")
-                   "' | grep -c 'unowned' || echo 0")))
+(define
+  unowned-r
+  (exec-capture
+    "sh"
+    "-c"
+    (string-append "echo '" (string-replace out "'" "'\"'\"'") "' | grep -c 'unowned' || echo 0")))
+
 (define unowned (string-trim (stdout-of unowned-r)))
 
 (append-output (string-append "unowned-count=" unowned))
 
-(cond
-  ((and (equal? fail-on "true") (not (equal? unowned "0"))) (exit 1))
-  (else (exit 0)))
+(cond ((and (equal? fail-on "true") (not (equal? unowned "0"))) (exit 1)) (else (exit 0)))

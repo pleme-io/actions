@@ -35,7 +35,8 @@
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 
 ;; Drop empty/whitespace-only tokens, trimming each survivor.
-(define (preseed-nonempty toks)
+(define
+  (preseed-nonempty toks)
   (cond
     ((null? toks) (list))
     ((equal? (string-trim (car toks)) "") (preseed-nonempty (cdr toks)))
@@ -44,27 +45,30 @@
 ;; Walk comma-segments, splitting each on whitespace, accumulating the
 ;; non-empty tokens. Accepts "a b", "a,b", "a, b". (No `map` — the dialect
 ;; has none; recursion + `append`, like super-cache-save's push-segments.)
-(define (preseed-split-ws segs acc)
+(define
+  (preseed-split-ws segs acc)
   (cond
     ((null? segs) acc)
-    (else (preseed-split-ws (cdr segs)
-            (append acc (preseed-nonempty (string-split (car segs) " ")))))))
-(define (preseed-parse-inputs raw)
-  (preseed-split-ws (string-split raw ",") (list)))
+    (else
+      (preseed-split-ws (cdr segs) (append acc (preseed-nonempty (string-split (car segs) " ")))))))
+
+(define (preseed-parse-inputs raw) (preseed-split-ws (string-split raw ",") (list)))
 
 ;; A truthy string flag → bool.
 (define (preseed-flag-true? s) (equal? (string-trim s) "true"))
 
 ;; Join a token list with a separator (pure recursion; no reliance on a
 ;; particular string-join builtin).
-(define (preseed-join toks sep)
+(define
+  (preseed-join toks sep)
   (cond
     ((null? toks) "")
     ((null? (cdr toks)) (car toks))
     (else (string-append (car toks) sep (preseed-join (cdr toks) sep)))))
 
 ;; Classify the run's terminal reason from the counts + gates.
-(define (preseed-reason endpoint requested preseeded)
+(define
+  (preseed-reason endpoint requested preseeded)
   (cond
     ((equal? (string-trim endpoint) "") "no-endpoint")
     ((= requested 0) "no-inputs")
@@ -77,70 +81,103 @@
 ;; Pull ONE input's source FOD from the endpoint into the local store.
 ;; Returns the resolved store path on success, "" on a resolve-miss or a
 ;; copy failure (best-effort — a miss degrades to the clone, never aborts).
-(define (preseed-one endpoint flake-lock name)
-  (let ((src (flakeinput:source-path flake-lock name)))
+(define
+  (preseed-one endpoint flake-lock name)
+  (let
+    ((src (flakeinput:source-path flake-lock name)))
     (cond
       ((equal? src "")
-       (log-error (string-append "flake-input-preseed: cannot resolve source path for input '"
-                                 name "' from " flake-lock " (missing node / bad narHash) — skip"))
-       "")
+        (log-error
+          (string-append
+            "flake-input-preseed: cannot resolve source path for input '"
+            name
+            "' from "
+            flake-lock
+            " (missing node / bad narHash) — skip"))
+        "")
       (else
-       (let ((r (exec-capture "nix" "copy" "--from" endpoint src "--no-check-sigs")))
-         (cond
-           ((= (status-of r) 0)
-            (log-info (string-append "flake-input-preseed: pulled " src " <- " endpoint
-                                     " (input '" name "') — the eval-time clone is now skipped"))
-            src)
-           (else
-            (log-error (string-append "flake-input-preseed: nix copy --from failed (best-effort, "
-                                      "falling back to clone) '" name "' " src ": "
-                                      (string-trim (stderr-of r))))
-            "")))))))
+        (let
+          ((r (exec-capture "nix" "copy" "--from" endpoint src "--no-check-sigs")))
+          (cond
+            ((= (status-of r) 0)
+              (log-info
+                (string-append
+                  "flake-input-preseed: pulled "
+                  src
+                  " <- "
+                  endpoint
+                  " (input '"
+                  name
+                  "') — the eval-time clone is now skipped"))
+              src)
+            (else
+              (log-error
+                (string-append
+                  "flake-input-preseed: nix copy --from failed (best-effort, "
+                  "falling back to clone) '"
+                  name
+                  "' "
+                  src
+                  ": "
+                  (string-trim (stderr-of r))))
+              "")))))))
 
 ;; Preseed each input; return the list of successfully-pulled store paths.
-(define (preseed-all endpoint flake-lock names)
+(define
+  (preseed-all endpoint flake-lock names)
   (cond
     ((null? names) (list))
     (else
-     (let ((p (preseed-one endpoint flake-lock (car names)))
-           (rest (preseed-all endpoint flake-lock (cdr names))))
-       (if (equal? p "") rest (cons p rest))))))
+      (let
+        ((p (preseed-one endpoint flake-lock (car names)))
+          (rest (preseed-all endpoint flake-lock (cdr names))))
+        (if (equal? p "") rest (cons p rest))))))
 
-(define (emit paths requested preseeded reason)
+(define
+  (emit paths requested preseeded reason)
   (append-output (string-append "paths=" (preseed-join paths " ")))
   (append-output (string-append "requested=" (string-format "{}" requested)))
   (append-output (string-append "preseeded=" (string-format "{}" preseeded)))
   (append-output (string-append "reason=" reason)))
 
-(define (main)
-  (let* ((endpoint  (env-get "ENDPOINT" ""))
-         (flake-in  (env-get "FLAKE_LOCK" "flake.lock"))
-         (inputs-in (env-get "INPUTS" ""))
-         (require   (preseed-flag-true? (env-get "REQUIRE" "false")))
-         (names     (preseed-parse-inputs inputs-in))
-         (requested (length names)))
+(define
+  (main)
+  (let*
+    ((endpoint (env-get "ENDPOINT" ""))
+      (flake-in (env-get "FLAKE_LOCK" "flake.lock"))
+      (inputs-in (env-get "INPUTS" ""))
+      (require (preseed-flag-true? (env-get "REQUIRE" "false")))
+      (names (preseed-parse-inputs inputs-in))
+      (requested (length names)))
     (cond
       ((equal? (string-trim endpoint) "")
-       (log-info "flake-input-preseed: no endpoint — honest no-op (build will clone the source)")
-       (emit (list) requested 0 "no-endpoint")
-       (if require 1 0))
+        (log-info "flake-input-preseed: no endpoint — honest no-op (build will clone the source)")
+        (emit (list) requested 0 "no-endpoint")
+        (if require 1 0))
       ((= requested 0)
-       (log-info "flake-input-preseed: no inputs named — nothing to preseed")
-       (emit (list) 0 0 "no-inputs")
-       0)
+        (log-info "flake-input-preseed: no inputs named — nothing to preseed")
+        (emit (list) 0 0 "no-inputs")
+        0)
       (else
-       (let* ((pulled     (preseed-all endpoint flake-in names))
-              (preseeded  (length pulled))
-              (reason     (preseed-reason endpoint requested preseeded)))
-         (log-info (string-append "flake-input-preseed: " (string-format "{}" preseeded)
-                                  "/" (string-format "{}" requested)
-                                  " input source(s) preseeded from " endpoint
-                                  " (reason=" reason ")"))
-         (emit pulled requested preseeded reason)
-         (if (and require (< preseeded requested)) 1 0))))))
+        (let*
+          ((pulled (preseed-all endpoint flake-in names))
+            (preseeded (length pulled))
+            (reason (preseed-reason endpoint requested preseeded)))
+          (log-info
+            (string-append
+              "flake-input-preseed: "
+              (string-format "{}" preseeded)
+              "/"
+              (string-format "{}" requested)
+              " input source(s) preseeded from "
+              endpoint
+              " (reason="
+              reason
+              ")"))
+          (emit pulled requested preseeded reason)
+          (if (and require (< preseeded requested)) 1 0))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — flake-input-preseed helpers loaded; main skipped"))
-  (else
-   (exit (main))))
+    (log-info "TLISP_TEST=1 — flake-input-preseed helpers loaded; main skipped"))
+  (else (exit (main))))

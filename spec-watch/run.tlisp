@@ -12,10 +12,13 @@
 ;;   cached-sha  sha256 previously stored in the cache file (empty on first run)
 
 (define upstream-url (env-required "UPSTREAM_URL"))
+
 (define cache-file (env-required "CACHE_FILE"))
+
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define (append-output line)
+(define
+  (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
@@ -24,21 +27,20 @@
 ;; curl + sha256sum; we hash the body directly via the tatara stdlib's
 ;; (sha256 STR) primitive — no temp file needed.
 (define body (http-get upstream-url))
+
 (define new-sha (sha256 body))
 
 ;; ── Read the cached sha256, trimming whitespace ────────────────────
-(define cached-sha
-  (if (path-exists? cache-file)
-    (string-trim (read-file cache-file))
-    ""))
+(define cached-sha (if (path-exists? cache-file) (string-trim (read-file cache-file)) ""))
 
 (append-output (string-append "new-sha=" new-sha))
+
 (append-output (string-append "cached-sha=" cached-sha))
 
 (cond
   ((not (equal? new-sha cached-sha))
-   (append-output "changed=true")
-   (log-info (string-append "Upstream spec changed: " cached-sha " -> " new-sha)))
+    (append-output "changed=true")
+    (log-info (string-append "Upstream spec changed: " cached-sha " -> " new-sha)))
   (else
-   (append-output "changed=false")
-   (log-info (string-append "Upstream spec unchanged (" new-sha ")"))))
+    (append-output "changed=false")
+    (log-info (string-append "Upstream spec unchanged (" new-sha ")"))))

@@ -16,25 +16,31 @@
 ;;      so the workflow remains restartable on transient downstream failures.
 
 ;; INPUT_* (Docker mode) preferred, bare names retained as composite fallback.
-(define gem-name    (env-get "INPUT_GEM_NAME"    (env-get "GEM_NAME"    "")))
+(define gem-name (env-get "INPUT_GEM_NAME" (env-get "GEM_NAME" "")))
+
 (define tag-version (env-get "INPUT_TAG_VERSION" (env-get "TAG_VERSION" "")))
 
-(when (or (equal? gem-name "") (equal? tag-version ""))
+(when
+  (or (equal? gem-name "") (equal? tag-version ""))
   (log-error "gem-publish: missing INPUT_GEM_NAME or INPUT_TAG_VERSION")
   (exit 1))
 
 ;; ---------- version.rb parse ---------- ;;
 
-(define (slice-between line open close)
+(define
+  (slice-between line open close)
   ;; Substring after the first `open` token up to the next `close` token.
   ;; "" when either delimiter is absent. Used for Ruby's percent-literal
   ;; string form where the quote character isn't " or '.
-  (let ((a (string-split line open)))
-    (if (< (length a) 2) ""
-      (let ((b (string-split (car (cdr a)) close)))
-        (if (< (length b) 2) "" (car b))))))
+  (let
+    ((a (string-split line open)))
+    (if
+      (< (length a) 2)
+      ""
+      (let ((b (string-split (car (cdr a)) close))) (if (< (length b) 2) "" (car b))))))
 
-(define (extract-quoted-value line)
+(define
+  (extract-quoted-value line)
   ;; Extract a Ruby string literal's value from a `VERSION = …` line.
   ;; Handles the three forms that appear across the pleme-io gem fleet:
   ;;   VERSION = "0.1.0"      double-quote
@@ -44,28 +50,29 @@
   ;; The percent forms are checked before the plain quotes only matter
   ;; when no " or ' is present; an ordinary quoted line never contains
   ;; "%(" so the quote branches stay authoritative for it.
-  (let ((dq (string-split line "\""))
-        (sq (string-split line "'")))
+  (let
+    ((dq (string-split line "\"")) (sq (string-split line "'")))
     (cond
       ((>= (length dq) 2) (car (cdr dq)))
       ((>= (length sq) 2) (car (cdr sq)))
       ((string-contains? line "%q(") (slice-between line "%q(" ")"))
       ((string-contains? line "%Q(") (slice-between line "%Q(" ")"))
-      ((string-contains? line "%(")  (slice-between line "%("  ")"))
+      ((string-contains? line "%(") (slice-between line "%(" ")"))
       (else ""))))
 
-(define (first-version-line ls)
+(define
+  (first-version-line ls)
   (cond
     ((null? ls) "")
-    ((and (string-contains? (car ls) "VERSION")
-          (string-contains? (car ls) "="))
-     (extract-quoted-value (car ls)))
+    ((and (string-contains? (car ls) "VERSION") (string-contains? (car ls) "="))
+      (extract-quoted-value (car ls)))
     (else (first-version-line (cdr ls)))))
 
-(define (read-gem-version)
-  (let ((path (string-append "lib/" gem-name "/version.rb")))
-    (if (not (path-exists? path)) ""
-      (first-version-line (string-split (read-file path) "\n")))))
+(define
+  (read-gem-version)
+  (let
+    ((path (string-append "lib/" gem-name "/version.rb")))
+    (if (not (path-exists? path)) "" (first-version-line (string-split (read-file path) "\n")))))
 
 ;; ---------- sanity check ---------- ;;
 
@@ -73,47 +80,48 @@
 
 (cond
   ((equal? spec-version "")
-   (log-error (string-append "could not read version from lib/"
-                             gem-name "/version.rb"))
-   (exit 1))
+    (log-error (string-append "could not read version from lib/" gem-name "/version.rb"))
+    (exit 1))
   ((not (equal? spec-version tag-version))
-   (log-error (string-append "version mismatch: gemspec=" spec-version
-                             " tag=" tag-version))
-   (exit 1))
-  (else
-   (log-info (string-append "version match: " spec-version))))
+    (log-error (string-append "version mismatch: gemspec=" spec-version " tag=" tag-version))
+    (exit 1))
+  (else (log-info (string-append "version match: " spec-version))))
 
 ;; ---------- build ---------- ;;
 
 (define build-status (exec-check "gem" "build" (string-append gem-name ".gemspec")))
-(when (not (= build-status 0))
-  (log-error (string-append "gem build failed (status "
-                            (string-format "{}" build-status) ")"))
+
+(when
+  (not (= build-status 0))
+  (log-error (string-append "gem build failed (status " (string-format "{}" build-status) ")"))
   (exit build-status))
 
 ;; ---------- push ---------- ;;
 
 (define gem-file (string-append gem-name "-" tag-version ".gem"))
+
 (define push-result (exec-capture "gem" "push" gem-file))
+
 (define push-status (alist-get push-result :status))
+
 (define push-stdout (alist-get push-result :stdout))
+
 (define push-stderr (alist-get push-result :stderr))
+
 ;; rubygems CLI prints some failures to stdout (e.g. duplicate-push
 ;; refusals), others to stderr — grep both so the tolerance check is
 ;; resilient regardless of where rubygems lands the message.
 (define push-output (string-append push-stdout "\n" push-stderr))
 
 (cond
-  ((= push-status 0)
-   (log-info (string-append "published " gem-name " " tag-version)))
-  ((or (string-contains? push-output "has already been pushed")
-       (string-contains? push-output "Repushing of gem versions"))
-   (log-info (string-append "version " tag-version
-                            " already published; treating as success.")))
+  ((= push-status 0) (log-info (string-append "published " gem-name " " tag-version)))
+  ((or
+     (string-contains? push-output "has already been pushed")
+     (string-contains? push-output "Repushing of gem versions"))
+    (log-info (string-append "version " tag-version " already published; treating as success.")))
   (else
-   ;; Surface BOTH streams when failing so the underlying CLI message
-   ;; (which sometimes lands on stdout, sometimes stderr) shows up in
-   ;; the action log.
-   (log-error (string-append "gem push failed:\nSTDOUT:\n" push-stdout
-                             "\nSTDERR:\n" push-stderr))
-   (exit push-status)))
+    ;; Surface BOTH streams when failing so the underlying CLI message
+    ;; (which sometimes lands on stdout, sometimes stderr) shows up in
+    ;; the action log.
+    (log-error (string-append "gem push failed:\nSTDOUT:\n" push-stdout "\nSTDERR:\n" push-stderr))
+    (exit push-status)))

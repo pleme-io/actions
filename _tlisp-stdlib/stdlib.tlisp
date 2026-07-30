@@ -43,13 +43,14 @@
 
 (define stdlib:gh-output (env-get "GITHUB_OUTPUT" ""))
 
-(define (append-output line)
+(define
+  (append-output line)
   (cond
-    ((equal? stdlib:gh-output "") #t)  ;; no-op outside Actions
+    ((equal? stdlib:gh-output "") #t)
+    ;; no-op outside Actions
     (else
-      (let ((prior (if (path-exists? stdlib:gh-output)
-                     (read-file stdlib:gh-output)
-                     "")))
+      (let
+        ((prior (if (path-exists? stdlib:gh-output) (read-file stdlib:gh-output) "")))
         (write-file stdlib:gh-output (string-append prior line "\n"))))))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -57,7 +58,9 @@
 ;; ────────────────────────────────────────────────────────────────
 
 (define (status-of result) (alist-get result "status" -1))
+
 (define (stdout-of result) (alist-get result "stdout" ""))
+
 (define (stderr-of result) (alist-get result "stderr" ""))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -66,9 +69,10 @@
 ;; section heading.
 ;; ────────────────────────────────────────────────────────────────
 
-(define (extract-quoted-value line)
-  (let* ((dq-parts (string-split line "\""))
-         (sq-parts (string-split line "'")))
+(define
+  (extract-quoted-value line)
+  (let*
+    ((dq-parts (string-split line "\"")) (sq-parts (string-split line "'")))
     (cond
       ((>= (length dq-parts) 2) (car (cdr dq-parts)))
       ((>= (length sq-parts) 2) (car (cdr sq-parts)))
@@ -81,7 +85,8 @@
 ;; section headers and exited the [package] walker early — caused
 ;; cargo-bump to report "package.version not found" on num-traits
 ;; and any Cargo.toml with array fields above `version`.
-(define (line-is-section-header? line)
+(define
+  (line-is-section-header? line)
   ;; A TOML section header is `[section]` / `[[array]]` at line start (after
   ;; whitespace) — i.e. the text BEFORE the first `[` is empty/whitespace. The
   ;; old test was `contains "[" && !contains "="`, which mis-read a COMMENT that
@@ -91,60 +96,57 @@
   ;; comment). This stdlib has no `string-prefix?`, so "starts with `[`" is
   ;; expressed as: the piece before the first `[` trims to empty. The `=` guard
   ;; is kept belt-and-suspenders.
-  (let ((trimmed (string-trim line)))
-    (and (> (string-length trimmed) 0)
-         (string-contains? trimmed "[")
-         (equal? (string-trim (car (string-split trimmed "["))) "")
-         (not (string-contains? trimmed "=")))))
+  (let
+    ((trimmed (string-trim line)))
+    (and
+      (> (string-length trimmed) 0)
+      (string-contains? trimmed "[")
+      (equal? (string-trim (car (string-split trimmed "["))) "")
+      (not (string-contains? trimmed "=")))))
 
 ;; True when a TOML line is `<field> = ...` for the EXACT field name.
 ;; The previous predicate used (string-contains? line field) which
 ;; matches `version` inside `rust-version` — produced version-unchanged
 ;; "1.71" instead of the real package version on caixa-mio. Strict:
 ;; split at first =, trim the LHS, byte-equal against field.
-(define (line-assigns-field? line field)
-  (let ((parts (string-split line "=")))
-    (cond
-      ((< (length parts) 2) #f)
-      (else (equal? (string-trim (car parts)) field)))))
+(define
+  (line-assigns-field? line field)
+  (let
+    ((parts (string-split line "=")))
+    (cond ((< (length parts) 2) #f) (else (equal? (string-trim (car parts)) field)))))
 
 ;; True when the trimmed line IS the named section header — i.e.
 ;; the line, after stripping whitespace, byte-equals 'section'.
 ;; Strict matching prevents false positives from array values like
 ;; `keywords = ["package", "tool"]` matching section "[package]", or
 ;; from `[package.metadata.docs.rs]` matching section "[package]".
-(define (line-is-named-section? line section)
-  (equal? (string-trim line) section))
+(define (line-is-named-section? line section) (equal? (string-trim line) section))
 
 ;; Walk lines looking for the named section header, then return
 ;; the first `field = "value"` inside it. Returns "" on miss.
-(define (toml-walk-field-in-section section field lines in-section)
+(define
+  (toml-walk-field-in-section section field lines in-section)
   (cond
     ((null? lines) "")
     ((line-is-named-section? (car lines) section)
-     (toml-walk-field-in-section section field (cdr lines) #t))
-    ((and in-section (line-is-section-header? (car lines)))
-     "")
-    ((and in-section (line-assigns-field? (car lines) field))
-     (extract-quoted-value (car lines)))
+      (toml-walk-field-in-section section field (cdr lines) #t))
+    ((and in-section (line-is-section-header? (car lines))) "")
+    ((and in-section (line-assigns-field? (car lines) field)) (extract-quoted-value (car lines)))
     (else (toml-walk-field-in-section section field (cdr lines) in-section))))
 
-(define (toml-read-field path section field)
-  (if (path-exists? path)
-    (toml-walk-field-in-section section field
-                                (string-split (read-file path) "\n")
-                                #f)
+(define
+  (toml-read-field path section field)
+  (if
+    (path-exists? path)
+    (toml-walk-field-in-section section field (string-split (read-file path) "\n") #f)
     ""))
 
 ;; Cargo-specific shorthands.
-(define (cargo-workspace-version)
-  (toml-read-field "Cargo.toml" "[workspace.package]" "version"))
+(define (cargo-workspace-version) (toml-read-field "Cargo.toml" "[workspace.package]" "version"))
 
-(define (cargo-package-version)
-  (toml-read-field "Cargo.toml" "[package]" "version"))
+(define (cargo-package-version) (toml-read-field "Cargo.toml" "[package]" "version"))
 
-(define (cargo-package-name)
-  (toml-read-field "Cargo.toml" "[package]" "name"))
+(define (cargo-package-name) (toml-read-field "Cargo.toml" "[package]" "name"))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; VERIFIED TEXT MUTATION — the mutate-and-report-success-regardless seal
@@ -196,15 +198,18 @@
 ;; Occurrences of NEEDLE in S. Splitting on the needle yields one more piece
 ;; than there are matches. A "" needle would be meaningless here, so it is
 ;; reported as 0 matches rather than the split's sentinel count.
-(define (string-occurrence-count s needle)
+(define
+  (string-occurrence-count s needle)
   (if (equal? needle "") 0 (- (length (string-split s needle)) 1)))
 
-(define (replace-once-in-file-verified path needle replacement)
+(define
+  (replace-once-in-file-verified path needle replacement)
   (cond
     ((not (path-exists? path)) 'needle-absent)
     ((equal? needle "") 'needle-absent)
     (else
-      (let ((contents (read-file path)))
+      (let
+        ((contents (read-file path)))
         (cond
           ;; (1) needle absent → write NOTHING. A no-op write is the lie.
           ((not (string-contains? contents needle)) 'needle-absent)
@@ -214,7 +219,8 @@
           ;; (3) needle present but the edit is a tautology
           ((equal? needle replacement) 'unchanged)
           (else
-            (let ((wanted (string-replace contents needle replacement)))
+            (let
+              ((wanted (string-replace contents needle replacement)))
               (cond
                 ((equal? wanted contents) 'unchanged)
                 (else
@@ -227,34 +233,47 @@
 
 ;; Human-readable reason for a non-'replaced outcome, so every caller reports
 ;; the SAME diagnosis instead of inventing its own wording.
-(define (replace-outcome-reason outcome path needle)
+(define
+  (replace-outcome-reason outcome path needle)
   (cond
     ((equal? outcome 'needle-absent)
-     (string-append "needle not found in " path " — nothing was written. "
-                    "The file's shape has moved out from under this rewrite. "
-                    "Needle was: " needle))
+      (string-append
+        "needle not found in "
+        path
+        " — nothing was written. "
+        "The file's shape has moved out from under this rewrite. "
+        "Needle was: "
+        needle))
     ((equal? outcome 'needle-ambiguous)
-     (string-append "needle occurs MORE THAN ONCE in " path
-                    " — nothing was written, because string-replace would have "
-                    "rewritten every occurrence. Needle was: " needle))
+      (string-append
+        "needle occurs MORE THAN ONCE in "
+        path
+        " — nothing was written, because string-replace would have "
+        "rewritten every occurrence. Needle was: "
+        needle))
     ((equal? outcome 'unchanged)
-     (string-append "needle found in " path
-                    " but the replacement is byte-identical — no-op rewrite"))
+      (string-append
+        "needle found in "
+        path
+        " but the replacement is byte-identical — no-op rewrite"))
     ((equal? outcome 'write-mismatch)
-     (string-append "wrote " path
-                    " but re-reading it does NOT match what we wrote"))
+      (string-append "wrote " path " but re-reading it does NOT match what we wrote"))
     (else (string-append "unexpected replace outcome in " path))))
 
 ;; Mutate-or-abort. Use this wherever the rewrite landing is a PRECONDITION of
 ;; everything after it — which is every manifest rewrite followed by a commit.
 ;; Returns 'replaced or exits 1; there is no third path a caller can fumble.
-(define (replace-once-in-file-or-die path needle replacement)
-  (let ((outcome (replace-once-in-file-verified path needle replacement)))
+(define
+  (replace-once-in-file-or-die path needle replacement)
+  (let
+    ((outcome (replace-once-in-file-verified path needle replacement)))
     (cond
       ((equal? outcome 'replaced) 'replaced)
       (else
-        (log-error (string-append "replace-once-in-file-or-die: "
-                                 (replace-outcome-reason outcome path needle)))
+        (log-error
+          (string-append
+            "replace-once-in-file-or-die: "
+            (replace-outcome-reason outcome path needle)))
         (exit 1)))))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -276,19 +295,21 @@
 ;; whether it is `=0.3.3`, `^0.3.3`, `0.3.3`, or a shape nobody has met yet.
 
 ;; The verbatim line assigning FIELD inside SECTION, or "" if there is none.
-(define (toml-walk-line-in-section section field lines in-section)
+(define
+  (toml-walk-line-in-section section field lines in-section)
   (cond
     ((null? lines) "")
     ((line-is-named-section? (car lines) section)
-     (toml-walk-line-in-section section field (cdr lines) #t))
+      (toml-walk-line-in-section section field (cdr lines) #t))
     ((and in-section (line-is-section-header? (car lines))) "")
     ((and in-section (line-assigns-field? (car lines) field)) (car lines))
     (else (toml-walk-line-in-section section field (cdr lines) in-section))))
 
-(define (toml-line-in-section path section field)
-  (if (path-exists? path)
-    (toml-walk-line-in-section section field
-                              (string-split (read-file path) "\n") #f)
+(define
+  (toml-line-in-section path section field)
+  (if
+    (path-exists? path)
+    (toml-walk-line-in-section section field (string-split (read-file path) "\n") #f)
     ""))
 
 ;; #t iff S ends with SUFFIX. MEASURED: `(string-split "ab}" "")` yields
@@ -296,38 +317,40 @@
 ;; test written by splitting on "" reads the sentinel, not the character. This
 ;; is the honest formulation: S ends with SUFFIX exactly when splitting on
 ;; SUFFIX leaves a trailing empty piece.
-(define (string-suffix? s suffix)
-  (let ((parts (string-split s suffix)))
-    (and (>= (length parts) 2)
-         (equal? (car (reverse parts)) ""))))
+(define
+  (string-suffix? s suffix)
+  (let
+    ((parts (string-split s suffix)))
+    (and (>= (length parts) 2) (equal? (car (reverse parts)) ""))))
 
 ;; #t iff the trimmed line is a single-line inline table — `key = { … }`.
 ;; A multi-line table, or a bare `dep = "1.0"` string form, is NOT this shape
 ;; and must be refused LOUDLY rather than silently mangled.
-(define (toml-inline-table-line? line)
-  (let ((t (string-trim line)))
-    (and (string-contains? t "{")
-         (string-suffix? t "}"))))
+(define
+  (toml-inline-table-line? line)
+  (let ((t (string-trim line))) (and (string-contains? t "{") (string-suffix? t "}"))))
 
 ;; Add `, <key> = "<value>"` before the closing brace of an inline table line,
 ;; preserving every other byte — crucially the version requirement's `=`/`^`.
 ;; Returns "" when LINE is not a single-line inline table (caller must refuse).
-(define (toml-inline-table-add-key line key value)
+(define
+  (toml-inline-table-add-key line key value)
   (cond
     ((not (toml-inline-table-line? line)) "")
     (else
-      (let* ((t (string-trim line))
-             ;; drop the final `}` then re-trim, so `… "0.3.3" }` and
-             ;; `… "0.3.3"}` both normalize to the same body.
-             (body (string-trim
-                     (string-join "}" (reverse (cdr (reverse (string-split t "}")))))))
-             ;; a trailing comma inside the table would double up
-             (body2 (if (string-suffix? body ",")
-                      (string-trim
-                        (string-join "," (reverse (cdr (reverse (string-split body ","))))))
-                      body))
-             ;; keep the original leading indentation byte-for-byte
-             (indent (car (string-split line t))))
+      (let*
+        ((t (string-trim line))
+          ;; drop the final `}` then re-trim, so `… "0.3.3" }` and
+          ;; `… "0.3.3"}` both normalize to the same body.
+          (body (string-trim (string-join "}" (reverse (cdr (reverse (string-split t "}")))))))
+          ;; a trailing comma inside the table would double up
+          (body2
+            (if
+              (string-suffix? body ",")
+              (string-trim (string-join "," (reverse (cdr (reverse (string-split body ","))))))
+              body))
+          ;; keep the original leading indentation byte-for-byte
+          (indent (car (string-split line t))))
         (string-append indent body2 ", " key " = \"" value "\" }")))))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -345,17 +368,15 @@
 ;; triggers `gen build`; a regen that cannot restore the tie should be
 ;; treated as FATAL by the caller (pushing it bricks downstream evals).
 
-(define (gen-lock-committed-sha)
-  (json-read-field "Cargo.gen.lock" ".cargo_lock_sha256"))
+(define (gen-lock-committed-sha) (json-read-field "Cargo.gen.lock" ".cargo_lock_sha256"))
 
-(define (cargo-lock-sha)
-  (let ((r (exec-capture "sha256sum" "Cargo.lock")))
-    (if (= (status-of r) 0)
-      (car (string-split (string-trim (stdout-of r)) " "))
-      "")))
+(define
+  (cargo-lock-sha)
+  (let
+    ((r (exec-capture "sha256sum" "Cargo.lock")))
+    (if (= (status-of r) 0) (car (string-split (string-trim (stdout-of r)) " ")) "")))
 
-(define (gen-lock-fresh?)
-  (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
+(define (gen-lock-fresh?) (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
 
 ;; `gen build` shells out to the literal `cargo metadata` binary (not a
 ;; Nix-mediated call) to read the workspace graph. GitHub-hosted runners
@@ -369,20 +390,29 @@
 ;; install, identical on every runner regardless of what it ships with.
 ;; Every consumer of this helper (rust-workspace-bump, cargo-bump) is
 ;; fixed by this one change.
-(define (regen-gen-lock)
-  (exec-capture "nix" "shell" "nixpkgs#cargo" "--command"
-                "nix" "run" "github:pleme-io/gen" "--" "build" "."))
+(define
+  (regen-gen-lock)
+  (exec-capture
+    "nix"
+    "shell"
+    "nixpkgs#cargo"
+    "--command"
+    "nix"
+    "run"
+    "github:pleme-io/gen"
+    "--"
+    "build"
+    "."))
 
-(define (ensure-gen-lock-fresh)
+(define
+  (ensure-gen-lock-fresh)
   (cond
     ((not (path-exists? "Cargo.gen.lock")) #t)
     ((gen-lock-fresh?) #t)
     (else
       (regen-gen-lock)
       (cond
-        ((gen-lock-fresh?)
-         (log-info "Cargo.gen.lock regenerated (D2 tie restored)")
-         #t)
+        ((gen-lock-fresh?) (log-info "Cargo.gen.lock regenerated (D2 tie restored)") #t)
         (else #f)))))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -393,53 +423,63 @@
 ;; chunk (cargo publish's stderr/stdout merged) and returns #t if the
 ;; named failure-mode pattern is present.
 
-(define (any-line-matches? lines pred)
-  (cond
-    ((null? lines) #f)
-    ((pred (car lines)) #t)
-    (else (any-line-matches? (cdr lines) pred))))
+(define
+  (any-line-matches? lines pred)
+  (cond ((null? lines) #f) ((pred (car lines)) #t) (else (any-line-matches? (cdr lines) pred))))
 
-(define (cargo-publish-already-uploaded-line? line)
-  (or (string-contains? line "already exists on crates.io")
-      (string-contains? line "already uploaded")
-      (string-contains? line "was already published")))
+(define
+  (cargo-publish-already-uploaded-line? line)
+  (or
+    (string-contains? line "already exists on crates.io")
+    (string-contains? line "already uploaded")
+    (string-contains? line "was already published")))
 
-(define (cargo-publish-already-uploaded? log)
+(define
+  (cargo-publish-already-uploaded? log)
   (any-line-matches? (string-split log "\n") cargo-publish-already-uploaded-line?))
 
-(define (cargo-publish-conflict-line? line)
-  (or (string-contains? line "is already in use")
-      (string-contains? line "is already taken")
-      (string-contains? line "is already on the registry")
-      (string-contains? line "crate name is not allowed")
-      ;; crates.io 403 when the name exists under a DIFFERENT owner —
-      ;; the canonical rename-to-pleme-io-<name> trigger (was previously
-      ;; unrecognized → 'failed, e.g. the `tear` crate 2026-07-17).
-      (string-contains? line "seem to be an owner")
-      (string-contains? line "Unauthorized")
-      (string-contains? line "denied")
-      (string-contains? line "Invalid token")))
+(define
+  (cargo-publish-conflict-line? line)
+  (or
+    (string-contains? line "is already in use")
+    (string-contains? line "is already taken")
+    (string-contains? line "is already on the registry")
+    (string-contains? line "crate name is not allowed")
+    ;; crates.io 403 when the name exists under a DIFFERENT owner —
+    ;; the canonical rename-to-pleme-io-<name> trigger (was previously
+    ;; unrecognized → 'failed, e.g. the `tear` crate 2026-07-17).
+    (string-contains? line "seem to be an owner")
+    (string-contains? line "Unauthorized")
+    (string-contains? line "denied")
+    (string-contains? line "Invalid token")))
 
-(define (cargo-publish-conflict? log)
+(define
+  (cargo-publish-conflict? log)
   (any-line-matches? (string-split log "\n") cargo-publish-conflict-line?))
 
-(define (cargo-publish-rate-limited-line? line)
-  (or (string-contains? line "status 429 Too Many Requests")
-      (string-contains? line "published too many new crates")
-      (string-contains? line "rate-limits")
-      (string-contains? line "429 Too Many")))
+(define
+  (cargo-publish-rate-limited-line? line)
+  (or
+    (string-contains? line "status 429 Too Many Requests")
+    (string-contains? line "published too many new crates")
+    (string-contains? line "rate-limits")
+    (string-contains? line "429 Too Many")))
 
-(define (cargo-publish-rate-limited? log)
+(define
+  (cargo-publish-rate-limited? log)
   (any-line-matches? (string-split log "\n") cargo-publish-rate-limited-line?))
 
-(define (cargo-publish-dep-missing-line? line)
+(define
+  (cargo-publish-dep-missing-line? line)
   ;; cargo emits "no matching package named `X` found" when a workspace
   ;; dep isn't yet on the registry — i.e. the dep wasn't published
   ;; first; defer this crate + retry after a full pass.
-  (or (string-contains? line "no matching package named")
-      (string-contains? line "failed to select a version for")))
+  (or
+    (string-contains? line "no matching package named")
+    (string-contains? line "failed to select a version for")))
 
-(define (cargo-publish-dep-missing? log)
+(define
+  (cargo-publish-dep-missing? log)
   (any-line-matches? (string-split log "\n") cargo-publish-dep-missing-line?))
 
 ;; Classify an arbitrary cargo publish output into a typed outcome
@@ -452,7 +492,8 @@
 ;;   'rate-limited      — 429, back off and retry
 ;;   'dep-missing       — workspace dep not yet on registry; defer
 ;;   'failed            — unrecognized failure, surface to operator
-(define (classify-cargo-publish-outcome log status)
+(define
+  (classify-cargo-publish-outcome log status)
   (cond
     ((= status 0) 'published)
     ((cargo-publish-already-uploaded? log) 'already-uploaded)
@@ -483,74 +524,86 @@
 ;;   "git-dependency: <line>"       — a git dep in a shipped table (never lands)
 ;;   "path-dep-no-version: <line>"  — a versionless path dep in a shipped table
 
-(define (shipped-dep-table? section)
+(define
+  (shipped-dep-table? section)
   ;; a dependency table whose deps ship with the crate (so each needs a
   ;; version). [dev-dependencies] and [target.*.dev-dependencies] are exempt.
-  (and (string-contains? section "dependencies")
-       (not (string-contains? section "dev-dependencies"))))
+  (and
+    (string-contains? section "dependencies")
+    (not (string-contains? section "dev-dependencies"))))
 
-(define (not-comment-line? line)
+(define
+  (not-comment-line? line)
   ;; #t unless the trimmed line is a pure comment (text before the first '#'
   ;; is empty). A trailing comment on a real dep line keeps it a dep line.
   (not (equal? (string-trim (car (string-split (string-trim line) "#"))) "")))
 
-(define (line-declares-git-dep? line)
-  (and (not-comment-line? line)
-       (or (string-contains? line "git = \"") (string-contains? line "git=\""))))
+(define
+  (line-declares-git-dep? line)
+  (and
+    (not-comment-line? line)
+    (or (string-contains? line "git = \"") (string-contains? line "git=\""))))
 
-(define (line-declares-pathless-version-dep? line)
-  (and (not-comment-line? line)
-       (or (string-contains? line "path = \"") (string-contains? line "path=\""))
-       (not (string-contains? line "version"))))
+(define
+  (line-declares-pathless-version-dep? line)
+  (and
+    (not-comment-line? line)
+    (or (string-contains? line "path = \"") (string-contains? line "path=\""))
+    (not (string-contains? line "version"))))
 
-(define (walk-publish-blockers lines in-shipped acc)
+(define
+  (walk-publish-blockers lines in-shipped acc)
   (cond
     ((null? lines) (reverse acc))
     ((line-is-section-header? (car lines))
-     (walk-publish-blockers (cdr lines)
-                            (shipped-dep-table? (string-trim (car lines)))
-                            acc))
+      (walk-publish-blockers (cdr lines) (shipped-dep-table? (string-trim (car lines))) acc))
     ((and in-shipped (line-declares-git-dep? (car lines)))
-     (walk-publish-blockers (cdr lines) in-shipped
-                            (cons (string-append "git-dependency: " (string-trim (car lines))) acc)))
+      (walk-publish-blockers
+        (cdr lines)
+        in-shipped
+        (cons (string-append "git-dependency: " (string-trim (car lines))) acc)))
     ((and in-shipped (line-declares-pathless-version-dep? (car lines)))
-     (walk-publish-blockers (cdr lines) in-shipped
-                            (cons (string-append "path-dep-no-version: " (string-trim (car lines))) acc)))
+      (walk-publish-blockers
+        (cdr lines)
+        in-shipped
+        (cons (string-append "path-dep-no-version: " (string-trim (car lines))) acc)))
     (else (walk-publish-blockers (cdr lines) in-shipped acc))))
 
 ;; The list of publish blockers in a Cargo.toml's text (empty = publishable).
-(define (manifest-publish-blockers toml-text)
+(define
+  (manifest-publish-blockers toml-text)
   (walk-publish-blockers (string-split toml-text "\n") #f '()))
 
 ;; #t iff the manifest is structurally publishable to crates.io.
-(define (manifest-publishable? toml-text)
-  (null? (manifest-publish-blockers toml-text)))
+(define (manifest-publishable? toml-text) (null? (manifest-publish-blockers toml-text)))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; git introspection
 ;; ────────────────────────────────────────────────────────────────
 
-(define (last-tag)
-  (let ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
-    (if (= (status-of r) 0)
-      (string-trim (stdout-of r))
-      "")))
+(define
+  (last-tag)
+  (let
+    ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
 
-(define (has-changes-since? tag paths)
+(define
+  (has-changes-since? tag paths)
   ;; tag may be "" (no prior tag); treat as "always has changes"
   ;; so first-release flows always bump.
   (cond
     ((equal? tag "") #t)
     (else
-      (let* ((path-list (string-split paths " "))
-             (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
-             (r (apply exec-capture (cons "git" args))))
+      (let*
+        ((path-list (string-split paths " "))
+          (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
+          (r (apply exec-capture (cons "git" args))))
         (not (= (status-of r) 0))))))
 
-(define (configure-git-bot)
+(define
+  (configure-git-bot)
   (exec-check "git" "config" "user.name" "github-actions[bot]")
-  (exec-check "git" "config" "user.email"
-              "41898282+github-actions[bot]@users.noreply.github.com")
+  (exec-check "git" "config" "user.email" "41898282+github-actions[bot]@users.noreply.github.com")
   ;; Docker action mode safety — runner UID rarely matches the
   ;; workspace owner; without safe.directory, git refuses every
   ;; mutation with "fatal: detected dubious ownership".
@@ -580,15 +633,20 @@
 ;; Run CMD-LIST (a list of strings) with inherited stdio. Returns 0
 ;; on success; on any non-zero child exit, log the failing command +
 ;; code and abort the whole action with that code.
-(define (exec-or-die cmd-list)
-  (let ((status (apply exec-check cmd-list)))
+(define
+  (exec-or-die cmd-list)
+  (let
+    ((status (apply exec-check cmd-list)))
     (cond
       ((= status 0) 0)
       (else
-        (log-error (string-append "exec-or-die: `"
-                                  (string-join " " cmd-list)
-                                  "` failed (exit "
-                                  (string-format "{}" status) ")"))
+        (log-error
+          (string-append
+            "exec-or-die: `"
+            (string-join " " cmd-list)
+            "` failed (exit "
+            (string-format "{}" status)
+            ")"))
         (exit status)))))
 
 ;; #t iff TAG already exists as a local ref. `git rev-parse --verify
@@ -596,9 +654,12 @@
 ;; otherwise. Guards against re-creating a tag on a new commit
 ;; (version skew) — `git tag -a <existing>` fails, but exec-check
 ;; returns that code rather than raising, so callers must guard.
-(define (git-tag-exists? tag)
-  (= 0 (status-of (exec-capture "git" "rev-parse" "--verify" "--quiet"
-                                (string-append "refs/tags/" tag)))))
+(define
+  (git-tag-exists? tag)
+  (=
+    0
+    (status-of
+      (exec-capture "git" "rev-parse" "--verify" "--quiet" (string-append "refs/tags/" tag)))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; Generic string prefix helpers. First consumer is the `semver:`
@@ -610,17 +671,18 @@
 ;; #t iff S starts with PREFIX. Expressed via string-split because there
 ;; is no char indexing here: splitting on the prefix yields ≥2 pieces AND
 ;; nothing precedes the first occurrence.
-(define (string-prefix? s prefix)
+(define
+  (string-prefix? s prefix)
   (cond
     ((equal? prefix "") #t)
     (else
-      (let ((parts (string-split s prefix)))
-        (and (>= (length parts) 2) (equal? (car parts) ""))))))
+      (let ((parts (string-split s prefix))) (and (>= (length parts) 2) (equal? (car parts) ""))))))
 
 ;; S with ONE leading PREFIX removed; S unchanged when it does not start
 ;; with PREFIX. Re-joins on the prefix so a LATER occurrence survives:
 ;; ("vv1.0.0", "v") -> "v1.0.0", never "1.0.0".
-(define (string-strip-prefix s prefix)
+(define
+  (string-strip-prefix s prefix)
   (cond
     ((equal? prefix "") s)
     ((not (string-prefix? s prefix)) s)
@@ -668,32 +730,33 @@
 ;; `read-string` RAISES on an empty source, so the "" guard comes first;
 ;; `integer?` is what separates a parsed Int from the symbol read-string
 ;; hands back for non-numeric text.
-(define (semver:segment s)
-  (cond
-    ((equal? s "") -1)
-    (else (let ((v (read-string s))) (if (integer? v) v -1)))))
+(define
+  (semver:segment s)
+  (cond ((equal? s "") -1) (else (let ((v (read-string s))) (if (integer? v) v -1)))))
 
 ;; (major minor patch) for a bare X.Y.Z; '() for anything else. Two-segment,
 ;; four-segment, pre-release and build-metadata versions are EXCLUDED from
 ;; ranking rather than coerced into it.
-(define (semver:parse v)
-  (let ((parts (string-split v ".")))
+(define
+  (semver:parse v)
+  (let
+    ((parts (string-split v ".")))
     (cond
       ((not (= (length parts) 3)) '())
       (else
-        (let ((a (semver:segment (car parts)))
-              (b (semver:segment (car (cdr parts))))
-              (c (semver:segment (car (cdr (cdr parts))))))
-          (cond
-            ((or (< a 0) (< b 0) (< c 0)) '())
-            (else (list a b c))))))))
+        (let
+          ((a (semver:segment (car parts)))
+            (b (semver:segment (car (cdr parts))))
+            (c (semver:segment (car (cdr (cdr parts))))))
+          (cond ((or (< a 0) (< b 0) (< c 0)) '()) (else (list a b c))))))))
 
 (define (semver:valid? v) (not (null? (semver:parse v))))
 
 ;; Strict numeric ordering on parsed segment lists: major, then minor,
 ;; then patch. This is the entire reason the block exists — 0.10.0 beats
 ;; 0.9.0 here and loses to it under every string comparison.
-(define (semver:parts-gt? pa pb)
+(define
+  (semver:parts-gt? pa pb)
   (cond
     ((> (car pa) (car pb)) #t)
     ((< (car pa) (car pb)) #f)
@@ -704,12 +767,15 @@
 ;; #t iff A is strictly greater than B, numerically. FAIL-CLOSED: an
 ;; unrankable side is never "greater", so a caller gating on this refuses
 ;; rather than waving through.
-(define (semver:gt? a b)
-  (let ((pa (semver:parse a)) (pb (semver:parse b)))
+(define
+  (semver:gt? a b)
+  (let
+    ((pa (semver:parse a)) (pb (semver:parse b)))
     (and (not (null? pa)) (not (null? pb)) (semver:parts-gt? pa pb))))
 
 ;; The numerically-highest bare X.Y.Z in VS; "" when VS holds none.
-(define (semver:max-fold vs best)
+(define
+  (semver:max-fold vs best)
   (cond
     ((null? vs) best)
     ((not (semver:valid? (car vs))) (semver:max-fold (cdr vs) best))
@@ -724,25 +790,26 @@
 ;; always shipped; "" for an unknown type, which every caller treats as a
 ;; hard failure. Plain integer arithmetic on three segments — no cargo, no
 ;; awk, no subprocess, so it is unit-testable directly.
-(define (semver:bump-segment parts idx)
+(define
+  (semver:bump-segment parts idx)
   (cond
     ((and (= idx 0) (>= (length parts) 1)) (read-string (car parts)))
     ((and (= idx 1) (>= (length parts) 2)) (read-string (car (cdr parts))))
     ((and (= idx 2) (>= (length parts) 3)) (read-string (car (cdr (cdr parts)))))
     (else 0)))
 
-(define (semver:bump version type)
-  (let* ((parts (string-split version "."))
-         (major (semver:bump-segment parts 0))
-         (minor (semver:bump-segment parts 1))
-         (patch (semver:bump-segment parts 2)))
+(define
+  (semver:bump version type)
+  (let*
+    ((parts (string-split version "."))
+      (major (semver:bump-segment parts 0))
+      (minor (semver:bump-segment parts 1))
+      (patch (semver:bump-segment parts 2)))
     (cond
       ((equal? type "patch")
-       (string-append (pr-str major) "." (pr-str minor) "." (pr-str (+ patch 1))))
-      ((equal? type "minor")
-       (string-append (pr-str major) "." (pr-str (+ minor 1)) ".0"))
-      ((equal? type "major")
-       (string-append (pr-str (+ major 1)) ".0.0"))
+        (string-append (pr-str major) "." (pr-str minor) "." (pr-str (+ patch 1))))
+      ((equal? type "minor") (string-append (pr-str major) "." (pr-str (+ minor 1)) ".0"))
+      ((equal? type "major") (string-append (pr-str (+ major 1)) ".0.0"))
       (else ""))))
 
 ;; Every LOCAL tag name. Deliberately UNSORTED — ordering is semver:max's
@@ -750,13 +817,16 @@
 ;; Requires tags in the checkout; every substrate release workflow checks
 ;; out with `fetch-depth: 0`, which brings them (verified 2026-07-27
 ;; across all 7 git-commit-tag-routing reusables).
-(define (git:tag-names)
-  (let ((r (exec-capture "git" "tag" "--list")))
+(define
+  (git:tag-names)
+  (let
+    ((r (exec-capture "git" "tag" "--list")))
     (cond
       ((not (= (status-of r) 0)) '())
       (else
-        (filter (lambda (l) (not (equal? l "")))
-                (map string-trim (string-split (stdout-of r) "\n")))))))
+        (filter
+          (lambda (l) (not (equal? l "")))
+          (map string-trim (string-split (stdout-of r) "\n")))))))
 
 ;; The highest released version as a BARE X.Y.Z, over tags shaped
 ;; <prefix>X.Y.Z. "" iff the repo has released no rankable version yet.
@@ -769,10 +839,12 @@
 ;; (v0.8.18-pleme.1). Each is excluded by prefix or by semver:parse, so a
 ;; component tag can never gate a root release and an image tag can never
 ;; be mistaken for a version.
-(define (git:max-released-version prefix)
+(define
+  (git:max-released-version prefix)
   (semver:max
-    (map (lambda (t) (string-strip-prefix t prefix))
-         (filter (lambda (t) (string-prefix? t prefix)) (git:tag-names)))))
+    (map
+      (lambda (t) (string-strip-prefix t prefix))
+      (filter (lambda (t) (string-prefix? t prefix)) (git:tag-names)))))
 
 ;; ── THE INVARIANT — one definition, every consumer ──────────────
 
@@ -781,11 +853,9 @@
 ;; the one case where there is nothing to regress below, so the gate is
 ;; vacuous BY DEFINITION rather than by accident. An unrankable NEW-V
 ;; never passes.
-(define (semver:release-monotone? new-v max-v)
-  (cond
-    ((not (semver:valid? new-v)) #f)
-    ((equal? max-v "") #t)
-    (else (semver:gt? new-v max-v))))
+(define
+  (semver:release-monotone? new-v max-v)
+  (cond ((not (semver:valid? new-v)) #f) ((equal? max-v "") #t) (else (semver:gt? new-v max-v))))
 
 ;; The version a bump must start FROM: the higher of what the manifest
 ;; says and what has actually been released. Seeding from the manifest
@@ -793,7 +863,8 @@
 ;; the repo already passed, and the release walks backward. Seeding from
 ;; the max makes a below-max result unreachable by the arithmetic rather
 ;; than caught after the fact.
-(define (semver:bump-seed committed-v max-v)
+(define
+  (semver:bump-seed committed-v max-v)
   (cond
     ((equal? max-v "") committed-v)
     ((not (semver:valid? committed-v)) max-v)
@@ -804,90 +875,90 @@
 ;; Log scanning — match any line by predicate
 ;; ────────────────────────────────────────────────────────────────
 
-(define (any-line-matches? lines pred)
-  (cond
-    ((null? lines) #f)
-    ((pred (car lines)) #t)
-    (else (any-line-matches? (cdr lines) pred))))
+(define
+  (any-line-matches? lines pred)
+  (cond ((null? lines) #f) ((pred (car lines)) #t) (else (any-line-matches? (cdr lines) pred))))
 
-(define (log-contains? log substr)
-  (any-line-matches? (string-split log "\n")
-                     (lambda (line) (string-contains? line substr))))
+(define
+  (log-contains? log substr)
+  (any-line-matches? (string-split log "\n") (lambda (line) (string-contains? line substr))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; HTTP existence probe (uses curl since tatara-lisp's http-get
 ;; raises on 404; we want a (200|404) → bool answer instead).
 ;; ────────────────────────────────────────────────────────────────
 
-(define (http-200? url)
-  (let* ((r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url))
-         (code (stdout-of r)))
+(define
+  (http-200? url)
+  (let*
+    ((r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url)) (code (stdout-of r)))
     (equal? code "200")))
 
 ;; Crates.io specific.
-(define (cargo-published? name version)
-  (http-200? (string-append "https://crates.io/api/v1/crates/"
-                            name "/" version)))
+(define
+  (cargo-published? name version)
+  (http-200? (string-append "https://crates.io/api/v1/crates/" name "/" version)))
 
 ;; npm registry (with @scope/name URL-encoding).
-(define (npm-published? name version)
-  (let* ((u1 (string-replace name "@" "%40"))
-         (u2 (string-replace u1 "/" "%2F"))
-         (url (string-append "https://registry.npmjs.org/" u2 "/" version)))
+(define
+  (npm-published? name version)
+  (let*
+    ((u1 (string-replace name "@" "%40"))
+      (u2 (string-replace u1 "/" "%2F"))
+      (url (string-append "https://registry.npmjs.org/" u2 "/" version)))
     (http-200? url)))
 
 ;; pypi version-specific JSON endpoint.
-(define (pypi-published? name version)
+(define
+  (pypi-published? name version)
   (http-200? (string-append "https://pypi.org/pypi/" name "/" version "/json")))
 
 ;; Helm OCI registry probe (v2 manifest endpoint).
-(define (helm-published? registry name version)
-  (let* ((host (string-replace registry "ghcr.io" "ghcr.io/v2"))
-         (url (string-append "https://" host "/" name "/manifests/" version)))
+(define
+  (helm-published? registry name version)
+  (let*
+    ((host (string-replace registry "ghcr.io" "ghcr.io/v2"))
+      (url (string-append "https://" host "/" name "/manifests/" version)))
     (http-200? url)))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; JSON manifest field reader (uses jq via shell)
 ;; ────────────────────────────────────────────────────────────────
 
-(define (json-read-field path field)
+(define
+  (json-read-field path field)
   ;; field is a jq path expression: "name" or ".dependencies.foo"
-  (let ((r (exec-capture "sh" "-c"
-              (string-append "jq -r '" field "' " path " 2>/dev/null"))))
-    (if (= (status-of r) 0)
-      (let ((v (string-trim (stdout-of r))))
-        (if (equal? v "null") "" v))
-      "")))
+  (let
+    ((r (exec-capture "sh" "-c" (string-append "jq -r '" field "' " path " 2>/dev/null"))))
+    (if (= (status-of r) 0) (let ((v (string-trim (stdout-of r)))) (if (equal? v "null") "" v)) "")))
 
 ;; npm-specific shorthands.
 (define (npm-package-name) (json-read-field "package.json" ".name"))
+
 (define (npm-package-version) (json-read-field "package.json" ".version"))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; YAML manifest field reader (uses yq via shell)
 ;; ────────────────────────────────────────────────────────────────
 
-(define (yaml-read-field path field)
-  (let ((r (exec-capture "sh" "-c"
-              (string-append "yq '" field "' " path " 2>/dev/null"))))
-    (if (= (status-of r) 0)
-      (let ((v (string-trim (stdout-of r))))
-        (if (equal? v "null") "" v))
-      "")))
+(define
+  (yaml-read-field path field)
+  (let
+    ((r (exec-capture "sh" "-c" (string-append "yq '" field "' " path " 2>/dev/null"))))
+    (if (= (status-of r) 0) (let ((v (string-trim (stdout-of r)))) (if (equal? v "null") "" v)) "")))
 
 ;; Helm Chart.yaml shorthands.
 (define (helm-chart-name) (yaml-read-field "Chart.yaml" ".name"))
+
 (define (helm-chart-version) (yaml-read-field "Chart.yaml" ".version"))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; Python pyproject.toml shorthands (uses the TOML walker above)
 ;; ────────────────────────────────────────────────────────────────
 
-(define (pyproject-name)
-  (toml-read-field "pyproject.toml" "[project]" "name"))
+(define (pyproject-name) (toml-read-field "pyproject.toml" "[project]" "name"))
 
-(define (pyproject-version)
-  (toml-read-field "pyproject.toml" "[project]" "version"))
+(define (pyproject-version) (toml-read-field "pyproject.toml" "[project]" "version"))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; .pleme-io-release.toml — per-repo defaults consumed by every
@@ -920,24 +991,24 @@
 
 ;; Read a field from .pleme-io-release.toml, fall back to default.
 ;; Uses the existing toml-read-field walker.
-(define (release-config-field section field default-value)
+(define
+  (release-config-field section field default-value)
   (cond
     ((not (path-exists? ".pleme-io-release.toml")) default-value)
     (else
-      (let ((v (toml-read-field ".pleme-io-release.toml"
-                                (string-append "[" section "]")
-                                field)))
+      (let
+        ((v (toml-read-field ".pleme-io-release.toml" (string-append "[" section "]") field)))
         (if (equal? v "") default-value v)))))
 
 ;; Resolve a value with precedence:
 ;;   env-var (workflow input)
 ;;     > .pleme-io-release.toml config
 ;;       > hardcoded default
-(define (config-resolve env-var section field default-value)
-  (let ((env-v (env-get env-var "")))
-    (cond
-      ((not (equal? env-v "")) env-v)
-      (else (release-config-field section field default-value)))))
+(define
+  (config-resolve env-var section field default-value)
+  (let
+    ((env-v (env-get env-var "")))
+    (cond ((not (equal? env-v "")) env-v) (else (release-config-field section field default-value)))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; super-cache-ci — sui service + tiered-cache helpers
@@ -955,54 +1026,52 @@
 
 ;; The sui-daemon-graph default UDS (sui-daemon-graph/src/main.rs:
 ;; SocketPath::for_app("sui-graph")).
-(define (supercache:default-uds)
+(define
+  (supercache:default-uds)
   (string-append (env-get "XDG_RUNTIME_DIR" "/run") "/sui-graph.sock"))
 
 ;; Resolve the sui service endpoint: env SUI_ENDPOINT
 ;;   > .pleme-io-release.toml [super-cache-ci] endpoint
 ;;     > the daemon's default UDS.
-(define (supercache:endpoint-resolve)
-  (config-resolve "SUI_ENDPOINT" "super-cache-ci" "endpoint"
-                  (supercache:default-uds)))
+(define
+  (supercache:endpoint-resolve)
+  (config-resolve "SUI_ENDPOINT" "super-cache-ci" "endpoint" (supercache:default-uds)))
 
 ;; A UDS endpoint is a filesystem path (no host:port colon). A colon ⇒
 ;; a host:port TCP endpoint (a cluster `.svc`).
-(define (supercache:endpoint-is-uds? endpoint)
-  (not (string-contains? endpoint ":")))
+(define (supercache:endpoint-is-uds? endpoint) (not (string-contains? endpoint ":")))
 
 ;; Endpoint liveness. UDS ⇒ the socket file exists (the daemon bound
 ;; it). TCP (`.svc:port`) liveness needs a client ping the daemon does
 ;; not yet ship a CLI for — `sui-daemon-client` is a LIBRARY
 ;; (`DaemonClient`), not a binary — so it is a LiveTODO and returns #f.
-(define (supercache:endpoint-alive? endpoint)
-  (cond
-    ((supercache:endpoint-is-uds? endpoint) (path-exists? endpoint))
-    (else #f)))
+(define
+  (supercache:endpoint-alive? endpoint)
+  (cond ((supercache:endpoint-is-uds? endpoint) (path-exists? endpoint)) (else #f)))
 
 ;; The honest structural never-touch-DURABLE-disk predicate
 ;; (SUPER-CACHE-CI.md §III): true ONLY when the store is Postgres AND the
 ;; cache is Redis AND the sandbox is tmpfs. A COMPUTED predicate, never a
 ;; claimed constant — ephemeral/graphstore/local/disk ⇒ #f. Tier-honesty
 ;; is CI-caught here, not prose.
-(define (supercache:never-touch-disk? store cache sandbox)
-  (and (equal? store "postgres")
-       (equal? cache "redis")
-       (equal? sandbox "tmpfs")))
+(define
+  (supercache:never-touch-disk? store cache sandbox)
+  (and (equal? store "postgres") (equal? cache "redis") (equal? sandbox "tmpfs")))
 
 ;; Content-addressed client-side cache key: sha256 over the build-spec
 ;; file. This is the RESTORE↔BUILD↔SAVE lookup key threaded across the
 ;; verbs; the daemon's derivation-level BLAKE3 store address remains
 ;; authoritative for store-level dedup. Returns "" when the spec is
 ;; absent (an unresolvable key ⇒ an honest miss downstream).
-(define (supercache:content-key spec-path)
+(define
+  (supercache:content-key spec-path)
   (cond
     ((equal? spec-path "") "")
     ((not (path-exists? spec-path)) "")
     (else
-      (let ((r (exec-capture "sha256sum" spec-path)))
-        (if (= (status-of r) 0)
-          (car (string-split (string-trim (stdout-of r)) " "))
-          "")))))
+      (let
+        ((r (exec-capture "sha256sum" spec-path)))
+        (if (= (status-of r) 0) (car (string-split (string-trim (stdout-of r)) " ")) "")))))
 
 ;; Local content-addressed object tier (the now-path). The Redis L1 /
 ;; Postgres L2 tiers are LiveTODO behind sui-cache::StorageBackend /
@@ -1010,24 +1079,21 @@
 ;; the space-separated output list — write-if-absent, content-addressed,
 ;; NO lock (the eliminate-the-shared-cell property: two runners saving the
 ;; same key produce identical content, so a race is benign).
-(define (supercache:cache-dir)
-  (config-resolve "SUI_CACHE_DIR" "super-cache-ci" "cache-dir" ""))
+(define (supercache:cache-dir) (config-resolve "SUI_CACHE_DIR" "super-cache-ci" "cache-dir" ""))
 
-(define (supercache:local-entry-path dir key)
-  (string-append dir "/" key ".entry"))
+(define (supercache:local-entry-path dir key) (string-append dir "/" key ".entry"))
 
-(define (supercache:cache-local-has? dir key)
-  (and (not (equal? dir ""))
-       (not (equal? key ""))
-       (path-exists? (supercache:local-entry-path dir key))))
+(define
+  (supercache:cache-local-has? dir key)
+  (and
+    (not (equal? dir ""))
+    (not (equal? key ""))
+    (path-exists? (supercache:local-entry-path dir key))))
 
 ;; Classify a probe result into a tier string. The now-path resolves only
 ;; the local object tier or a miss; redis|pg are LiveTODO (they never
 ;; classify true until TieredBackend + RedisBackend land).
-(define (supercache:classify-tier local-hit?)
-  (cond
-    (local-hit? "object")
-    (else "miss")))
+(define (supercache:classify-tier local-hit?) (cond (local-hit? "object") (else "miss")))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; flakeinput: — flake-input SOURCE FOD store-path algebra (the WARM
@@ -1063,53 +1129,71 @@
 ;; "flake.lock" is not one). readlink -f is on every runner + the nixos/nix
 ;; image; on failure the input passes through unchanged (an already-absolute
 ;; path is idempotent under readlink -f).
-(define (flakeinput:abs-path p)
-  (let ((r (exec-capture "readlink" "-f" p)))
+(define
+  (flakeinput:abs-path p)
+  (let
+    ((r (exec-capture "readlink" "-f" p)))
     (if (= (status-of r) 0) (string-trim (stdout-of r)) p)))
 
 ;; The locked narHash of input <name> read straight from a flake.lock via
 ;; pure-nix builtins.fromJSON (no jq). flake-lock may be relative — it is
 ;; resolved to absolute here. "" on any failure (missing node, unreadable
 ;; lock, nix error).
-(define (flakeinput:narhash flake-lock name)
-  (let ((r (exec-capture "nix" "eval" "--impure" "--raw" "--expr"
-             (string-append
-               "let l = builtins.fromJSON (builtins.readFile "
-               (flakeinput:abs-path flake-lock)
-               "); in l.nodes.\"" name "\".locked.narHash"))))
+(define
+  (flakeinput:narhash flake-lock name)
+  (let
+    ((r
+       (exec-capture
+         "nix"
+         "eval"
+         "--impure"
+         "--raw"
+         "--expr"
+         (string-append
+           "let l = builtins.fromJSON (builtins.readFile "
+           (flakeinput:abs-path flake-lock)
+           "); in l.nodes.\""
+           name
+           "\".locked.narHash"))))
     (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
 
 ;; nix32(base32)-encode an SRI/other-form sha256 narHash across nix
 ;; versions: `nix hash convert` (nix 2.19+) first, else the older
 ;; `nix hash to-base32`. "" iff neither is available/succeeds.
-(define (flakeinput:narhash->nix32 narhash)
-  (let ((c (exec-capture "nix" "hash" "convert" "--hash-algo" "sha256"
-                         "--to" "nix32" narhash)))
+(define
+  (flakeinput:narhash->nix32 narhash)
+  (let
+    ((c (exec-capture "nix" "hash" "convert" "--hash-algo" "sha256" "--to" "nix32" narhash)))
     (cond
       ((= (status-of c) 0) (string-trim (stdout-of c)))
       (else
-       (let ((o (exec-capture "nix" "hash" "to-base32" narhash)))
-         (if (= (status-of o) 0) (string-trim (stdout-of o)) ""))))))
+        (let
+          ((o (exec-capture "nix" "hash" "to-base32" narhash)))
+          (if (= (status-of o) 0) (string-trim (stdout-of o)) ""))))))
 
 ;; The fixed-output SOURCE store path for a locked narHash (recursive
 ;; sha256, tree name "source") — `nix-store --print-fixed-path` over the
 ;; nix32-encoded hash. "" on any failure.
-(define (flakeinput:narhash->source-path narhash)
+(define
+  (flakeinput:narhash->source-path narhash)
   (cond
     ((equal? narhash "") "")
     (else
-     (let ((b32 (flakeinput:narhash->nix32 narhash)))
-       (cond
-         ((equal? b32 "") "")
-         (else
-          (let ((pr (exec-capture "nix-store" "--print-fixed-path"
-                                  "--recursive" "sha256" b32 "source")))
-            (if (= (status-of pr) 0) (string-trim (stdout-of pr)) ""))))))))
+      (let
+        ((b32 (flakeinput:narhash->nix32 narhash)))
+        (cond
+          ((equal? b32 "") "")
+          (else
+            (let
+              ((pr
+                 (exec-capture "nix-store" "--print-fixed-path" "--recursive" "sha256" b32 "source")))
+              (if (= (status-of pr) 0) (string-trim (stdout-of pr)) ""))))))))
 
 ;; The SOURCE store path for input <name> in <flake-lock> (absolute path).
 ;; "" iff the node/narHash/path can't be resolved — the caller treats ""
 ;; as an honest skip, NEVER a faked push/preseed.
-(define (flakeinput:source-path flake-lock name)
+(define
+  (flakeinput:source-path flake-lock name)
   (flakeinput:narhash->source-path (flakeinput:narhash flake-lock name)))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -1133,41 +1217,37 @@
 ;; The AUTOBUMP per-arch exact tag <arch>-r<run>-<sha> — sortable
 ;; (r<run> = the numeric key a Flux ImagePolicy extracts), immutable,
 ;; traceable (<sha>). NEVER a moving tag; NEVER a deploy `:latest`.
-(define (oci:autobump-tag arch run sha)
-  (string-append arch "-r" run "-" sha))
+(define (oci:autobump-tag arch run sha) (string-append arch "-r" run "-" sha))
 
 ;; The MULTI-ARCH index coordinate r<run>-<sha> (NO arch prefix — a
 ;; manifest list spans arches). Its per-arch children carry
 ;; oci:autobump-tag; the index tag is what an environment pins.
-(define (oci:index-tag run sha)
-  (string-append "r" run "-" sha))
+(define (oci:index-tag run sha) (string-append "r" run "-" sha))
 
 ;; The moving human pointer <arch>-latest — a convenience pointer that
 ;; is NEVER a deploy source (org ★★ AUTOBUMP law).
-(define (oci:moving-tag arch)
-  (string-append arch "-latest"))
+(define (oci:moving-tag arch) (string-append arch "-latest"))
 
 ;; Image base: an explicit `repo` wins; else compose registry/image.
-(define (oci:image-base repo registry image)
-  (cond
-    ((not (equal? repo "")) repo)
-    (else (string-append registry "/" image))))
+(define
+  (oci:image-base repo registry image)
+  (cond ((not (equal? repo "")) repo) (else (string-append registry "/" image))))
 
 ;; Compose a target base with a service repo-shape. Precedence:
 ;;   explicit `repo` > `registry/image` > `registry/<repo-prefix><svc>`.
 ;; "" when no target is resolvable (an honest need-target error). Shared
 ;; by zot-push + manifest-list-join (repo-prefix = "akeyless-" at the
 ;; akeyless call sites).
-(define (oci:compose-base repo registry image repo-prefix svc)
+(define
+  (oci:compose-base repo registry image repo-prefix svc)
   (cond
     ((not (equal? repo "")) repo)
     ((not (equal? image "")) (string-append registry "/" image))
-    ((not (equal? svc ""))  (string-append registry "/" repo-prefix svc))
+    ((not (equal? svc "")) (string-append registry "/" repo-prefix svc))
     (else "")))
 
 ;; Full ref = <base>:<tag>.
-(define (oci:target-ref base tag)
-  (string-append base ":" tag))
+(define (oci:target-ref base tag) (string-append base ":" tag))
 
 ;; A truthy string flag → bool.
 (define (oci:flag-true? s) (equal? (string-trim s) "true"))
@@ -1175,37 +1255,47 @@
 ;; skopeo copy docker-archive:<tarball> -> docker://<dst-ref>. Auth is
 ;; a pre-condition (docker login to the target registry). Returns the
 ;; child status (0 = ok). insecure? ⇒ --dest-tls-verify=false.
-(define (oci:skopeo-push-archive tarball dst-ref insecure?)
-  (let ((tls (if insecure? (list "--dest-tls-verify=false") (list))))
-    (status-of (apply exec-capture
-      (append (list "skopeo" "--insecure-policy" "copy")
-              tls
-              (list (string-append "docker-archive:" tarball)
-                    (string-append "docker://" dst-ref)))))))
+(define
+  (oci:skopeo-push-archive tarball dst-ref insecure?)
+  (let
+    ((tls (if insecure? (list "--dest-tls-verify=false") (list))))
+    (status-of
+      (apply
+        exec-capture
+        (append
+          (list "skopeo" "--insecure-policy" "copy")
+          tls
+          (list (string-append "docker-archive:" tarball) (string-append "docker://" dst-ref)))))))
 
 ;; skopeo copy docker://<src> -> docker://<dst> (moving-tag repush /
 ;; cross-registry promote). Returns the child status (0 = ok).
-(define (oci:skopeo-copy-remote src-ref dst-ref insecure?)
-  (let ((tls (if insecure?
-               (list "--src-tls-verify=false" "--dest-tls-verify=false")
-               (list))))
-    (status-of (apply exec-capture
-      (append (list "skopeo" "--insecure-policy" "copy")
-              tls
-              (list (string-append "docker://" src-ref)
-                    (string-append "docker://" dst-ref)))))))
+(define
+  (oci:skopeo-copy-remote src-ref dst-ref insecure?)
+  (let
+    ((tls (if insecure? (list "--src-tls-verify=false" "--dest-tls-verify=false") (list))))
+    (status-of
+      (apply
+        exec-capture
+        (append
+          (list "skopeo" "--insecure-policy" "copy")
+          tls
+          (list (string-append "docker://" src-ref) (string-append "docker://" dst-ref)))))))
 
 ;; The repository DIGEST of a pushed ref — the EXACT deploy coordinate
 ;; (what a manifest-list joins + what an environment pins by digest).
 ;; `skopeo inspect --format {{.Digest}}`. Returns "" on failure — the
 ;; caller must treat "" as an honest miss, NEVER emit a faked digest.
-(define (oci:skopeo-remote-digest ref insecure?)
-  (let* ((tls (if insecure? (list "--tls-verify=false") (list)))
-         (r (apply exec-capture
-              (append (list "skopeo" "--insecure-policy" "inspect"
-                            "--format" "{{.Digest}}")
-                      tls
-                      (list (string-append "docker://" ref))))))
+(define
+  (oci:skopeo-remote-digest ref insecure?)
+  (let*
+    ((tls (if insecure? (list "--tls-verify=false") (list)))
+      (r
+        (apply
+          exec-capture
+          (append
+            (list "skopeo" "--insecure-policy" "inspect" "--format" "{{.Digest}}")
+            tls
+            (list (string-append "docker://" ref))))))
     (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
 
 ;; Split a composed "<registry>/<image...>" base back into the two
@@ -1218,11 +1308,9 @@
 ;; run.tlisp` still carries its own local `zot:split-registry` /
 ;; `zot:split-image`; converging it onto these is a NAMED LiveTODO
 ;; (same follow-up-refactor discipline as the rest of this block).
-(define (oci:split-registry base)
-  (car (string-split base "/")))
+(define (oci:split-registry base) (car (string-split base "/")))
 
-(define (oci:split-image base)
-  (string-join "/" (cdr (string-split base "/"))))
+(define (oci:split-image base) (string-join "/" (cdr (string-split base "/"))))
 
 ;; Build the curl argv for fetching a pinned CA/leaf cert (PEM) --
 ;; pure, testable separately from the exec-capture side effect. Shared
@@ -1235,16 +1323,20 @@
 ;; `zot-push/run.tlisp` still carries its own local
 ;; `zot:ca-cert-curl-args` / `zot:fetch-ca-cert`; converging it onto
 ;; these is the same NAMED LiveTODO as oci:split-registry above.
-(define (oci:ca-cert-curl-args url path token)
-  (if (equal? token "")
+(define
+  (oci:ca-cert-curl-args url path token)
+  (if
+    (equal? token "")
     (list "curl" "-sL" "-f" "-o" path url)
     (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
 
 ;; Fetch the pinned CA cert to a local path via curl (universally
 ;; available on these runners). Returns the local path on success, ""
 ;; on failure -- an honest miss, never a silent lie.
-(define (oci:fetch-ca-cert url path token)
-  (let ((r (apply exec-capture (oci:ca-cert-curl-args url path token))))
+(define
+  (oci:fetch-ca-cert url path token)
+  (let
+    ((r (apply exec-capture (oci:ca-cert-curl-args url path token))))
     (if (= (status-of r) 0) path "")))
 
 ;; ────────────────────────────────────────────────────────────────
@@ -1260,22 +1352,20 @@
 ;; discipline as the oci: block above).
 ;; ────────────────────────────────────────────────────────────────
 
-(define (hash:cmd-present? name)
-  (= 0 (status-of (exec-capture "sh" "-c"
-                    (string-append "command -v " name " >/dev/null 2>&1")))))
+(define
+  (hash:cmd-present? name)
+  (= 0 (status-of (exec-capture "sh" "-c" (string-append "command -v " name " >/dev/null 2>&1")))))
 
 ;; First whitespace-delimited field of a b3sum result ("<hex>  <path>"),
 ;; or "" when the command failed.
-(define (hash:b3-first result)
-  (if (= (status-of result) 0)
-    (car (string-split (string-trim (stdout-of result)) " "))
-    ""))
+(define
+  (hash:b3-first result)
+  (if (= (status-of result) 0) (car (string-split (string-trim (stdout-of result)) " ")) ""))
 
 ;; BLAKE3 of a file: prefer on-PATH b3sum, fall back to nix. "" iff none.
-(define (hash:blake3-file path)
+(define
+  (hash:blake3-file path)
   (cond
-    ((hash:cmd-present? "b3sum")
-     (hash:b3-first (exec-capture "b3sum" path)))
-    ((hash:cmd-present? "nix")
-     (hash:b3-first (exec-capture "nix" "run" "nixpkgs#b3sum" "--" path)))
+    ((hash:cmd-present? "b3sum") (hash:b3-first (exec-capture "b3sum" path)))
+    ((hash:cmd-present? "nix") (hash:b3-first (exec-capture "nix" "run" "nixpkgs#b3sum" "--" path)))
     (else "")))

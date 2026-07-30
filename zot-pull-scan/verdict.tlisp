@@ -46,12 +46,14 @@
 
 ;; ── main: every side effect lives here ───────────────────────────
 
-(define (main)
-  (let* ((outcome (env-get "SCAN_OUTCOME" ""))
-         (severity (env-get "SCAN_SEVERITY" "none"))
-         (vuln-count (env-get "SCAN_VULN_COUNT" "0"))
-         (dest (env-get "DEST" "zot-pull.tar"))
-         (verdict (verdict-of outcome)))
+(define
+  (main)
+  (let*
+    ((outcome (env-get "SCAN_OUTCOME" ""))
+      (severity (env-get "SCAN_SEVERITY" "none"))
+      (vuln-count (env-get "SCAN_VULN_COUNT" "0"))
+      (dest (env-get "DEST" "zot-pull.tar"))
+      (verdict (verdict-of outcome)))
     (append-output (string-append "severity=" severity))
     (append-output (string-append "vuln-count=" vuln-count))
     (append-output (string-append "local-archive=" dest))
@@ -59,16 +61,21 @@
     (append-output (string-append "result=" verdict))
     (cond
       ((admitted-outcome? outcome)
-       (log-info (string-append "zot faucet ADMIT: severity " severity " below the configured threshold"))
-       0)
+        (log-info
+          (string-append "zot faucet ADMIT: severity " severity " below the configured threshold"))
+        0)
       (else
-       (log-error (string-append "zot faucet REJECT: scan outcome=" outcome
-                   " severity=" severity " — not admitted (image-scan's own gate is canonical; "
-                   "this stage never re-derives severity, only re-asserts its verdict)"))
-       1))))
+        (log-error
+          (string-append
+            "zot faucet REJECT: scan outcome="
+            outcome
+            " severity="
+            severity
+            " — not admitted (image-scan's own gate is canonical; "
+            "this stage never re-derives severity, only re-asserts its verdict)"))
+        1))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — zot-pull-scan verdict.tlisp helpers loaded; main skipped"))
-  (else
-   (exit (main))))
+    (log-info "TLISP_TEST=1 — zot-pull-scan verdict.tlisp helpers loaded; main skipped"))
+  (else (exit (main))))

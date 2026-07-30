@@ -51,77 +51,78 @@
 ;; here, so it stays the caller's one line — see every consumer reusable.
 
 ;; Typed fallback — mirrors registry-login's `rl:pick`, two rungs.
-(define (gc:pick a b)
-  (cond
-    ((not (equal? a "")) a)
-    (else b)))
+(define (gc:pick a b) (cond ((not (equal? a "")) a) (else b)))
 
-(define (gc:which bot gh)
-  (cond
-    ((not (equal? bot "")) "bot-pat")
-    ((not (equal? gh "")) "github-token")
-    (else "none")))
+(define
+  (gc:which bot gh)
+  (cond ((not (equal? bot "")) "bot-pat") ((not (equal? gh "")) "github-token") (else "none")))
 
 ;; Install the rewrite. Returns #t on success. The unset is best-effort by
 ;; design: a runner with no extraheader set (a job that never ran
 ;; actions/checkout) makes `--unset-all` exit non-zero, which is not a
 ;; failure of this action.
-(define (gc:configure host token)
-  (let* ((url (string-append "https://x-access-token:" token "@" host "/"))
-         (key (string-append "url." url ".insteadOf"))
-         (plain (string-append "https://" host "/"))
-         (hdr (string-append "http.https://" host "/.extraheader"))
-         ;; Unset FIRST — see the header comment; a surviving extraheader
-         ;; wins by prefix match and silently voids the rewrite.
-         (_unset (exec-capture "git" "config" "--global" "--unset-all" hdr))
-         (set (exec-capture "git" "config" "--global" key plain)))
+(define
+  (gc:configure host token)
+  (let*
+    ((url (string-append "https://x-access-token:" token "@" host "/"))
+      (key (string-append "url." url ".insteadOf"))
+      (plain (string-append "https://" host "/"))
+      (hdr (string-append "http.https://" host "/.extraheader"))
+      ;; Unset FIRST — see the header comment; a surviving extraheader
+      ;; wins by prefix match and silently voids the rewrite.
+      (_unset (exec-capture "git" "config" "--global" "--unset-all" hdr))
+      (set (exec-capture "git" "config" "--global" key plain)))
     (= (status-of set) 0)))
 
-(define (gc:run)
-  (let* ((bot   (env-get "BOT_PAT" ""))
-         (gh    (env-get "GITHUB_TOKEN" ""))
-         (host  (env-get "GIT_HOST" "github.com"))
-         (req   (equal? (env-get "REQUIRED" "false") "true"))
-         (token (gc:pick bot gh))
-         (which (gc:which bot gh)))
+(define
+  (gc:run)
+  (let*
+    ((bot (env-get "BOT_PAT" ""))
+      (gh (env-get "GITHUB_TOKEN" ""))
+      (host (env-get "GIT_HOST" "github.com"))
+      (req (equal? (env-get "REQUIRED" "false") "true"))
+      (token (gc:pick bot gh))
+      (which (gc:which bot gh)))
     (cond
       ((equal? token "")
-       ;; Never log a token; log only WHICH rung was taken.
-       (cond
-         (req
-          (log-error
-            (string-append
-              "git-credentials: no credential resolved for " host
-              " — BOT_PAT and GITHUB_TOKEN are both empty, and required=true. "
-              "A public repo should receive the org BOT_PAT; a PRIVATE repo on "
-              "the Free plan does not, and must set a repo-level BOT_PAT."))
-          (append-output "result=false")
-          1)
-         (else
-          (log-info
-            (string-append
-              "git-credentials: no credential provided — leaving git config "
-              "untouched (a repo with no private git dependencies needs none)"))
-          (append-output "result=false")
-          0)))
+        ;; Never log a token; log only WHICH rung was taken.
+        (cond
+          (req
+            (log-error
+              (string-append
+                "git-credentials: no credential resolved for "
+                host
+                " — BOT_PAT and GITHUB_TOKEN are both empty, and required=true. "
+                "A public repo should receive the org BOT_PAT; a PRIVATE repo on "
+                "the Free plan does not, and must set a repo-level BOT_PAT."))
+            (append-output "result=false")
+            1)
+          (else
+            (log-info
+              (string-append
+                "git-credentials: no credential provided — leaving git config "
+                "untouched (a repo with no private git dependencies needs none)"))
+            (append-output "result=false")
+            0)))
       (else
         (cond
           ((gc:configure host token)
-           (log-info
-             (string-append "git-credentials: " host
-                            " fetches routed via " which
-                            " (checkout extraheader cleared so the rewrite takes effect)"))
-           (append-output "result=true")
-           0)
+            (log-info
+              (string-append
+                "git-credentials: "
+                host
+                " fetches routed via "
+                which
+                " (checkout extraheader cleared so the rewrite takes effect)"))
+            (append-output "result=true")
+            0)
           (else
             (log-error
-              (string-append "git-credentials: `git config` failed installing the "
-                             host " rewrite"))
+              (string-append "git-credentials: `git config` failed installing the " host " rewrite"))
             (append-output "result=false")
             1))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-   (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
-  (else
-   (exit (gc:run))))
+    (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
+  (else (exit (gc:run))))

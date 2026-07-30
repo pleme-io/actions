@@ -3,8 +3,11 @@
 ;; auto-back-off on 429 rate limits.
 
 (define dry-run (env-get "DRY_RUN" "false"))
+
 (define no-verify (env-get "NO_VERIFY" "true"))
+
 (define rename-prefix (env-get "RENAME_PREFIX" "pleme-io-"))
+
 (define max-retries 20)
 
 ;; publish-mode: "full" (default) = bump+ship on push, with a bounded
@@ -22,8 +25,11 @@
 ;; converts to a cron deferral instead of an in-job sleep, and the */15
 ;; drip finishes the long tail cheaply. (now) is unix seconds;
 ;; budget-deadline is the absolute epoch past which 429s defer to cron.
-(define budget-secs 1800) ;; 30m
+(define budget-secs 1800)
+
+;; 30m
 (define job-start (now))
+
 (define budget-deadline (+ job-start budget-secs))
 
 ;; append-output / status-of / stdout-of / stderr-of / configure-git-bot come
@@ -49,13 +55,18 @@
 ;; (bracket AND no `=`) + `line-assigns-field?` (exact field) fix both —
 ;; solve once, in one place.
 
-(define (workspace-members)
+(define
+  (workspace-members)
   ;; `cargo metadata --no-deps --format-version 1` returns JSON with
   ;; workspace_members listed. We use jq via exec-capture for a
   ;; line-per-name shape that's easy to parse in tlisp.
-  (let* ((r (exec-capture "sh" "-c"
-              "cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'"))
-         (out (stdout-of r)))
+  (let*
+    ((r
+       (exec-capture
+         "sh"
+         "-c"
+         "cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'"))
+      (out (stdout-of r)))
     (string-split (string-trim out) "\n")))
 
 ;; Each member's SHIPPED dependencies, as
@@ -71,37 +82,44 @@
 ;; itself against a floated derive. An exact pin has ZERO slack against index
 ;; lag — no other version can satisfy it — so its target is published first
 ;; within its ready batch, buying the most settle time before its dependent.
-(define (workspace-dep-lines)
-  (let* ((r (exec-capture "sh" "-c"
-              (string-append
-                "cargo metadata --no-deps --format-version 1 | jq -r "
-                "'.packages[] | .name + \"\\t\" + "
-                "([.dependencies[] | select(.kind != \"dev\") | .name] | join(\",\"))"
-                " + \"\\t\" + "
-                "([.dependencies[] | select(.kind != \"dev\")"
-                " | select(.req | startswith(\"=\")) | .name] | join(\",\"))'")))
-         (out (string-trim (stdout-of r))))
+(define
+  (workspace-dep-lines)
+  (let*
+    ((r
+       (exec-capture
+         "sh"
+         "-c"
+         (string-append
+           "cargo metadata --no-deps --format-version 1 | jq -r "
+           "'.packages[] | .name + \"\\t\" + "
+           "([.dependencies[] | select(.kind != \"dev\") | .name] | join(\",\"))"
+           " + \"\\t\" + "
+           "([.dependencies[] | select(.kind != \"dev\")"
+           " | select(.req | startswith(\"=\")) | .name] | join(\",\"))'")))
+      (out (string-trim (stdout-of r))))
     (if (equal? out "") (list) (string-split out "\n"))))
 
-(define (csv-field parts n)
-  (let ((raw (if (< (length parts) (+ n 1)) "" (string-trim (nth n parts)))))
+(define
+  (csv-field parts n)
+  (let
+    ((raw (if (< (length parts) (+ n 1)) "" (string-trim (nth n parts)))))
     (if (equal? raw "") (list) (string-split raw ","))))
 
 ;; "<name>\t<a>,<b>\t<a>" → ("<name>" "<a>" "<b>")
-(define (parse-dep-line line)
-  (let ((parts (string-split line "\t")))
-    (cons (string-trim (car parts)) (csv-field parts 1))))
+(define
+  (parse-dep-line line)
+  (let ((parts (string-split line "\t"))) (cons (string-trim (car parts)) (csv-field parts 1))))
 
 ;; every member name that some member EXACT-pins
 (define (parse-exact-line line) (csv-field (string-split line "\t") 2))
 
 (define (workspace-dep-graph) (map parse-dep-line (workspace-dep-lines)))
 
-(define (flatten-lists xs)
+(define
+  (flatten-lists xs)
   (cond ((null? xs) (list)) (else (append (car xs) (flatten-lists (cdr xs))))))
 
-(define (workspace-exact-pinned)
-  (flatten-lists (map parse-exact-line (workspace-dep-lines))))
+(define (workspace-exact-pinned) (flatten-lists (map parse-exact-line (workspace-dep-lines))))
 
 ;; -------------------------------------------------------------- ;;
 ;; crates.io existence check                                       ;;
@@ -110,29 +128,26 @@
 ;; code. If the (name, version) pair already exists, we skip the
 ;; publish to keep the run idempotent.
 
-(define (already-published? name version)
-  (let* ((url (string-append "https://crates.io/api/v1/crates/"
-                             name "/" version))
-         (r (exec-capture "curl" "-s" "-o" "/dev/null"
-              "-w" "%{http_code}" url))
-         (code-str (stdout-of r)))
+(define
+  (already-published? name version)
+  (let*
+    ((url (string-append "https://crates.io/api/v1/crates/" name "/" version))
+      (r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url))
+      (code-str (stdout-of r)))
     (equal? code-str "200")))
 
 ;; -------------------------------------------------------------- ;;
 ;; Per-crate publish                                               ;;
 ;; -------------------------------------------------------------- ;;
 
-(define (publish-args name)
-  (let* ((base (list "publish" "-p" name))
-         (with-dry (if (equal? dry-run "true")
-                     (append base (list "--dry-run"))
-                     base)))
-    (if (equal? no-verify "true")
-      (append with-dry (list "--no-verify"))
-      with-dry)))
+(define
+  (publish-args name)
+  (let*
+    ((base (list "publish" "-p" name))
+      (with-dry (if (equal? dry-run "true") (append base (list "--dry-run")) base)))
+    (if (equal? no-verify "true") (append with-dry (list "--no-verify")) with-dry)))
 
-(define (do-publish name)
-  (apply exec-capture (cons "cargo" (publish-args name))))
+(define (do-publish name) (apply exec-capture (cons "cargo" (publish-args name))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Failure-mode detection                                          ;;
@@ -167,7 +182,8 @@
 ;; "dep not on registry yet" for escriba while all 23 of its dependencies were
 ;; published and semver-satisfiable, and nothing in the output revealed what
 ;; cargo had actually complained about.
-(define (first-matching-line lines pred)
+(define
+  (first-matching-line lines pred)
   (cond
     ((null? lines) "")
     ((pred (car lines)) (car lines))
@@ -196,13 +212,14 @@
 
 ;; Extract the backticked crate name cargo names on a line, or "".
 ;; `foo = "^1.2"` → "foo";  `foo` → "foo";  no backticks → "".
-(define (requirement-name-on-line line)
-  (let ((parts (string-split line "`")))
-    (cond
-      ((< (length parts) 2) "")
-      (else (string-trim (car (string-split (car (cdr parts)) " ")))))))
+(define
+  (requirement-name-on-line line)
+  (let
+    ((parts (string-split line "`")))
+    (cond ((< (length parts) 2) "") (else (string-trim (car (string-split (car (cdr parts)) " ")))))))
 
-(define (workspace-sibling? name members)
+(define
+  (workspace-sibling? name members)
   ;; A sibling under its own name, or under the conflict-rename identity the
   ;; rename path republishes it as (pleme-io-<member>) — a dependent resolves
   ;; against the NEW name, which is absent from the pre-rename member list.
@@ -213,17 +230,22 @@
     ((equal? name (string-append rename-prefix (car members))) #t)
     (else (workspace-sibling? name (cdr members)))))
 
-(define (sibling-dep-blocker-line? line members)
-  (and (cargo-publish-dep-missing-line? line)
-       (workspace-sibling? (requirement-name-on-line line) members)))
+(define
+  (sibling-dep-blocker-line? line members)
+  (and
+    (cargo-publish-dep-missing-line? line)
+    (workspace-sibling? (requirement-name-on-line line) members)))
 
-(define (sibling-dep-missing? log members)
-  (any-line-matches? (string-split log "\n")
-                     (lambda (line) (sibling-dep-blocker-line? line members))))
+(define
+  (sibling-dep-missing? log members)
+  (any-line-matches?
+    (string-split log "\n")
+    (lambda (line) (sibling-dep-blocker-line? line members))))
 
 ;; The evidence line for whichever verdict we reached — a resolution complaint
 ;; if cargo made one, else "".
-(define (resolution-evidence log)
+(define
+  (resolution-evidence log)
   (first-matching-line (string-split log "\n") cargo-publish-dep-missing-line?))
 
 ;; -------------------------------------------------------------- ;;
@@ -241,20 +263,31 @@
 ;;   "wait" — drip tick, OR refill beyond the job budget, OR no parseable
 ;;            timestamp: re-queue for the next cron tick (exit green)
 (define rl-log-path "/tmp/rust-workspace-publish-429.log")
-(define (rate-limit-decision log)
+
+(define
+  (rate-limit-decision log)
   (write-file rl-log-path log)
-  (let ((r (exec-capture "sh" "-c"
-             (string-append
-               "LOG='" rl-log-path "'; MODE='" publish-mode
-               "'; DEADLINE=" (string-format "{}" budget-deadline) "; "
-               "d=$(grep -oiE 'try again after [A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT' \"$LOG\" 2>/dev/null | head -1 | sed -E 's/^[Tt]ry again after //'); "
-               "now=$(LC_ALL=C date -u +%s); resume=''; "
-               "if [ -n \"$d\" ]; then resume=$(LC_ALL=C date -u -d \"$d\" +%s 2>/dev/null); fi; "
-               "[ -z \"$resume\" ] && resume=$((now + 600)); "
-               "if [ \"$MODE\" = drip ]; then echo wait; exit 0; fi; "
-               "if [ \"$resume\" -gt \"$DEADLINE\" ]; then echo wait; exit 0; fi; "
-               "w=$((resume - now + 10)); [ \"$w\" -lt 1 ] && w=1; "
-               "echo \"riding rate limit ${w}s\" >&2; sleep \"$w\"; echo rode"))))
+  (let
+    ((r
+       (exec-capture
+         "sh"
+         "-c"
+         (string-append
+           "LOG='"
+           rl-log-path
+           "'; MODE='"
+           publish-mode
+           "'; DEADLINE="
+           (string-format "{}" budget-deadline)
+           "; "
+           "d=$(grep -oiE 'try again after [A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT' \"$LOG\" 2>/dev/null | head -1 | sed -E 's/^[Tt]ry again after //'); "
+           "now=$(LC_ALL=C date -u +%s); resume=''; "
+           "if [ -n \"$d\" ]; then resume=$(LC_ALL=C date -u -d \"$d\" +%s 2>/dev/null); fi; "
+           "[ -z \"$resume\" ] && resume=$((now + 600)); "
+           "if [ \"$MODE\" = drip ]; then echo wait; exit 0; fi; "
+           "if [ \"$resume\" -gt \"$DEADLINE\" ]; then echo wait; exit 0; fi; "
+           "w=$((resume - now + 10)); [ \"$w\" -lt 1 ] && w=1; "
+           "echo \"riding rate limit ${w}s\" >&2; sleep \"$w\"; echo rode"))))
     (string-trim (stdout-of r))))
 
 ;; -------------------------------------------------------------- ;;
@@ -326,87 +359,119 @@
 ;;   'no-workspace-dep-row  — nothing to patch; caller must refuse
 ;;   'already-renamed       — a `package =` key is already present (idempotent)
 ;;   'unsupported-dep-shape — not a single-line inline table
-(define (rename-dep-row-plan dep-line new-name)
+(define
+  (rename-dep-row-plan dep-line new-name)
   (cond
     ((equal? (string-trim dep-line) "") 'no-workspace-dep-row)
     ((string-contains? dep-line "package =") 'already-renamed)
     (else
-      (let ((new-row (toml-inline-table-add-key dep-line "package" new-name)))
+      (let
+        ((new-row (toml-inline-table-add-key dep-line "package" new-name)))
         (if (equal? new-row "") 'unsupported-dep-shape new-row)))))
 
-(define (rename-crate original)
-  (let* ((new-name (string-append rename-prefix original))
-         (crate-toml (string-append original "/Cargo.toml"))
-         (dep-line (toml-line-in-section "Cargo.toml"
-                                        "[workspace.dependencies]" original))
-         (plan (rename-dep-row-plan dep-line new-name)))
+(define
+  (rename-crate original)
+  (let*
+    ((new-name (string-append rename-prefix original))
+      (crate-toml (string-append original "/Cargo.toml"))
+      (dep-line (toml-line-in-section "Cargo.toml" "[workspace.dependencies]" original))
+      (plan (rename-dep-row-plan dep-line new-name)))
     (cond
       ((not (path-exists? crate-toml))
-       (log-error (string-append "no crate dir for '" original "'"))
-       #f)
+        (log-error (string-append "no crate dir for '" original "'"))
+        #f)
 
       ;; No workspace-level pin to patch → refuse, do not half-rename.
       ((equal? plan 'no-workspace-dep-row)
-       (log-error
-         (string-append
-           "rename of '" original "' REFUSED: no `" original
-           " = { … }` row under [workspace.dependencies] in the root Cargo.toml. "
-           "The old code would have rewritten nothing here and reported success. "
-           "Supported shapes are an inline table with an exact/caret/plain "
-           "version (members may inherit it via `" original
-           ".workspace = true`); an inline per-member declaration is not "
-           "auto-renamed because a partial rewrite across members is worse "
-           "than this refusal."))
-       #f)
+        (log-error
+          (string-append
+            "rename of '"
+            original
+            "' REFUSED: no `"
+            original
+            " = { … }` row under [workspace.dependencies] in the root Cargo.toml. "
+            "The old code would have rewritten nothing here and reported success. "
+            "Supported shapes are an inline table with an exact/caret/plain "
+            "version (members may inherit it via `"
+            original
+            ".workspace = true`); an inline per-member declaration is not "
+            "auto-renamed because a partial rewrite across members is worse "
+            "than this refusal."))
+        #f)
 
       ;; Idempotent: a previous pass already renamed it.
       ((equal? plan 'already-renamed)
-       (log-info (string-append "'" original "' already carries a `package =` "
-                                "rename in [workspace.dependencies]; nothing to do"))
-       #t)
+        (log-info
+          (string-append
+            "'"
+            original
+            "' already carries a `package =` "
+            "rename in [workspace.dependencies]; nothing to do"))
+        #t)
 
       ((equal? plan 'unsupported-dep-shape)
-       (log-error
-         (string-append
-           "rename of '" original "' REFUSED: its [workspace.dependencies] "
-           "row is not a single-line inline table this action can edit "
-           "without mangling it. Verbatim row: " dep-line))
-       #f)
+        (log-error
+          (string-append
+            "rename of '"
+            original
+            "' REFUSED: its [workspace.dependencies] "
+            "row is not a single-line inline table this action can edit "
+            "without mangling it. Verbatim row: "
+            dep-line))
+        #f)
 
       (else
         ;; (a) the member's own [package] name. LOCATED, not synthesized, so a
         ;; `[[bin]] name = "X"` line cannot be caught in the blast radius — and
         ;; if the located line somehow occurs twice, the primitive refuses
         ;; rather than rewriting both.
-        (let ((name-line (toml-line-in-section crate-toml "[package]" "name")))
+        (let
+          ((name-line (toml-line-in-section crate-toml "[package]" "name")))
           (cond
             ((equal? name-line "")
-             (log-error (string-append "rename of '" original
-                                       "' REFUSED: no `name = …` under "
-                                       "[package] in " crate-toml))
-             #f)
+              (log-error
+                (string-append
+                  "rename of '"
+                  original
+                  "' REFUSED: no `name = …` under "
+                  "[package] in "
+                  crate-toml))
+              #f)
             (else
               (replace-once-in-file-or-die
-                crate-toml name-line
+                crate-toml
+                name-line
                 (string-append "name = \"" new-name "\""))
               ;; (b) the workspace pin — requirement preserved verbatim.
               (replace-once-in-file-or-die "Cargo.toml" dep-line plan)
-              (log-info (string-append "renamed '" original "' -> '" new-name
-                                       "' (workspace pin now: "
-                                       (string-trim plan) ")"))
+              (log-info
+                (string-append
+                  "renamed '"
+                  original
+                  "' -> '"
+                  new-name
+                  "' (workspace pin now: "
+                  (string-trim plan)
+                  ")"))
               #t)))))))
 
-(define (commit-and-push original)
-  (let ((new-name (string-append rename-prefix original)))
+(define
+  (commit-and-push original)
+  (let
+    ((new-name (string-append rename-prefix original)))
     ;; Per-path add (a missing pathspec must not abort the whole stage),
     ;; then commit + push via exec-or-die: a silently-ignored push here
     ;; left the rename UNPUSHED while the loop treated it as done → the
     ;; conflicting name was re-published every pass.
-    (for-each (lambda (p) (exec-check "git" "add" p))
-              (list (string-append original "/Cargo.toml") "Cargo.toml"))
-    (exec-or-die (list "git" "commit" "-m"
-                       (string-append "rename: " original " -> " new-name
-                                      " (registry name conflict)")))
+    (for-each
+      (lambda (p) (exec-check "git" "add" p))
+      (list (string-append original "/Cargo.toml") "Cargo.toml"))
+    (exec-or-die
+      (list
+        "git"
+        "commit"
+        "-m"
+        (string-append "rename: " original " -> " new-name " (registry name conflict)")))
     (exec-or-die (list "git" "push" "origin" "HEAD:main"))))
 
 ;; -------------------------------------------------------------- ;;
@@ -463,7 +528,8 @@
 ;; Returns one of:
 ;;   'published   'already-uploaded   'dep-missing   'rate-limited
 ;;   'conflict    'failed
-(define (classify-cargo-publish-outcome-with-siblings log members code)
+(define
+  (classify-cargo-publish-outcome-with-siblings log members code)
   (cond
     ((= code 0) 'published)
     ((cargo-publish-already-uploaded? log) 'already-uploaded)
@@ -490,66 +556,80 @@
 ;; same false-green class this whole fix exists to kill. (dev-dependencies are
 ;; filtered out upstream, so a real cycle is not expected.)
 
-(define (name-in-list? x xs)
+(define
+  (name-in-list? x xs)
   (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (name-in-list? x (cdr xs)))))
 
-(define (all-emitted? deps emitted members)
+(define
+  (all-emitted? deps emitted members)
   (cond
     ((null? deps) #t)
     ((not (workspace-sibling? (car deps) members))
-     ;; an external crate is not an ordering edge
-     (all-emitted? (cdr deps) emitted members))
+      ;; an external crate is not an ordering edge
+      (all-emitted? (cdr deps) emitted members))
     ((name-in-list? (car deps) emitted) (all-emitted? (cdr deps) emitted members))
     (else #f)))
 
-(define (deps-of name dep-alist)
+(define
+  (deps-of name dep-alist)
   (cond
     ((null? dep-alist) (list))
     ((equal? (car (car dep-alist)) name) (cdr (car dep-alist)))
     (else (deps-of name (cdr dep-alist)))))
 
-(define (topo-sweep remaining dep-alist emitted members ready blocked)
+(define
+  (topo-sweep remaining dep-alist emitted members ready blocked)
   ;; one sweep: partition `remaining` into newly-ready and still-blocked
   (cond
     ((null? remaining) (list (reverse ready) (reverse blocked)))
     ((all-emitted? (deps-of (car remaining) dep-alist) emitted members)
-     (topo-sweep (cdr remaining) dep-alist (append emitted (list (car remaining)))
-                 members (cons (car remaining) ready) blocked))
+      (topo-sweep
+        (cdr remaining)
+        dep-alist
+        (append emitted (list (car remaining)))
+        members
+        (cons (car remaining) ready)
+        blocked))
     (else
-      (topo-sweep (cdr remaining) dep-alist emitted members
-                  ready (cons (car remaining) blocked)))))
+      (topo-sweep (cdr remaining) dep-alist emitted members ready (cons (car remaining) blocked)))))
 
 ;; Within one ready batch the members are mutually independent, so any order
 ;; publishes correctly — but an EXACT-pinned target goes first, because `=x.y.z`
 ;; is the one requirement shape that no other published version can satisfy, so
 ;; it is the least forgiving of index lag.
-(define (seal-first ready exact)
-  (append (filter (lambda (n) (name-in-list? n exact)) ready)
-          (filter (lambda (n) (not (name-in-list? n exact))) ready)))
+(define
+  (seal-first ready exact)
+  (append
+    (filter (lambda (n) (name-in-list? n exact)) ready)
+    (filter (lambda (n) (not (name-in-list? n exact))) ready)))
 
-(define (topo-drive remaining dep-alist emitted members exact)
+(define
+  (topo-drive remaining dep-alist emitted members exact)
   (cond
     ((null? remaining) emitted)
     (else
-      (let* ((swept (topo-sweep remaining dep-alist emitted members (list) (list)))
-             (ready (seal-first (car swept) exact))
-             (blocked (car (cdr swept))))
+      (let*
+        ((swept (topo-sweep remaining dep-alist emitted members (list) (list)))
+          (ready (seal-first (car swept) exact))
+          (blocked (car (cdr swept))))
         (cond
           ((null? ready)
-           ;; cycle — nothing became ready. Keep every member; order degrades.
-           (log-error (string-append "cycle among workspace members: "
-                                     (string-join "," blocked)
-                                     " — publishing them in manifest order"))
-           (append emitted blocked))
+            ;; cycle — nothing became ready. Keep every member; order degrades.
+            (log-error
+              (string-append
+                "cycle among workspace members: "
+                (string-join "," blocked)
+                " — publishing them in manifest order"))
+            (append emitted blocked))
           (else (topo-drive blocked dep-alist (append emitted ready) members exact)))))))
 
 ;; `exact` is optional-by-arity in spirit but explicit here: pass the
 ;; exact-pinned member names, or (list) when there are none.
-(define (topo-order-with members dep-alist exact)
+(define
+  (topo-order-with members dep-alist exact)
   (topo-drive members dep-alist (list) members exact))
 
-(define (topo-order members dep-alist)
-  (topo-order-with members dep-alist (list)))
+(define (topo-order members dep-alist) (topo-order-with members dep-alist (list)))
 
 ;; Returns one of:
 ;;   ("done" . <final-name>) — successfully published (or skipped)
@@ -559,70 +639,89 @@
 ;; sibling that simply isn't published yet from an external dep that never
 ;; will be. `siblings` is threaded rather than read from a global so the
 ;; classifier stays pure and testable.
-(define (publish-one-in siblings name attempt)
+(define
+  (publish-one-in siblings name attempt)
   (cond
     ((>= attempt max-retries)
-     (log-error (string-append "exceeded retries for '" name "'"))
-     (list "fail" name))
+      (log-error (string-append "exceeded retries for '" name "'"))
+      (list "fail" name))
     ((already-published? name version)
-     (log-info (string-append "skipping '" name "@" version "' — already on registry"))
-     (list "done" name))
+      (log-info (string-append "skipping '" name "@" version "' — already on registry"))
+      (list "done" name))
     (else
-      (log-info (string-append "publishing '" name "@" version "' (attempt "
-                               (string-format "{}" attempt) ")"))
-      (let* ((r (do-publish name))
-             (code (status-of r))
-             (log (string-append (stdout-of r) "\n" (stderr-of r)))
-             (outcome (classify-cargo-publish-outcome-with-siblings log siblings code)))
+      (log-info
+        (string-append
+          "publishing '"
+          name
+          "@"
+          version
+          "' (attempt "
+          (string-format "{}" attempt)
+          ")"))
+      (let*
+        ((r (do-publish name))
+          (code (status-of r))
+          (log (string-append (stdout-of r) "\n" (stderr-of r)))
+          (outcome (classify-cargo-publish-outcome-with-siblings log siblings code)))
         (cond
           ((equal? outcome 'published)
-           (log-info (string-append "published '" name "'"))
-           (list "done" name))
+            (log-info (string-append "published '" name "'"))
+            (list "done" name))
           ((equal? outcome 'already-uploaded)
-           (log-info (string-append "already published '" name "' — treating as success"))
-           (list "done" name))
+            (log-info (string-append "already published '" name "' — treating as success"))
+            (list "done" name))
           ((equal? outcome 'dep-missing)
-           (log-info (string-append "deferring '" name "' — workspace sibling not on the "
-                                    "registry yet: " (resolution-evidence log)))
-           (list "defer" name))
+            (log-info
+              (string-append
+                "deferring '"
+                name
+                "' — workspace sibling not on the "
+                "registry yet: "
+                (resolution-evidence log)))
+            (list "defer" name))
           ((equal? outcome 'rate-limited)
-           (let ((decision (rate-limit-decision log)))
-             (cond
-               ((string-contains? decision "rode")
-                ;; Rode the precise refill in-job. Retry the SAME crate
-                ;; WITHOUT advancing attempt — the job budget (not
-                ;; max-retries) bounds rate-limit riding, so a heavily
-                ;; throttled bootstrap can never exhaust retries → fail.
-                (log-info (string-append "rode rate-limit refill — retrying '" name "'"))
-                (publish-one-in siblings name attempt))
-               (else
-                ;; Capacity exhausted (or a drip tick): re-queue this
-                ;; crate for the next cron tick and keep the pass going.
-                ;; A rate-limited bootstrap is NOT a failed run.
-                (log-info (string-append "capacity exhausted — re-queueing '" name "' for next tick"))
-                (list "wait" name)))))
+            (let
+              ((decision (rate-limit-decision log)))
+              (cond
+                ((string-contains? decision "rode")
+                  ;; Rode the precise refill in-job. Retry the SAME crate
+                  ;; WITHOUT advancing attempt — the job budget (not
+                  ;; max-retries) bounds rate-limit riding, so a heavily
+                  ;; throttled bootstrap can never exhaust retries → fail.
+                  (log-info (string-append "rode rate-limit refill — retrying '" name "'"))
+                  (publish-one-in siblings name attempt))
+                (else
+                  ;; Capacity exhausted (or a drip tick): re-queue this
+                  ;; crate for the next cron tick and keep the pass going.
+                  ;; A rate-limited bootstrap is NOT a failed run.
+                  (log-info
+                    (string-append "capacity exhausted — re-queueing '" name "' for next tick"))
+                  (list "wait" name)))))
           ((equal? outcome 'conflict)
-           (log-info (string-append "name conflict on '" name "', renaming"))
-           (cond
-             ((rename-crate name)
-              (commit-and-push name)
-              (publish-one-in siblings (string-append rename-prefix name) (+ attempt 1)))
-             (else
-               (log-error (string-append "rename failed for '" name "'"))
-               (list "fail" name))))
+            (log-info (string-append "name conflict on '" name "', renaming"))
+            (cond
+              ((rename-crate name)
+                (commit-and-push name)
+                (publish-one-in siblings (string-append rename-prefix name) (+ attempt 1)))
+              (else (log-error (string-append "rename failed for '" name "'")) (list "fail" name))))
           (else
             ;; Unrecognized. If cargo DID make a resolution complaint, name it:
             ;; that means the blocker is not a workspace sibling, so no amount
             ;; of deferring can make it resolve — the escriba shape.
-            (let ((evidence (resolution-evidence log)))
+            (let
+              ((evidence (resolution-evidence log)))
               (cond
                 ((equal? evidence "")
-                 (log-error (string-append "publish of '" name
-                                           "' failed with no recognizable signature")))
+                  (log-error
+                    (string-append "publish of '" name "' failed with no recognizable signature")))
                 (else
-                  (log-error (string-append "publish of '" name
-                                            "' blocked by a NON-sibling requirement (deferring "
-                                            "cannot fix this): " evidence)))))
+                  (log-error
+                    (string-append
+                      "publish of '"
+                      name
+                      "' blocked by a NON-sibling requirement (deferring "
+                      "cannot fix this): "
+                      evidence)))))
             (log-info log)
             (list "fail" name)))))))
 
@@ -636,10 +735,13 @@
 ;; remains. GitHub takes the last write for a duplicated key, so even an
 ;; accidental double-emit is benign — but routing all four lines through
 ;; here keeps them in lockstep.
-(define (emit-outputs shipped renamed pending failed complete?)
+(define
+  (emit-outputs shipped renamed pending failed complete?)
   (append-output (string-append "shipped-count=" (string-format "{}" (length shipped))))
-  (append-output (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
-  (append-output (string-append "pending-crates=" (if (null? pending) "" (string-join "," pending))))
+  (append-output
+    (string-append "renamed-crates=" (if (null? renamed) "" (string-join "," renamed))))
+  (append-output
+    (string-append "pending-crates=" (if (null? pending) "" (string-join "," pending))))
   (append-output (string-append "failed-crates=" (if (null? failed) "" (string-join "," failed))))
   (append-output (string-append "bootstrap-complete=" (if complete? "true" "false"))))
 
@@ -662,36 +764,70 @@
 ;;
 ;; `publish-one` is injected via `ops` so the bucketing is unit-testable
 ;; without cargo, git or a registry.
-(define (publish-pass-with ops names shipped renamed deferred waited failed)
+(define
+  (publish-pass-with ops names shipped renamed deferred waited failed)
   (cond
-    ((null? names)
-     (list shipped renamed deferred waited failed))
+    ((null? names) (list shipped renamed deferred waited failed))
     (else
-      (let* ((name (car names))
-             (result ((ops-fn ops "publish-one") name 1))
-             (kind (car result))
-             (final (car (cdr result))))
+      (let*
+        ((name (car names))
+          (result ((ops-fn ops "publish-one") name 1))
+          (kind (car result))
+          (final (car (cdr result))))
         (cond
           ((equal? kind "fail")
-           (log-error (string-append "permanent failure on '" final
-                                     "' — continuing with the remaining members"))
-           (publish-pass-with ops (cdr names) shipped renamed deferred waited
-                              (append failed (list final))))
+            (log-error
+              (string-append
+                "permanent failure on '"
+                final
+                "' — continuing with the remaining members"))
+            (publish-pass-with
+              ops
+              (cdr names)
+              shipped
+              renamed
+              deferred
+              waited
+              (append failed (list final))))
           ((equal? kind "wait")
-           (publish-pass-with ops (cdr names) shipped renamed deferred
-                              (append waited (list final)) failed))
+            (publish-pass-with
+              ops
+              (cdr names)
+              shipped
+              renamed
+              deferred
+              (append waited (list final))
+              failed))
           ((equal? kind "defer")
-           (publish-pass-with ops (cdr names) shipped renamed
-                              (append deferred (list final)) waited failed))
+            (publish-pass-with
+              ops
+              (cdr names)
+              shipped
+              renamed
+              (append deferred (list final))
+              waited
+              failed))
           ((equal? final name)
-           (publish-pass-with ops (cdr names) (append shipped (list final))
-                              renamed deferred waited failed))
+            (publish-pass-with
+              ops
+              (cdr names)
+              (append shipped (list final))
+              renamed
+              deferred
+              waited
+              failed))
           (else
-            (publish-pass-with ops (cdr names) (append shipped (list final))
-                               (append renamed (list name))
-                               deferred waited failed)))))))
+            (publish-pass-with
+              ops
+              (cdr names)
+              (append shipped (list final))
+              (append renamed (list name))
+              deferred
+              waited
+              failed)))))))
 
-(define (real-ops siblings)
+(define
+  (real-ops siblings)
   (list (cons "publish-one" (lambda (name attempt) (publish-one-in siblings name attempt)))))
 
 ;; A permanent failure anywhere in the workspace is a RED run — but only after
@@ -710,12 +846,9 @@
 ;; tick; the sleep only stops us from burning all 8 passes inside one second.
 ;; (Note `already-published?` polls the crates.io *API*, which can answer 200
 ;; while the index a resolver reads is still stale — the API is not the index.)
-(define (index-settle-secs pass-n)
-  (cond
-    ((<= pass-n 1) 15)
-    ((= pass-n 2) 30)
-    ((= pass-n 3) 60)
-    (else 120)))
+(define
+  (index-settle-secs pass-n)
+  (cond ((<= pass-n 1) 15) ((= pass-n 2) 30) ((= pass-n 3) 60) (else 120)))
 
 ;; Multi-pass driver. Each pass publishes what it can; dep-deferred crates
 ;; retry in the next pass (this tick, after an index-settle wait), rate-limited
@@ -730,85 +863,104 @@
 ;;   (e) otherwise               → progress; next pass over `deferred`
 (define max-passes 8)
 
-(define (drive-passes-with ops pending shipped renamed waited failed pass-n)
+(define
+  (drive-passes-with ops pending shipped renamed waited failed pass-n)
   (cond
     ((null? pending)
-     (emit-outputs shipped renamed waited failed (and (null? waited) (null? failed)))
-     (if (null? waited)
-       (log-info (string-append "all " (string-format "{}" (length shipped)) " members shipped"))
-       (log-info (string-append "shipped " (string-format "{}" (length shipped)) "; "
-                                (string-format "{}" (length waited))
-                                " deferred to next capacity window")))
-     (if (null? failed)
-       0
-       (begin
-         (log-error (string-append "permanent failures: " (string-join "," failed)))
-         1)))
+      (emit-outputs shipped renamed waited failed (and (null? waited) (null? failed)))
+      (if
+        (null? waited)
+        (log-info (string-append "all " (string-format "{}" (length shipped)) " members shipped"))
+        (log-info
+          (string-append
+            "shipped "
+            (string-format "{}" (length shipped))
+            "; "
+            (string-format "{}" (length waited))
+            " deferred to next capacity window")))
+      (if
+        (null? failed)
+        0
+        (begin (log-error (string-append "permanent failures: " (string-join "," failed))) 1)))
     ((>= pass-n max-passes)
-     (emit-outputs shipped renamed (append pending waited) failed #f)
-     (log-info (string-append "pass budget reached; "
-                              (string-format "{}" (+ (length pending) (length waited)))
-                              " members deferred to next tick"))
-     (pass-exit-code failed))
+      (emit-outputs shipped renamed (append pending waited) failed #f)
+      (log-info
+        (string-append
+          "pass budget reached; "
+          (string-format "{}" (+ (length pending) (length waited)))
+          " members deferred to next tick"))
+      (pass-exit-code failed))
     (else
-      (log-info (string-append "==> pass " (string-format "{}" pass-n)
-                               " — " (string-format "{}" (length pending))
-                               " members to attempt"))
-      (let* ((out (publish-pass-with ops pending (list) (list) (list) (list) (list)))
-             (newly-shipped (car out))
-             (newly-renamed (car (cdr out)))
-             (deferred (car (cdr (cdr out))))
-             (newly-waited (car (cdr (cdr (cdr out)))))
-             (newly-failed (car (cdr (cdr (cdr (cdr out))))))
-             (all-waited (append waited newly-waited))
-             (all-failed (append failed newly-failed)))
+      (log-info
+        (string-append
+          "==> pass "
+          (string-format "{}" pass-n)
+          " — "
+          (string-format "{}" (length pending))
+          " members to attempt"))
+      (let*
+        ((out (publish-pass-with ops pending (list) (list) (list) (list) (list)))
+          (newly-shipped (car out))
+          (newly-renamed (car (cdr out)))
+          (deferred (car (cdr (cdr out))))
+          (newly-waited (car (cdr (cdr (cdr out)))))
+          (newly-failed (car (cdr (cdr (cdr (cdr out))))))
+          (all-waited (append waited newly-waited))
+          (all-failed (append failed newly-failed)))
         (cond
-          ((and (null? newly-shipped)
-                (null? newly-waited)
-                (= (length deferred) (length pending)))
-           (emit-outputs shipped renamed (append deferred all-waited) all-failed #f)
-           (log-error (string-append "no progress this pass; aborting (likely circular dep "
-                                     "or stuck registry index). still blocked: "
-                                     (string-join "," deferred)))
-           1)
+          ((and (null? newly-shipped) (null? newly-waited) (= (length deferred) (length pending)))
+            (emit-outputs shipped renamed (append deferred all-waited) all-failed #f)
+            (log-error
+              (string-append
+                "no progress this pass; aborting (likely circular dep "
+                "or stuck registry index). still blocked: "
+                (string-join "," deferred)))
+            1)
           ((null? newly-shipped)
-           (emit-outputs shipped renamed (append deferred all-waited) all-failed #f)
-           (log-info (string-append "capacity-blocked; "
-                                    (string-format "{}" (+ (length deferred) (length all-waited)))
-                                    " members deferred to next tick"))
-           (pass-exit-code all-failed))
+            (emit-outputs shipped renamed (append deferred all-waited) all-failed #f)
+            (log-info
+              (string-append
+                "capacity-blocked; "
+                (string-format "{}" (+ (length deferred) (length all-waited)))
+                " members deferred to next tick"))
+            (pass-exit-code all-failed))
           (else
             ;; Something shipped and something is still blocked on a sibling:
             ;; give the sparse index a bounded moment before re-attempting,
             ;; rather than burning the pass budget in one second.
             (cond
               ((not (null? deferred))
-               (log-info (string-append "waiting " (string-format "{}" (index-settle-secs pass-n))
-                                        "s for the sparse index to serve "
-                                        (string-format "{}" (length newly-shipped))
-                                        " newly-published sibling(s)"))
-               ((ops-fn ops "settle") (index-settle-secs pass-n)))
+                (log-info
+                  (string-append
+                    "waiting "
+                    (string-format "{}" (index-settle-secs pass-n))
+                    "s for the sparse index to serve "
+                    (string-format "{}" (length newly-shipped))
+                    " newly-published sibling(s)"))
+                ((ops-fn ops "settle") (index-settle-secs pass-n)))
               (else #t))
-            (drive-passes-with ops deferred
-                               (append shipped newly-shipped)
-                               (append renamed newly-renamed)
-                               all-waited
-                               all-failed
-                               (+ pass-n 1))))))))
+            (drive-passes-with
+              ops
+              deferred
+              (append shipped newly-shipped)
+              (append renamed newly-renamed)
+              all-waited
+              all-failed
+              (+ pass-n 1))))))))
 
-(define (run-main)
+(define
+  (run-main)
   (configure-git-bot)
-  (let* ((members (workspace-members))
-         (ordered (topo-order-with members (workspace-dep-graph) (workspace-exact-pinned)))
-         (ops (append (real-ops members)
-                      (list (cons "settle" (lambda (secs) (sleep secs)))))))
-    (log-info (string-append "workspace v" version " — "
-                             (string-format "{}" (length members)) " members"))
+  (let*
+    ((members (workspace-members))
+      (ordered (topo-order-with members (workspace-dep-graph) (workspace-exact-pinned)))
+      (ops (append (real-ops members) (list (cons "settle" (lambda (secs) (sleep secs)))))))
+    (log-info
+      (string-append "workspace v" version " — " (string-format "{}" (length members)) " members"))
     (log-info (string-append "publish order (leaves first): " (string-join " -> " ordered)))
     (drive-passes-with ops ordered (list) (list) (list) (list) 1)))
 
 (cond
   (tlisp-test-mode
-   (log-info "TLISP_TEST=1 — publisher loaded; main skipped (the test harness drives it)"))
-  (else
-    (exit (run-main))))
+    (log-info "TLISP_TEST=1 — publisher loaded; main skipped (the test harness drives it)"))
+  (else (exit (run-main))))

@@ -2,25 +2,36 @@
 ;; commit with template, create annotated tag. Does NOT push.
 
 (define version (env-required "VERSION"))
+
 (define tag-prefix (env-get "TAG_PREFIX" "v"))
+
 (define template (env-get "COMMIT_MESSAGE_TEMPLATE" "release: workspace v{version}"))
+
 (define add-paths-str (env-get "ADD_PATHS" "Cargo.toml Cargo.lock Cargo.nix Cargo.gen.lock"))
+
 (define identity-name (env-get "IDENTITY_NAME" "github-actions[bot]"))
-(define identity-email (env-get "IDENTITY_EMAIL"
-                        "41898282+github-actions[bot]@users.noreply.github.com"))
+
+(define
+  identity-email
+  (env-get "IDENTITY_EMAIL" "41898282+github-actions[bot]@users.noreply.github.com"))
+
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define (append-output line)
+(define
+  (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
 (define tag (string-append tag-prefix version))
+
 (define commit-message (string-replace template "{version}" version))
+
 (define add-paths (string-split add-paths-str " "))
 
 ;; Configure bot identity for this repo (must succeed — a missing
 ;; identity makes the commit below fail in a more confusing way).
 (exec-or-die (list "git" "config" "user.name" identity-name))
+
 (exec-or-die (list "git" "config" "user.email" identity-email))
 
 ;; Tag-collision guard — checked BEFORE any mutation (fail fast).
@@ -29,11 +40,16 @@
 ;; stale, pre-existing tag got pushed (the 2026-06-03 version-skew
 ;; bug). Refuse to release onto an existing tag; the operator must
 ;; reconcile the workspace version against it first.
-(when (git-tag-exists? tag)
-  (log-error (string-append "tag " tag " already exists — refusing to "
-                            "release onto an existing tag (version-skew "
-                            "guard). Reconcile the workspace version "
-                            "against the existing tag before releasing."))
+(when
+  (git-tag-exists? tag)
+  (log-error
+    (string-append
+      "tag "
+      tag
+      " already exists — refusing to "
+      "release onto an existing tag (version-skew "
+      "guard). Reconcile the workspace version "
+      "against the existing tag before releasing."))
   (exit 1))
 
 ;; MONOTONICITY guard — checked BEFORE any mutation, alongside the
@@ -74,19 +90,34 @@
 ;; route here). An unrankable version arriving from a pleme-io bumper is
 ;; itself the defect, so surfacing it is the point.
 (define max-released (git:max-released-version tag-prefix))
-(when (not (semver:release-monotone? version max-released))
-  (log-error (string-append
-               "refusing to release " tag " — version " version
-               " is not ABOVE the highest already-released version "
-               tag-prefix max-released
-               " (release-monotonicity guard). Releasing it would walk the"
-               " published version BACKWARD. This almost always means the"
-               " manifest version lags the tags: reconcile the manifest to"
-               " at least " max-released " and re-run."))
+
+(when
+  (not (semver:release-monotone? version max-released))
+  (log-error
+    (string-append
+      "refusing to release "
+      tag
+      " — version "
+      version
+      " is not ABOVE the highest already-released version "
+      tag-prefix
+      max-released
+      " (release-monotonicity guard). Releasing it would walk the"
+      " published version BACKWARD. This almost always means the"
+      " manifest version lags the tags: reconcile the manifest to"
+      " at least "
+      max-released
+      " and re-run."))
   (exit 1))
-(when (equal? max-released "")
-  (log-info (string-append "no rankable " tag-prefix "X.Y.Z tag yet — "
-                           "first release, monotonicity vacuously holds")))
+
+(when
+  (equal? max-released "")
+  (log-info
+    (string-append
+      "no rankable "
+      tag-prefix
+      "X.Y.Z tag yet — "
+      "first release, monotonicity vacuously holds")))
 
 ;; Stage each path SEPARATELY. `git add a b c` fails ATOMICALLY if ANY
 ;; pathspec doesn't match an existing file — e.g. `Cargo.nix` in a repo
@@ -113,4 +144,5 @@
 (exec-or-die (list "git" "tag" "-a" tag "-m" commit-message))
 
 (append-output (string-append "tag=" tag))
+
 (log-info (string-append "committed + tagged " tag))

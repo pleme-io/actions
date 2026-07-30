@@ -1,7 +1,9 @@
 ;; secrets-scan/run.tlisp — gitleaks-driven secret scan.
 
 (define config (env-get "CONFIG_PATH" ""))
+
 (define fail-on-found (env-get "FAIL_ON_FOUND" "true"))
+
 (define report-path "/tmp/gitleaks.json")
 
 ;; TLISP_TEST gate — under the harness the definitions load but no scan runs,
@@ -47,10 +49,16 @@
 ;; the rest of this script (the "Install Nix" step in action.yml already
 ;; ran DeterminateSystems/nix-installer-action, wiring nix itself onto PATH).
 
-(define args
-  (append (list "detect" "--no-banner" "--redact" "--report-format=json"
-                (string-append "--report-path=" report-path))
-          (if (equal? config "") (list) (list "--config" config))))
+(define
+  args
+  (append
+    (list
+      "detect"
+      "--no-banner"
+      "--redact"
+      "--report-format=json"
+      (string-append "--report-path=" report-path))
+    (if (equal? config "") (list) (list "--config" config))))
 
 ;; ── The PURE verdict, split out so it is provable ──────────────────────
 ;; Closed outcome vocabulary:
@@ -58,7 +66,8 @@
 ;;   'findings           — non-zero exit AND a report we could count
 ;;   'scan-error         — non-zero exit with NO report: it never really ran
 ;;   'report-unparseable — a report exists but no count could be read from it
-(define (gitleaks-outcome code report-exists? count-readable?)
+(define
+  (gitleaks-outcome code report-exists? count-readable?)
   (cond
     ((= code 0) 'clean)
     ((not report-exists?) 'scan-error)
@@ -67,25 +76,36 @@
 
 ;; #t iff the outcome means "we do not know whether this repo is clean".
 ;; These fail the build even when fail-on-found is "false".
-(define (gitleaks-outcome-unknown? outcome)
+(define
+  (gitleaks-outcome-unknown? outcome)
   (or (equal? outcome 'scan-error) (equal? outcome 'report-unparseable)))
 
-(define (gitleaks-outcome-message outcome code)
+(define
+  (gitleaks-outcome-message outcome code)
   (cond
     ((equal? outcome 'scan-error)
-     (string-append "gitleaks exited " (string-format "{}" code)
-                    " and wrote NO report to " report-path
-                    " — the scan did not run. This is NOT a clean result. "
-                    "Most likely cause: an unreadable --config path (CONFIG_PATH='"
-                    config "'), a shallow/corrupt checkout, or an unreadable repo."))
+      (string-append
+        "gitleaks exited "
+        (string-format "{}" code)
+        " and wrote NO report to "
+        report-path
+        " — the scan did not run. This is NOT a clean result. "
+        "Most likely cause: an unreadable --config path (CONFIG_PATH='"
+        config
+        "'), a shallow/corrupt checkout, or an unreadable repo."))
     ((equal? outcome 'report-unparseable)
-     (string-append "gitleaks exited " (string-format "{}" code) " and " report-path
-                    " exists but no finding count could be read from it — the "
-                    "report is truncated or is not the JSON array we expect. "
-                    "This is NOT a clean result."))
+      (string-append
+        "gitleaks exited "
+        (string-format "{}" code)
+        " and "
+        report-path
+        " exists but no finding count could be read from it — the "
+        "report is truncated or is not the JSON array we expect. "
+        "This is NOT a clean result."))
     (else "")))
 
-(define (run-scan)
+(define
+  (run-scan)
   ;; A STALE report from an earlier step, or from a previous job on a warm
   ;; self-hosted runner, would be read as THIS run's result — the same
   ;; silent-failure class one layer down. Remove it first and require our own
@@ -93,58 +113,60 @@
   (exec-check "rm" "-f" report-path)
 
   (log-info "==> installing gitleaks (nix profile install, nixos-24.05)")
-  (exec-check "nix" "profile" "install"
-              "github:NixOS/nixpkgs/nixos-24.05#gitleaks")
+  (exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#gitleaks")
 
   (log-info "==> gitleaks detect")
-  (let* ((r (apply exec-capture (cons "gitleaks" args)))
-         (code (status-of r))
-         (report-exists? (path-exists? report-path))
-         ;; No `|| echo 0`. jq's OWN status is the signal for whether a count
-         ;; could be read at all; conflating its failure with the value 0 is
-         ;; the defect itself.
-         (c (exec-capture "sh" "-c" (string-append "jq 'length' " report-path)))
-         (count-str (string-trim (stdout-of c)))
-         (count-readable? (and (= (status-of c) 0) (not (equal? count-str ""))))
-         (outcome (gitleaks-outcome code report-exists? count-readable?)))
+  (let*
+    ((r (apply exec-capture (cons "gitleaks" args)))
+      (code (status-of r))
+      (report-exists? (path-exists? report-path))
+      ;; No `|| echo 0`. jq's OWN status is the signal for whether a count
+      ;; could be read at all; conflating its failure with the value 0 is
+      ;; the defect itself.
+      (c (exec-capture "sh" "-c" (string-append "jq 'length' " report-path)))
+      (count-str (string-trim (stdout-of c)))
+      (count-readable? (and (= (status-of c) 0) (not (equal? count-str ""))))
+      (outcome (gitleaks-outcome code report-exists? count-readable?)))
 
     (append-output (string-append "scan-outcome=" (string-format "{}" outcome)))
 
     (cond
       ;; UNKNOWN — loud, and it ignores fail-on-found on purpose.
       ((gitleaks-outcome-unknown? outcome)
-       (log-error (gitleaks-outcome-message outcome code))
-       (log-error (string-trim (stderr-of r)))
-       (append-output "found-count=unknown")
-       (exit 1))
+        (log-error (gitleaks-outcome-message outcome code))
+        (log-error (string-trim (stderr-of r)))
+        (append-output "found-count=unknown")
+        (exit 1))
 
       ((equal? outcome 'clean)
-       (append-output "found-count=0")
-       (log-info "no secrets found")
-       (exit 0))
+        (append-output "found-count=0")
+        (log-info "no secrets found")
+        (exit 0))
 
       ;; findings — the count is real, because we proved it readable
       (else
         (append-output (string-append "found-count=" count-str))
         (cond
           ((equal? count-str "0")
-           ;; gitleaks exited non-zero but the report lists zero findings.
-           ;; Neither a clean pass nor a countable finding — surface it rather
-           ;; than rounding it to green.
-           (log-error (string-append "gitleaks exited " (string-format "{}" code)
-                                     " but the report lists 0 findings — "
-                                     "treating as a scan failure, not a pass"))
-           (log-error (string-trim (stderr-of r)))
-           (exit 1))
+            ;; gitleaks exited non-zero but the report lists zero findings.
+            ;; Neither a clean pass nor a countable finding — surface it rather
+            ;; than rounding it to green.
+            (log-error
+              (string-append
+                "gitleaks exited "
+                (string-format "{}" code)
+                " but the report lists 0 findings — "
+                "treating as a scan failure, not a pass"))
+            (log-error (string-trim (stderr-of r)))
+            (exit 1))
           ((equal? fail-on-found "true")
-           (log-error (string-append count-str " secret(s) found — failing"))
-           (exit 1))
+            (log-error (string-append count-str " secret(s) found — failing"))
+            (exit 1))
           (else
-           (log-info (string-append count-str
-                                    " secret(s) found (fail-on-found=false, passing)"))
-           (exit 0)))))))
+            (log-info (string-append count-str " secret(s) found (fail-on-found=false, passing)"))
+            (exit 0)))))))
 
 (cond
   (tlisp-test-mode
-   (log-info "TLISP_TEST=1 — secrets-scan loaded; main skipped (the harness drives it)"))
+    (log-info "TLISP_TEST=1 — secrets-scan loaded; main skipped (the harness drives it)"))
   (else (run-scan)))
