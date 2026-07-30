@@ -1,0 +1,17 @@
+# tlisp-lint Layer 6 — crash-certain-form baseline.
+#
+# INTENTIONALLY EMPTY, and this is the point. Layers 4 and 5 baseline their
+# existing debt because a stdlib shadow is a maintenance hazard you can live
+# with for a while. A crash-certain form is not: it is code that CANNOT run.
+# Every instance this gate found on the day it landed was fixed in the same
+# commit — 12 named lets across 11 actions, and 13 four-argument
+# `string-replace` calls across 12 actions — so the honest baseline is zero.
+#
+# Row format, matching the log line the gate prints:
+#     <path>:<line><TAB>named-let
+#     <path>:<line><TAB><primitive>/<got> (wants <n>)
+#
+# Adding a row means asserting the form is unreachable AND that you want it to
+# stay that way. Say why on a `#` line above it. "It has always been there" is
+# not a reason — `helm-deploy`'s named let had always been there too, and it
+# would have taken down the first deploy that passed `--set`.

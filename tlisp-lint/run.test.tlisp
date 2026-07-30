@@ -166,3 +166,122 @@
   (assert (equal? (literal-row "./zot-push/run.tlisp" "Authorization: token ")
                   "zot-push/run.tlisp\tAuthorization: token")
           "the row is whitespace-stable, and the path is repo-relative"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Layer 6 — crash-certain forms
+;;
+;; The named-let / call-site EXTRACTION lives in crash-certain-reader.py and is
+;; proven end-to-end in the commit (both a broken file turning the run red and a
+;; file of twelve legal look-alikes staying green). What these tests pin is the
+;; tlisp half: parsing the interpreter's own arity verdict, and the row formats
+;; the baseline is keyed on.
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "row-field: TSV by index, and a short row yields \"\" not nil"
+  (assert (equal? (row-field "CALL\tp\t7\tstring-replace\t4" 3) "string-replace")
+          "the head is field 3")
+  (assert (equal? (row-field "HEAD\tcar" 1) "car") "a two-field row reads")
+  (assert (equal? (row-field "HEAD\tcar" 5) "")
+          "past the end is \"\" — nth returns nil there, and a nil in a "
+          "string-append is a runtime error, so the length guard is load-bearing"))
+
+(deftest "probe-exact-arity: reads the arity OUT OF THE INTERPRETER'S OWN ERROR"
+  ;; These verdict strings are the interpreter's real output, captured by
+  ;;   (try (string-replace #f #f #f #f) (catch (e) e))
+  ;; That is the whole reason Layer 6 hand-lists nothing.
+  (assert (equal? (probe-exact-arity
+                    "string-replace"
+                    "Error(arity-mismatch: `string-replace` expected Exact(3), got 23)")
+                  "3")
+          "THE case the gate exists for — 13 four-arg string-replace calls")
+  (assert (equal? (probe-exact-arity
+                    "car" "Error(arity-mismatch: `car` expected Exact(1), got 23)")
+                  "1")
+          "a one-arg primitive")
+  (assert (equal? (probe-exact-arity
+                    "alist-get"
+                    "Error(arity-mismatch: `alist-get` expected Range(2, 3), got 23)")
+                  "")
+          "a RANGE is deliberately ungated — there is no string->number here, so "
+          "a range bound cannot be compared. Ungated is honest; guessing is not.")
+  (assert (equal? (probe-exact-arity
+                    "count" "Error(arity-mismatch: `<closure>` expected Exact(1), got 23)")
+                  "")
+          "a <closure> verdict is DROPPED: that is a stdlib lisp function, and "
+          "actions legitimately rebind those (Layer 4's baseline is the proof). "
+          "breathe-band-lint's own 2-arg `count` is exactly this, 7 times over.")
+  (assert (equal? (probe-exact-arity
+                    "add-finding" "Error(unbound-symbol: unbound symbol `add-finding`)")
+                  "")
+          "an action's own function is unknown to the interpreter -> never gated")
+  (assert (equal? (probe-exact-arity
+                    "cond" "Error(bad-special-form: bad `cond`: clause must be a list)")
+                  "")
+          "a special form is not a primitive -> never gated")
+  (assert (equal? (probe-exact-arity "list" "[Bool(false), Bool(false)]") "")
+          "a variadic that ACCEPTED 23 args answers with a value, not an error"))
+
+(deftest "probe-row->arity-row: one arity-table row per probed native primitive"
+  (assert (equal? (probe-row->arity-row
+                    "[05:30:57] INFO ARITYPROBE\tstring-replace\tError(arity-mismatch: `string-replace` expected Exact(3), got 23)")
+                  "string-replace\t3")
+          "the log-info timestamp prefix is stripped by splitting on the marker")
+  (assert (equal? (probe-row->arity-row "[05:30:57] INFO something unrelated") "")
+          "a line without the marker contributes nothing")
+  (assert (equal? (probe-row->arity-row
+                    "[05:30:57] INFO ARITYPROBE\tlist\t[Bool(false)]")
+                  "")
+          "a marked line with no arity verdict contributes nothing"))
+
+(deftest "arity-probe-line: the probe can only ARITY-FAIL, never run the body"
+  ;; Load-bearing safety property. `Interpreter::apply` checks arity BEFORE it
+  ;; invokes the callable, so a probe at an absurd count never reaches an
+  ;; effectful primitive's body. And when the count IS accepted (a variadic),
+  ;; `#f` type-errors in the argument marshaller — MEASURED:
+  ;;   (exec-capture #f ×23) => in native `exec-capture`: expected string, got bool
+  ;; Not one process was spawned. A dummy of "" would NOT have that property.
+  (assert (string-contains? (arity-probe-line "exec-capture") "(exec-capture #f #f")
+          "the head is applied to dummies")
+  (assert (string-contains? (arity-probe-line "exec-capture") "(catch (e) e)")
+          "and it is wrapped in try/catch, so one bad head cannot abort the probe")
+  (assert (not (string-contains? (arity-probe-line "exec-capture") "\"\""))
+          "the dummy is #f, never an empty string — a string ARG would satisfy "
+          "the marshaller and let a variadic effectful primitive actually run"))
+
+(deftest "the crash-certain row formats the baseline is keyed on"
+  (assert (equal? (namedlet-row "NAMEDLET\t./helm-deploy/run.tlisp\t21\tlet")
+                  "helm-deploy/run.tlisp:21\tnamed-let")
+          "path:line TAB named-<form>, path repo-relative for find-style ./ ")
+  (assert (equal? (namedlet-row "NAMEDLET\tx/run.tlisp\t9\tlet*")
+                  "x/run.tlisp:9\tnamed-let*")
+          "let* and letrec reject a name too — the form is carried, not assumed")
+  (assert (equal? (arityviol-row "ARITYVIOL\t./kafka-publish/run.tlisp\t10\tstring-replace\t4\t3")
+                  "kafka-publish/run.tlisp:10\tstring-replace/4 (wants 3)")
+          "got/want are both in the row, so a baseline entry pins the exact defect"))
+
+(deftest "the crash-certain baseline is loaded AND EMPTY — zero tolerated debt"
+  ;; Layers 4 and 5 baseline real debt because a stdlib shadow is survivable.
+  ;; A crash-certain form is not survivable: it is code that cannot run. Every
+  ;; instance found on the day this landed was FIXED, not baselined, so the
+  ;; honest state is zero rows. If this test fails, somebody baselined a crash.
+  (assert (null? crash-baselined)
+          "no crash-certain form is baselined")
+  (assert (path-exists? crash-baseline-path)
+          "and the file itself exists, so the filter above is reading a real "
+          "file rather than silently defaulting to an empty list"))
+
+(deftest "crash-row-new?: an unbaselined row is NEW"
+  (assert (crash-row-new? "some-action/run.tlisp:9\tnamed-let")
+          "with an empty baseline every crash-certain row is new"))
+
+(deftest "nonblank-lines drops blanks so a trailing newline is not a row"
+  (assert (equal? (nonblank-lines "a\nb\n") (list "a" "b"))
+          "the trailing newline python's print adds does not become an empty row")
+  (assert (null? (nonblank-lines "\n  \n")) "whitespace-only input yields nothing"))
+
+(deftest "rows-of-kind: the reader's row kinds do not bleed into each other"
+  (let ((rows (list "NAMEDLET\tp\t1\tlet" "HEAD\tcar" "HEAD\tcdr")))
+    (assert (equal? (rows-of-kind rows "HEAD") (list "HEAD\tcar" "HEAD\tcdr"))
+            "only HEAD rows")
+    (assert (equal? (length (rows-of-kind rows "NAMEDLET")) 1) "only NAMEDLET rows")
+    (assert (null? (rows-of-kind rows "ARITYVIOL")) "an absent kind yields nothing")))

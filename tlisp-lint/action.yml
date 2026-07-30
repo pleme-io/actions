@@ -50,3 +50,8 @@ runs:
         PATHS: ${{ inputs.paths }}
         FAIL_ON_UNBALANCED: ${{ inputs.fail-on-unbalanced }}
         RUN_PARSER_CHECK: ${{ inputs.run-parser-check }}
+        # Layer 6's s-expression reader is a sidecar file, and this script
+        # reaches the runner as a STRING (see the "Load run.tlisp" step above),
+        # so it cannot locate its own directory. Without this the layer skips
+        # itself with a log line instead of silently passing.
+        ACTION_PATH: ${{ github.action_path }}
