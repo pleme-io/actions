@@ -1,0 +1,42 @@
+# output-contract-sync/dynamic-keys.tsv — the typed dynamic-output-key spec.
+#
+# HAND-AUTHORED. This is the one input to generation that a static scan cannot
+# derive, and it is the reason a byte-diff gate over this corpus is safe.
+#
+# Three sites build the output KEY by runtime concatenation:
+#
+#     ghcr-publish/run.tlisp   (append-output (string-append "ref-"     arch "=" ref))
+#     zot-push/run.tlisp       (append-output (string-append "ref-"     arch "=" ref))
+#     nix-image/run.tlisp      (append-output (string-append "tarball-" arch "=" path))
+#
+# No scan can see the resulting names, so a purely static generator reports
+# ref-amd64 / ref-arm64 / tarball-amd64 / tarball-arm64 as declared-but-never-
+# written. A reviewer reads that deletion as a clean cleanup and all three
+# actions break silently. Declaring the (action, prefix, domain) here instead
+# makes the key domain FINITE and derivable, and the cross product is generated.
+#
+# Reconciliation runs BOTH directions and both are hard failures:
+#   - a detected site with no row here          => a new dynamic site cannot
+#                                                  land without its spec entry
+#   - a row here matching no detected site      => the spec cannot rot
+#
+# domain: the closed set of values the concatenated variable may take.
+# nix-image's own arch->system cond (run.tlisp:99-105) accepts exactly these
+# four aliases, so tarball-x86_64 and tarball-aarch64 are REACHABLE today and
+# were undeclared — a live hole this spec closes.
+#
+# TIER-HONEST, and the reason this file is a hazard label as much as a fix:
+# ghcr-publish and zot-push have ZERO validation on arch — both read a bare
+# `(env-get "ARCH" "amd64")` and their action.yml input carries no enum — so
+# their true key domain is UNBOUNDED (ARCH=linux/amd64 yields the key
+# `ref-linux/amd64`, which GitHub discards and the runtime gate ignores, since
+# `/` is not in its identifier set). Declaring these four is strictly better
+# than the two declared before, and it is NOT a proof of exhaustiveness.
+# Closing that properly means constraining arch to a closed enum at the tlisp
+# boundary in all three actions, which is a behaviour change (it rejects input
+# that is accepted today) and so is deliberately NOT bundled here.
+#
+# action<TAB>prefix<TAB>comma-separated domain
+ghcr-publish	ref-	amd64,aarch64,arm64,x86_64
+nix-image	tarball-	amd64,aarch64,arm64,x86_64
+zot-push	ref-	amd64,aarch64,arm64,x86_64

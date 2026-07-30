@@ -1,0 +1,160 @@
+;; output-contract-sync/run.test.tlisp
+;;
+;; Run by the ./tlisp-test job, which concatenates
+;;   stdlib + run.tlisp + this file
+;; with TLISP_TEST=1, so run.tlisp derives the WHOLE live contract (338 actions)
+;; and skips its main. Every assertion below therefore runs against the real
+;; corpus, not a fixture that could silently drift away from it.
+;;
+;; ── HOW AN ASSERTION MUST BE WRITTEN HERE (measured 2026-07-30) ──────────
+;;
+;; `deftest` fails ONLY on a raised runtime error. Two forms that LOOK like
+;; assertions do not raise, and a test using them reports green no matter what
+;; the subject does:
+;;
+;;     (deftest t (equal? 1 2))              -> PASSES. A #f body is not a failure.
+;;     (deftest t (error "kind" "boom"))     -> PASSES. The 2-3 arg form does not raise.
+;;
+;; `(assert COND MSG)` DOES raise, and is what this file uses throughout.
+;; (tatara-script/output-contract.test.tlisp's header claims no working
+;; assertion exists and reaches for `(car (list))`; that is over-broad —
+;; `assert` works. Its own tests are correct either way, so nothing there needs
+;; changing.)
+
+(define (nonblank xs) (filter (fn (x) (not (equal? x ""))) xs))
+
+;; ── the live contract holds ──────────────────────────────────────────────
+;;
+;; These are the invariants the gate exists to keep. They are assertions, not
+;; smoke tests: if a future commit adds an append-output without regenerating,
+;; inner-missing becomes non-empty and this file goes red in the tlisp-test job
+;; as well as in the gate.
+
+(deftest live-contract-has-no-inner-gap
+  (assert (null? inner-missing) (string-append "keys written but not declared by the inner runner: " (string-join ", " inner-missing))))
+
+(deftest live-contract-has-no-outer-gap
+  (assert (null? wrapper-new) (string-append "keys written but not forwarded by their own action.yml: " (string-join ", " wrapper-new))))
+
+(deftest live-contract-has-no-ghost-step
+  (assert (null? ghosts) (string-append "outputs forwarding from a nonexistent step id: " (string-join ", " ghosts))))
+
+(deftest dynamic-spec-is-reconciled-both-ways
+  (assert (equal? spec-violations 0) (string-append "undeclared dynamic sites: " (string-join ", " undeclared-sites) " / stale spec rows: " (string-join ", " stale-sites))))
+
+(deftest parsers-agree-on-every-manifest
+  (assert (null? parity-bad) (string-append "yaml-parse vs line-scanner disagreement: " (string-join ", " parity-bad))))
+
+(deftest verdict-is-clean
+  (assert (equal? failures 0) (string-append "gate reports failures, reason=" reason)))
+
+;; ── determinism ──────────────────────────────────────────────────────────
+
+(deftest inner-union-is-sorted-and-deduped
+  (assert (equal? inner-union (sort-by compare inner-union)) "the generated key union is not sorted")
+  (assert (equal? (length inner-union) (length (distinct inner-union))) "the generated key union contains duplicates"))
+
+(deftest catalog-body-is-sorted-within-each-section
+  (let*
+    ((ls (string-split rendered-catalog "\n"))
+      (keys-ix (find-index (fn (l) (equal? l "## keys")) ls))
+      (sum-ix (find-index (fn (l) (equal? l "## summary")) ls)))
+    (assert (> sum-ix 0) "catalog has no ## summary section")
+    (assert (> keys-ix sum-ix) "catalog has no ## keys section after ## summary")
+    (let
+      ((summary (nonblank (take (- keys-ix (+ sum-ix 1)) (drop (+ sum-ix 1) ls))))
+        (keyrows (nonblank (drop (+ keys-ix 1) ls))))
+      (assert (equal? summary (sort-by compare summary)) "catalog ## summary rows are not sorted")
+      (assert (equal? keyrows (sort-by compare keyrows)) "catalog ## keys rows are not sorted"))))
+
+(deftest generation-is-a-fixed-point
+  ;; The committed artifacts must already equal what this pass generates,
+  ;; which is the same predicate the gate uses. If write mode needed a second
+  ;; pass to converge, this is where that shows up.
+  (assert (equal? inner-drift 0) "the committed inner manifest differs from the generated one")
+  (assert (equal? catalog-drift 0) "the committed catalog differs from the generated one"))
+
+(deftest rendered-inner-carries-both-markers-exactly-once
+  (let
+    ((ls (lines-of rendered-inner)))
+    (assert (equal? (length (filter (fn (l) (equal? l BEGIN-MARK)) ls)) 1) "BEGIN marker is not present exactly once")
+    (assert (equal? (length (filter (fn (l) (equal? l END-MARK)) ls)) 1) "END marker is not present exactly once")))
+
+;; ── the union is monotonic: generation must never DROP a declaration ──────
+;;
+;; The property that makes a byte-diff gate safe over this corpus. Four keys
+;; (ref-amd64, ref-arm64, tarball-amd64, tarball-arm64) are written ONLY by
+;; runtime concatenation, so a static generator sees them as dead and deletes
+;; them, silently breaking ghcr-publish, zot-push and nix-image.
+
+(deftest every-currently-declared-key-survives-generation
+  (for-each
+    (fn (k) (assert (member? k inner-union) (string-append "generation would DROP the declared key " k)))
+    inner-declared))
+
+(deftest the-runtime-concatenated-keys-are-in-the-union
+  (for-each
+    (fn (k) (assert (member? k inner-union) (string-append "dynamic key absent from the union: " k)))
+    (list "ref-amd64" "ref-arm64" "ref-aarch64" "ref-x86_64" "tarball-amd64" "tarball-arm64" "tarball-aarch64" "tarball-x86_64")))
+
+(deftest no-declared-key-lacks-a-writer-silently
+  ;; stale-declared is REPORTED, never deleted. It is 0 today only because the
+  ;; dynamic spec accounts for all four concatenated keys; if it becomes
+  ;; non-zero the catalog and the log say so rather than the block shrinking.
+  (assert (equal? (length stale-declared) 0) (string-append "declared with no discoverable writer: " (string-join ", " stale-declared))))
+
+;; ── scanner behaviour (the part a corpus assertion cannot pin) ────────────
+
+(deftest scanner-reads-both-separators
+  (assert (member? "plain" (scan-static "(append-output \"plain=1\")")) "the key=value form was not scanned")
+  (assert (member? "wrapped" (scan-static "(append-output (string-append \"wrapped=\" v))")) "the string-append form was not scanned")
+  (assert (member? "heredoc" (scan-static "(append-output (string-append \"heredoc<<\" eof))")) "the heredoc `key<<DELIM` form was not scanned"))
+
+(deftest scanner-reads-a-multiline-call
+  (assert (member? "spread" (scan-static "(append-output\n  (string-append\n    \"spread=\" p))")) "a call split across lines was not scanned"))
+
+(deftest heredoc-form-is-why-the-count-is-not-172
+  ;; changelog-generate writes `changelog<<EOF`, the only heredoc opener in the
+  ;; corpus. An `=`-only scan silently loses it -- and heredocs are exactly the
+  ;; multi-line outputs, i.e. the keys most likely to carry real payload.
+  (assert (member? "changelog" written-static) "changelog is absent from the scanned set; the `<<` alternative has been dropped from STATIC-RE")
+  (assert (member? "changelog" inner-union) "changelog is absent from the generated union"))
+
+(deftest scanner-rejects-a-dynamic-key-as-static
+  (assert (null? (scan-static "(append-output (string-append \"ref-\" arch \"=\" ref))")) "a runtime-concatenated key was mis-scanned as a literal")
+  (assert (member? "ref-" (scan-dynamic "(append-output (string-append \"ref-\" arch \"=\" ref))")) "the dynamic site was not detected"))
+
+(deftest scanner-is-anchored-not-a-bare-literal-match
+  ;; An UNanchored scan returns ~45 phantom keys from CLI flags and env vars.
+  ;; Over-declaration is inert at runtime, so no gate would ever catch it.
+  (assert (null? (scan-static "(exec-check \"skopeo\" \"copy\" \"--tls-verify=false\")")) "a CLI flag was scanned as an output key")
+  (assert (null? (scan-static "(env-set \"GOFLAGS\" \"-mod=mod\")")) "an env var assignment was scanned as an output key"))
+
+(deftest scanner-ignores-a-commented-out-example
+  ;; This file's own unit documents the three dynamic sites verbatim in a `;;`
+  ;; block and would otherwise claim them as its own keys.
+  (assert (null? (scan-static ";; (append-output \"documented=1\")")) "a full-line comment produced a phantom key")
+  (assert (null? (scan-dynamic ";;     nix-image  (append-output (string-append \"tarball-\" arch \"=\" p))")) "a full-line comment produced a phantom dynamic site")
+  (assert (member? "real" (scan-static "(append-output \"real=1\")  ;; trailing comment")) "a trailing comment suppressed a real key"))
+
+(deftest scanner-ignores-the-append-output-definition-itself
+  (assert (null? (scan-static "(define (append-output line) (write-file f line))")) "the stdlib's own definition of append-output was scanned as a key"))
+
+;; ── L7 non-vacuity: the floors must be real ──────────────────────────────
+;;
+;; A gate that examined nothing must be RED. These assert the floors are above
+;; zero and below the live corpus, i.e. that they would actually fire — the
+;; RED-run evidence for the floors themselves is recorded in the commit that
+;; adds this action (an empty-corpus invocation, captured verbatim).
+
+(deftest non-vacuity-floors-would-fire-on-an-empty-corpus
+  (assert (> (length action-dirs) 200) "corpus is below the action floor the unit enforces")
+  (assert (> (length routing) 200) "routing set is below the floor the unit enforces")
+  (assert (> (length written-static) 100) "written-key set is below the floor the unit enforces")
+  (assert (not (null? spec-rows)) "the dynamic-key spec is empty, which the unit treats as vacuous"))
+
+(deftest the-gate-actually-examined-both-boundaries
+  ;; keys-checked and actions-scanned are the two outputs a reader would use to
+  ;; tell enforcement from theatre. Assert they are non-trivial.
+  (assert (> (length inner-union) 200) "the inner union is implausibly small")
+  (assert (> (length (flat (map (fn (r) (f-get r "forwards")) routing))) 200) "almost no outer-boundary forwards were parsed, so L4 proved little"))
