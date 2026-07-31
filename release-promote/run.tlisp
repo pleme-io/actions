@@ -44,9 +44,20 @@
   (promote:version-or version source-tag)
   (if (equal? (string-trim version) "") source-tag version))
 
-;; The yq set-expression for a scalar string assignment (TYPED write —
-;; no sed). e.g. (".version" "1.2.3") -> `.version = "1.2.3"`.
+;; The yq set-expression for a scalar string assignment. RETAINED for the
+;; unit tests below and for callers that still shell out; the promote path
+;; itself no longer uses it — see stdlib's yaml-set-field.
 (define (promote:yq-set-expr yaml-path version) (string-append yaml-path " = \"" version "\""))
+
+;; The top-level-scalar YAML read/write used by the promote path lives in
+;; _tlisp-stdlib (`yaml-read-field` / `yaml-set-field` / `yaml-top-key`),
+;; NOT here. It was written for this action and then moved, because the
+;; defect it fixes was never this action's alone: the stdlib reader shelled
+;; out to `yq` and returned "" on any non-zero exit, so on a runner without
+;; yq -- which is every `camelot-builder-pleme-eks` runner -- "field absent"
+;; and "binary missing" were the same answer for EVERY action. Keeping a
+;; private copy here would have fixed one call site and left the class
+;; intact. See stdlib.tlisp's header for the measurement (run 30555068358).
 
 (define
   (promote:commit-msg values-file version target-env)
@@ -141,6 +152,11 @@
             values-file
             (if (equal? (string-trim target-env) "") "" (string-append " for " target-env))))
         (let
+          ;; In-process read, NOT stdlib's yaml-read-field: that one runs
+          ;; `yq … 2>/dev/null` and returns "" on any non-zero exit, so on a
+          ;; runner without yq "the binary is missing" and "the field is
+          ;; absent" are the same answer. That is why this idempotency check
+          ;; never once matched -- it compared against "" every time.
           ((current (yaml-read-field values-file yaml-path)))
           (cond
             ;; Idempotent: already at the target version — nothing to do.
@@ -155,17 +171,28 @@
               (append-output "reason=already-at-version")
               (exit 0))
             (else
-              ;; TYPED write via yq (never sed).
+              ;; TYPED write, in-process — no yq, no sed, no subprocess.
+              ;; See stdlib's yaml-read-field header for why the previous
+              ;; `exec-capture "yq"` could never succeed on the ARC runner.
               (let
-                ((w (exec-capture "yq" "-i" (promote:yq-set-expr yaml-path version) values-file)))
+                ((new-text (yaml-set-field (read-file values-file) yaml-path version)))
                 (cond
-                  ((not (= (status-of w) 0))
-                    (log-info (stderr-of w))
-                    (log-error "release-promote(helm-chart-version): yq write failed")
-                    (promote:emit-fail "yq-write-failed")
+                  ((null? new-text)
+                    (log-error (string-append
+                      "release-promote(helm-chart-version): cannot set '" yaml-path "' in "
+                      values-file " -- the path must name a top-level scalar (e.g."
+                      " '.version') defined exactly once. Refusing to guess which line"
+                      " to rewrite."))
+                    (promote:emit-fail "yaml-set-unsupported-or-ambiguous")
                     (exit 1))
-                  ;; Verify the write took.
-                  ((not (equal? (yaml-read-field values-file yaml-path) version))
+                  ;; Write, then verify by reading the file back IN-PROCESS,
+                  ;; so a missing binary can no longer masquerade as a
+                  ;; missing field the way the yq path did.
+                  ((not (equal?
+                          (begin
+                            (write-file values-file new-text)
+                            (yaml-read-field values-file yaml-path))
+                          version))
                     (log-error "release-promote(helm-chart-version): post-write verify mismatch")
                     (promote:emit-fail "write-verify-mismatch")
                     (exit 1))
