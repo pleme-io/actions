@@ -94,10 +94,25 @@
     ((w (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true")))
     (string-trim (stdout-of w))))
 
-;; Credentials ONLY when explicitly supplied; otherwise doca's own ambient
-;; lookup runs. Passing empty strings would DEFEAT that lookup by looking like
-;; an explicit (empty) credential, so the flags are omitted entirely.
-(define cred-args (if (equal? user "") (list) (list "--dest-user" user "--dest-pass" pass)))
+;; ── CREDENTIALS GO VIA ENV, NEVER ARGV. ─────────────────────────────────────
+;; This previously appended `--dest-user <u> --dest-pass <p>` to the command
+;; line. A command line is world-readable on the host: /proc/<pid>/cmdline and
+;; plain `ps` show it to every process on the runner. GitHub masks secrets in
+;; LOG OUTPUT, which is a different thing entirely and gives no protection here.
+;; On a shared ARC pool that is a real exposure of ZOT_PASSWORD, and it is one I
+;; introduced earlier today when converting the Zot push away from an ambient
+;; authfile -- before that change this action passed no secret at all.
+;;
+;; doca reads the same credentials from INPUT_DEST_USER / INPUT_DEST_PASS (its
+;; documented `INPUT_<FLAG_UPPER_UNDERSCORE>` convention), which the composite
+;; sets as step env. Env is not perfect -- /proc/<pid>/environ exists -- but it
+;; is readable only by the same uid, whereas cmdline is world-readable.
+;;
+;; SAFE WHEN EMPTY, verified in doca's source rather than assumed: `env_input`
+;; is `env::var(name).ok().filter(|s| !s.is_empty())`, so an empty
+;; INPUT_DEST_USER is None, not Some(""). The ambient-docker-config fallback that
+;; every generated patterns*.nix consumer relies on is therefore untouched.
+(define cred-args (list))
 
 (define
   tls-args

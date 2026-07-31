@@ -23,7 +23,7 @@ inputs:
     required: false
     default: ""
   password:
-    description: "Explicit registry password/token, paired with `username`. Passed to doca as --dest-pass, never echoed. Ignored when `username` is empty."
+    description: "Explicit registry password/token, paired with `username`. Handed to doca as the INPUT_DEST_PASS ENV VAR, never on the command line -- /proc/<pid>/cmdline and `ps` are world-readable on a shared runner and GitHub log-masking does not cover the process table. Ignored when `username` is empty."
     required: false
     default: ""
   ca-cert:
@@ -91,6 +91,14 @@ runs:
         TARBALL:   ${{ inputs.tarball }}
         USERNAME:  ${{ inputs.username }}
         PASSWORD:  ${{ inputs.password }}
+        # doca reads these directly (its INPUT_<FLAG> convention). Passing them
+        # as ENV rather than on the command line keeps the password out of
+        # /proc/<pid>/cmdline and `ps`, which are world-readable on the runner --
+        # GitHub's log masking does not cover the process table. Empty values are
+        # treated as unset by doca's own env_input (it filters empty strings), so
+        # the ambient-docker-config path is unaffected.
+        INPUT_DEST_USER: ${{ inputs.username }}
+        INPUT_DEST_PASS: ${{ inputs.password }}
         CA_CERT:   ${{ inputs.ca-cert }}
         INSECURE:  ${{ inputs.insecure }}
         DOCA_REF:  ${{ inputs.doca-ref }}
