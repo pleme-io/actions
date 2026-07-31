@@ -229,11 +229,39 @@
          "cd "
          dir
          " && cargo publish"
+         ;; --allow-dirty is REQUIRED here, and it is correct-by-design rather
+         ;; than a workaround. `real-bump` above runs `cargo set-version`, which
+         ;; rewrites Cargo.toml + Cargo.lock and deliberately does NOT commit:
+         ;; `commit-tag` fires only AFTER a successful publish, so git can never
+         ;; tag a version that is not on the registry (see this file's header).
+         ;; Every publish therefore runs against a tree with N modified
+         ;; manifests, and without this flag cargo refuses locally, instantly,
+         ;; before contacting the registry at all.
+         ;;
+         ;; MEASURED, 2026-07-31: 11 caixa repos on this callee were 0 for 737
+         ;; runs. The tell was the timing — `caixa-bindgen` failed in 70 ms and
+         ;; `caixa-ratatui` in 165 ms on the first member of a 41-member
+         ;; workspace. That is far too fast for an upload; it is a local refusal.
+         " --allow-dirty"
          (if (equal? dry-run "true") " --dry-run" "")
          (if (equal? no-verify "true") " --no-verify" "")
          " 2>&1"))
-      (r (exec-capture "sh" "-c" args)))
-    (classify-cargo-publish-outcome (string-append (stdout-of r) "\n" (stderr-of r)) (status-of r))))
+      (r (exec-capture "sh" "-c" args))
+      (out (string-append (stdout-of r) "\n" (stderr-of r)))
+      (verdict (classify-cargo-publish-outcome out (status-of r))))
+    ;; Log the captured output on an UNCLASSIFIED failure. Previously this text
+    ;; went straight into the classifier and was never printed, so an error
+    ;; matching no arm surfaced only as "permanent publish failure" with the
+    ;; actual cargo message discarded — which is why 737 identical failures
+    ;; produced no diagnosable signal. A failure whose cause is swallowed is the
+    ;; same defect class as a check that examined nothing.
+    ;; 'failed is the CLASSIFIER's symbol (stdlib.tlisp:503). `member-disposition`
+    ;; separately maps it to 'fail — checking for that here would silently never
+    ;; fire, which is the very failure mode this logging exists to end.
+    (if (equal? verdict 'failed)
+      (log-error (string-append "unclassified cargo publish failure in " dir ": " out))
+      #t)
+    verdict))
 
 (define
   (real-sleep)
