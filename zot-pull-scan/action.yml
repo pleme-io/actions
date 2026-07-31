@@ -65,7 +65,7 @@ inputs:
     required: false
     default: ""
   src-pass:
-    description: "Password/token for the SOURCE registry. Passed to doca as --pass, never echoed. Empty (with src-user empty) keeps the anonymous path."
+    description: "Password/token for the SOURCE registry. Handed to doca as the INPUT_PASS ENV VAR, never on the command line -- /proc/<pid>/cmdline and `ps` are world-readable on a shared runner and GitHub log-masking does not cover the process table. Empty (with src-user empty) keeps the anonymous path."
     required: false
     default: ""
 
@@ -172,6 +172,13 @@ runs:
         SRC_INSECURE: ${{ inputs.src-insecure }}
         SRC_USER: ${{ inputs.src-user }}
         SRC_PASS: ${{ inputs.src-pass }}
+        # doca reads these directly. Passing the token as ENV rather than on the
+        # command line keeps it out of /proc/<pid>/cmdline and `ps`, which are
+        # world-readable on the runner -- GitHub's log masking does not cover the
+        # process table. Empty is treated as unset by doca's own env_input, so
+        # the anonymous path for a public source is unaffected.
+        INPUT_USER: ${{ inputs.src-user }}
+        INPUT_PASS: ${{ inputs.src-pass }}
         DOCA_REF: ${{ inputs.doca-ref }}
 
     # ── Stage 2: scan the PULLED bytes via image-scan -- the fleet's one

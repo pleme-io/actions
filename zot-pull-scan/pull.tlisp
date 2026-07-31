@@ -117,10 +117,22 @@
       ;; (GHCR) keeps the anonymous path. Without this an authenticated
       ;; registry rejects the pull outright -- which is exactly how this
       ;; action failed for as long as it had no credential input at all.
-      (cred-args
-        (if (equal? user "")
-          (list)
-          (list "--user" user "--pass" pass)))
+      ;; ── CREDENTIALS GO VIA ENV, NEVER ARGV. ──────────────────────────────
+      ;; This used to append `--user <u> --pass <p>`. A command line is
+      ;; world-readable: /proc/<pid>/cmdline and `ps` expose it to every process
+      ;; on the runner, and GitHub's log masking does not cover the process
+      ;; table. The credential here is a GHCR token with read access to private
+      ;; pleme-io packages, on a shared ARC pool.
+      ;;
+      ;; doca reads the same values from INPUT_USER / INPUT_PASS (its
+      ;; INPUT_<FLAG_UPPER_UNDERSCORE> convention), exported as step env by
+      ;; action.yml. Env is readable only by the same uid; cmdline is readable
+      ;; by anyone on the box.
+      ;;
+      ;; Empty is safe: doca's `env_input` filters empty strings, so an unset or
+      ;; blank INPUT_USER is None rather than Some(""), and the anonymous path
+      ;; for a public source is unchanged.
+      (cred-args (list))
       ;; Clear DEST first. `docker-archive:` opens an existing path read-write
       ;; to APPEND another image, so a pre-existing dest is not overwritten --
       ;; and when that dest is a `nix build` out-link, the open fails outright:
