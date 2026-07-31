@@ -93,7 +93,19 @@
       ;; Path to a .trivyignore-format file -- named, tracked exceptions
       ;; (never a blanket severity loosening). Empty = no ignorefile
       ;; passed.
-      (ignore-file (env-get "IGNORE_FILE" "")))
+      (ignore-file (env-get "IGNORE_FILE" ""))
+      ;; VEX — the disposition channel for a finding that is REAL in the
+      ;; SBOM and NOT REACHABLE in this artifact. Without it such a finding
+      ;; has nowhere to go: it stays red forever and the gate can never
+      ;; pass, so an image whose only findings are assessed-unreachable is
+      ;; unshippable on a compliance path that expects a green gate.
+      ;;
+      ;; This is DIFFERENT from `ignore-file`, and the difference is the
+      ;; whole point. An ignore is "stop telling me"; a VEX statement is a
+      ;; PUBLISHED, machine-readable CLAIM with a justification, which a
+      ;; downstream auditor can read and disagree with. One hides a
+      ;; finding, the other answers it.
+      (vex-file (env-get "VEX_FILE" "")))
 
     (if
       (not (equal? fail-on-raw fail-on))
@@ -128,12 +140,16 @@
     (let*
       ((unfixed-flag (if (equal? ignore-unfixed "true") (list "--ignore-unfixed") (list)))
         (ignorefile-flag (if (equal? ignore-file "") (list) (list "--ignorefile" ignore-file)))
+        ;; trivy consumes OpenVEX/CSAF natively via --vex; empty keeps the
+        ;; previous behaviour byte-for-byte for every existing consumer.
+        (vex-flag (if (equal? vex-file "") (list) (list "--vex" vex-file)))
         (target-flag (if (equal? local-archive "") (list image) (list "--input" local-archive)))
         (args
           (append
             (list "image")
             unfixed-flag
             ignorefile-flag
+            vex-flag
             (list "--format" "json" "--quiet")
             target-flag))
         (r (apply exec-capture (cons "trivy" args))))

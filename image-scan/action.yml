@@ -20,6 +20,10 @@ inputs:
     description: "Skip vulns without an available fix"
     required: false
     default: "false"
+  vex:
+    description: "Path to an OpenVEX/CSAF document passed to trivy as --vex. For a finding that is REAL in the SBOM but NOT REACHABLE in this artifact -- a published, machine-readable claim with a justification, which an auditor can read and dispute. NOT the same as ignore-file: an ignore hides a finding, a VEX answers it. Empty (default) keeps the prior behaviour exactly."
+    required: false
+    default: ""
   ignore-file:
     description: "Path to a .trivyignore-format file of named, tracked exceptions (never a blanket severity loosening — each entry should carry its own justification). Empty = none."
     required: false
@@ -86,6 +90,7 @@ runs:
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
         IGNORE_FILE: ${{ inputs.ignore-file }}
+        VEX_FILE: ${{ inputs.vex }}
         TRIVY_USERNAME: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.actor || '' }}
         TRIVY_PASSWORD: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.token || '' }}
 
