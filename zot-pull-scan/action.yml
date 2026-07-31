@@ -25,11 +25,11 @@ inputs:
     required: false
     default: "zot-pull.tar"
   src-ca-cert-url:
-    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for a self-signed SOURCE registry (mirrors zot-push's ca-cert-url; skopeo pins it via --src-cert-dir). Default '' = OPT-OUT (plain copy, the original behavior) -- correct for a publicly-trusted source like GHCR (the shipped vendor-image-mirror consumer pulls its source from GHCR, so a required zot-CA fetch would wrongly refuse it). When the SOURCE is the self-signed zot itself, set this to the committed zot-ca.crt raw URL (https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt) plus src-ca-cert-token, or set src-insecure=true."
+    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for a self-signed SOURCE registry (mirrors zot-push's ca-cert-url; doca pins it via --dest-ca-cert). Default '' = OPT-OUT (plain copy, the original behavior) -- correct for a publicly-trusted source like GHCR (the shipped vendor-image-mirror consumer pulls its source from GHCR, so a required zot-CA fetch would wrongly refuse it). When the SOURCE is the self-signed zot itself, set this to the committed zot-ca.crt raw URL (https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt) plus src-ca-cert-token, or set src-insecure=true."
     required: false
     default: ""
   src-ca-cert-dir:
-    description: "Local directory the fetched CA cert is written into and handed to skopeo's --src-cert-dir (skopeo pins a DIR of *.crt certs, not a single file). Override if a job invokes this action more than once against DIFFERENT source certs."
+    description: "Local directory the fetched CA cert is written into; doca is handed the PEM FILE inside it (src-ca.crt) via --dest-ca-cert. skopeo took a DIR of *.crt, doca takes one file -- the directory input is kept so consumers need no change. Override if a job invokes this action more than once against DIFFERENT source certs."
     required: false
     default: "/tmp/zot-pull-certs"
   src-ca-cert-token:
@@ -40,12 +40,16 @@ inputs:
     description: "Fall back to plain --src-tls-verify=false if the CA cert fetch fails (real degradation, logged loudly -- never the default path when the cert is reachable)."
     required: false
     default: "false"
+  doca-ref:
+    description: "The doca (oci-push) flake ref `nix run` resolves -- pin to a tagged/commit ref for build-reproducibility, or point at a fork. Mirrors zot-push's identically-named input."
+    required: false
+    default: "github:pleme-io/substrate#oci-push"
   src-user:
-    description: "Username for the SOURCE registry. Required when it demands auth. This action previously had no credential input at all and its header asserted auth was 'a pre-condition (the consumer workflow logs in before this action runs)' -- an assumption no consumer met: skopeo was invoked with no --src-creds and no authfile, so an authenticated Zot rejected it in under a second and the only log line was this action's own 'skopeo pull failed'. Empty keeps the anonymous path for a public source like GHCR."
+    description: "Username for the SOURCE registry. Required when it demands auth. This action previously had no credential input at all and its header asserted auth was 'a pre-condition (the consumer workflow logs in before this action runs)' -- an assumption no consumer met: the pull was invoked with no credentials and no authfile, so an authenticated Zot rejected it in under a second and the only log line was this action's own 'pull failed'. Empty keeps the anonymous path for a public source like GHCR."
     required: false
     default: ""
   src-pass:
-    description: "Password/token for the SOURCE registry. Passed to skopeo as --src-creds user:pass, never echoed. Empty (with src-user empty) keeps the anonymous path."
+    description: "Password/token for the SOURCE registry. Passed to doca as --pass, never echoed. Empty (with src-user empty) keeps the anonymous path."
     required: false
     default: ""
 
@@ -87,11 +91,15 @@ runs:
     # image-scan (stage 2, below) installs its own trivy -- this action no
     # longer needs to, now that it delegates scanning to it instead of
     # duplicating the scan+gate logic.
-    # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) -- exact-pinned
-    # to nixos-24.05.
-    - name: Ensure skopeo
-      shell: bash
-      run: command -v skopeo >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#skopeo
+    # NO TOOL-INSTALL STEP, deliberately. This used to run
+    #   command -v skopeo || nix profile install …#skopeo
+    # which is an imperative install of a third-party binary at job time --
+    # the exact thing ★★ HERMETIC SUPPLY CHAIN forbids ("a pleme-io/actions
+    # action never installs a binary at job time"). We bake, we do not
+    # install. The pull now uses doca (pleme-io/substrate#oci-push) resolved
+    # by `nix run`, which is content-addressed rather than a mutation of the
+    # runner, and is the same way this action's already-converted sibling
+    # zot-push obtains it.
 
     # ── Stage 1: pull the image into a local docker-archive. Hard-fails
     # (no continue-on-error) on a pull failure -- that's terminal, so the
@@ -122,6 +130,7 @@ runs:
         SRC_INSECURE: ${{ inputs.src-insecure }}
         SRC_USER: ${{ inputs.src-user }}
         SRC_PASS: ${{ inputs.src-pass }}
+        DOCA_REF: ${{ inputs.doca-ref }}
 
     # ── Stage 2: scan the PULLED bytes via image-scan -- the fleet's one
     # canonical severity classification + fail-on-severity gate (real
