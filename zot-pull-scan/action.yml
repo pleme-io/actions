@@ -86,7 +86,33 @@ outputs:
 runs:
   using: composite
   steps:
+    # ── determinate: false — ALIGNED WITH actions/doca (2026-07-31) ──────────
+    # This step used the installer's DEFAULTS, i.e. Determinate Nix, and the Zot
+    # mirror died on it. From hardened-images run 30648147453:
+    #
+    #   WARN SelfTest([ShellFailed { shell: Sh, ... }, ShellFailed { shell: Bash, ...}])
+    #   Stack size hard limit is 10485760, which is less than the desired 62914560
+    #   error: cannot connect to socket at '/nix/var/nix/daemon-socket/socket'
+    #
+    # The installer's OWN self-test failed for both shells and the job continued
+    # anyway, so the later `nix run` had no daemon to talk to and doca never
+    # started. That stack-size line is a Determinate-Nix message; upstream nix
+    # does not emit it.
+    #
+    # actions/doca runs the SAME `nix run github:pleme-io/substrate#oci-push`
+    # and pins `determinate: false` + `sandbox = relaxed`. Matching a sibling
+    # that works beats inventing a third configuration.
+    #
+    # NOT VERIFIED IN CI YET — it cannot be tested locally, and the previous
+    # behaviour is a hard failure, so this is a change from "known broken" to
+    # "matches the known-working sibling", not a proven fix. If the mirror still
+    # fails, read the installer's self-test lines FIRST: they were present and
+    # ignored last time.
     - uses: DeterminateSystems/nix-installer-action@main
+      with:
+        determinate: false
+        extra-conf: |
+          sandbox = relaxed
 
     # image-scan (stage 2, below) installs its own trivy -- this action no
     # longer needs to, now that it delegates scanning to it instead of
