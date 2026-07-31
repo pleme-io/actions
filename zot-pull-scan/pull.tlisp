@@ -137,13 +137,51 @@
       ;; that what ships is what Zot holds, and appending to whatever was
       ;; already there would quietly break that.
       (_cleared (exec-capture "rm" "-f" dest))
+      ;; ── BAKED FIRST, `nix run` ONLY AS FALLBACK (2026-07-31) ──────────────
+      ;; ★★ HERMETIC SUPPLY CHAIN + the operator's "we bake, we don't install":
+      ;; a baked `oci-push` on PATH is used directly, and `nix run` is reached
+      ;; for only when there is none.
+      ;;
+      ;; THIS IS NOT A PREFERENCE, IT IS A LIVE OUTAGE FIX. hardened-images run
+      ;; 30648147453, mirror-hardened-clickhouse-to-zot:
+      ;;
+      ;;   ERROR doca pull: Stack size hard limit is 10485760, which is less
+      ;;     than the desired 62914560 ...
+      ;;   error: cannot connect to socket at
+      ;;     '/nix/var/nix/daemon-socket/socket': No such file or directory
+      ;;
+      ;; Both lines are NIX's, not doca's, and they came from the nix
+      ;; installer's own self-test, which had already FAILED for both sh and
+      ;; bash (`WARN SelfTest([ShellFailed ...])`) and let the job continue.
+      ;; So `nix run` had no daemon, doca never started, and an image that had
+      ;; passed its CVE gate and been pushed could not be mirrored -- a 2F
+      ;; blocker with no security meaning whatsoever.
+      ;;
+      ;; It is also the honest closure of this action's earlier hermetic fix.
+      ;; Replacing `nix profile install ...#skopeo` with
+      ;; `nix run github:pleme-io/substrate#oci-push` removed the *word* install
+      ;; while keeping a job-time resolution of an UNPINNED @main ref -- the
+      ;; violation changed shape rather than closing. A baked binary closes it.
+      (doca-baked
+        (let ((w (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true")))
+          (string-trim (stdout-of w))))
       (args
         (append
-          (list "nix" "run"
-                (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
-                "--" "pull" "--ref" ref "--out" dest)
+          (if (equal? doca-baked "")
+            (list "nix" "run"
+                  (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
+                  "--" "pull" "--ref" ref "--out" dest)
+            (list doca-baked "pull" "--ref" ref "--out" dest))
           tls-args
           cred-args))
+      (_which
+        (log-info
+          (string-append
+            "doca source: "
+            (if (equal? doca-baked "")
+              (string-append "nix run " (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
+                             " (NOT baked -- needs a working nix daemon at job time)")
+              (string-append "baked at " doca-baked)))))
       (r (apply exec-capture args)))
     ;; Surface skopeo's OWN stderr on failure. Returning a bare status threw
     ;; the reason away, so a 401, a DNS miss and a TLS refusal were one
