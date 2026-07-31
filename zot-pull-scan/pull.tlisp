@@ -187,9 +187,36 @@
     ;; the reason away, so a 401, a DNS miss and a TLS refusal were one
     ;; indistinguishable "skopeo pull failed" line -- which is exactly how an
     ;; unauthenticated pull looked for as long as this action has existed.
+    ;; ── REPORT EXIT CODE + BOTH STREAMS (2026-07-31) ──────────────────────
+    ;; Logging stderr alone was not enough, and a real run proved it. On
+    ;; hardened-images run 30658995498 every mirror failed after ~2 minutes
+    ;; having printed ONLY nix's own noise:
+    ;;
+    ;;   ERROR doca pull: warning: unknown setting 'build-provenance-tags'
+    ;;   Stack size hard limit is 10485760, which is less than the desired ...
+    ;;
+    ;; Both are NIX WARNINGS. `nix run` floods stderr with them, so doca's
+    ;; actual failure -- whatever it was -- was drowned and the operator was
+    ;; left with a two-minute silence and a warning. That is the same
+    ;; failure-is-illegible shape this block was written to fix, one layer in:
+    ;; the fix surfaced stderr, and stderr turned out not to be where the
+    ;; answer lives.
+    ;;
+    ;; Now: the EXIT CODE (which nix cannot pollute), plus stdout as well as
+    ;; stderr, each labelled. A doca error printed to stdout, an empty-output
+    ;; timeout, and a 401 are three different pictures and must not render the
+    ;; same.
     (when
       (not (= (status-of r) 0))
-      (log-error (string-append "doca pull: " (string-trim (stderr-of r)))))
+      (log-error
+        (string-append "doca pull FAILED, exit=" (string-format "{}" (status-of r))))
+      (log-error (string-append "  stderr: " (string-trim (stderr-of r))))
+      (log-error (string-append "  stdout: " (string-trim (stdout-of r))))
+      (log-error
+        (string-append
+          "  ref=" ref " out=" dest
+          " -- if both streams are empty the pull produced no diagnostic at all; "
+          "check whether doca was reachable and whether the source needed credentials.")))
     (status-of r)))
 
 ;; The full public output contract this action must emit itself on a
