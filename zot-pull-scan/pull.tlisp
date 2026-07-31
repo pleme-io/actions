@@ -276,7 +276,15 @@
             (append-output "pulled=true")
             0)
           (else
-            (log-error (string-append "zot-pull-scan: skopeo pull failed for " ref))
+            ;; "doca", not "skopeo": this line named the wrong tool for as long
+            ;; as the puller has been doca, and it cost real diagnosis time --
+            ;; the run-30658995498 failure read as "skopeo pull failed" directly
+            ;; beneath doca's own "oci-push: pull failed", so the two lines
+            ;; disagreed about which program had just run. A log that names a
+            ;; component not in the closure sends the reader to the wrong layer;
+            ;; here it pointed at skopeo credentials when the actual defect was
+            ;; a caller that never requested credentials at all.
+            (log-error (string-append "zot-pull-scan: doca pull failed for " ref))
             (emit-pull-failed dest)
             1))))))
 
