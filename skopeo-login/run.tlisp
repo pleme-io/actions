@@ -1,5 +1,29 @@
 ;; skopeo-login/run.tlisp — real `skopeo login`, ECR-aware.
 ;;
+;; ── RETIRED 2026-07-31. STILL FUNCTIONAL; DELIBERATELY NOT DELETED. ─────────
+;; MEASURED: zero executable consumers fleet-wide. A scoped per-repo search
+;; across actions / substrate / hardened-images / helmworks / k8s / nix returns
+;; two hits and BOTH are prose -- an explanatory comment in
+;; substrate/.github/workflows/vendor-image-mirror.yml recording why the step was
+;; removed, and a reference in hardened-images/tools/resolve-drop-off.tlisp. The
+;; probe is not broken: the same search shape returns 7 live consumers for
+;; oci-image-push.
+;;
+;; WHY IT HAS NO CONSUMERS, and why none will return: doca authenticates
+;; PER CALL (--user/--pass, or the ambient docker/containers config it resolves
+;; itself). There is no session to establish, so there is no login step to run.
+;; A separate login action is not merely unused here, it is the wrong shape for
+;; the tool that replaced skopeo. The two call sites that used it were converted
+;; today:
+;;   substrate vendor-image-mirror.yml  source login  -> deleted (8d4becd)
+;;                                      Zot push login -> deleted (55ad771)
+;;
+;; NOT DELETED, per the fleet's MODULARIZE-DON'T-DELETE rule: retirement is a
+;; typed flag, never a deletion, and "we stopped using it" is explicitly NOT the
+;; orphan exception. This file still works if some external consumer needs a real
+;; `skopeo login`; the action's `description` carries the [RETIRED] marker so a
+;; reader of the catalog sees it before wiring it into anything new.
+;;
 ;; Ported from the proven akeyless_services/release/skopeo-login.sh
 ;; shape (push-to-harbor.yml's own working Harbor-login mechanism):
 ;; ECR registries resolve a short-lived password via
