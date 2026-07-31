@@ -544,11 +544,11 @@
                     s)
                   (else
                     (let
-                      ((digest (oci:skopeo-remote-digest index-ref insecure)))
+                      ((digest (oci:doca-remote-digest index-ref insecure)))
                       (when
                         (equal? digest "")
                         (log-info
-                          "::warning::manifest-list-join: could not resolve index digest (skopeo inspect failed) — index-digest= (honest empty); the push itself succeeded"))
+                          "::warning::manifest-list-join: could not resolve index digest (doca inspect failed) — index-digest= (honest empty); the push itself succeeded"))
                       (append-output (string-append "index-ref=" index-ref))
                       (append-output (string-append "index-digest=" digest))
                       (append-output (string-append "arches=" arches))

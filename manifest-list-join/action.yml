@@ -85,12 +85,22 @@ runs:
   steps:
     - uses: DeterminateSystems/nix-installer-action@main
 
-    - name: Ensure skopeo
-      shell: bash
-      run: |
-        # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) --
-        # exact-pinned to nixos-24.05.
-        command -v skopeo >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#skopeo
+    # ── skopeo REMOVED 2026-07-31 (fleet-wide doca conversion) ───────────────
+    # This step was the last `nix profile install` of skopeo in this repo, and
+    # it was a HERMETIC SUPPLY CHAIN violation regardless of being Nix-pinned:
+    # it RESOLVED AND FETCHED a third-party artifact at job time. Pinning the
+    # nixpkgs rev makes the fetch reproducible; it does not make it hermetic.
+    #
+    # skopeo was used here for exactly ONE thing -- resolving the pushed
+    # index's digest (`skopeo inspect --format {{.Digest}}`). doca's
+    # `inspect --ref <r> --digest-only` is a functional match, and doca is
+    # already resolved by every converted sibling, so nothing is installed.
+    #
+    # The resolution + the call now live in _tlisp-stdlib as
+    # `oci:doca-argv` / `oci:doca-remote-digest`, because zot-pull-scan and
+    # zot-push had each inlined the same baked-or-`nix run` logic and this
+    # would have been the third copy. Same >=2-consumer rule that already
+    # governs oci:split-registry in that file.
 
     - name: Ensure regctl
       shell: bash

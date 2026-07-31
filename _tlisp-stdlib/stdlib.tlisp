@@ -1425,6 +1425,74 @@
             (list (string-append "docker://" ref))))))
     (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
 
+;; ── doca, the replacement for every skopeo call above ───────────────────────
+;;
+;; `oci:doca-argv` returns the argv PREFIX for a doca subcommand, resolving
+;; doca the way its already-converted consumers do: a BAKED `oci-push`/`doca`
+;; on PATH wins, and `nix run <DOCA_REF>` is the fallback.
+;;
+;; This exists because zot-pull-scan and zot-push had each inlined the same
+;; resolution, and manifest-list-join was about to become the third copy. Per
+;; the >=2-consumer rule that already governs oci:split-registry and
+;; oci:fetch-ca-cert-argv in this file, the third hand-wiring is a primitive,
+;; not a task.
+;;
+;; WHY BAKED IS PREFERRED, not a micro-optimisation: `nix run
+;; github:pleme-io/substrate#oci-push` removes the WORD install while keeping a
+;; job-time resolution of an unpinned @main ref -- the HERMETIC SUPPLY CHAIN
+;; violation changes shape rather than closing. Only a baked binary closes it.
+;; The fallback is kept because not every runner bakes doca yet, and it is
+;; LOGGED (see oci:doca-source-note) so a job never silently takes the weaker
+;; path.
+(define
+  (oci:doca-baked)
+  (string-trim
+    (stdout-of (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true"))))
+
+(define
+  (oci:doca-argv subcommand)
+  (let
+    ((baked (oci:doca-baked)))
+    (if (equal? baked "")
+      (list "nix" "run" (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push") "--" subcommand)
+      (list baked subcommand))))
+
+;; Human-readable provenance for the log. Never silently degrade: a job that
+;; fell back to `nix run` must say so, because that path needs a working nix
+;; daemon at job time and fails in a way that reads as a doca error when it is
+;; actually nix's ("Stack size hard limit ..." with no daemon).
+(define
+  (oci:doca-source-note)
+  (let
+    ((baked (oci:doca-baked)))
+    (string-append
+      "doca source: "
+      (if (equal? baked "")
+        (string-append
+          "nix run "
+          (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
+          " (NOT baked -- needs a working nix daemon at job time)")
+        (string-append "baked at " baked)))))
+
+;; The repository DIGEST of a pushed ref, via doca instead of skopeo.
+;; Functional replacement for `oci:skopeo-remote-digest` above:
+;; `doca inspect --ref <ref> --digest-only` prints ONLY the digest to stdout.
+;;
+;; Same contract as the skopeo version, deliberately -- returns "" on failure,
+;; and the caller must treat "" as an honest miss and NEVER emit a faked
+;; digest. Credentials come from INPUT_USER / INPUT_PASS in the environment
+;; (doca's own env_input treats empty as unset), never on argv, because
+;; /proc/<pid>/cmdline and `ps` are world-readable on a shared runner and
+;; GitHub log-masking does not cover the process table.
+(define
+  (oci:doca-remote-digest ref insecure?)
+  (let*
+    ((tls (if insecure? (list "--insecure") (list)))
+      (r (apply exec-capture (append (oci:doca-argv "inspect")
+                                     (list "--ref" ref "--digest-only")
+                                     tls))))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
 ;; Split a composed "<registry>/<image...>" base back into the two
 ;; parts a CLI wants separately (doca's --registry/--image; regctl's
 ;; bare registry-host for `regctl registry set`). Every branch of
