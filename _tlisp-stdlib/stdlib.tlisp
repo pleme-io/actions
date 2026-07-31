@@ -979,11 +979,100 @@
 ;; YAML manifest field reader (uses yq via shell)
 ;; ────────────────────────────────────────────────────────────────
 
+;; ── IN-PROCESS. `yq` IS NOT INVOKED, AND THAT IS THE POINT ───────────
+;;
+;; This used to be `exec-capture "sh" "-c" "yq '<field>' <path> 2>/dev/null"`
+;; with `(if (= (status-of r) 0) … "")` — i.e. ANY non-zero exit became the
+;; empty string. That collapses two completely different facts into one
+;; answer: "the field is absent" and "yq does not exist on this machine".
+;;
+;; That is not hypothetical. `yq` is absent from the `camelot-builder-pleme-eks`
+;; ARC runner, so on that runner this function returned "" for every field of
+;; every file. release-promote's idempotency check compared against "" every
+;; time, never matched, and always fell through to its write — which then died
+;; on the same missing binary (run 30555068358). No 2F promotion has ever
+;; completed; the pointer files still read their seed `version: 0.0.0`.
+;;
+;; A read whose failure is indistinguishable from a legitimate empty result
+;; cannot gate anything. So the fix is not to check yq harder — it is to REMOVE
+;; the subprocess, which makes the confusable state unconstructible rather than
+;; guarded. There is no longer any code path in which a missing binary can
+;; present as a missing field, because there is no binary.
+;;
+;; SCOPE: top-level scalar keys. Every call site in this repo is one —
+;; `.name`, `.version` (Chart.yaml), `.runner` (runner-resolve). A nested or
+;; bracketed path now FAILS LOUDLY rather than returning "", because silently
+;; answering "" to a question this cannot answer is the exact defect above,
+;; re-introduced one level down.
+
+;; ".version" -> "version"; anything else -> '(). Split IS the validation:
+;; ".version" -> ("" "version"); ".a.b" -> ("" "a" "b"); "version" -> ("version").
+;; (This dialect binds no `nil` symbol; `null?` accepts the empty list, so
+;; `'()` is the value that both exists and answers true to `(null? …)`.)
+(define
+  (yaml-top-key yaml-path)
+  (let ((parts (string-split yaml-path ".")))
+    (if (and (= (length parts) 2)
+             (equal? (car parts) "")
+             (not (equal? (car (cdr parts)) ""))
+             (not (string-contains? yaml-path "["))
+             (not (string-contains? yaml-path "]")))
+        (car (cdr parts))
+        '())))
+
+;; Top-level means column zero. An indented `version:` belongs to some other
+;; key and must not match.
+(define
+  (yaml-top-key-line? line key)
+  (string-starts-with? line (string-append key ":")))
+
+;; Read a top-level scalar; "" ONLY when the key is genuinely absent.
 (define
   (yaml-read-field path field)
-  (let
-    ((r (exec-capture "sh" "-c" (string-append "yq '" field "' " path " 2>/dev/null"))))
-    (if (= (status-of r) 0) (let ((v (string-trim (stdout-of r)))) (if (equal? v "null") "" v)) "")))
+  (let ((key (yaml-top-key field)))
+    (if (null? key)
+        (begin
+          (eprint-line
+            (string-append
+              "yaml-read-field: '" field "' is not a top-level scalar path (e.g. "
+              "'.version'). Nested paths are unsupported; refusing to answer \"\", "
+              "which would be indistinguishable from an absent field."))
+          (exit 1))
+        (let ((hits (filter (lambda (l) (yaml-top-key-line? l key))
+                            (string-split (read-file path) "\n"))))
+          (if (null? hits)
+              ""
+              ;; Everything after the FIRST colon, rejoined so a value
+              ;; containing a colon survives. `null` -> "" preserves the
+              ;; previous contract for an explicitly-null field.
+              (let ((v (string-trim
+                         (string-replace
+                           (string-replace
+                             (string-join ":" (cdr (string-split (car hits) ":")))
+                             "\"" "")
+                           "'" ""))))
+                (if (equal? v "null") "" v)))))))
+
+;; Rewrite a top-level scalar in place, preserving every other byte —
+;; comments, ordering, blank lines. A YAML parse/emit round-trip would drop
+;; comments, and the files this writes (the Zot admission pointers) are mostly
+;; a load-bearing comment header. Returns '() for EVERY refusal — unsupported
+;; path, key absent, key defined more than once. Callers must treat '() as
+;; failure; there is no partial success.
+(define
+  (yaml-set-field text yaml-path version)
+  (let ((key (yaml-top-key yaml-path)))
+    (if (null? key)
+        '()
+        (let ((lines (string-split text "\n")))
+          (if (not (= (length (filter (lambda (l) (yaml-top-key-line? l key)) lines)) 1))
+              '()
+              (string-join "\n"
+                (map (lambda (l)
+                       (if (yaml-top-key-line? l key)
+                           (string-append key ": " version)
+                           l))
+                     lines)))))))
 
 ;; Helm Chart.yaml shorthands.
 (define (helm-chart-name) (yaml-read-field "Chart.yaml" ".name"))
