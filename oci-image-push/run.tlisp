@@ -57,6 +57,26 @@
 
 (define pass (env-get "INPUT_PASSWORD" (env-get "PASSWORD" "")))
 
+;; ── A SYSTEM TRUST STORE DOES NOT REACH doca. THIS IS NOT OPTIONAL POLISH. ───
+;; skopeo used the host trust store, so a caller pushing to a self-signed
+;; registry only had to run `update-ca-certificates` and skopeo picked it up.
+;; doca CANNOT: its oci-client is built with `rustls-tls`, whose trust anchors
+;; are the COMPILED-IN webpki set (`rustls-native-certs` is not in the lock).
+;; doca's own source says so at cmd_list. So for a self-signed registry the CA
+;; must be handed to doca as a FILE via --dest-ca-cert; installing it into
+;; /usr/local/share/ca-certificates does nothing here.
+;;
+;; Caught before shipping rather than after: converting this action while
+;; leaving the caller's "trust the CA system-wide" step in place would have
+;; produced a TLS failure at the Zot push, with a workflow step named "Trust
+;; Zot's CA" sitting green directly above it -- a preparation step that
+;; succeeds and does not prepare anything for the tool that follows.
+(define ca-cert (env-get "INPUT_CA_CERT" (env-get "CA_CERT" "")))
+
+;; Plain HTTP / skip-verify escape hatch. Distinct from ca-cert: pinning a
+;; specific self-signed cert is real verification, this is none.
+(define insecure (env-get "INPUT_INSECURE" (env-get "INSECURE" "")))
+
 (when
   (or (equal? registry "") (equal? image "") (equal? tag ""))
   (log-error "oci-image-push: missing INPUT_REGISTRY, INPUT_IMAGE, or INPUT_TAG")
@@ -78,6 +98,12 @@
 ;; lookup runs. Passing empty strings would DEFEAT that lookup by looking like
 ;; an explicit (empty) credential, so the flags are omitted entirely.
 (define cred-args (if (equal? user "") (list) (list "--dest-user" user "--dest-pass" pass)))
+
+(define
+  tls-args
+  (append
+    (if (equal? ca-cert "") (list) (list "--dest-ca-cert" ca-cert))
+    (if (equal? insecure "true") (list "--insecure") (list))))
 
 (define
   base-args
@@ -104,7 +130,8 @@
     (append
       base-args
       (list "--backend" "native" "--registry" registry "--image" image "--tag" tag "--tarball" tarball)
-      cred-args)))
+      cred-args
+      tls-args)))
 
 ;; Report the EXIT CODE plus BOTH streams, each labelled. Returning a bare
 ;; status threw the reason away, and logging stderr alone was measurably not
