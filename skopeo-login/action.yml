@@ -1,5 +1,5 @@
-name: 'pleme-io · skopeo-login'
-description: 'Log skopeo into a registry (ECR-aware) — the real auth precondition for skopeo-copy / oci-image-push. Writes to skopeo''s own auth file, not ~/.docker/config.json (docker/login-action authenticates a different client).'
+name: 'pleme-io · skopeo-login [RETIRED]'
+description: 'RETIRED 2026-07-31 — zero consumers remain fleet-wide. doca is per-CALL auth, so there is no login step to perform. Kept, not deleted, per MODULARIZE-DON''T-DELETE. Historically: logged skopeo into a registry (ECR-aware), writing skopeo''s own auth file rather than ~/.docker/config.json.'
 branding:
   icon: 'log-in'
   color: 'blue'
