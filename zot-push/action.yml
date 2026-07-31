@@ -66,7 +66,7 @@ inputs:
     required: false
     default: "github:pleme-io/substrate#oci-push"
   backend:
-    description: "doca push backend: native (default, pure-Rust, no external binary) | skopeo (escape hatch)"
+    description: "doca push backend. Only `native` (pure-Rust) exists; the skopeo fallback was deleted 2026-07-31 because it was the last thing putting skopeo into every doca consumer's closure. Any other value is now an error."
     required: false
     default: "native"
 

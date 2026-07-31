@@ -44,7 +44,7 @@ inputs:
     required: false
     default: ""
   backend:
-    description: "Push backend: native (pure-Rust oci-client, default) | skopeo. Flag: --backend. Env: INPUT_BACKEND."
+    description: "Push backend. Only `native` (pure-Rust oci-client) exists; the skopeo fallback was deleted 2026-07-31. Flag: --backend. Env: INPUT_BACKEND."
     required: false
     default: ""
   dest-user:
