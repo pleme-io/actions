@@ -34,6 +34,19 @@ outputs:
     value: ${{ steps.scan.outputs.severity }}
   vuln-count:
     value: ${{ steps.scan.outputs.vuln-count }}
+  scanned-targets:
+    description: >-
+      How many targets trivy actually examined (`.Results | length`), or
+      "unknown" if that could not be parsed. THE DENOMINATOR for vuln-count:
+      `vuln-count=0` with `scanned-targets=0` means NOTHING WAS MEASURED, which
+      is a different fact from a clean image and used to print identically.
+      Confirmed live in hardened-images run 30648147453, where
+      release-clickhouse passed on `severity=none count=0` while trivy had
+      examined zero targets (distroless C++: no OS package DB, no language
+      manifest) and vulnix reported 11 findings on the same image in the same
+      job. Advisory only -- it does not gate, because for those images the
+      vulnix closure scan is the real coverage by design.
+    value: ${{ steps.scan.outputs.scanned-targets }}
 
 runs:
   using: composite

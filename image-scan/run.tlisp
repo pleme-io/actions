@@ -276,16 +276,65 @@
                           (vuln-count
                             (let ((v (string-trim (stdout-of count-r)))) (if (equal? v "") "0" v))))
 
-                        (append-output (string-append "severity=" severity))
-                        (append-output (string-append "vuln-count=" vuln-count))
-                        (log-info
-                          (string-append
-                            "result: severity="
-                            severity
-                            " count="
-                            vuln-count
-                            " threshold="
-                            fail-on))
+                        ;; ── THE DENOMINATOR (added 2026-07-31) ──────────────
+                        ;; `count=0` printed identically whether trivy examined
+                        ;; five targets and found nothing, or examined NOTHING
+                        ;; AT ALL. Those are opposite facts and this line could
+                        ;; not tell them apart, so a green scan over an empty
+                        ;; subject set read exactly like a clean image.
+                        ;;
+                        ;; CONFIRMED LIVE, not hypothetical: in run 30648147453
+                        ;; `release-clickhouse` logged `severity=none count=0
+                        ;; threshold=UNKNOWN` and PASSED. Measuring that same
+                        ;; tarball directly gives trivy `.Results | length` = 0
+                        ;; -- a C++ binary on distroless has no OS package DB
+                        ;; and no language manifest, so neither of trivy's two
+                        ;; scanner families has anything to read. vulnix, in the
+                        ;; SAME job, reported 11 findings against that image.
+                        ;; The image was never clean; trivy was blind, and only
+                        ;; trivy's verdict was legible here.
+                        ;;
+                        ;; Advisory, exactly like vuln-count: it does NOT gate.
+                        ;; Failing on targets=0 would break every image whose
+                        ;; real coverage is the vulnix Nix-closure gate by
+                        ;; design. The fix is to make the blindness VISIBLE so
+                        ;; "0 of 0" can never again be read as "0 of many".
+                        (let*
+                          ((targets-r
+                             (exec-capture
+                               "sh"
+                               "-c"
+                               (string-append
+                                 "jq -r '[.Results[]?] | length' "
+                                 trivy-output-file
+                                 " 2>/dev/null || echo unknown")))
+                            (targets
+                              (let ((v (string-trim (stdout-of targets-r))))
+                                (if (equal? v "") "unknown" v))))
+                          (append-output (string-append "severity=" severity))
+                          (append-output (string-append "vuln-count=" vuln-count))
+                          (append-output (string-append "scanned-targets=" targets))
+                          (log-info
+                            (string-append
+                              "result: severity="
+                              severity
+                              " count="
+                              vuln-count
+                              " scanned-targets="
+                              targets
+                              " threshold="
+                              fail-on))
+                          (cond
+                            ((equal? targets "0")
+                              (log-info
+                                (string-append
+                                  "NOTE: trivy examined ZERO targets -- 'count=0' "
+                                  "here means NOTHING WAS MEASURED, not that the "
+                                  "image is clean. Expected for a distroless image "
+                                  "with no OS package DB and no language manifest; "
+                                  "real coverage for those is the vulnix closure "
+                                  "gate. Do not quote this as evidence of 0 CVE.")))
+                            (else 0)))
 
                         (cond
                           ((equal? fail-on "none")
