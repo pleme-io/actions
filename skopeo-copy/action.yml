@@ -1,5 +1,5 @@
-name: 'pleme-io · skopeo-copy'
-description: 'Copy an OCI image between registries via skopeo copy.'
+name: 'pleme-io · skopeo-copy [RETIRED]'
+description: 'RETIRED 2026-07-31 — zero consumers fleet-wide, measured with a control (actions/oci-image-push@ returns 3 in substrate, so the probe reads these repos correctly; actions/skopeo-copy@ returns 0 everywhere). Use pleme-io/actions/oci-image-push (doca: pure-Rust, per-call auth, retry-on-transient) or doca transfer for registry-to-registry. Kept, not deleted, per MODULARIZE-DON''T-DELETE. Historically: copied an OCI image between registries via skopeo copy.'
 branding: { icon: 'upload', color: 'blue' }
 
 inputs:
