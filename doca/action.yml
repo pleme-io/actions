@@ -144,7 +144,7 @@ outputs:
     description: "resolve: the winning tag (numerically highest pure X.Y.Z after exclusions)."
     value: ${{ steps.doca.outputs.tag }}
   digest:
-    description: "resolve: that tag's immutable digest. Copy by this rather than by the tag, so a tag that later moves cannot swap the bytes."
+    description: "resolve, and inspect with digest-only: that ref's immutable digest. Copy by this rather than by the tag, so a tag that later moves cannot swap the bytes. inspect populated this only from substrate@<doca digest-only GITHUB_OUTPUT fix> onward -- before that it printed to stdout where nothing captured it, and a caller read an empty string while the step reported success."
     value: ${{ steps.doca.outputs.digest }}
 
 runs:
