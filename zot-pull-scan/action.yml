@@ -16,8 +16,24 @@ inputs:
     description: "Skip vulns without an available fix. Forwarded verbatim to image-scan."
     required: false
     default: "false"
+  vex:
+    description: >-
+      Path to an OpenVEX/CSAF document, forwarded verbatim to image-scan's own
+      `vex` input (trivy --vex). REQUIRED for parity with the publishing gate:
+      an image whose ghcr release passes BECAUSE of a VEX statement was, without
+      this, guaranteed to be REJECTED here -- this faucet re-scans the pulled
+      bytes and had no way to receive the same answer. Measured 2026-07-31, run
+      30661312791: hardened-chproxy released green with
+      vex/hardened-chproxy-GO-2026-5932.openvex.json and its Zot mirror failed
+      "zot faucet REJECT: scan outcome=failure severity=UNKNOWN". The two gates
+      disagreed BY CONSTRUCTION, so a VEX-dependent image could never enter Zot
+      and therefore could never reach 2F. Empty = no VEX, prior behaviour exactly.
+      NOTE the path is resolved on the runner's filesystem, so the caller must
+      have checked the repo out (vendor-image-mirror.yml now does).
+    required: false
+    default: ""
   ignore-file:
-    description: "Path to a .trivyignore-format file of named, tracked exceptions (never a blanket severity loosening -- each entry should carry its own justification). Forwarded verbatim to image-scan. Empty = none."
+    description: "Path to a .trivyignore-format file of named, tracked exceptions (never a blanket severity loosening -- each entry should carry its own justification). Forwarded verbatim to image-scan. Empty = none. Like `vex`, this is a runner-filesystem path and needs the repo checked out."
     required: false
     default: ""
   dest:
@@ -190,6 +206,10 @@ runs:
         fail-on-severity: ${{ inputs.fail-on-severity }}
         ignore-unfixed: ${{ inputs.ignore-unfixed }}
         ignore-file: ${{ inputs.ignore-file }}
+        # Without this line the faucet gate and the publishing gate answer the
+        # same findings differently -- see this action's `vex` input for the
+        # measured run where that made a released image unmirrorable.
+        vex: ${{ inputs.vex }}
 
     # ── Stage 3: the verdict arbiter. Translates steps.scan.outcome into
     # this action's typed admitted/result vocabulary AND re-asserts the
