@@ -7,9 +7,9 @@
 #
 # actions                338
 # routing tatara-script  316
-# distinct keys written  288
+# distinct keys written  289
 # dynamic key expansions 8
-# inner union (generated)296
+# inner union (generated)297
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -180,7 +180,7 @@ honeycomb-marker	tatara-script	run.tlisp	1	1
 hubspot-contact-upsert	tatara-script	run.tlisp	1	1
 hugo-build	tatara-script	run.tlisp	1	1
 iac-forge	tatara-script	run.tlisp	0	0
-image-scan	tatara-script	run.tlisp	2	2
+image-scan	tatara-script	run.tlisp	3	3
 influxdb-write	tatara-script	run.tlisp	1	1
 infracost-comment	tatara-script	run.tlisp	1	1
 issue-create	tatara-script	run.tlisp	2	2
@@ -324,7 +324,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	296
+tatara-script	own-runner	-	0	297
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -609,6 +609,7 @@ hf-hub-upload	uploaded	static	declared	forwarded
 honeycomb-marker	marker-id	static	declared	forwarded
 hubspot-contact-upsert	contact-id	static	declared	forwarded
 hugo-build	site-path	static	declared	forwarded
+image-scan	scanned-targets	static	declared	forwarded
 image-scan	severity	static	declared	forwarded
 image-scan	vuln-count	static	declared	forwarded
 influxdb-write	written	static	declared	forwarded

@@ -727,6 +727,9 @@ outputs:
   scan-outcome:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: scan-outcome)"
     value: ${{ steps.exec.outputs.scan-outcome }}
+  scanned-targets:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: scanned-targets)"
+    value: ${{ steps.exec.outputs.scanned-targets }}
   sent:
     description: "Forwarded (key: sent) — written by 8 action dir(s): apprise-notify, matrix-notify, mattermost-notify …"
     value: ${{ steps.exec.outputs.sent }}
