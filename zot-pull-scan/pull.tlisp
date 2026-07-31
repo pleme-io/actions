@@ -90,19 +90,37 @@
 (define
   (pull-image ref dest cert-dir insecure user pass)
   (let*
+    ;; doca (oci-push), NOT skopeo. `doca pull` IS registry ->
+    ;; docker-archive, with the same three concerns this action already
+    ;; had: a pinned CA for a self-signed source, a TLS-verify escape
+    ;; hatch, and per-call credentials. The flag names differ; the
+    ;; semantics are 1:1.
+    ;;
+    ;; This also removes a HERMETIC SUPPLY CHAIN violation, not just a
+    ;; foreign tool: the action used to run
+    ;;   command -v skopeo || nix profile install …#skopeo
+    ;; i.e. it INSTALLED a third-party binary at job time. We bake, we do
+    ;; not install -- and doca arrives the way its already-converted
+    ;; sibling zot-push gets it, via `nix run …#oci-push`, which is
+    ;; content-addressed rather than an imperative mutation of the runner.
+    ;;
+    ;; One real difference to know: doca takes a PEM FILE, skopeo took a
+    ;; DIRECTORY of *.crt. The caller's `src-ca-cert-dir` is where the
+    ;; fetched cert is written, so the file inside it is what we hand over.
     ((tls-args
        (cond
-         ((not (equal? cert-dir "")) (list "--src-cert-dir" cert-dir))
-         (insecure (list "--src-tls-verify=false"))
+         ((not (equal? cert-dir ""))
+           (list "--dest-ca-cert" (path-join cert-dir "src-ca.crt")))
+         (insecure (list "--insecure"))
          (else (list))))
-      ;; --src-creds ONLY when a username is supplied, so a public source
-      ;; (GHCR) keeps the anonymous path. skopeo reads no authfile here and
-      ;; the consumer never logs in, so without this an authenticated
-      ;; registry rejects the copy outright.
+      ;; Credentials ONLY when a username is supplied, so a public source
+      ;; (GHCR) keeps the anonymous path. Without this an authenticated
+      ;; registry rejects the pull outright -- which is exactly how this
+      ;; action failed for as long as it had no credential input at all.
       (cred-args
         (if (equal? user "")
           (list)
-          (list "--src-creds" (string-append user ":" pass))))
+          (list "--user" user "--pass" pass)))
       ;; Clear DEST first. `docker-archive:` opens an existing path read-write
       ;; to APPEND another image, so a pre-existing dest is not overwritten --
       ;; and when that dest is a `nix build` out-link, the open fails outright:
@@ -121,10 +139,11 @@
       (_cleared (exec-capture "rm" "-f" dest))
       (args
         (append
-          (list "skopeo" "--insecure-policy" "copy")
+          (list "nix" "run"
+                (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
+                "--" "pull" "--ref" ref "--out" dest)
           tls-args
-          cred-args
-          (list (string-append "docker://" ref) (string-append "docker-archive:" dest))))
+          cred-args))
       (r (apply exec-capture args)))
     ;; Surface skopeo's OWN stderr on failure. Returning a bare status threw
     ;; the reason away, so a 401, a DNS miss and a TLS refusal were one
@@ -132,7 +151,7 @@
     ;; unauthenticated pull looked for as long as this action has existed.
     (when
       (not (= (status-of r) 0))
-      (log-error (string-append "skopeo: " (string-trim (stderr-of r)))))
+      (log-error (string-append "doca pull: " (string-trim (stderr-of r)))))
     (status-of r)))
 
 ;; The full public output contract this action must emit itself on a
