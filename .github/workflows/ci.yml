@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manually re-runnable. Added because this workflow's two red jobs were both
+  # fixed OUTSIDE this repo — the tlisp-lint failure by deleting a duplicate in
+  # substrate-bump, and the doc-gen failure by unpicking a path-dep chain in
+  # pleme-doc-gen and go-tool-synthesizer. With push/pull_request as the only
+  # triggers there was no way to ask "is it green now?" without inventing a
+  # commit here, which is a bad reason to touch a repo 315 consumers pull from.
+  workflow_dispatch:
 
 jobs:
   validate-action-yml:
