@@ -1,5 +1,5 @@
 name: 'pleme-io · oci-image-push'
-description: 'Push an OCI image tarball (Nix dockerTools output) to a registry via skopeo'
+description: 'Push an OCI image tarball (Nix dockerTools output) to a registry via doca (pure-Rust OCI push, retry-on-transient)'
 branding:
   icon: 'upload-cloud'
   color: 'blue'
@@ -18,6 +18,18 @@ inputs:
     description: "Path to the Docker/OCI image tarball produced by Nix"
     required: false
     default: "./result"
+  username:
+    description: "Explicit registry username. Empty (default) keeps the existing contract -- doca falls back to the AMBIENT ~/.docker/config.json a prior docker/login-action wrote, the same file skopeo read. Supply this to skip the login step entirely."
+    required: false
+    default: ""
+  password:
+    description: "Explicit registry password/token, paired with `username`. Passed to doca as --dest-pass, never echoed. Ignored when `username` is empty."
+    required: false
+    default: ""
+  doca-ref:
+    description: "The doca (oci-push) flake ref `nix run` resolves when no doca binary is baked into the runner. Pin to a tagged/commit ref for build reproducibility. Mirrors the identically-named input on zot-push / zot-pull-scan."
+    required: false
+    default: "github:pleme-io/substrate#oci-push"
   flake-ref:
     description: "(unused — kept for input-compat with older callers)"
     required: false
@@ -69,4 +81,7 @@ runs:
         IMAGE:     ${{ inputs.image }}
         TAG:       ${{ inputs.tag }}
         TARBALL:   ${{ inputs.tarball }}
+        USERNAME:  ${{ inputs.username }}
+        PASSWORD:  ${{ inputs.password }}
+        DOCA_REF:  ${{ inputs.doca-ref }}
         FLAKE_REF: ${{ inputs.flake-ref }}

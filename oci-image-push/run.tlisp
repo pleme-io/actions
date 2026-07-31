@@ -1,17 +1,48 @@
 ;; oci-image-push/run.tlisp — push a Nix-produced OCI image tarball.
 ;;
-;; Uses skopeo (baked into the tatara-script base image) to copy
-;; the local docker-archive tarball to `<registry>/<image>:<tag>`.
+;; Pushes the local docker-archive to `<registry>/<image>:<tag>` with **doca**
+;; (pleme-io/substrate's `oci-push`), the fleet's one container tool. skopeo is
+;; gone from this path.
+;;
+;; ── WHY THE RETRY MOVED BEFORE THE CONVERSION ────────────────────────────────
+;; The skopeo call this replaces carried `--retry-times 5`, and it was not
+;; decoration: it was added against a MEASURED failure (2026-07-21, Harbor /
+;; registry.secondfront.com) -- "writing blob: ... read: connection reset by
+;; peer" partway through a ~40-blob rabbitmq image, after most blobs had already
+;; uploaded. doca had NO retry at all.
+;;
+;; Converting first and noticing later would have silently regressed resilience
+;; on precisely the path that pushes large hardened images to Harbor -- the 2F
+;; endpoint, i.e. the same registry the original incident was measured against.
+;; So the retry landed in doca FIRST (substrate 8f2a136, three tests each with a
+;; recorded red run), and only then did this call site move. doca's retry is
+;; also strictly better than what it replaces: skopeo retried EVERY failure five
+;; times, so a 401 slept through the whole budget before reporting the same
+;; reason it had on attempt 1; doca retries only the registry interaction and
+;; returns deterministic errors immediately.
+;;
+;; ── CREDENTIALS ──────────────────────────────────────────────────────────────
+;; Unchanged contract: a prior `docker login` still works. doca resolves
+;; explicit --dest-user/--dest-pass first, then INPUT_*, then AMBIENT
+;; ~/.docker/config.json (and ~/.config/containers/auth.json) -- the same file
+;; skopeo read, which is what makes this swap behavior-preserving for the
+;; generated `substrate/lib/release/patterns*.nix` consumers that never pass
+;; credentials at all.
+;;
+;; If NOTHING supplies credentials, doca fails with a missing-dest-user error
+;; rather than pushing anonymously. That is deliberate: a silent anonymous WRITE
+;; is worse than a loud failure, and it is the one behavior here that is
+;; intentionally stricter than skopeo's.
 ;;
 ;; Inputs (env):
 ;;   REGISTRY    — e.g. "ghcr.io"
 ;;   IMAGE       — e.g. "pleme-io/pangea-operator"
 ;;   TAG         — image tag
 ;;   TARBALL     — local path to the Docker tarball (default "./result")
-;;   FLAKE_REF   — (ignored in Docker mode; kept for input-compat)
-;;
-;; Pre-conditions: docker/login-action has already authenticated to
-;; the target registry (skopeo reads ~/.docker/config.json).
+;;   USERNAME    — optional explicit registry user (else ambient docker login)
+;;   PASSWORD    — optional explicit registry password/token
+;;   DOCA_REF    — flake ref `nix run` resolves when doca is not baked
+;;   FLAKE_REF   — (ignored; kept for input-compat)
 
 ;; INPUT_* (Docker mode) preferred; bare names retained as composite fallback.
 (define registry (env-get "INPUT_REGISTRY" (env-get "REGISTRY" "")))
@@ -22,6 +53,10 @@
 
 (define tarball (env-get "INPUT_TARBALL" (env-get "TARBALL" "./result")))
 
+(define user (env-get "INPUT_USERNAME" (env-get "USERNAME" "")))
+
+(define pass (env-get "INPUT_PASSWORD" (env-get "PASSWORD" "")))
+
 (when
   (or (equal? registry "") (equal? image "") (equal? tag ""))
   (log-error "oci-image-push: missing INPUT_REGISTRY, INPUT_IMAGE, or INPUT_TAG")
@@ -29,31 +64,65 @@
 
 (define target (string-append registry "/" image ":" tag))
 
-(log-info (string-append "pushing " tarball " -> " target))
-
-;; --retry-times: a large multi-blob upload over a real network hits
-;; transient resets mid-transfer -- confirmed live 2026-07-21 against
-;; Harbor (registry.secondfront.com), post the docker->composite fix:
-;; "writing blob: ... read: connection reset by peer" partway through a
-;; ~40-blob rabbitmq image, after successfully reading + uploading most
-;; blobs (proving the underlying /nix/store access fix was correct; this
-;; is a separate, purely-transient network failure). skopeo's own
-;; --retry-times uses exponential backoff by default (no --retry-delay
-;; override needed).
+;; Prefer a BAKED doca over `nix run`. A job-time `nix run` of an unpinned @main
+;; ref is a hermetic-supply-chain violation AND, measured on hardened-images run
+;; 30658995498, floods stderr with nix's own warnings so the tool's real error is
+;; drowned. Same detection the zot-pull-scan puller uses -- one idiom, not two.
 (define
-  status
-  (exec-check
-    "skopeo"
-    "--insecure-policy"
-    "copy"
-    "--retry-times"
-    "5"
-    (string-append "docker-archive:" tarball)
-    (string-append "docker://" target)))
+  doca-baked
+  (let
+    ((w (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true")))
+    (string-trim (stdout-of w))))
 
+;; Credentials ONLY when explicitly supplied; otherwise doca's own ambient
+;; lookup runs. Passing empty strings would DEFEAT that lookup by looking like
+;; an explicit (empty) credential, so the flags are omitted entirely.
+(define cred-args (if (equal? user "") (list) (list "--dest-user" user "--dest-pass" pass)))
+
+(define
+  base-args
+  (if (equal? doca-baked "")
+    (list "nix" "run" (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push") "--" "push")
+    (list doca-baked "push")))
+
+(log-info
+  (string-append
+    "doca source: "
+    (if (equal? doca-baked "")
+      (string-append "nix run " (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
+                     " (NOT baked -- needs a working nix daemon at job time)")
+      (string-append "baked at " doca-baked))))
+
+(log-info
+  (string-append "pushing " tarball " -> " target
+                 (if (equal? user "") " (ambient credentials)" " (explicit credentials)")))
+
+(define
+  r
+  (apply
+    exec-capture
+    (append
+      base-args
+      (list "--backend" "native" "--registry" registry "--image" image "--tag" tag "--tarball" tarball)
+      cred-args)))
+
+;; Report the EXIT CODE plus BOTH streams, each labelled. Returning a bare
+;; status threw the reason away, and logging stderr alone was measurably not
+;; enough: under `nix run`, nix's own warnings fill stderr and drown the tool's
+;; actual error. A 401, a DNS miss, a missing tarball and an empty-output
+;; timeout are four different pictures and must not render the same.
 (when
-  (not (= status 0))
-  (log-error (string-append "skopeo copy failed (status " (string-format "{}" status) ")"))
-  (exit status))
+  (not (= (status-of r) 0))
+  (log-error (string-append "oci-image-push: doca push FAILED, exit=" (string-format "{}" (status-of r))))
+  (log-error (string-append "  stderr: " (string-trim (stderr-of r))))
+  (log-error (string-append "  stdout: " (string-trim (stdout-of r))))
+  (log-error
+    (string-append
+      "  target=" target " tarball=" tarball
+      " -- a missing-dest-user error here means NOTHING supplied credentials: "
+      "no --dest-user, no INPUT_USERNAME, and no ambient docker login. doca "
+      "refuses to push anonymously rather than writing under an identity nobody "
+      "chose."))
+  (exit (status-of r)))
 
 (log-info (string-append "pushed " target))
