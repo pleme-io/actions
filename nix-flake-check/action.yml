@@ -68,10 +68,32 @@ runs:
     # nothing runs any of them, which is the "a forcing function nobody runs is
     # a comment" trap one level up — the test file itself is the comment. Left
     # in place per MODULARIZE-DON'T-DELETE; wiring them is its own change.
+    # `sandbox = relaxed` is REQUIRED, not a loosening for convenience.
+    #
+    # Every pleme-io Rust flake evaluates gen's `cargo-build-spec-ifd`, and
+    # that derivation sets `__noChroot` (it must reach the network to resolve
+    # crates during import-from-derivation). With the installer's Linux
+    # default of `sandbox = true`, nix refuses it outright:
+    #
+    #   error: derivation '…-cargo-build-spec-ifd.drv' has '__noChroot' set,
+    #   but that's not allowed when 'sandbox' is 'true'
+    #
+    # `relaxed` is the narrow fix: normal derivations stay sandboxed exactly
+    # as before, and ONLY a derivation that explicitly opts in via
+    # `__noChroot` is exempted. It is not `sandbox = false`.
+    #
+    # WHY THIS SURFACED ONLY NOW (2026-08-01): the repos hitting it were all
+    # on hand-written `runs-on: macos-15` jobs, and macOS nix does not enforce
+    # the sandbox the same way — so `__noChroot` was never rejected there.
+    # Migrating those jobs onto Linux ARC runners is what exposed it. Real
+    # consequence of the migration, so it is fixed HERE, in the shared action,
+    # rather than in each consumer that trips over it.
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@main
       with:
-        extra-conf: ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+        extra-conf: |
+          sandbox = relaxed
+          ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
 
     - name: Load run.tlisp
       id: src
