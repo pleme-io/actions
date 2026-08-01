@@ -126,9 +126,9 @@ runs:
         ARCH=$(uname -m)
         case "$OS-$ARCH" in
           Linux-x86_64)  SUFFIX="linux-x86_64";;
-          Linux-aarch64) SUFFIX="linux-arm64";;
-          Darwin-arm64)  SUFFIX="darwin-arm64";;
-          Darwin-x86_64) SUFFIX="darwin-x86_64";;
+          Linux-aarch64) SUFFIX="linux-aarch64";;
+          Darwin-arm64)  SUFFIX="macos-aarch64";;
+          Darwin-x86_64) SUFFIX="macos-x86_64";;
           *) echo "::error::aldrava-dispatch: unsupported runner $OS-$ARCH" >&2; exit 1;;
         esac
         curl -fsL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
