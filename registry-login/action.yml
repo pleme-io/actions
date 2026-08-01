@@ -39,18 +39,29 @@ runs:
     - id: src
       shell: bash
       run: |
+        set -euo pipefail
+        # Writes a FILE, passes a PATH. MEASURED 2026-08-02 on hardened-images
+        # run 30713648889: this action was the LARGEST single contributor of
+        # log noise in a build job -- 1677 lines for the cat, plus a 1713-line
+        # env dump when tatara-script re-echoed the same source as
+        # TATARA_SCRIPT_SRC. ~3390 lines, 30% of an 11,256-line job, from one
+        # action. Passing a path leaves one short string in the env block.
+        f="$RUNNER_TEMP/registry-login-$GITHUB_RUN_ID-$RANDOM.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$f"
+        # An empty assembly parses to nothing and exits 0 -- refuse it rather
+        # than let a no-op registry login look like a successful one.
+        if [ ! -s "$f" ]; then echo "::error::registry-login: assembled tlisp is empty" >&2; exit 1; fi
+        echo "path=$f" >> "$GITHUB_OUTPUT"
+        echo "assembled $(wc -l < "$f") lines -> $f"
     - id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.path }}
       env:
         REGISTRY: ${{ inputs.registry }}
         CLIENT: ${{ inputs.client }}
