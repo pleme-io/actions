@@ -1,0 +1,153 @@
+name: 'pleme-io · aldrava-install'
+description: 'Install the aldrava binary at a PINNED tag, checksum-verified, onto PATH'
+
+# ── WHY THIS ACTION EXISTS ──────────────────────────────────────────────────
+# Three actions (aldrava-dispatch, aldrava-lint, aldrava-resolve) each carried
+# a byte-identical copy of this install block. Three copies is the defect, not
+# three tasks — so the block lives here once and they consume it.
+#
+# ── THE TIMING PROBLEM THIS CLOSES, WHICH IS THE REAL POINT ─────────────────
+# The copies read:
+#
+#   curl -fsL -o /usr/local/bin/aldrava \
+#     https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-$SUFFIX
+#   chmod +x /usr/local/bin/aldrava
+#
+# Measured 2026-08-01: pleme-io/aldrava has ZERO releases, so that URL returns
+# HTTP 404 (probed directly; control — tatara-lisp's equivalent latest-download
+# URL returns 200, so the probe reads GitHub correctly). Under the block's own
+# `set -euo pipefail` the 404 aborts the step LOUDLY. Today it is safe.
+#
+# It is safe ONLY BECAUSE IT IS BROKEN, and that is the whole finding. The
+# instant anyone pushes a `v*` tag — which arms aldrava's release-binaries.yml,
+# an obviously-good act nobody would classify as a supply-chain change — all
+# three actions begin succeeding against `releases/latest/download/`, with:
+#
+#   1. NO PIN. `latest` floats. Every subsequent aldrava release silently
+#      changes the binary executed in every consumer, with no version bump, no
+#      lockfile entry, and no diff in any consuming repo to review.
+#   2. NO CHECKSUM, though release-binaries.yml publishes a .sha256 beside
+#      every asset (its own header, line 4). Same shape already fixed in
+#      tatara-script: an attestation published and consumed by nothing is worse
+#      than none, because it absorbs the attention that would find the gap.
+#   3. A PRIVILEGED PATH. It writes straight into /usr/local/bin, already on
+#      PATH, so an unverified binary is reachable by every later step.
+#
+# So the loud failure of today converts to a silent floating dependency on the
+# first tag, and everything goes green at the moment the guarantee is lost.
+# The window to fix it is BEFORE that tag, which is why this landed now rather
+# than alongside the release. After the tag there is no symptom to notice.
+#
+# ── THE POSTURE ─────────────────────────────────────────────────────────────
+# Fail closed, and make the floating state unrepresentable rather than
+# mitigated: `version` has NO default, and an empty value is refused with an
+# error naming the fix. There is no code path here that resolves `latest`.
+# A caller cannot opt back into floating by omitting an argument.
+
+inputs:
+  version:
+    description: >-
+      REQUIRED. The aldrava release tag to install, e.g. `v0.1.0`. Deliberately
+      has no default and is never resolved to `latest` — see the header. Pass a
+      tag your repo can review and bump.
+    required: true
+  install-dir:
+    description: >-
+      Directory the verified binary is written into and added to PATH. Defaults
+      to a RUNNER_TEMP subdir rather than /usr/local/bin so an unverified or
+      partial download is never left on PATH.
+    required: false
+    default: ""
+
+outputs:
+  bin-dir:
+    description: "Directory containing the verified aldrava binary (also added to PATH)"
+    value: ${{ steps.install.outputs.bin-dir }}
+  resolved-version:
+    description: "The tag actually installed"
+    value: ${{ steps.install.outputs.resolved-version }}
+  sha256:
+    description: "Verified SHA-256 of the installed binary"
+    value: ${{ steps.install.outputs.sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install aldrava (pinned + checksum-verified)
+      id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        set -euo pipefail
+
+        TAG="$INPUT_VERSION"
+        if [ -z "$TAG" ]; then
+          echo "::error::aldrava-install: 'version' is required and must name a release tag (e.g. v0.1.0)." >&2
+          echo "::error::  This action deliberately does NOT fall back to 'latest'. A floating" >&2
+          echo "::error::  ref changes the executed binary with no version bump in any consumer." >&2
+          exit 1
+        fi
+        # Reject a caller that tries to smuggle the floating ref back in.
+        case "$TAG" in
+          latest|LATEST|main|HEAD)
+            echo "::error::aldrava-install: version='$TAG' is a floating ref, not a pinned release tag." >&2
+            exit 1;;
+        esac
+
+        OS="$(uname -s)"; ARCH="$(uname -m)"
+        case "$OS-$ARCH" in
+          Linux-x86_64)   SUFFIX="linux-x86_64";;
+          Linux-aarch64)  SUFFIX="linux-aarch64";;
+          Darwin-arm64)   SUFFIX="macos-aarch64";;
+          Darwin-x86_64)  SUFFIX="macos-x86_64";;
+          *) echo "::error::aldrava-install: unsupported runner $OS-$ARCH" >&2; exit 1;;
+        esac
+
+        BIN_DIR="${INPUT_INSTALL_DIR:-$RUNNER_TEMP/aldrava-bin}"
+        mkdir -p "$BIN_DIR"
+        BASE="https://github.com/pleme-io/aldrava/releases/download/$TAG"
+        URL="$BASE/aldrava-$SUFFIX"
+
+        # Download to a staging name. The binary only reaches its final path
+        # after the digest matches, so a failed verification cannot leave an
+        # executable behind for a later step to pick up off PATH.
+        STAGE="$BIN_DIR/.aldrava.staged"
+        if ! curl -fsSL -o "$STAGE" "$URL"; then
+          echo "::error::aldrava-install: no asset at $URL" >&2
+          echo "::error::  Check that tag '$TAG' exists and its release carries aldrava-$SUFFIX." >&2
+          exit 1
+        fi
+
+        if ! curl -fsSL -o "$STAGE.sha256" "$URL.sha256"; then
+          echo "::error::aldrava-install: no checksum at $URL.sha256 — refusing to execute unverified bytes." >&2
+          rm -f "$STAGE"
+          exit 1
+        fi
+
+        # Published sidecar format is `<hex>  <name>`; compare the hex field
+        # only, since the recorded name need not match our staging filename.
+        WANT="$(awk '{print $1}' "$STAGE.sha256" | head -1)"
+        GOT="$(sha256sum "$STAGE" 2>/dev/null | awk '{print $1}' || true)"
+        if [ -z "$GOT" ]; then
+          GOT="$(shasum -a 256 "$STAGE" | awk '{print $1}')"
+        fi
+
+        if [ -z "$WANT" ] || [ "$WANT" != "$GOT" ]; then
+          echo "::error::aldrava-install: checksum MISMATCH for $URL" >&2
+          echo "::error::  published: ${WANT:-<empty>}" >&2
+          echo "::error::  computed:  ${GOT:-<empty>}" >&2
+          rm -f "$STAGE" "$STAGE.sha256"
+          exit 1
+        fi
+
+        mv "$STAGE" "$BIN_DIR/aldrava"
+        rm -f "$STAGE.sha256"
+        chmod +x "$BIN_DIR/aldrava"
+
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+        echo "bin-dir=$BIN_DIR" >> "$GITHUB_OUTPUT"
+        echo "resolved-version=$TAG" >> "$GITHUB_OUTPUT"
+        echo "sha256=$GOT" >> "$GITHUB_OUTPUT"
+        echo "aldrava $TAG installed, checksum verified ($GOT)"

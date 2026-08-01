@@ -5,6 +5,14 @@ branding:
   color: 'blue'
 
 inputs:
+  aldrava-version:
+    description: >-
+      REQUIRED. The pleme-io/aldrava release tag to install (e.g. `v0.1.0`).
+      Deliberately has no default: this action previously pulled
+      `releases/latest/download/` unpinned and unverified, so every future
+      aldrava release would have silently changed the executed binary in every
+      consumer with no version bump to review. Pass a tag you can bump.
+    required: true
   label-name:
     description: "Restrict a pull_request: [labeled] event to this label. Leave empty to treat every pull_request action as eligible."
     required: false
@@ -49,21 +57,12 @@ runs:
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
 
+    # See aldrava-install/action.yml — this replaced one of three identical
+    # unpinned, unverified copies of the install block.
     - name: Install aldrava
-      shell: bash
-      run: |
-        set -euo pipefail
-        OS=$(uname -s)
-        ARCH=$(uname -m)
-        case "$OS-$ARCH" in
-          Linux-x86_64)  SUFFIX="linux-x86_64";;
-          Linux-aarch64) SUFFIX="linux-aarch64";;
-          Darwin-arm64)  SUFFIX="macos-aarch64";;
-          Darwin-x86_64) SUFFIX="macos-x86_64";;
-          *) echo "::error::aldrava-resolve: unsupported runner $OS-$ARCH" >&2; exit 1;;
-        esac
-        curl -fsL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
-        chmod +x /usr/local/bin/aldrava
+      uses: pleme-io/actions/aldrava-install@main
+      with:
+        version: ${{ inputs.aldrava-version }}
 
     - name: Resolve run context
       id: resolve

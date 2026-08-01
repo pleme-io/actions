@@ -5,6 +5,14 @@ branding:
   color: 'blue'
 
 inputs:
+  aldrava-version:
+    description: >-
+      REQUIRED. The pleme-io/aldrava release tag to install (e.g. `v0.1.0`).
+      Deliberately has no default: this action previously pulled
+      `releases/latest/download/` unpinned and unverified, so every future
+      aldrava release would have silently changed the executed binary in every
+      consumer with no version bump to review. Pass a tag you can bump.
+    required: true
   catalog-path:
     description: "Path to the catalog file to validate."
     required: false
@@ -37,21 +45,15 @@ runs:
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
 
+    # Was an inline copy of the install block (one of three byte-identical
+    # copies) that pulled `releases/latest/download/` with no pin and no
+    # checksum, straight into /usr/local/bin. See aldrava-install/action.yml
+    # for why that was safe only while it was broken, and stopped being safe
+    # the moment aldrava's first `v*` tag lands.
     - name: Install aldrava
-      shell: bash
-      run: |
-        set -euo pipefail
-        OS=$(uname -s)
-        ARCH=$(uname -m)
-        case "$OS-$ARCH" in
-          Linux-x86_64)  SUFFIX="linux-x86_64";;
-          Linux-aarch64) SUFFIX="linux-aarch64";;
-          Darwin-arm64)  SUFFIX="macos-aarch64";;
-          Darwin-x86_64) SUFFIX="macos-x86_64";;
-          *) echo "::error::aldrava-lint: unsupported runner $OS-$ARCH" >&2; exit 1;;
-        esac
-        curl -fsL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
-        chmod +x /usr/local/bin/aldrava
+      uses: pleme-io/actions/aldrava-install@main
+      with:
+        version: ${{ inputs.aldrava-version }}
 
     - name: Lint the catalog
       id: lint
