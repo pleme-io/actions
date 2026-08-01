@@ -174,26 +174,18 @@
       ;; `nix run github:pleme-io/substrate#oci-push` removed the *word* install
       ;; while keeping a job-time resolution of an UNPINNED @main ref -- the
       ;; violation changed shape rather than closing. A baked binary closes it.
-      (doca-baked
-        (let ((w (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true")))
-          (string-trim (stdout-of w))))
+      ;; Resolution + the source-note diagnostic live in the STDLIB
+      ;; (oci:doca-baked / oci:doca-argv / oci:doca-source-note). This block used
+      ;; to re-type all three; tlisp-lint Layer 5 correctly failed the duplicated
+      ;; "(NOT baked ...)" literal, because a copy of a diagnostic string drifts
+      ;; from its original and only one copy ever gets fixed.
       (args
         (append
-          (if (equal? doca-baked "")
-            (list "nix" "run"
-                  (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
-                  "--" "pull" "--ref" ref "--out" dest)
-            (list doca-baked "pull" "--ref" ref "--out" dest))
+          (oci:doca-argv "pull")
+          (list "--ref" ref "--out" dest)
           tls-args
           cred-args))
-      (_which
-        (log-info
-          (string-append
-            "doca source: "
-            (if (equal? doca-baked "")
-              (string-append "nix run " (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
-                             " (NOT baked -- needs a working nix daemon at job time)")
-              (string-append "baked at " doca-baked)))))
+      (_which (log-info (oci:doca-source-note)))
       (r (apply exec-capture args)))
     ;; Surface skopeo's OWN stderr on failure. Returning a bare status threw
     ;; the reason away, so a 401, a DNS miss and a TLS refusal were one

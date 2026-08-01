@@ -87,12 +87,18 @@
 ;; Prefer a BAKED doca over `nix run`. A job-time `nix run` of an unpinned @main
 ;; ref is a hermetic-supply-chain violation AND, measured on hardened-images run
 ;; 30658995498, floods stderr with nix's own warnings so the tool's real error is
-;; drowned. Same detection the zot-pull-scan puller uses -- one idiom, not two.
-(define
-  doca-baked
-  (let
-    ((w (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true")))
-    (string-trim (stdout-of w))))
+;; drowned.
+;;
+;; Resolution lives in the STDLIB (oci:doca-baked / oci:doca-argv /
+;; oci:doca-source-note), called here rather than re-typed. This file used to
+;; carry its own copy of all three, including the "(NOT baked ...)" diagnostic
+;; string -- which tlisp-lint's Layer 5 correctly failed as a re-typed stdlib
+;; literal: a predicate over a tool's diagnostic text belongs in one place, or
+;; the copies drift and only one of them gets fixed.
+;;
+;; No local `doca-baked` binding: both call sites below now go through
+;; oci:doca-argv / oci:doca-source-note, which resolve it themselves. Keeping one
+;; here would be dead AND would spend an extra `command -v` subprocess at load.
 
 ;; ── CREDENTIALS GO VIA ENV, NEVER ARGV. ─────────────────────────────────────
 ;; This previously appended `--dest-user <u> --dest-pass <p>` to the command
@@ -120,19 +126,9 @@
     (if (equal? ca-cert "") (list) (list "--dest-ca-cert" ca-cert))
     (if (equal? insecure "true") (list "--insecure") (list))))
 
-(define
-  base-args
-  (if (equal? doca-baked "")
-    (list "nix" "run" (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push") "--" "push")
-    (list doca-baked "push")))
+(define base-args (oci:doca-argv "push"))
 
-(log-info
-  (string-append
-    "doca source: "
-    (if (equal? doca-baked "")
-      (string-append "nix run " (env-get "DOCA_REF" "github:pleme-io/substrate#oci-push")
-                     " (NOT baked -- needs a working nix daemon at job time)")
-      (string-append "baked at " doca-baked))))
+(log-info (oci:doca-source-note))
 
 (log-info
   (string-append "pushing " tarball " -> " target
