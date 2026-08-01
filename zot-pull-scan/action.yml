@@ -120,7 +120,7 @@ outputs:
     description: >-
       How many targets trivy actually examined -- the DENOMINATOR behind
       `severity` and `vuln-count`. `severity=none` with `scanned-targets=0`
-      means NOTHING WAS MEASURED, not that the image is clean; 11 images in
+      means NOTHING WAS MEASURED, not that the image is clean; 7 images in
       hardened-images declare `trivyAnalysableTargets = [ ]` because a
       distroless C++ binary has no OS package DB and no language manifest for
       trivy to read. Declared here because a composite action's outputs must be
@@ -308,7 +308,7 @@ runs:
         # spells out why it matters -- "vuln-count=0 with scanned-targets=0
         # means NOTHING WAS MEASURED" -- but the faucet dropped it, so the
         # trusted-zone admission line read `severity none` identically whether
-        # trivy examined 40 targets or zero. 11 images in hardened-images
+        # trivy examined 40 targets or zero. 7 images in hardened-images
         # declare `trivyAnalysableTargets = [ ]` (a distroless C++ binary has no
         # OS package DB and no language manifest), and hardened-clickhouse and
         # -clickhouse-keeper are two of them: their real coverage is vulnix over
