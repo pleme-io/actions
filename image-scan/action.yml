@@ -201,18 +201,43 @@ runs:
         fi
         echo "sensitivity canary OK: trivy flagged the known-vulnerable canary package"
 
+    # WRITES A FILE, PASSES A PATH (migrated 2026-08-02). This previously
+    # emitted the concatenated stdlib+script as a step OUTPUT, which
+    # tatara-script then carried as the env var TATARA_SCRIPT_SRC -- and GitHub
+    # echoes every env value into the step's log group, so each scan dumped
+    # ~1700 lines of tlisp source into the job log before running.
+    #
+    # THAT IS NOT A COSMETIC PROBLEM. It makes every grep for a message find
+    # the source line that WOULD print it rather than a line that DID. This
+    # action's logs are the ones I have had to read most in this campaign, and
+    # the trap produced four wrong diagnoses -- twice on the same fix, where
+    # `grep "0 store paths pushed"` matched an echoed `(cond ((= pushed 0) ...`
+    # branch and a WORKING change was judged ineffective.
+    #
+    # tatara-script's `script-file` input takes a path instead, and blanks
+    # TATARA_SCRIPT_SRC when it is set, so the env dump carries one short
+    # string. Same bytes executed; the log stops containing its own program.
     - name: Load stdlib + run.tlisp
       id: src
       shell: bash
       run: |
+        set -euo pipefail
+        f="$RUNNER_TEMP/image-scan-$GITHUB_RUN_ID-$RANDOM.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$f"
+        # Refuse an empty script rather than handing tatara-script a file that
+        # parses to nothing and exits 0 -- a scan that ran no checks would look
+        # exactly like a scan that found none.
+        if [ ! -s "$f" ]; then
+          echo "::error::image-scan: assembled tlisp is empty at $f" >&2
+          exit 1
+        fi
+        echo "path=$f" >> "$GITHUB_OUTPUT"
+        echo "assembled $(wc -l < "$f") lines -> $f"
 
       # @main, not @v1 -- this action's own `severity`/`vuln-count`
       # output forwards don't exist on tatara-script/action.yml at the v1
@@ -241,7 +266,7 @@ runs:
     - id: scan
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.path }}
       env:
         IMAGE_REF: ${{ inputs.image-ref }}
         LOCAL_ARCHIVE: ${{ inputs.local-archive }}
