@@ -4,10 +4,23 @@
 
 (define ptype (env-get "PREDICATE_TYPE" "https://slsa.dev/provenance/v1"))
 
+;; PINNED, and the asset name is the fix -- not a style change.
+;;
+;; This used to fetch `releases/latest/download/witness-linux-amd64`. That
+;; asset DOES NOT EXIST and never did at this name: in-toto/witness ships
+;; `witness_<ver>_linux_amd64.tar.gz`. Measured 2026-08-01, that URL returns
+;; **404**. With the old `-sSL` (no --fail) curl exited 0, wrote GitHub's 404
+;; HTML to /tmp/witness, `chmod +x`'d it and moved it onto PATH -- so the
+;; failure surfaced later as a bizarre exec error from `witness run`, pointing
+;; at the attestation step rather than at the download. This action has TWO
+;; live consumer workflows and cannot ever have produced an attestation.
+;;
+;; Verified before pinning: the tarball is HTTP 200, 24219077 bytes, and the
+;; binary sits at the archive root as `witness`.
 (exec-check
   "sh"
   "-c"
-  "curl -fsSL https://github.com/in-toto/witness/releases/latest/download/witness-linux-amd64 -o /tmp/witness && chmod +x /tmp/witness && sudo mv /tmp/witness /usr/local/bin/")
+  "curl -fsSL https://github.com/in-toto/witness/releases/download/v0.12.0/witness_0.12.0_linux_amd64.tar.gz -o /tmp/witness.tgz && tar xzf /tmp/witness.tgz -C /tmp witness && chmod +x /tmp/witness && sudo mv /tmp/witness /usr/local/bin/")
 
 (define out-path (string-append artifact ".slsa.json"))
 

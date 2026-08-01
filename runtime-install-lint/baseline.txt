@@ -22,7 +22,23 @@
 # so what remains below is two defects, not three:
 #   * UNPINNED -- `releases/latest` or a `main` install.sh, so the binary can
 #     change under us between two runs of the SAME commit. This is the one that
-#     makes a scan verdict irreproducible, and it is untouched.
+#     makes a scan verdict irreproducible. NOW FIXED for the three that decide
+#     what we ship: image-scan (trivy v0.72.0), sbom-generate (syft v1.50.0)
+#     and slsa-attest (witness v0.12.0) pin BOTH the install script and the
+#     version. The other nine are still on `releases/latest`.
+#
+# AND SIX OF THE TWELVE WERE 404-ING (measured 2026-08-01, per URL):
+#     slsa-attest      witness-linux-amd64            404  <- asset never existed
+#     api-spec-diff    oasdiff_linux_amd64.tar.gz     404
+#     nats-publish     nats-0.1.6-linux-amd64.zip     404
+#     aldrava-{resolve,dispatch,lint}                 404  <- repo has NO releases
+#   200 only for: argocd-sync, cyclonedx-merge, image-scan, sbom-generate,
+#   onepassword-fetch, defaction-render.
+# With the old `-sSL` these exited 0, wrote GitHub's 404 HTML to the target and
+# `chmod +x`'d it, so the fault surfaced later as an exec error in the tool's
+# own step. slsa-attest (2 live consumer workflows) and aldrava-resolve /
+# aldrava-dispatch (1 each) are LIVE; the other three have 0 consumers.
+# slsa-attest is fixed here. aldrava needs a RELEASE, not an action edit.
 #   * NOT HERMETIC -- fetched at job time instead of baked into a
 #     pleme-io/hardened-images distroless image (§VI.1). That image does not
 #     exist yet for trivy/syft/grype -- checked, `grypePkg` is an internal

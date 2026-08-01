@@ -28,8 +28,14 @@ runs:
     - name: Install syft
       shell: bash
       run: |
-        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-          | sh -s -- -b /usr/local/bin
+        # PINNED TWICE: the SCRIPT at a tag, and the VERSION it installs. Both
+        # were unpinned -- install.sh came from `main`, and its version arg
+        # defaults to "latest". An SBOM is a provenance claim, so a syft nobody
+        # can name produces a component list nobody can reproduce.
+        # Verified 2026-08-01: the tagged script URL is HTTP 200; v1.50.0 is
+        # the current release.
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/v1.50.0/install.sh \
+          | sh -s -- -b /usr/local/bin v1.50.0
 
     - name: Load stdlib + run.tlisp
       id: src
