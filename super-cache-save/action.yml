@@ -61,20 +61,30 @@ runs:
       id: src
       shell: bash
       run: |
+        set -euo pipefail
+        # Writes a FILE and passes its PATH (migrated 2026-08-02). Emitting the
+        # assembled stdlib+script as a step OUTPUT made tatara-script carry it as
+        # the env var TATARA_SCRIPT_SRC, and GitHub echoes env values into the log
+        # group -- so every invocation printed the whole source before running,
+        # and any grep for a message matched the line that WOULD print it.
+        f="$RUNNER_TEMP/super-cache-save-$GITHUB_RUN_ID-$RANDOM.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$f"
+        # An empty assembly parses to nothing and exits 0 -- refuse it rather than
+        # let a no-op look like a pass.
+        if [ ! -s "$f" ]; then echo "::error::super-cache-save: assembled tlisp is empty" >&2; exit 1; fi
+        echo "path=$f" >> "$GITHUB_OUTPUT"
+        echo "assembled $(wc -l < "$f") lines -> $f"
 
     - name: Run super-cache-save
       id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.path }}
       env:
         ENDPOINT: ${{ inputs.endpoint }}
         KEY: ${{ inputs.key }}
