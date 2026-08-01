@@ -1,10 +1,30 @@
 ;; action-shell-lint/run.tlisp — enforce NO-SHELL on pleme-io action.yml files.
 ;;
-;; The canonical loader block is exactly:
-;;     - id: src
-;;       shell: bash
-;;       run: |
-;;         { echo 'script<<TLISP_EOF' ...
+;; There are TWO canonical loader blocks, and recognizing only the first
+;; is what made this gate fire on correct work (fixed 2026-08-01):
+;;
+;;   (a) heredoc  — `{ echo 'script<<TLISP_EOF' ... }`, feeding `script:`
+;;   (b) file     — assemble into "$RUNNER_TEMP/<name>.tlisp", feed
+;;                  `script-file:` with the PATH
+;;
+;; (b) is the newer form and exists for a measured reason: on
+;; hardened-images run 30713648889 the heredoc made registry-login the
+;; single largest source of log noise in a build job — ~3390 lines of an
+;; 11,256-line job (the cat, plus tatara-script re-echoing the same source
+;; as TATARA_SCRIPT_SRC). Passing a path leaves one short string.
+;;
+;; The detector keyed on the literal `TLISP_EOF`, which form (b) does not
+;; contain — so every action migrated to it was reclassified from "loader"
+;; to "raw shell body" and reported as NO-SHELL debt. Measured: 6 of the 7
+;; violations on c98742d were exactly this (image-scan x3, super-cache-save,
+;; container-boot-check, registry-login), all already fully tlisp-backed.
+;;
+;; A loader is now recognized by what actually DEFINES it — assembling the
+;; shared stdlib — via `stdlib.tlisp`, which both forms cat and no genuine
+;; shell body has reason to mention. The 7th violation
+;; (aldrava-install, 71 lines, no tlisp anywhere) is untouched by this and
+;; stays red, which is the point: this narrows a false positive without
+;; making the gate vacuous.
 ;;
 ;; We count `shell: bash` blocks elsewhere AND the line count of
 ;; their `run: |` body. Any non-loader shell body > threshold lines
@@ -18,12 +38,13 @@
 
 (log-info (string-append "==> scanning " paths " (threshold=" threshold-str ")"))
 
-;; Awk script that detects 'shell: bash' blocks NOT containing
-;; 'script<<TLISP_EOF' in the next 10 lines (= loader block), and
-;; counts the run body. Emits "<file>\t<lines>" per offender.
+;; Awk script that detects 'shell: bash' blocks that are NOT a tlisp
+;; loader — i.e. contain neither 'TLISP_EOF' (heredoc form) nor
+;; 'stdlib.tlisp' (file form) — and counts the run body. Emits
+;; "<file>\t<lines>" per offender.
 (define
   awk-prog
-  "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }\n   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }\n   in_run && /TLISP_EOF/ { is_loader=1; }\n   in_run && /run: \\|/ { in_body=1; next; }\n   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }\n   in_body { lines++; }\n   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
+  "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }\n   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }\n   in_run && /TLISP_EOF|stdlib\\.tlisp/ { is_loader=1; }\n   in_run && /run: \\|/ { in_body=1; next; }\n   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }\n   in_body { lines++; }\n   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
 
 (define
   find-cmd
