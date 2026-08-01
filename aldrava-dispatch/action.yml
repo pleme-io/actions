@@ -5,6 +5,14 @@ branding:
   color: 'blue'
 
 inputs:
+  aldrava-version:
+    description: >-
+      REQUIRED. The pleme-io/aldrava release tag to install (e.g. `v0.1.0`).
+      Deliberately has no default: this action previously pulled
+      `releases/latest/download/` unpinned and unverified, so every future
+      aldrava release would have silently changed the executed binary in every
+      consumer with no version bump to review. Pass a tag you can bump.
+    required: true
   catalog-path:
     description: "Path to a (defcommentcommand ...) catalog file (e.g. .github/aldrava.lisp). When set, every other command/trigger/target-* input is ignored — the catalog is the sole source of registered commands."
     required: false
@@ -115,24 +123,17 @@ runs:
           echo 'TLISP_EOF'
         } >> "$GITHUB_OUTPUT"
 
+    # See aldrava-install/action.yml — this replaced one of three identical
+    # unpinned, unverified copies of the install block. The removed copy
+    # carried its own admission that the asset names were GUESSED ("mirrors
+    # pleme-io/tend's release shape; revisit once aldrava ships its first
+    # release if the real names differ") — a convention never checked against
+    # a real asset, because no real asset has ever existed. aldrava-install
+    # fails loudly and by name when the asset is absent, instead of guessing.
     - name: Install aldrava
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Asset-name convention mirrors pleme-io/tend's release shape
-        # (<tool>-<os>-<arch>); revisit once aldrava ships its first
-        # `nix run .#release` if the real names differ.
-        OS=$(uname -s)
-        ARCH=$(uname -m)
-        case "$OS-$ARCH" in
-          Linux-x86_64)  SUFFIX="linux-x86_64";;
-          Linux-aarch64) SUFFIX="linux-aarch64";;
-          Darwin-arm64)  SUFFIX="macos-aarch64";;
-          Darwin-x86_64) SUFFIX="macos-x86_64";;
-          *) echo "::error::aldrava-dispatch: unsupported runner $OS-$ARCH" >&2; exit 1;;
-        esac
-        curl -fsL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
-        chmod +x /usr/local/bin/aldrava
+      uses: pleme-io/actions/aldrava-install@main
+      with:
+        version: ${{ inputs.aldrava-version }}
 
     - name: Resolve the knock and dispatch
       id: dispatch
