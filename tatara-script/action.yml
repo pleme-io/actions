@@ -5,6 +5,21 @@ branding:
   color: 'green'
 
 inputs:
+  script-file:
+    description: >-
+      Path to a .tlisp file to execute, as an ALTERNATIVE to `script`. When
+      non-empty this takes precedence and `script` is not read.
+      WHY IT EXISTS: `script` rides to the runner as the env var
+      TATARA_SCRIPT_SRC, and GitHub echoes every env value into the step's log
+      group -- so each invocation dumps the whole stdlib+script (~1700 lines)
+      into the log before running. That makes a job log mostly SOURCE CODE, and
+      any grep for a message finds the line that WOULD print it rather than a
+      line that DID. Measured four separate times in this stack: a fix was
+      twice judged ineffective because `grep "0 store paths pushed"` matched
+      the (cond ((= pushed 0) (log-error ...)) branch of the echoed source, not
+      a verdict. Passing a PATH puts one short string in the env dump instead.
+    required: false
+    default: ""
   script:
     description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file)"
     required: true
@@ -1162,12 +1177,24 @@ runs:
       # the working directory cannot affect locating it.
       working-directory: ${{ inputs.working-directory }}
       env:
-        TATARA_SCRIPT_SRC: ${{ inputs.script }}
+        # Emptied when script-file is used, DELIBERATELY: leaving the value here
+        # would still echo the whole script into the log group even though
+        # nothing reads it, which is the entire problem script-file solves.
+        TATARA_SCRIPT_SRC: ${{ inputs.script-file != '' && '' || inputs.script }}
+        TATARA_SCRIPT_FILE: ${{ inputs.script-file }}
         TATARA_SCRIPT_ARGS: ${{ inputs.args }}
       run: |
         set -uo pipefail
-        TMP=$(mktemp -t tatara-action-XXXXXX.tlisp)
-        printf '%s\n' "$TATARA_SCRIPT_SRC" > "$TMP"
+        if [ -n "${TATARA_SCRIPT_FILE:-}" ]; then
+          if [ ! -f "$TATARA_SCRIPT_FILE" ]; then
+            echo "::error::script-file not found: $TATARA_SCRIPT_FILE" >&2
+            exit 1
+          fi
+          TMP="$TATARA_SCRIPT_FILE"
+        else
+          TMP=$(mktemp -t tatara-action-XXXXXX.tlisp)
+          printf '%s\n' "$TATARA_SCRIPT_SRC" > "$TMP"
+        fi
         # shellcheck disable=SC2086 — splitting on whitespace is intentional
         rc=0
         tatara-script "$TMP" $TATARA_SCRIPT_ARGS || rc=$?
