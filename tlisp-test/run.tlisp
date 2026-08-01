@@ -83,9 +83,49 @@
     ((null? files) fails)
     (else (run-all (cdr files) (if (= (run-one (car files)) 0) fails (+ fails 1))))))
 
+;; tatara-lisp has no string->number; bridge a numeric env string to an Int via
+;; json-parse (a bare integer is valid JSON) -- the proven
+;; container-boot-check / nix-image pattern.
+(define
+  (parse-int s fallback)
+  (let ((t (string-trim s))) (cond ((equal? t "") fallback) (else (json-parse t)))))
+
+(define min-files (parse-int (env-get "MIN_FILES" "1") 1))
+
 (define test-files (find-test-files))
 
-(log-info (string-append "tlisp-test: " (string-format "{}" (length test-files)) " test file(s)"))
+(define discovered (length test-files))
+
+(log-info (string-append "tlisp-test: " (string-format "{}" discovered) " test file(s)"))
+
+;; ── THE ZERO-DENOMINATOR GATE ────────────────────────────────────────────
+;; Without this, a discovery failure is INDISTINGUISHABLE FROM SUCCESS: `find`
+;; returning nothing gives failures=0, and the tail below logs
+;; "all 0 file(s) passed" and exits 0. A wrong cwd, a checkout that did not
+;; land, a glob that stopped matching after a rename -- every one of them
+;; reports a green gate over a denominator of ZERO, which is the same defect
+;; as a scanner that skips every package and still exits 0.
+;;
+;; MIN_FILES is a FLOOR, so it catches two different regressions:
+;;   * total discovery failure (0 found) -- caught by the default floor of 1
+;;   * partial collapse (a caller that expects ~37 finding 4) -- caught when
+;;     the caller raises the floor, which actions/ci.yml does.
+;; Outputs are emitted BEFORE exiting so a failing run still reports its count
+;; rather than leaving the caller's `test-files` output empty.
+(cond
+  ((< discovered min-files)
+    (append-output (string-append "test-files=" (string-format "{}" discovered)))
+    (append-output "failed-files=0")
+    (log-error
+      (string-append
+        "tlisp-test: discovered "
+        (string-format "{}" discovered)
+        " test file(s), below the required floor of "
+        (string-format "{}" min-files)
+        ". This is a DISCOVERY failure, not a passing suite -- check the working"
+        " directory, that actions/checkout ran, and that *.test.tlisp still match."
+        " Set min-files: 0 only for a repo that genuinely has no tlisp tests."))
+    (exit 1)))
 
 (define failures (run-all test-files 0))
 

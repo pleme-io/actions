@@ -239,10 +239,15 @@
     (equal? (row-field "CALL\tp\t7\tstring-replace\t4" 3) "string-replace")
     "the head is field 3")
   (assert (equal? (row-field "HEAD\tcar" 1) "car") "a two-field row reads")
+  ;; ONE message string. `assert` is arity-2 (condition + message); the message
+  ;; here used to be split across two adjacent literals as if they would
+  ;; concatenate, which made this a 3-arg call -- "compile error in call to
+  ;; assert: too many args: expected at most 2, got 3". That aborted the whole
+  ;; deftest, so the past-the-end case below NEVER RAN while the suite reported
+  ;; a failure that read as a row-field defect. row-field was correct all along.
   (assert
     (equal? (row-field "HEAD\tcar" 5) "")
-    "past the end is \"\" — nth returns nil there, and a nil in a "
-    "string-append is a runtime error, so the length guard is load-bearing"))
+    "past the end is \"\" — nth returns nil there, and a nil in a string-append is a runtime error, so the length guard is load-bearing"))
 
 (deftest
   "probe-exact-arity: reads the arity OUT OF THE INTERPRETER'S OWN ERROR"
@@ -265,15 +270,12 @@
         "alist-get"
         "Error(arity-mismatch: `alist-get` expected Range(2, 3), got 23)")
       "")
-    "a RANGE is deliberately ungated — there is no string->number here, so "
-    "a range bound cannot be compared. Ungated is honest; guessing is not.")
+    "a RANGE is deliberately ungated — there is no string->number here, so a range bound cannot be compared. Ungated is honest; guessing is not.")
   (assert
     (equal?
       (probe-exact-arity "count" "Error(arity-mismatch: `<closure>` expected Exact(1), got 23)")
       "")
-    "a <closure> verdict is DROPPED: that is a stdlib lisp function, and "
-    "actions legitimately rebind those (Layer 4's baseline is the proof). "
-    "breathe-band-lint's own 2-arg `count` is exactly this, 7 times over.")
+    "a <closure> verdict is DROPPED: that is a stdlib lisp function, and actions legitimately rebind those (Layer 4's baseline is the proof). breathe-band-lint's own 2-arg `count` is exactly this, 7 times over.")
   (assert
     (equal?
       (probe-exact-arity "add-finding" "Error(unbound-symbol: unbound symbol `add-finding`)")
@@ -319,8 +321,7 @@
     "and it is wrapped in try/catch, so one bad head cannot abort the probe")
   (assert
     (not (string-contains? (arity-probe-line "exec-capture") "\"\""))
-    "the dummy is #f, never an empty string — a string ARG would satisfy "
-    "the marshaller and let a variadic effectful primitive actually run"))
+    "the dummy is #f, never an empty string — a string ARG would satisfy the marshaller and let a variadic effectful primitive actually run"))
 
 (deftest
   "the crash-certain row formats the baseline is keyed on"
@@ -347,8 +348,7 @@
   (assert (null? crash-baselined) "no crash-certain form is baselined")
   (assert
     (path-exists? crash-baseline-path)
-    "and the file itself exists, so the filter above is reading a real "
-    "file rather than silently defaulting to an empty list"))
+    "and the file itself exists, so the filter above is reading a real file rather than silently defaulting to an empty list"))
 
 (deftest
   "crash-row-new?: an unbaselined row is NEW"

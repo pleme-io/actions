@@ -81,7 +81,16 @@ jobs:
       # Discovers each <action>/run.test.tlisp, runs its (deftest ...) forms
       # against the real run.tlisp (TLISP_TEST=1 gates the unit's main), and
       # fails the gate on any failing assertion.
+      #
+      # min-files is a FLOOR against the zero-denominator failure: discovery
+      # matching nothing would otherwise log "all 0 file(s) passed" and exit 0.
+      # 37 test files exist at the time of writing (2026-08-01); the floor sits
+      # below that so deleting a couple of actions does not wedge CI, while a
+      # collapse (a bad cwd, a missing checkout, a rename that breaks the glob)
+      # still goes red. Raise it as the suite grows.
       - uses: ./tlisp-test
+        with:
+          min-files: "30"
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files
