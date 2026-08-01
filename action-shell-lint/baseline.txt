@@ -6,6 +6,18 @@
 # is an empty file, not a permanently-growing one. Remove an entry only
 # by actually fixing that action's shell body (route it through tlisp),
 # never by raising the threshold to make it fit.
+#
+# ── AMENDED 2026-08-01: the list below the original ten is NOT "predating
+# the lint". Those are entries added later, and each one states its reason
+# inline, the same discipline runtime-install-lint and banned-tool-lint
+# already use. Saying so here rather than letting the header above quietly
+# misdescribe half the file.
+#
+# The bar for adding an entry, so this does not become the growing file the
+# header warns about: converting the block must be a WORSE engineering act
+# than tracking it, and the reason must be specific enough to argue with.
+# "It is long" is not a reason. "It is security-critical and cannot be
+# exercised" is.
 ./aldrava-dispatch/action.yml
 ./caixa-render/action.yml
 ./email-notify/action.yml
@@ -16,3 +28,30 @@
 ./tatara-script/action.yml
 ./caixa-publish/action.yml
 ./wasm-build/action.yml
+
+# ── Added 2026-08-01, each with its reason ──────────────────────────────
+#
+# aldrava-install: a pinned, checksum-verified binary installer written the
+# same day (e2f4afc) specifically to close a floating-`latest` supply-chain
+# gap. Porting it means rewriting a checksum-verification path, and the
+# download arm CANNOT BE EXERCISED: pleme-io/aldrava has zero releases, so
+# every asset URL 404s (probed; control — tatara-lisp's equivalent URL
+# returns 200, so the probe reads GitHub correctly). An unverifiable
+# rewrite of verification code is a worse act than tracking it. Convert
+# when aldrava cuts its first release and the path can actually be run.
+./aldrava-install/action.yml
+#
+# image-scan: two bodies, and the loader is NOT one of them (that was the
+# false positive fixed in run.tlisp today).
+#   * "Install Trivy" — pins BOTH the installer script tag and the scanner
+#     version; the whole block exists to make a scan verdict reproducible.
+#   * "Trivy sensitivity canary" — proves the scanner can still find a
+#     known-vulnerable SPDX fixture, i.e. it is the thing that stops the
+#     gate going vacuously green.
+# Both are security-critical and freshly reviewed (7c62f66, 57d160f). The
+# canary's real defect is a JSON fixture inlined as a heredoc; the right
+# conversion moves the fixture to a committed file FIRST, then types the
+# orchestration. Tracked as one entry because the baseline is file-granular
+# — which is also why image-scan was NOT baselined earlier today when only
+# its loader was flagged, since that would have hidden these two.
+./image-scan/action.yml
