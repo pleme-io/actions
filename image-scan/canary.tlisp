@@ -1,0 +1,111 @@
+;; image-scan/canary.tlisp — the Trivy sensitivity canary.
+;;
+;; Proves the scanner can still FIND something before any "no findings"
+;; verdict from this run is believed. Without it, trivy's family=none
+;; failure mode (it skips what it cannot classify and still exits 0) makes
+;; a blind scanner indistinguishable from a clean image.
+;;
+;; ── WHY THIS IS TLISP AND NOT A `run: |` BLOCK ──────────────────────────
+;;
+;; It used to be ~81 lines of shell inside action.yml, which is the ★★
+;; NO-SHELL violation action-shell-lint tracks. Two things came out of the
+;; conversion that the shell form could not have:
+;;
+;;   1. The SPDX fixture is now a COMMITTED FILE (trivy-canary.spdx.json)
+;;      instead of a heredoc. It is reviewable, diffable, and a syntax
+;;      error in it is visible in a PR rather than buried in a quoted
+;;      string.
+;;   2. The exit-code semantics are a PURE FUNCTION with unit tests
+;;      (canary.test.tlisp). They were previously an if/elif chain nothing
+;;      could exercise — and they are the whole point of the gate, so
+;;      "untested" was the wrong place for them to live.
+;;
+;; ── MEASURED SEMANTICS, verified against the real binary ────────────────
+;;
+;;   vulnerable canary -> exit 1   findings exist; the scanner is WORKING
+;;   no-CVE package    -> exit 0   found nothing; the scanner is BLIND
+;;   trivy error       -> exit 2+  it could not run at all
+;;
+;; So exit 1 is the ONLY acceptable outcome. 0 and 2+ both fail, and are
+;; reported apart because they mean different things and have different
+;; fixes.
+;;
+;; ── TWO DECISIONS CARRIED OVER FROM THE SHELL VERSION, both load-bearing ─
+;;
+;; NO jq. The first draft parsed the JSON report with jq, and jq appears
+;; NOWHERE else in this action — nothing proves it exists on
+;; camelot-builder-pleme-eks, the self-hosted ARC runner these jobs use for
+;; private repos. Combined with fail-closed, a missing jq would have turned
+;; this into a RED GATE ON EVERY IMAGE for a reason unrelated to any image.
+;; That is the same defect already recorded against this stack ("yq missing
+;; on the ARC runner"), recreated while fixing a different one. trivy's own
+;; exit code carries the whole signal.
+;;
+;; Severity stays at trivy's default, verified to be ALL of
+;; UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL — never narrowed to fail-on-severity.
+;; "Can this scanner find anything" is a different question from "does this
+;; image breach our threshold"; narrowing would make the canary vacuous for
+;; any caller whose threshold excludes the canary's severities.
+
+(define fixture (env-get "CANARY_FIXTURE" "image-scan/trivy-canary.spdx.json"))
+
+;; The whole verdict, as a pure function of trivy's exit code.
+;; Returns one of: 'working  'blind  'unusable
+(define
+  (classify-canary-exit code)
+  (cond
+    ((= code 1) 'working)
+    ((= code 0) 'blind)
+    (else 'unusable)))
+
+;; Does this verdict mean the run's findings can be trusted?
+(define (canary-ok? verdict) (equal? verdict 'working))
+
+;; Operator-facing explanation. Kept beside the classifier so a new verdict
+;; cannot be added without a message — the `else` names the gap rather than
+;; printing something vague.
+(define
+  (canary-message verdict code)
+  (cond
+    ((equal? verdict 'working)
+      "sensitivity canary OK: trivy flagged the known-vulnerable canary package")
+    ((equal? verdict 'blind)
+      (string-append
+        "Trivy sensitivity canary found NOTHING in a package with known "
+        "vulnerabilities. Any 'no findings' verdict from this run is UNPROVEN "
+        "— do not read it as clean. This is the family=none failure mode: "
+        "trivy skips what it cannot classify and still exits 0."))
+    ((equal? verdict 'unusable)
+      (string-append
+        "Trivy sensitivity canary could not run (exit "
+        (string-format "{}" code)
+        "). The scanner is unusable, so no verdict from this run is "
+        "trustworthy."))
+    (else
+      (string-append
+        "canary: unhandled verdict for exit " (string-format "{}" code)))))
+
+(define
+  (main)
+  (cond
+    ((not (path-exists? fixture))
+      ;; Fail closed. A missing fixture means the canary did not run, and a
+      ;; canary that did not run must never read as a canary that passed.
+      (log-error
+        (string-append
+          "canary fixture not found: " fixture
+          " — refusing to pass a gate that never executed."))
+      1)
+    (else
+      (let*
+        ((r (exec-capture "trivy" "sbom" fixture "--exit-code" "1" "--quiet"))
+         (code (status-of r))
+         (verdict (classify-canary-exit code)))
+        (cond
+          ((canary-ok? verdict) (log-info (canary-message verdict code)) 0)
+          (else (log-error (canary-message verdict code)) 1))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — canary helpers loaded; main skipped"))
+  (else (exit (main))))

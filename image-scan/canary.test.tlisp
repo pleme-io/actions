@@ -1,0 +1,69 @@
+;; image-scan/canary.test.tlisp — unit tests for the Trivy sensitivity
+;; canary's verdict logic.
+;;
+;; These assertions did not exist while the canary was a `run: |` block:
+;; the exit-code chain was inline shell nothing could exercise, which is
+;; the wrong place for the one predicate that decides whether a "no
+;; findings" scan may be believed at all.
+;;
+;; Run via tatara-script --test by the tlisp-test action, which assembles
+;; stdlib + canary.tlisp + this file with TLISP_TEST=1 so the unit defines
+;; its functions but skips its main.
+
+(deftest
+  "classify-canary-exit: exit 1 is the ONLY working scanner"
+  (assert
+    (equal? (classify-canary-exit 1) 'working)
+    "exit 1 = trivy found the known-vulnerable package = scanner works")
+  (assert
+    (not (canary-ok? (classify-canary-exit 0)))
+    "exit 0 must NOT pass")
+  (assert
+    (not (canary-ok? (classify-canary-exit 2)))
+    "exit 2 must NOT pass")
+  (assert (canary-ok? (classify-canary-exit 1)) "exit 1 passes"))
+
+(deftest
+  "classify-canary-exit: 0 and 2+ are DISTINCT verdicts, not one failure"
+  ;; They mean different things and have different fixes — a blind scanner
+  ;; is a data problem, an unusable one is an environment problem. Collapsing
+  ;; them into "failed" is what makes an operator chase the wrong one.
+  (assert (equal? (classify-canary-exit 0) 'blind) "0 = blind")
+  (assert (equal? (classify-canary-exit 2) 'unusable) "2 = unusable")
+  (assert (equal? (classify-canary-exit 127) 'unusable) "127 (not found) = unusable")
+  (assert
+    (not (equal? (classify-canary-exit 0) (classify-canary-exit 2)))
+    "blind and unusable must never collapse into the same verdict"))
+
+(deftest
+  "the BLIND message says the run's findings are unproven, not merely 'failed'"
+  ;; The load-bearing property: a reader must not walk away thinking the
+  ;; image is clean. The message has to say the verdict is UNPROVEN.
+  (let*
+    ((m (canary-message 'blind 0)))
+    (assert (string-contains? m "UNPROVEN") "names the finding as unproven")
+    (assert (string-contains? m "family=none") "names the actual failure mode")))
+
+(deftest
+  "the UNUSABLE message carries the exit code the operator needs"
+  (let*
+    ((m (canary-message 'unusable 127)))
+    (assert (string-contains? m "127") "the exit code appears in the message")
+    ;; Assert the phrase the message actually uses. The first version of this
+    ;; test looked for "not trustworthy" and failed — the message reads "no
+    ;; verdict from this run is trustworthy", a negation built from a
+    ;; different word order. Worth keeping the note: a substring assertion
+    ;; pins the STRING, not the meaning, so it has to be written against the
+    ;; real text rather than a paraphrase of it.
+    (assert
+      (string-contains? m "no verdict from this run")
+      "says no verdict from this run may be used")))
+
+(deftest
+  "every verdict has a message — an unhandled one is named, never silent"
+  (assert
+    (not (equal? (canary-message 'working 1) ""))
+    "working has a message")
+  (assert
+    (string-contains? (canary-message 'some-future-verdict 3) "unhandled")
+    "an unknown verdict says so rather than printing something reassuring"))

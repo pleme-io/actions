@@ -182,7 +182,7 @@ honeycomb-marker	tatara-script	run.tlisp	1	1
 hubspot-contact-upsert	tatara-script	run.tlisp	1	1
 hugo-build	tatara-script	run.tlisp	1	1
 iac-forge	tatara-script	run.tlisp	0	0
-image-scan	tatara-script	run.tlisp	3	3
+image-scan	tatara-script	canary.tlisp,run.tlisp	3	3
 influxdb-write	tatara-script	run.tlisp	1	1
 infracost-comment	tatara-script	run.tlisp	1	1
 issue-create	tatara-script	run.tlisp	2	2
