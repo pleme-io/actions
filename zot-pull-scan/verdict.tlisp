@@ -119,7 +119,8 @@
               ;;  "no second scanner covers this payload" when that is the
               ;;  truth. Admission policy is a separate question -- rejecting
               ;;  vendor rewraps outright is an operator decision, not this
-              ;;  gate's to make unilaterally.`))
+              ;;  gate's to make unilaterally.`
+              ))
           #t)
         0)
       (else
