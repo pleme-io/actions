@@ -68,9 +68,18 @@
         ;; this is the trusted-zone boundary -- the worst place in the pipeline
         ;; for a verdict whose denominator is invisible. hardened-clickhouse and
         ;; -clickhouse-keeper are trivy-blind by declaration
-        ;; (`trivyAnalysableTargets = [ ]`; 11 images are), so their honest
-        ;; coverage is vulnix over the Nix closure and this line must not read
-        ;; as if trivy cleared them.
+        ;; (`trivyAnalysableTargets = [ ]`), so their honest coverage is vulnix
+        ;; over the Nix closure and this line must not read as if trivy cleared
+        ;; them. SEVEN images are in that state, measured 2026-08-01:
+        ;;   rabbitmq · mysql · socat-relay · clickhouse · clickhouse-keeper ·
+        ;;   classic-hardened-clickhouse-{server,keeper}
+        ;; An earlier draft of this comment said ELEVEN. That was a raw
+        ;; grep count of `trivyAnalysableTargets = [ ]` in hardened-images'
+        ;; flake.nix, and FOUR of the 11 hits are the string appearing inside
+        ;; COMMENTS explaining the convention. Prose about a thing counted as
+        ;; an instance of it -- the same defect this whole gate exists to
+        ;; catch, committed in the fix for it. Attribute to a service block,
+        ;; never grep a bare count.
         (log-info
           (string-append "zot faucet ADMIT: severity " severity
                          " below the configured threshold (scanned-targets="
