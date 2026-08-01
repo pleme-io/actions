@@ -91,7 +91,35 @@
               "  NOTE: scanned-targets=0 -- trivy measured NOTHING here. This "
               "ADMIT is not evidence of a clean image; it is the absence of "
               "evidence from this scanner. Coverage for such images comes from "
-              "vulnix over the Nix closure in the release gate."))
+              "vulnix over the Nix closure in the release gate."
+              ;; ★★ AND THAT LAST SENTENCE IS TRUE OF ONE LANE ONLY (2026-08-02).
+              ;; It holds for the NIX-BUILT images: they have a Nix closure, so
+              ;; vulnix is a real second denominator behind a zero-target trivy.
+              ;; It does NOT hold for the classic-hardened-* VENDOR REWRAPS,
+              ;; which reach this same branch and are admitted by this same
+              ;; NOTE. Their payload is a pulled vendor blob with no store path;
+              ;; hardened-images records `vulnixWhitelist = null` and that
+              ;; vulnix "scans the base closure only". So for those three the
+              ;; fallback named here covers the base and not the thing that
+              ;; carries the risk.
+              ;;
+              ;; MEASURED, so this is not theoretical: the classic server and
+              ;; keeper bundle OpenSSL 3.5.0 statically, and 3.5.0 matches 35
+              ;; NVD records (40 raw, minus a 5-record floor proven with a
+              ;; nonsense-version control), four of them HIGH. Every one is
+              ;; invisible to both scanners named above.
+              ;;
+              ;; The shape worth naming: a caveat that CITES A COMPENSATING
+              ;; CONTROL is stronger than one that just says "unmeasured" --
+              ;; and it is therefore worse when the compensating control does
+              ;; not apply to every image that reaches it. This note reassures
+              ;; on the classic lane by pointing at coverage that lane lacks.
+              ;; `pending-faucet-lane-aware-note: the zero-target NOTE should
+              ;;  name the ACTUAL fallback for the image at hand, and say
+              ;;  "no second scanner covers this payload" when that is the
+              ;;  truth. Admission policy is a separate question -- rejecting
+              ;;  vendor rewraps outright is an operator decision, not this
+              ;;  gate's to make unilaterally.`))
           #t)
         0)
       (else
