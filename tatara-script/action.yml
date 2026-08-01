@@ -1056,9 +1056,59 @@ runs:
         mkdir -p "$BIN_DIR"
         URL="https://github.com/pleme-io/tatara-lisp/releases/download/$TAG/tatara-script-$SUFFIX"
 
+        # ── CHECKSUM VERIFICATION (added 2026-08-01) ────────────────────────
+        # Every tatara-lisp release publishes `<asset>.sha256` beside each
+        # binary. Until now NOTHING consumed them: this action curl'd the
+        # binary, chmod +x'd it, and executed it in 322 consumer repos while
+        # the checksum sat unread in the same release.
+        #
+        # That is worse than having no checksum at all. An auditor reading the
+        # release page sees a .sha256 for every artifact and concludes the
+        # download is verified; the publisher's own release process
+        # manufactures the evidence of a check that never ran. The failure mode
+        # of "verified" and "not verified" were byte-identical from outside.
+        #
+        # FAIL CLOSED, and route a mismatch to the nix path rather than
+        # exiting: nix resolves the SAME pinned $TAG and hashes what it builds,
+        # so the fallback is a verified path, not a bypass. A MISMATCH is
+        # ::error:: (a mismatched binary is a supply-chain event, not a
+        # missing-asset inconvenience); a MISSING .sha256 is ::warning:: and
+        # also routes to nix — absence of the checksum must never silently
+        # degrade to executing the unverified bytes, which is precisely the
+        # shape this block replaces.
         if curl -sSL -f -o "$BIN_DIR/tatara-script" "$URL"; then
-          chmod +x "$BIN_DIR/tatara-script"
-          echo "Installed tatara-script from binary release"
+          SUM_OK=""
+          if curl -sSL -f -o "$BIN_DIR/tatara-script.sha256" "$URL.sha256"; then
+            # The published file is `<hex>  <name>`; compare the hex field
+            # only, since the recorded name need not match our local filename.
+            WANT="$(awk '{print $1}' "$BIN_DIR/tatara-script.sha256" | head -1)"
+            GOT="$(sha256sum "$BIN_DIR/tatara-script" 2>/dev/null | awk '{print $1}')"
+            if [ -z "$GOT" ]; then
+              GOT="$(shasum -a 256 "$BIN_DIR/tatara-script" | awk '{print $1}')"
+            fi
+            if [ -n "$WANT" ] && [ "$WANT" = "$GOT" ]; then
+              SUM_OK=1
+              echo "checksum OK: $GOT"
+            else
+              echo "::error::tatara-script checksum MISMATCH for $URL"
+              echo "::error::  published: ${WANT:-<empty>}"
+              echo "::error::  computed:  ${GOT:-<empty>}"
+            fi
+          else
+            echo "::warning::No .sha256 published at $URL.sha256 — refusing to execute the unverified binary"
+          fi
+
+          if [ -n "$SUM_OK" ]; then
+            chmod +x "$BIN_DIR/tatara-script"
+            echo "Installed tatara-script from binary release (checksum verified)"
+          else
+            # Remove the unverified bytes so nothing downstream can reach them
+            # via $BIN_DIR, which is placed on PATH unconditionally below.
+            rm -f "$BIN_DIR/tatara-script"
+            echo "::warning::Falling back to nix profile install at pinned tag $TAG"
+            echo "fallback-needed=true" >> "$GITHUB_OUTPUT"
+            echo "resolved-tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
         else
           # No shell-installed toolchain fallback (no `cargo install --git`,
           # no piped installer script) — the fleet-wide rule is that no CI
