@@ -20,6 +20,33 @@
     (equal? (image-base "" "ghcr.io" "pleme-io/svc") "ghcr.io/pleme-io/svc")
     "fallback composes registry/image"))
 
+;; The doca swap's actual risk surface. skopeo took ONE composed ref; doca wants
+;; --registry and --image separately, so a wrong split silently pushes to the
+;; wrong repository rather than failing. These pin the split for every base
+;; shape this action composes (image-base's two branches, above).
+(deftest
+  "doca --registry/--image split is correct for every base image-base produces"
+  (assert
+    (equal? (oci:split-registry (image-base "" "ghcr.io" "pleme-io/svc")) "ghcr.io")
+    "REGISTRY+IMAGE branch -> registry is the host")
+  (assert
+    (equal? (oci:split-image (image-base "" "ghcr.io" "pleme-io/svc")) "pleme-io/svc")
+    "REGISTRY+IMAGE branch -> image keeps the full path")
+  (assert
+    (equal? (oci:split-registry (image-base "ghcr.io/pleme-io/svc" "ghcr.io" "x/y")) "ghcr.io")
+    "REPO branch -> registry is the host")
+  (assert
+    (equal? (oci:split-image (image-base "ghcr.io/pleme-io/svc" "ghcr.io" "x/y")) "pleme-io/svc")
+    "REPO branch -> image is everything after the FIRST slash")
+  ;; A deeper path must not lose segments -- splitting on the first "/" only.
+  (assert
+    (equal? (oci:split-image "ghcr.io/pleme-io/group/sub/svc") "pleme-io/group/sub/svc")
+    "nested path survives the split intact")
+  ;; A host:port registry must keep its port on the registry side.
+  (assert
+    (equal? (oci:split-registry "zot.camelot.svc:5000/pleme-io/svc") "zot.camelot.svc:5000")
+    "host:port stays whole on the registry side"))
+
 (deftest
   "target-ref appends :tag to the base"
   (assert

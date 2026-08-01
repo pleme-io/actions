@@ -70,12 +70,19 @@ runs:
   steps:
     - uses: DeterminateSystems/nix-installer-action@main
 
-    - name: Ensure skopeo
-      shell: bash
-      run: |
-        # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) --
-        # exact-pinned to nixos-24.05.
-        command -v skopeo >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#skopeo
+    # NO TOOL-INSTALL STEP. This used to be:
+    #   command -v skopeo || nix profile install …nixos-24.05#skopeo
+    # which was both a skopeo dependency and a HERMETIC SUPPLY CHAIN violation
+    # (a third-party binary fetched at job time). run.tlisp now calls doca via
+    # the stdlib's `oci:doca-argv`, which prefers a BAKED oci-push/doca on PATH
+    # and logs which path it took (`oci:doca-source-note`) so a run is never
+    # ambiguous about which binary produced the artifact.
+    #
+    # Honest limit, not glossed: when doca is NOT baked, oci:doca-argv falls
+    # back to `nix run github:pleme-io/substrate#oci-push`, which removes the
+    # word "install" while still resolving an unpinned @main ref at job time --
+    # the violation changes shape rather than closing. Only a baked binary
+    # closes it. The fallback is logged, never silent.
 
     - name: Load stdlib + run.tlisp
       id: src
