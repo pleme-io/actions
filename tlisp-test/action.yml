@@ -1,8 +1,20 @@
 name: 'pleme-io · tlisp-test'
-description: "Discover + run every *.test.tlisp via tatara-script --test. Each test runs as the stdlib + the sibling unit (<base>.tlisp) + the test, with TLISP_TEST=1 so the unit defines its functions but skips its main. Fails if any (deftest ...) fails."
+description: "Discover + run every *.test.tlisp via tatara-script --test. Each test runs as the stdlib + the sibling unit (<base>.tlisp) + the test, with TLISP_TEST=1 so the unit defines its functions but skips its main. Fails if any (deftest ...) fails, AND fails if fewer than `min-files` tests are discovered so a discovery failure can never pass as a green suite."
 branding:
   icon: 'check-circle'
   color: 'green'
+
+inputs:
+  min-files:
+    description: >-
+      Minimum number of *.test.tlisp files that MUST be discovered. Default 1,
+      which catches total discovery failure -- without a floor, `find` matching
+      nothing yields "all 0 file(s) passed" and exit 0, indistinguishable from
+      a real pass. Raise it to the count you expect (actions/ci.yml does) so a
+      PARTIAL collapse is caught too, not just a total one. Set 0 only for a
+      repo that genuinely has no tlisp tests.
+    required: false
+    default: "1"
 
 outputs:
   test-files:
@@ -29,3 +41,5 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
+      env:
+        MIN_FILES: ${{ inputs.min-files }}
