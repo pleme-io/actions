@@ -52,17 +52,38 @@
     ((outcome (env-get "SCAN_OUTCOME" ""))
       (severity (env-get "SCAN_SEVERITY" "none"))
       (vuln-count (env-get "SCAN_VULN_COUNT" "0"))
+      (scanned-targets (env-get "SCAN_SCANNED_TARGETS" ""))
       (dest (env-get "DEST" "zot-pull.tar"))
       (verdict (verdict-of outcome)))
     (append-output (string-append "severity=" severity))
     (append-output (string-append "vuln-count=" vuln-count))
+    (append-output (string-append "scanned-targets=" scanned-targets))
     (append-output (string-append "local-archive=" dest))
     (append-output (string-append "admitted=" (if (admitted-outcome? outcome) "true" "false")))
     (append-output (string-append "result=" verdict))
     (cond
       ((admitted-outcome? outcome)
+        ;; STATE THE DENOMINATOR NEXT TO THE VERDICT. `severity none` over 40
+        ;; targets and `severity none` over ZERO printed identically here, and
+        ;; this is the trusted-zone boundary -- the worst place in the pipeline
+        ;; for a verdict whose denominator is invisible. hardened-clickhouse and
+        ;; -clickhouse-keeper are trivy-blind by declaration
+        ;; (`trivyAnalysableTargets = [ ]`; 11 images are), so their honest
+        ;; coverage is vulnix over the Nix closure and this line must not read
+        ;; as if trivy cleared them.
         (log-info
-          (string-append "zot faucet ADMIT: severity " severity " below the configured threshold"))
+          (string-append "zot faucet ADMIT: severity " severity
+                         " below the configured threshold (scanned-targets="
+                         (if (equal? scanned-targets "") "UNREPORTED" scanned-targets)
+                         ", vuln-count=" vuln-count ")"))
+        (if (equal? (string-trim scanned-targets) "0")
+          (log-info
+            (string-append
+              "  NOTE: scanned-targets=0 -- trivy measured NOTHING here. This "
+              "ADMIT is not evidence of a clean image; it is the absence of "
+              "evidence from this scanner. Coverage for such images comes from "
+              "vulnix over the Nix closure in the release gate."))
+          #t)
         0)
       (else
         (log-error
