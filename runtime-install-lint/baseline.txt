@@ -12,15 +12,28 @@
 # are TRACKED DEBT reported on every run, not silence. Nothing below is
 # accepted; each line is work.
 #
-# All twelve share three defects, and the third is the dangerous one:
+# CORRECTION, 2026-08-01, to this file's own first draft. It said "all twelve"
+# lacked --fail. Measured per file rather than by eye: TEN lacked it; image-scan
+# (`curl -sfL`) and sbom-generate (`curl -sSfL`) always had it. Writing "all
+# twelve" was the same round-up this repo keeps correcting elsewhere, committed
+# by the very entry that names the habit.
+#
+# The --fail defect is now FIXED for all ten (`-sSL`->`-fsSL`, `-sL`->`-fsL`),
+# so what remains below is two defects, not three:
 #   * UNPINNED -- `releases/latest` or a `main` install.sh, so the binary can
-#     change under us between two runs of the SAME commit.
+#     change under us between two runs of the SAME commit. This is the one that
+#     makes a scan verdict irreproducible, and it is untouched.
 #   * NOT HERMETIC -- fetched at job time instead of baked into a
-#     pleme-io/hardened-images distroless image (§VI.1).
-#   * NO --fail -- `-sSL` exits 0 on an HTTP error and writes the error body to
-#     the destination, which is then `chmod +x`'d. A 404 becomes an
-#     "executable". That is precisely the class run.tlisp's own header says
-#     this lint closes. It did not.
+#     pleme-io/hardened-images distroless image (§VI.1). That image does not
+#     exist yet for trivy/syft/grype -- checked, `grypePkg` is an internal
+#     scan package, not a shipped image -- so baking one is the real work
+#     these entries represent.
+#
+# FIXED and no longer true of any entry:
+#   * NO --fail -- `-sSL` exited 0 on an HTTP error, wrote the error body to
+#     the destination, and `chmod +x` made a 404 page "executable". That was
+#     precisely the class run.tlisp's header says this lint closes, and the
+#     lint could not see it. Closed for all 12 as of this commit.
 #
 # Ordered by what it costs us to be wrong, worst first: the top four ARE the
 # supply-chain toolchain. An unpinned scanner or attestor makes a verdict we

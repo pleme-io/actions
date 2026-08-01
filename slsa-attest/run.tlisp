@@ -7,7 +7,7 @@
 (exec-check
   "sh"
   "-c"
-  "curl -sSL https://github.com/in-toto/witness/releases/latest/download/witness-linux-amd64 -o /tmp/witness && chmod +x /tmp/witness && sudo mv /tmp/witness /usr/local/bin/")
+  "curl -fsSL https://github.com/in-toto/witness/releases/latest/download/witness-linux-amd64 -o /tmp/witness && chmod +x /tmp/witness && sudo mv /tmp/witness /usr/local/bin/")
 
 (define out-path (string-append artifact ".slsa.json"))
 
