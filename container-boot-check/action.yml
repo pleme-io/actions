@@ -6,6 +6,22 @@ inputs:
   image:
     description: "Image ref to start (e.g. ghcr.io/pleme-io/rabbitmq:3.13.7-nix0)"
     required: true
+  expect-log:
+    description: >-
+      Third boot mode, for a binary that CANNOT fully start in isolation (a
+      Kubernetes operator with no cluster, a client needing an absent backend).
+      When set, the check waits the full window and passes if this exact string
+      appears in `docker logs` (stdout+stderr), regardless of exit code. This
+      proves the binary LOADED -- shared libraries resolved, no glibc collision,
+      no SIGSEGV before main -- and executed into its own startup path. It does
+      NOT prove the process serves traffic, and the log line says so. Takes
+      precedence over health-cmd. Empty (default) does not select this mode, so
+      it can never degrade into "any output passes". Choose a string only a
+      correctly-loading binary emits -- e.g. clickhouse-operator's
+      "Unable to build kubeconf"; a string the runtime prints BEFORE exec'ing
+      the entrypoint would make this vacuous.
+    required: false
+    default: ""
   health-cmd:
     description: "Shell command run inside the container via `docker exec` on each poll; success (exit 0) means healthy (e.g. \"rabbitmq-diagnostics -q ping\"). Leave empty for a shell-less/distroless image with nothing to exec into — falls back to a 'still running after max-attempts*poll-interval-seconds' check via `docker inspect`, no exec into the container."
     required: false
@@ -48,6 +64,7 @@ runs:
       env:
         IMAGE: ${{ inputs.image }}
         HEALTH_CMD: ${{ inputs.health-cmd }}
+        EXPECT_LOG: ${{ inputs.expect-log }}
         CONTAINER_ENV: ${{ inputs.env }}
         MAX_ATTEMPTS: ${{ inputs.max-attempts }}
         POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}

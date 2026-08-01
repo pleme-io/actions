@@ -97,9 +97,82 @@
     ((r (exec-capture "docker" "inspect" "--format" "{{.State.Running}}" container-name)))
     (if (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true")) 'healthy 'timeout)))
 
-(define result (if (equal? health-cmd "") (still-running-after-wait) (poll 1)))
+;; ── THIRD MODE: a binary that CANNOT fully start in isolation ──────────────
+;; Measured 2026-08-01 on akeylesslabs' camelot-hardened-images run 30702469999:
+;; `clickhouse-operator` fails boot-check with
+;;   F():Unable to build kubeconf: ~/.kube/config not found  -> exitCode=255
+;; It is a KUBERNETES OPERATOR. There is no cluster inside `docker run`, so it
+;; cannot stay up and cannot answer an exec'd health-cmd. BOTH existing modes
+;; therefore fail it by construction:
+;;   * still-running-after-wait — it exits 255 immediately
+;;   * health-cmd poll          — execs into a container that already exited
+;;
+;; That is a gate which can NEVER pass. Everything this campaign has hunted so
+;; far was a gate that always passes; this is the inverse, and its blast radius
+;; is worse: a vacuous GREEN lets one bad artifact through, a vacuous RED blocks
+;; every GOOD one behind it. Four consecutive downstream runs died here, so the
+;; images that DID pass never promoted either.
+;;
+;; It is also better camouflaged. Nobody audits a FAILING security gate for
+;; correctness — red reads as the system working, the finding is assumed real,
+;; and triage goes to the thing under test ("the operator image is broken")
+;; rather than to the test. Discovering it requires concluding that a security
+;; control is wrong, which is the socially expensive answer.
+;;
+;; WHAT THIS MODE PROVES, and it is deliberately WEAKER than 'healthy':
+;; reaching a known startup string proves the binary LOADED — every shared
+;; library resolved, no glibc collision, no missing interpreter, no SIGSEGV
+;; before main — and executed into its own startup path. For a hardened-image
+;; rewrap that IS the property at risk; it is exactly the class that caught
+;; keeper's 139. It does NOT prove the process serves anything. Never report an
+;; expect-log pass as "healthy".
+;;
+;; ANTI-LAUNDERING: the string is REQUIRED and must be non-empty. An empty
+;; EXPECT_LOG does not select this mode, so it can never degrade into
+;; "any output passes" — the failure shape it exists to remove. Callers must
+;; name a string only a correctly-loading binary can emit; a string the runtime
+;; prints before exec'ing the entrypoint would make this vacuous again.
+(define expect-log (env-get "EXPECT_LOG" ""))
+
+(define
+  (reached-expected-log)
+  (exec-capture "sh" "-c" (string-append "sleep " (string-format "{}" wait-seconds)))
+  ;; 2>&1 is load-bearing: glog and most Go startup diagnostics go to STDERR,
+  ;; and `docker logs` keeps the streams separate. Reading only stdout would
+  ;; report "string absent" for a container that printed it.
+  (let
+    ((r (exec-capture "sh" "-c"
+          (string-append "docker logs " container-name " 2>&1"))))
+    (if (and (= (status-of r) 0) (string-contains? (stdout-of r) expect-log))
+      'expected-log-reached
+      'timeout)))
+
+(define result
+  (cond
+    ((not (equal? expect-log "")) (reached-expected-log))
+    ((equal? health-cmd "") (still-running-after-wait))
+    (else (poll 1))))
 
 (cond
+  ;; Distinct verdict, distinct wording, on purpose. This is a LOAD proof, not
+  ;; a health proof, and the log line a human skims must not say otherwise --
+  ;; rounding it up to "passed health check" would recreate the overclaim in
+  ;; the one place anyone reads. `healthy=true` is still emitted because the
+  ;; output means "this boot-check passed", and every consumer branches on it;
+  ;; the qualifier lives in the message beside it.
+  ((equal? result 'expected-log-reached)
+    (log-info
+      (string-append
+        image
+        " LOADED and reached its expected startup marker: \""
+        expect-log
+        "\" -- this proves the binary linked and executed into its own startup"
+        " path (the class that catches a glibc collision or a missing"
+        " interpreter). It does NOT prove the process serves traffic; this"
+        " image cannot fully start in isolation by design."))
+    (append-output "healthy=true")
+    (cleanup)
+    (exit 0))
   ((equal? result 'healthy)
     (log-info
       (string-append
