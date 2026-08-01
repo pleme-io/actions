@@ -13,12 +13,54 @@ inputs:
     description: "Pass --no-warn-dirty (default true)"
     required: false
     default: "true"
+  github-token:
+    description: >-
+      Token written to nix.conf as `access-tokens = github.com=<token>`, so
+      nix's OWN GitHub fetcher can read PRIVATE pleme-io repos. Leave unset
+      for a flake with no private inputs — the rendered line is then empty
+      and nix.conf is untouched. Needs a token that can read the OTHER repo:
+      the auto-provided `GITHUB_TOKEN` is scoped to the running repo alone
+      and will still 404, so pass an org-scoped PAT (`BOT_PAT`).
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    # ── why this action needs a token at all ──────────────────────────────
+    #
+    # A `nix flake check` on a Rust repo with a PRIVATE pleme-io git crate
+    # dep fails without one, and the failure names the wrong layer: it
+    # surfaces as an ordinary HTTP 404 on `api.github.com/repos/<o>/<r>/
+    # tarball/<rev>`, which reads like a bad rev rather than "you are
+    # anonymous". Measured on mado 2026-08-01 (run 30681539821), on private
+    # pleme-io/hayai reached through mado -> nami-core -> hayai.
+    #
+    # It is worth being precise about WHICH fetcher, because the fleet's two
+    # git fetchers have OPPOSITE credential behavior and the wrong guess
+    # sends you to the wrong fix:
+    #
+    #   pkgs.fetchgit          shells `git clone` inside a FOD. A FOD has
+    #                          network but no credentials, and neither
+    #                          `access-tokens` nor `netrc-file` reaches a git
+    #                          process in a builder. A token CANNOT fix it.
+    #   builtins.fetchTree     routes through nix's own GitHub fetcher, which
+    #     { type = "github"; }  DOES honor `access-tokens`. A token IS the fix.
+    #
+    # substrate's lockfile-builder already moved every github git-crate source
+    # onto the second one, precisely so this class became fixable (see
+    # `lib/build/rust/lockfile-builder.nix` — 66 of the fleet's 111 pleme-io
+    # git-crate deps are private). That whole-class fix was load-bearing and
+    # still could not work here, because this action installed Nix with no
+    # token at all. This step is the missing half.
+    #
+    # Backward compatible by construction: a caller that passes nothing
+    # renders an empty `extra-conf` and gets the installer's default nix.conf,
+    # byte-for-byte what it got before.
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@main
+      with:
+        extra-conf: ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
 
     - name: Load run.tlisp
       id: src
