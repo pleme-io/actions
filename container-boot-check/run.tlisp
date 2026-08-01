@@ -117,10 +117,32 @@
         " never became healthy after "
         (string-format "{}" max-attempts)
         " attempts -- container logs follow"))
+    ;; ── DUMP THE STATE, NOT JUST THE LOGS ──────────────────────────────────
+    ;; `docker logs` alone is not enough, and hardened-images run 30698283011
+    ;; is the receipt: release-clickhouse-keeper failed here with
+    ;; "never became healthy ... container logs follow" and the dump that
+    ;; followed was EMPTY -- the very next line in the job log was the git
+    ;; cleanup two seconds later. A distroless image that dies instantly writes
+    ;; nothing to stdout/stderr, so the operator was handed a red verdict with
+    ;; ZERO evidence, and "the container printed nothing" was indistinguishable
+    ;; from "we failed to capture the logs".
+    ;;
+    ;; .State.ExitCode / .State.Error / .State.OOMKilled are what actually name
+    ;; the cause in that case: 127 for a missing interpreter or entrypoint, 125
+    ;; when the runtime itself refused, a non-empty .Error for "exec format
+    ;; error", OOMKilled for a memory limit. They cost one docker call and are
+    ;; available precisely when the log dump is empty.
     (let
       ((logs (exec-capture "docker" "logs" container-name)))
-      (log-info (stdout-of logs))
-      (log-info (stderr-of logs)))
+      (if (and (equal? (string-trim (stdout-of logs)) "")
+               (equal? (string-trim (stderr-of logs)) ""))
+        (log-error "container produced NO output on stdout or stderr")
+        (begin (log-info (stdout-of logs)) (log-info (stderr-of logs)))))
+    (let
+      ((st (exec-capture "docker" "inspect" "--format"
+             "exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}} status={{.State.Status}}"
+             container-name)))
+      (log-error (string-append "container state: " (string-trim (stdout-of st)))))
     (append-output "healthy=false")
     (cleanup)
     (exit 1)))
