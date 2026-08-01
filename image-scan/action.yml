@@ -64,8 +64,45 @@ runs:
         # is the current release (it is also the version hardened-images'
         # cve-gate.nix names as current, so this closes a real staleness gap
         # against the nixpkgs-pinned 0.52.0 it warns about).
-        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh \
-          | sudo sh -s -- -b /usr/local/bin v0.72.0
+        #
+        # ── SCRIPT HASH PINNED TOO (added 2026-08-02) ─────────────────────
+        # CORRECTION to an earlier note that called the fetched BINARY
+        # unverified: it is not. install.sh verifies the release tarball's
+        # sha256 against trivy's published checksums file (its own line 61,
+        # `hash_sha256_verify`) -- 16 verification call sites in the script.
+        # The binary was never the gap.
+        #
+        # THE SCRIPT was. `curl | sudo sh` executed it as ROOT with nothing
+        # checking its bytes, and the URL is pinned to a TAG -- which a
+        # publisher can move. So the one genuinely unverified link was the
+        # thing running with the most privilege. install.sh even documents
+        # the hazard itself (line 53: "if a curl|bash cuts off the end of the
+        # script due to ..."), which is a truncation this pipe cannot detect
+        # either: a short read yields a partial script that may still exit 0.
+        #
+        # Now: fetch to disk, verify against a pinned digest, THEN execute.
+        # Measured 2026-08-02 at the pinned tag: 9945 bytes,
+        # sha256 e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+        # If upstream moves the tag, this fails LOUDLY naming both digests
+        # instead of silently running different code as root.
+        TRIVY_INSTALL_SHA256="e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a"
+        curl -sfL -o /tmp/trivy-install.sh \
+          https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh
+        got="$(sha256sum /tmp/trivy-install.sh | awk '{print $1}')"
+        if [ "$got" != "$TRIVY_INSTALL_SHA256" ]; then
+          echo "::error::trivy install.sh checksum MISMATCH -- refusing to execute as root."
+          echo "::error::  expected: $TRIVY_INSTALL_SHA256"
+          echo "::error::  got:      $got"
+          echo "::error::  The pinned tag may have been moved, or the fetch was truncated."
+          exit 1
+        fi
+        echo "trivy install.sh verified ($got)"
+        # NOTE the argv change: piping used `sh -s -- <args>` because `-s` tells
+        # sh to read the SCRIPT from stdin. Running a FILE, `-s --` would be
+        # passed to the script as arguments instead. Verified by running both
+        # forms against the real installer: `-s -- -b DIR v0.72.0` exits 2 and
+        # installs nothing; `-b DIR v0.72.0` exits 0 and installs the binary.
+        sudo sh /tmp/trivy-install.sh -b /usr/local/bin v0.72.0
 
     # ── SENSITIVITY CANARY (added 2026-08-02) ──────────────────────────────
     # This action already reports scanned-targets, the DENOMINATOR: it proves
