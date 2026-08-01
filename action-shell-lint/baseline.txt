@@ -41,17 +41,22 @@
 # when aldrava cuts its first release and the path can actually be run.
 ./aldrava-install/action.yml
 #
-# image-scan: two bodies, and the loader is NOT one of them (that was the
-# false positive fixed in run.tlisp today).
-#   * "Install Trivy" — pins BOTH the installer script tag and the scanner
-#     version; the whole block exists to make a scan verdict reproducible.
-#   * "Trivy sensitivity canary" — proves the scanner can still find a
-#     known-vulnerable SPDX fixture, i.e. it is the thing that stops the
-#     gate going vacuously green.
-# Both are security-critical and freshly reviewed (7c62f66, 57d160f). The
-# canary's real defect is a JSON fixture inlined as a heredoc; the right
-# conversion moves the fixture to a committed file FIRST, then types the
-# orchestration. Tracked as one entry because the baseline is file-granular
-# — which is also why image-scan was NOT baselined earlier today when only
-# its loader was flagged, since that would have hidden these two.
+# image-scan: ONE body left, down from two (the third flag was its loader,
+# the false positive fixed in run.tlisp today).
+#
+#   * "Trivy sensitivity canary" — CONVERTED 2026-08-01, exactly the way
+#     this entry said it should be: the SPDX fixture moved to a committed
+#     file (trivy-canary.spdx.json) FIRST, then the orchestration typed
+#     into canary.tlisp with the exit-code semantics as a pure function
+#     under unit test (canary.test.tlisp, 5 assertions). ~81 shell lines
+#     to zero.
+#   * "Install Trivy" — STILL HERE, 79 lines. It pins BOTH the installer
+#     script tag and the scanner version, and that dual pin is the only
+#     reason a scan verdict is reproducible at all. Security-critical and
+#     freshly reviewed; converting it is the remaining work, not a
+#     formality.
+#
+# Kept as one entry because the baseline is file-granular — which is also
+# why image-scan was NOT baselined earlier today when only its loader was
+# flagged, since that would have hidden both real bodies.
 ./image-scan/action.yml
