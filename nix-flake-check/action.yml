@@ -57,6 +57,17 @@ runs:
     # Backward compatible by construction: a caller that passes nothing
     # renders an empty `extra-conf` and gets the installer's default nix.conf,
     # byte-for-byte what it got before.
+    #
+    # CORRECTION (2026-08-01, same day): the commit that added this claimed
+    # `tests/test.yml` "covers exactly that path" because it invokes the action
+    # with no token. It does invoke it that way — but the file lives under
+    # `nix-flake-check/tests/`, NOT `.github/workflows/`, so GitHub never
+    # registers it and it has never run. The no-token path is therefore
+    # argued-correct, not measured. It is not a one-off either: 18 such
+    # `*/tests/*.yml` files exist across 53 action directories in this repo and
+    # nothing runs any of them, which is the "a forcing function nobody runs is
+    # a comment" trap one level up — the test file itself is the comment. Left
+    # in place per MODULARIZE-DON'T-DELETE; wiring them is its own change.
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@main
       with:
