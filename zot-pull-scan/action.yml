@@ -183,7 +183,16 @@ runs:
       run: |
         {
           echo 'script<<TLISP_EOF'
-          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          # In-checkout, not fetched. substrate pins this action `@v1`, so the
+          # tlisp below comes from the v1 checkout -- but the stdlib was curl'd
+          # from `main`, and the two halves of one script ran at different refs.
+          # This action is on the ClickHouse pull-and-scan path, where "which
+          # code actually ran" is the whole question. GitHub clones the whole
+          # repo for a composite action, so the stdlib is already on disk at the
+          # SAME ref. It also drops a fetch that could not fail loudly:
+          # `curl -sL` has no --fail, so an HTTP error yields an EMPTY body and
+          # a ZERO exit, and the heredoc closes over a stdlib-less script.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/pull.tlisp
           echo 'TLISP_EOF'
@@ -260,7 +269,16 @@ runs:
       run: |
         {
           echo 'script<<TLISP_EOF'
-          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          # In-checkout, not fetched. substrate pins this action `@v1`, so the
+          # tlisp below comes from the v1 checkout -- but the stdlib was curl'd
+          # from `main`, and the two halves of one script ran at different refs.
+          # This action is on the ClickHouse pull-and-scan path, where "which
+          # code actually ran" is the whole question. GitHub clones the whole
+          # repo for a composite action, so the stdlib is already on disk at the
+          # SAME ref. It also drops a fetch that could not fail loudly:
+          # `curl -sL` has no --fail, so an HTTP error yields an EMPTY body and
+          # a ZERO exit, and the heredoc closes over a stdlib-less script.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/verdict.tlisp
           echo 'TLISP_EOF'
