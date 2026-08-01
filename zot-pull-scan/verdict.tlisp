@@ -92,6 +92,16 @@
               "ADMIT is not evidence of a clean image; it is the absence of "
               "evidence from this scanner. Coverage for such images comes from "
               "vulnix over the Nix closure in the release gate."
+              ;; ── VERIFIED BY EXECUTION 2026-08-02, not by reading ─────────────────
+              ;; stdlib prepended as action.yml does, three cases:
+              ;;   scanned-targets=0, severity=none  -> "ADMIT ... (scanned-
+              ;;     targets=0, vuln-count=0)" + this NOTE; admitted=true,
+              ;;     result=admitted
+              ;;   scanned-targets=40, severity=HIGH -> "REJECT"; admitted=false,
+              ;;     result=rejected   (so the gate is not simply permissive)
+              ;;   scanned-targets=40, severity=none -> admits with ZERO note
+              ;;     lines (so the note is genuinely tied to the denominator)
+              ;;
               ;; ★★ AND THAT LAST SENTENCE IS TRUE OF ONE LANE ONLY (2026-08-02).
               ;; It holds for the NIX-BUILT images: they have a Nix closure, so
               ;; vulnix is a real second denominator behind a zero-target trivy.
