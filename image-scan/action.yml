@@ -54,8 +54,18 @@ runs:
     - name: Install Trivy
       shell: bash
       run: |
-        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-          | sudo sh -s -- -b /usr/local/bin
+        # PINNED TWICE, deliberately: the SCRIPT at a tag, and the VERSION it
+        # installs. Both were unpinned -- install.sh came from `main` and, per
+        # its own usage text, "if tag is missing, then the latest will be
+        # used". A scanner resolved that way makes its verdict irreproducible:
+        # "0 CVE" asserted by a trivy nobody can name, from a script that can
+        # change between two runs of the same commit.
+        # Verified 2026-08-01: the tagged script URL is HTTP 200, and v0.72.0
+        # is the current release (it is also the version hardened-images'
+        # cve-gate.nix names as current, so this closes a real staleness gap
+        # against the nixpkgs-pinned 0.52.0 it warns about).
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh \
+          | sudo sh -s -- -b /usr/local/bin v0.72.0
 
     - name: Load stdlib + run.tlisp
       id: src
