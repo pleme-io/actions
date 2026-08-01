@@ -1,0 +1,16 @@
+# Banned external tools, and what replaces each.
+#
+# Format:  <tool><TAB><replacement><TAB><reason>
+# A `#` line is a comment. Rows are read by run.tlisp; adding a row is the whole
+# act of banning a tool fleet-wide -- there is no second place to edit.
+#
+# SCOPE: pleme-io-owned repos only. akeylesslabs/* and akeyless-community/* are
+# other orgs' code and are deliberately NOT covered by this gate (operator
+# decision, 2026-08-01) -- they keep skopeo.
+#
+# This is a RATCHET, not a sweep: existing call sites live in baseline.txt and
+# are reported every run, never silently accepted. Only a NEW, non-baselined
+# call site fails the build. Graduating a row out of the baseline (converting it
+# to the replacement) is the tracked path to zero -- the same discipline that
+# took runtime-install-lint's 23 initial violations to 0.
+skopeo	doca (substrate#oci-push)	doca is the one fleet container tool: push/transfer/inspect/pull/list/resolve/tag/delete. It reads a Nix docker-archive natively, resolves credentials from the ambient docker config exactly as skopeo did, and is per-call auth so there is no login step to keep.

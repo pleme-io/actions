@@ -116,6 +116,21 @@ jobs:
         with:
           fail-on-violation: "true"
 
+  banned-tools:
+    name: Enforce banned external tools (skopeo -> doca)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # RATCHET, same discipline as runtime-install-lint above: the 4 known
+      # skopeo call sites in this repo are listed in banned-tool-lint/baseline.txt
+      # with a stated reason each (two retired actions with zero consumers, the
+      # stdlib's superseded oci:skopeo-* helpers, and one pre-conversion test
+      # fixture). Only a NEW call site fails. Verified by introducing one:
+      # exit 1, naming the file. Target is zero, as runtime-install-lint reached.
+      - uses: ./banned-tool-lint
+        with:
+          fail-on-violation: "true"
+
   enforce-output-contract:
     name: Enforce the two-boundary output contract (generated == committed)
     runs-on: ubuntu-latest
