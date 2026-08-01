@@ -40,6 +40,36 @@ inputs:
     description: "Local docker-archive path for the pulled bytes"
     required: false
     default: "zot-pull.tar"
+  # ── ★ A TRUST ANCHOR FETCHED FROM A CDN AT JOB TIME (measured 2026-08-01) ──
+  # This input names a raw.githubusercontent.com URL, and that has three
+  # compounding weaknesses, all observed in one incident today:
+  #
+  # 1. STALE-BY-CACHE. Zot's serving cert was reissued 01:25 by a new
+  #    cert-manager ClusterIssuer. The corrected CA was committed and the API
+  #    served it immediately (fp CF:0F:CA… at akeyless-k8s@6f19747), while
+  #    raw.githubusercontent.com kept returning the OLD cert (fp 7F:6C:CC…) for
+  #    minutes afterward. A mirror running in that window fetches HTTP 200,
+  #    gets the wrong bytes, and fails — with the fix already committed and
+  #    correct. Dispatching during the window reads as "the fix did not work".
+  # 2. OPAQUE FAILURE. doca is rustls-tls: compiled-in roots, system store
+  #    ignored, so this file is its ONLY trust input. A wrong CA surfaces as
+  #    `error sending request for url (…/blobs/uploads/)` with NO HTTP status —
+  #    indistinguishable from a network or payload-size problem, which is
+  #    exactly how it was misdiagnosed twice before the certs were compared.
+  # 3. HERMETIC SUPPLY CHAIN. Fetching a trust anchor over the network at job
+  #    time is the same class the doca conversion exists to remove; pinning the
+  #    URL makes the fetch reproducible, not hermetic.
+  #
+  # THE FIX IS AVAILABLE AND STRICTLY BETTER: these jobs run on Camelot's own
+  # in-cluster ARC pool, and the CA is already IN the cluster as the `ca.crt`
+  # key of the `zot-tls-camelot-ca` secret that cert-manager maintains. Reading
+  # it from there removes the CDN, removes the propagation window, and makes
+  # rotation self-healing — the reconciler that rotates the cert also publishes
+  # the anchor, so the two can never disagree. The committed file then becomes
+  # a fallback for out-of-cluster callers rather than the primary path.
+  # `pending-zot-ca-source: read the CA from the in-cluster secret, not a
+  #  CDN-cached raw URL; keep the committed file only as an off-cluster
+  #  fallback.`
   src-ca-cert-url:
     description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for a self-signed SOURCE registry (mirrors zot-push's ca-cert-url; doca pins it via --dest-ca-cert). Default '' = OPT-OUT (plain copy, the original behavior) -- correct for a publicly-trusted source like GHCR (the shipped vendor-image-mirror consumer pulls its source from GHCR, so a required zot-CA fetch would wrongly refuse it). When the SOURCE is the self-signed zot itself, set this to the committed zot-ca.crt raw URL (https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt) plus src-ca-cert-token, or set src-insecure=true."
     required: false
