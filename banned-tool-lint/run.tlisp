@@ -1,0 +1,195 @@
+;; banned-tool-lint/run.tlisp — fail the build when a BANNED external tool gains
+;; a NEW call site in a pleme-io-owned repo.
+;;
+;; ── WHY A RATCHET AND NOT A SWEEP ──────────────────────────────────────────
+;; The fleet has ~60 live skopeo call sites across forge, engenho,
+;; engenho-promessa-controllers, arch-synthesizer, formigueiro, esteira, actions
+;; and hardened-images. A gate that failed on all of them would be red from the
+;; first commit and would be disabled within a day. So existing sites are
+;; BASELINED -- reported every run, never silently accepted -- and only a NEW,
+;; non-baselined site fails. That is what makes "never again" true: the count
+;; can only go down. Same shape, and the same intent, as runtime-install-lint,
+;; whose 23 initial violations are now 0.
+;;
+;; ── WHAT COUNTS AS A CALL SITE ─────────────────────────────────────────────
+;; An INVOCATION, not a mention. Docs, comments and prose naming the tool are
+;; not violations -- 299 files in the fleet mention skopeo and only a fraction
+;; execute it, so a mention-based rule would be almost entirely false positives
+;; and would teach people to ignore the gate. Matched shapes:
+;;
+;;   "<tool>"                 the tool as a quoted exec argument (Rust/tlisp/Go)
+;;   command -v <tool>        a presence probe before invoking it
+;;   <tool> <verb>            copy|inspect|login|delete|list-tags|sync
+;;   #<tool>                  a nix attr / `nix profile install ...#<tool>`
+;;
+;; Comment lines (`#`, `;;`, `//`) are skipped, because a comment explaining
+;; what was REMOVED is the opposite of a violation -- several conversions in
+;; this repo deliberately leave that note behind.
+;;
+;; ── SCOPE ──────────────────────────────────────────────────────────────────
+;; pleme-io-owned repos. akeylesslabs/* and akeyless-community/* are other orgs'
+;; code and are explicitly out of scope (operator decision, 2026-08-01).
+
+(define paths (env-get "PATHS" "."))
+
+(define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
+
+(define tools-path (env-get "TOOLS_PATH" "banned-tool-lint/banned-tools.txt"))
+
+(define baseline-path (env-get "BASELINE_PATH" "banned-tool-lint/baseline.txt"))
+
+;; ── read a TAB-separated table, dropping comments and blanks ───────────────
+(define
+  (nonblank-rows text)
+  (filter
+    (lambda (l)
+      (let ((t (string-trim l))) (and (not (equal? t "")) (not (string-starts-with? t "#")))))
+    (string-split text "\n")))
+
+(define (row-field row n)
+  (let ((parts (string-split row "\t"))) (if (> (length parts) n) (nth n parts) "")))
+
+;; A MISSING tools table is a wiring failure, never an empty ban list -- an
+;; empty list would make this gate pass over everything, which is precisely the
+;; zero-denominator shape it exists to prevent.
+(cond
+  ((not (path-exists? tools-path))
+    (log-error
+      (string-append
+        "banned-tool-lint: no banned-tools table at "
+        tools-path
+        ". That is a wiring failure, not an empty ban list -- a gate with no"
+        " rules passes everything and reads exactly like a clean run."))
+    (exit 1)))
+
+(define tool-rows (nonblank-rows (read-file tools-path)))
+
+(cond
+  ((null? tool-rows)
+    (log-error
+      (string-append "banned-tool-lint: " tools-path " has zero rules. Refusing to report a"
+                     " vacuous pass -- add a row or remove the gate."))
+    (exit 1)))
+
+(define baseline-rows
+  (if (path-exists? baseline-path) (nonblank-rows (read-file baseline-path)) (list)))
+
+;; ── the scan ───────────────────────────────────────────────────────────────
+;; One awk per tool, over the source kinds a call site can live in. Emits
+;; "<path>\t<tool>" rows -- the same key shape the baseline uses, so a baseline
+;; row is compared against exactly what the scanner produces.
+(define
+  (scan-cmd tool)
+  (string-append
+    "find " paths " \\( -path '*/.git' -o -path '*/target' -o -path '*/node_modules' "
+    "-o -path './banned-tool-lint' \\) -prune -o "
+    "\\( -name '*.rs' -o -name '*.go' -o -name '*.tlisp' -o -name '*.nix' "
+    "-o -name '*.yml' -o -name '*.yaml' -o -name '*.sh' \\) -print "
+    "| xargs -I{} awk '"
+    "/^[ \\t]*#/ { next; }\n"
+    "/^[ \\t]*;;/ { next; }\n"
+    "/^[ \\t]*\\/\\// { next; }\n"
+    "/\"" tool "\"/ || /command -v " tool "/ "
+    "|| /[^a-zA-Z0-9_-]" tool " (copy|inspect|login|delete|list-tags|sync)/ "
+    "|| /#" tool "/ {\n"
+    "  print FILENAME \"\\t" tool "\"; nextfile;\n"
+    "}' {}"))
+
+(define
+  (scan-tool tool)
+  (let ((r (exec-capture "sh" "-c" (scan-cmd tool))))
+    (filter (lambda (l) (not (equal? (string-trim l) "")))
+            (string-split (string-trim (stdout-of r)) "\n"))))
+
+(define
+  (scan-all tools acc)
+  (cond
+    ((null? tools) acc)
+    (else (scan-all (cdr tools) (append acc (scan-tool (row-field (car tools) 0)))))))
+
+(log-info
+  (string-append
+    "==> banned-tool-lint: "
+    (string-format "{}" (length tool-rows))
+    " banned tool(s), baseline has "
+    (string-format "{}" (length baseline-rows))
+    " known call site(s)"))
+
+(define found (scan-all tool-rows (list)))
+
+;; ── baseline diff ──────────────────────────────────────────────────────────
+;; Normalize a scanner row to its baseline key. `find .` yields "./a/b.rs"; a
+;; baseline written by hand may omit the "./" -- comparing raw strings would
+;; make every baseline row miss and every known site read as NEW.
+(define
+  (norm row)
+  (let ((p (row-field row 0)) (t (row-field row 1)))
+    (string-append
+      (if (string-starts-with? p "./") (string-replace p "./" "") p)
+      "\t"
+      t)))
+
+(define baseline-keys (map norm baseline-rows))
+
+;; tatara-lisp has no `contains?` (probed: unbound symbol), so membership is
+;; spelled out rather than assumed.
+(define
+  (list-has? xs s)
+  (cond ((null? xs) #f) ((equal? (car xs) s) #t) (else (list-has? (cdr xs) s))))
+
+(define (known? row) (list-has? baseline-keys (norm row)))
+
+(define new-rows (filter (lambda (r) (not (known? r))) found))
+
+(define known-rows (filter known? found))
+
+;; ── report ─────────────────────────────────────────────────────────────────
+(for-each
+  (lambda (r) (log-info (string-append "  baselined  " (norm r))))
+  known-rows)
+
+(for-each
+  (lambda (r) (log-error (string-append "  NEW        " (norm r))))
+  new-rows)
+
+(append-output (string-append "call-sites=" (string-format "{}" (length found))))
+
+(append-output (string-append "baselined=" (string-format "{}" (length known-rows))))
+
+(append-output (string-append "new=" (string-format "{}" (length new-rows))))
+
+(define
+  (replacement-for tool rows)
+  (cond
+    ((null? rows) "")
+    ((equal? (row-field (car rows) 0) tool) (row-field (car rows) 1))
+    (else (replacement-for tool (cdr rows)))))
+
+(cond
+  ((null? new-rows)
+    (log-info
+      (string-append
+        "banned-tool-lint: no NEW call sites ("
+        (string-format "{}" (length known-rows))
+        " baselined, tracked to zero)."))
+    (exit 0))
+  ((not (equal? fail-on "true"))
+    (log-info
+      (string-append
+        "banned-tool-lint: "
+        (string-format "{}" (length new-rows))
+        " NEW call site(s), report-only (fail-on-violation=false)."))
+    (exit 0))
+  (else
+    (log-error
+      (string-append
+        "banned-tool-lint: "
+        (string-format "{}" (length new-rows))
+        " NEW banned-tool call site(s). Use the replacement ("
+        (replacement-for "skopeo" tool-rows)
+        "), or -- if this genuinely cannot be converted yet -- add the row above"
+        " to "
+        baseline-path
+        " WITH A STATED REASON. Baselining is visible debt; a silent new call"
+        " site is how a retired tool comes back."))
+    (exit 1)))

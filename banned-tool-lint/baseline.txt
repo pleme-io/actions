@@ -1,0 +1,20 @@
+# Known banned-tool call sites in pleme-io/actions, measured 2026-08-01.
+#
+# Format:  <path><TAB><tool><TAB><reason>
+# Only the first two fields are compared; the reason is for humans and is
+# REQUIRED by convention -- a baseline row without one is indistinguishable
+# from someone silencing the gate.
+#
+# This is a RATCHET. A row may be removed (by converting the call site) but a
+# new row should be rare and always argued. Target: zero, the same way
+# runtime-install-lint took its 23 initial violations to 0.
+#
+# Denominator when this file was written: 4 call sites in this repo, found by
+# banned-tool-lint itself. The other converted call sites -- ghcr-publish,
+# oci-image-push, zot-pull-scan, manifest-list-join -- are absent from this
+# list because they now call doca, which is the point.
+
+skopeo-login/run.tlisp	skopeo	RETIRED action, zero consumers fleet-wide. doca is per-call auth, so there is no login step to port -- rewriting a dead action to use doca would be work on code nothing invokes. Kept, not deleted, per MODULARIZE-DON'T-DELETE.
+skopeo-copy/action.yml	skopeo	RETIRED 2026-07-31, zero consumers measured with a control (actions/oci-image-push@ returns 3 in substrate, so the probe reads those repos correctly; actions/skopeo-copy@ returns 0 everywhere). Superseded by oci-image-push / `doca transfer`. Kept, not deleted.
+_tlisp-stdlib/stdlib.tlisp	skopeo	The legacy oci:skopeo-push-archive / oci:skopeo-copy-remote / oci:skopeo-remote-digest helpers. ZERO callers (measured: the only mention outside their own definitions is a comment in manifest-list-join/run.tlisp). Superseded by the oci:doca-* trio immediately below them in the same file. Retained per MODULARIZE-DON'T-DELETE -- "we stopped using it" is explicitly not the orphan exception.
+zot-push/tests/test.yml	skopeo	Test fixture asserting the PRE-conversion behaviour. Graduates out when the fixture is rewritten against doca; harmless today because it exercises no production path.

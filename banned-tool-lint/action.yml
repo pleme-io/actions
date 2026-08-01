@@ -1,0 +1,57 @@
+name: 'pleme-io · banned-tool-lint'
+description: 'Fail on a NEW call site of a banned external tool (today: skopeo, replaced fleet-wide by doca). Matches INVOCATIONS -- a quoted exec argument, `command -v <tool>`, `<tool> copy|inspect|login|delete|list-tags|sync`, or a `#<tool>` nix attr -- never a mention in prose or a comment. Existing call sites are baselined and reported every run; only a new one fails. Scope is pleme-io-owned repos; akeylesslabs/* and akeyless-community/* are deliberately out of scope.'
+branding:
+  icon: 'shield-off'
+  color: 'red'
+
+inputs:
+  paths:
+    description: "Root to scan (default: the whole checked-out repo). Passed to `find`; .git, target/ and node_modules are pruned."
+    required: false
+    default: "."
+  fail-on-violation:
+    description: "Fail the job on a NEW (not-yet-baselined) call site. Baselined debt is always reported, never silently accepted. Set false to survey a repo before adopting the gate."
+    required: false
+    default: "true"
+  tools-path:
+    description: "Path to the banned-tools table (<tool>TAB<replacement>TAB<reason>). A MISSING or EMPTY table fails the run rather than passing vacuously -- a gate with no rules passes everything and reads exactly like a clean run."
+    required: false
+    default: "banned-tool-lint/banned-tools.txt"
+  baseline-path:
+    description: "Path to this repo's tracked-debt baseline. A CONSUMING repo sets its own, e.g. .github/banned-tool-baseline.txt."
+    required: false
+    default: "banned-tool-lint/baseline.txt"
+
+outputs:
+  call-sites:
+    description: "Total call sites found (baselined + new). A zero here with a non-empty repo means the scan proved nothing -- check the path."
+    value: ${{ steps.scan.outputs.call-sites }}
+  baselined:
+    description: "Count of already-tracked call sites (reported, not failed)."
+    value: ${{ steps.scan.outputs.baselined }}
+  new:
+    description: "Count of NEW (non-baselined) call sites -- the number that fails the build."
+    value: ${{ steps.scan.outputs.new }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: scan
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PATHS: ${{ inputs.paths }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        TOOLS_PATH: ${{ inputs.tools-path }}
+        BASELINE_PATH: ${{ inputs.baseline-path }}
