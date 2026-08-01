@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                339
+# actions                340
 # routing tatara-script  317
 # distinct keys written  291
 # dynamic key expansions 8
@@ -31,6 +31,7 @@ akeyless-injector-validate	tatara-script	run.tlisp	2	2
 akeyless-rotate	tatara-script	run.tlisp	1	1
 akeyless-secret-fetch	tatara-script	run.tlisp	1	1
 aldrava-dispatch	tatara-script	run.tlisp	13	13
+aldrava-install	own-runner	-	0	3
 aldrava-lint	tatara-script	run.tlisp	3	3
 aldrava-resolve	tatara-script	run.tlisp	7	7
 algolia-index-push	tatara-script	run.tlisp	1	1
