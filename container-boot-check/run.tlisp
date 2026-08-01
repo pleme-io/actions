@@ -132,6 +132,32 @@
 ;; "any output passes" — the failure shape it exists to remove. Callers must
 ;; name a string only a correctly-loading binary can emit; a string the runtime
 ;; prints before exec'ing the entrypoint would make this vacuous again.
+;; ── MEASURED CONSUMERS (akeylesslabs camelot-hardened-images run 30706207197,
+;; 2026-08-01). THREE images fail boot-check, and they are TWO distinct causes,
+;; not one -- which matters, because "three boot-check failures" reads as one
+;; bug and is not:
+;;
+;;   clickhouse-operator          exitCode=255  "Unable to build kubeconf"
+;;   clickhouse-metrics-exporter  exitCode=255  "Unable to build kubeconf"  (same)
+;;   clickhouse-backup            exitCode=0    prints its usage banner
+;;
+;; The first two are k8s operators with no cluster. The THIRD is the sharpest
+;; case this action has produced: `clickhouse-backup` is a ONE-SHOT CLI. It ran
+;; correctly, printed `clickhouse-backup - Tool for easy backup of ClickHouse`,
+;; and exited ZERO -- and the gate reported "never became healthy". A container
+;; that SUCCEEDED was flagged as a boot failure, because both original modes
+;; assume a daemon. No amount of fixing the image could have made that pass.
+;;
+;; Suggested values (each string chosen because only a correctly-loading binary
+;; emits it, per the anti-laundering rule above):
+;;   clickhouse-operator          expect-log: "Unable to build kubeconf"
+;;   clickhouse-metrics-exporter  expect-log: "Unable to build kubeconf"
+;;   clickhouse-backup            expect-log: "Tool for easy backup of ClickHouse"
+;;
+;; BOTH OUTPUT SHAPES ARE VERIFIED against real containers, each with a negative
+;; control: marker on STDERR with exit 255, and marker on STDOUT with exit 0.
+;; That pair is why this reads `docker logs 2>&1` and ignores the exit code --
+;; either alone would have covered one class and silently failed the other.
 (define expect-log (env-get "EXPECT_LOG" ""))
 
 (define
