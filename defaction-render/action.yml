@@ -33,7 +33,7 @@ runs:
       run: |
         # Fetch the canonical render.py from substrate (kept in lock-step
         # with the typed-form schema there).
-        curl -sL https://raw.githubusercontent.com/pleme-io/substrate/main/lib/release/renderer-poc/render.py \
+        curl -fsL https://raw.githubusercontent.com/pleme-io/substrate/main/lib/release/renderer-poc/render.py \
           -o /tmp/render.py
     - id: run
       shell: bash

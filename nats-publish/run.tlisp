@@ -11,7 +11,7 @@
 (exec-check
   "sh"
   "-c"
-  "curl -sSL https://github.com/nats-io/natscli/releases/latest/download/nats-0.1.6-linux-amd64.zip -o /tmp/nats.zip && unzip -q /tmp/nats.zip -d /tmp/nats && sudo mv /tmp/nats/nats-0.1.6-linux-amd64/nats /usr/local/bin/")
+  "curl -fsSL https://github.com/nats-io/natscli/releases/latest/download/nats-0.1.6-linux-amd64.zip -o /tmp/nats.zip && unzip -q /tmp/nats.zip -d /tmp/nats && sudo mv /tmp/nats/nats-0.1.6-linux-amd64/nats /usr/local/bin/")
 
 (define base (list "-s" server))
 

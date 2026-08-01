@@ -9,7 +9,7 @@
 (exec-check
   "sh"
   "-c"
-  "curl -sSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz -o /tmp/oasdiff.tgz && tar xz -C /tmp -f /tmp/oasdiff.tgz && sudo mv /tmp/oasdiff /usr/local/bin/")
+  "curl -fsSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz -o /tmp/oasdiff.tgz && tar xz -C /tmp -f /tmp/oasdiff.tgz && sudo mv /tmp/oasdiff /usr/local/bin/")
 
 (exec-capture
   "sh"

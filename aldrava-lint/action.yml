@@ -50,7 +50,7 @@ runs:
           Darwin-x86_64) SUFFIX="darwin-x86_64";;
           *) echo "::error::aldrava-lint: unsupported runner $OS-$ARCH" >&2; exit 1;;
         esac
-        curl -sL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
+        curl -fsL -o /usr/local/bin/aldrava "https://github.com/pleme-io/aldrava/releases/latest/download/aldrava-${SUFFIX}"
         chmod +x /usr/local/bin/aldrava
 
     - name: Lint the catalog
