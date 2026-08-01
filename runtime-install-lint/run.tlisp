@@ -33,15 +33,45 @@
 (log-info (string-append "==> scanning " paths " for runtime tool installation"))
 
 ;; Skip pure-comment lines (YAML `#` / tlisp `;;` at line start, after
-;; leading whitespace) and the sanctioned stdlib loader fetch (a `curl`
-;; of stdlib.tlisp itself, not a tool binary) -- both are real,
-;; pre-existing false-positive sources this lint would otherwise trip on.
+;; leading whitespace).
+;;
+;; ── AN UNPIPED DOWNLOAD COUNTS, and that is the 2026-08-01 correction ──────
+;; Every clause required a PIPE (`curl … |`), so the dominant real shape --
+;; `curl -sSL <url>/releases/latest/download/<tool> -o /tmp/x && chmod +x` --
+;; matched NOTHING. This file's baseline said "Empty as of 2026-07-22, all 23
+;; violations purged … the forcing function that keeps the count at zero"
+;; while TWELVE actions installed tools at job time, unseen. A lint reporting 0
+;; over a subject set it cannot match is the failure-indistinguishable-from-
+;; success class one layer up: the number was true of what the regex saw and
+;; false of the repo.
+;;
+;; What the added clauses target is a DOWNLOAD OF SOMETHING TO RUN, not any
+;; curl -- an install script, a release asset, an archive, a raw source file,
+;; or a write onto /usr/. Measured against the alternative: a bare `/curl /`
+;; flagged 26 files, of which the notifiers (slack/teams/discord/matrix,
+;; datadog-event) are `curl -sS -o /dev/null -w '%{http_code}'` -- an HTTP
+;; status probe, which is the action's PURPOSE and not an install. Those are
+;; excluded by construction rather than by a skip-list.
+;;
+;; Every one of the 12 pulls from `releases/latest` or a `main` install.sh --
+;; UNPINNED -- with -sSL and no --fail, so an HTTP error writes an error page
+;; to the destination and `chmod +x` makes it "executable". That is exactly the
+;; "stale version pin silently downloading a 404 page" class named at the top
+;; of this file as a thing this lint closes. It did not.
+;;
+;; The `/stdlib\.tlisp/ { next; }` exemption is also gone. It carved out "the
+;; sanctioned stdlib loader fetch", and as of a296c0b there is no such fetch --
+;; all 310 actions read the stdlib in-checkout via github.action_path. Keeping
+;; a carve-out for a practice that no longer exists only licenses its return.
+;; (Note it was never load-bearing: the old loader line was `curl -sL <url>`
+;; with NO pipe, so the pattern missed it with or without the exemption.)
+;;
 ;; One hit is enough per file (`exit` from the pattern block once matched)
 ;; -- this reports OFFENDING FILES, the same granularity as
 ;; action-shell-lint's own output, not every offending line.
 (define
   awk-prog
-  "BEGIN { }\n   /^[ \\t]*#/ { next; }\n   /^[ \\t]*;;/ { next; }\n   /stdlib\\.tlisp/ { next; }\n   /curl[^\\n]*\\|/ || /wget /|| /apt-get install/ || /apt install/ || /pip install/ || /npm install -g/ || /go install / || /cargo install / {\n     print FILENAME; nextfile;\n   }")
+  "BEGIN { }\n   /^[ \\t]*#/ { next; }\n   /^[ \\t]*;;/ { next; }\n   /curl[^\\n]*install\\.sh/ || /curl[^\\n]*releases\\/(latest|download)/ || /curl[^\\n]*\\.(zip|tar\\.gz|tgz)/ || /curl[^\\n]*raw\\.githubusercontent/ || /curl[^\\n]*-o [^\\n]*\\/usr\\// || /curl[^\\n]*\\|/ || /wget /|| /apt-get install/ || /apt install/ || /pip install/ || /npm install -g/ || /go install / || /cargo install / {\n     print FILENAME; nextfile;\n   }")
 
 (define
   find-cmd

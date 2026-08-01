@@ -1,6 +1,39 @@
-# Tracked runtime-install debt (theory/NIX-HARDENING.md §VI). Empty as of
-# 2026-07-22 -- all 23 violations found in the initial catalog sweep are
-# purged. Keep this file (and the lint) in place: it is the forcing
-# function that keeps the count at zero going forward, not a one-time
-# cleanup. A new entry here should be rare and always carry a stated
-# reason, same discipline that got the first 23 to zero.
+# Tracked runtime-install debt (theory/NIX-HARDENING.md §VI).
+#
+# 2026-08-01: this file previously read "Empty as of 2026-07-22 -- all 23
+# violations found in the initial catalog sweep are purged" and called itself
+# "the forcing function that keeps the count at zero". The count was zero only
+# because every pattern required a PIPE (`curl … |`), and the dominant real
+# shape is unpiped:
+#
+#     curl -sSL <host>/releases/latest/download/<tool> -o /tmp/x && chmod +x /tmp/x
+#
+# Twelve actions were doing exactly that, unseen. They are listed here so they
+# are TRACKED DEBT reported on every run, not silence. Nothing below is
+# accepted; each line is work.
+#
+# All twelve share three defects, and the third is the dangerous one:
+#   * UNPINNED -- `releases/latest` or a `main` install.sh, so the binary can
+#     change under us between two runs of the SAME commit.
+#   * NOT HERMETIC -- fetched at job time instead of baked into a
+#     pleme-io/hardened-images distroless image (§VI.1).
+#   * NO --fail -- `-sSL` exits 0 on an HTTP error and writes the error body to
+#     the destination, which is then `chmod +x`'d. A 404 becomes an
+#     "executable". That is precisely the class run.tlisp's own header says
+#     this lint closes. It did not.
+#
+# Ordered by what it costs us to be wrong, worst first: the top four ARE the
+# supply-chain toolchain. An unpinned scanner or attestor makes a verdict we
+# cannot reproduce -- "0 CVE" asserted by a binary we cannot name.
+./image-scan/action.yml
+./sbom-generate/action.yml
+./slsa-attest/run.tlisp
+./cyclonedx-merge/run.tlisp
+./argocd-sync/run.tlisp
+./aldrava-dispatch/action.yml
+./aldrava-lint/action.yml
+./aldrava-resolve/action.yml
+./api-spec-diff/run.tlisp
+./nats-publish/run.tlisp
+./onepassword-fetch/action.yml
+./defaction-render/action.yml
