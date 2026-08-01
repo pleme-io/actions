@@ -156,7 +156,7 @@
 
 (append-output (string-append "baselined=" (string-format "{}" (length known-rows))))
 
-(append-output (string-append "new=" (string-format "{}" (length new-rows))))
+(append-output (string-append "new-call-sites=" (string-format "{}" (length new-rows))))
 
 (define
   (replacement-for tool rows)
