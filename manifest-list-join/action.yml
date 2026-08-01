@@ -122,7 +122,8 @@ runs:
       run: |
         {
           echo 'script<<TLISP_EOF'
-          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
           echo 'TLISP_EOF'
