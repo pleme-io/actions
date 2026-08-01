@@ -358,7 +358,7 @@ yank-version	tatara-script	run.tlisp	2	2
 zapier-webhook-trigger	tatara-script	run.tlisp	1	1
 zig-test	tatara-script	run.tlisp	1	1
 zola-build	tatara-script	run.tlisp	1	1
-zot-pull-scan	tatara-script	pull.tlisp,verdict.tlisp	6	6
+zot-pull-scan	tatara-script	pull.tlisp,verdict.tlisp	7	7
 zot-push	tatara-script	run.tlisp	5	9
 ## keys
 action-shell-lint	baseline-violations	static	declared	forwarded
@@ -899,6 +899,7 @@ zot-pull-scan	admitted	static	declared	forwarded
 zot-pull-scan	local-archive	static	declared	forwarded
 zot-pull-scan	pulled	static	declared	forwarded
 zot-pull-scan	result	static	declared	forwarded
+zot-pull-scan	scanned-targets	static	declared	forwarded
 zot-pull-scan	severity	static	declared	forwarded
 zot-pull-scan	vuln-count	static	declared	forwarded
 zot-push	digest	static	declared	forwarded
