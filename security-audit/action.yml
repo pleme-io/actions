@@ -57,7 +57,23 @@ runs:
       run: |
         {
           echo 'script<<TLISP_EOF'
-          curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          # READ IN-CHECKOUT, NOT FETCHED. This used to be
+          #   curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
+          # which defeated the consumer's own pin: `uses:
+          # pleme-io/actions/security-audit@v1` checks this repo out at v1 and
+          # run.tlisp below is read from that checkout via github.action_path --
+          # but the stdlib came from `main`. Half the executed script honoured
+          # the pin and half did not, so a consumer pinning for reproducibility
+          # silently ran whatever main held at that moment. GitHub clones the
+          # whole repo for a composite action, so the stdlib is already on disk
+          # beside us at the SAME ref; there was never a reason to fetch it.
+          #
+          # It also removes a network dependency that could not fail loudly:
+          # `curl -sL` carries no --fail, so an HTTP error yields an EMPTY body
+          # and a zero exit, and the heredoc closes over a script missing its
+          # entire stdlib. The failure then surfaces as an undefined-function
+          # error inside run.tlisp, pointing at the wrong layer.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
           echo 'TLISP_EOF'
