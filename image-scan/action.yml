@@ -162,21 +162,44 @@ runs:
           }]
         }
         CANARY_EOF
+        # NO jq, DELIBERATELY. The first draft parsed the JSON report with jq,
+        # and jq appears NOWHERE else in this action -- nothing proves it exists
+        # on camelot-builder-pleme-eks, the self-hosted ARC runner these jobs use
+        # for private repos. Combined with fail-closed, a missing jq would have
+        # turned this into a RED GATE ON EVERY IMAGE for a reason unrelated to
+        # any image. That is the same defect already recorded against this stack
+        # ("yq missing on the ARC runner"), recreated while fixing a different
+        # one. trivy's own exit code carries the whole signal, so the dependency
+        # is removed rather than assumed.
+        #
+        # MEASURED semantics (verified against the real binary, both directions):
+        #   vulnerable canary   -> exit 1   (findings exist; scanner is working)
+        #   no-CVE package      -> exit 0   (found nothing; scanner is BLIND)
+        #   trivy error         -> exit 2+
+        # So the ONLY acceptable outcome here is exit 1. Anything else fails
+        # closed, and 0 vs 2+ are reported distinctly because they mean
+        # different things.
+        #
+        # Severity is left at trivy's default, which is verified to be ALL of
+        # UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL -- never narrowed to
+        # fail-on-severity. "Can this scanner find anything" is a different
+        # question from "does this image breach our threshold"; narrowing would
+        # make the canary vacuous for any caller whose threshold excludes the
+        # canary's severities.
         rc=0
-        trivy sbom /tmp/trivy-canary.spdx.json --format json --quiet > /tmp/trivy-canary.json 2>/dev/null || rc=$?
-        n=""
-        if [ "$rc" -eq 0 ] && [ -s /tmp/trivy-canary.json ]; then
-          n=$(jq '[(.Results // [])[] | (.Vulnerabilities // []) | length] | add // 0' /tmp/trivy-canary.json 2>/dev/null || echo "")
-        fi
-        if [ -z "$n" ] || [ "$n" -eq 0 ]; then
-          echo "::error::Trivy sensitivity canary returned ${n:-<error>} findings (expected > 0)."
-          echo "::error::  The scanner did not flag a package with KNOWN vulnerabilities, so any"
-          echo "::error::  'no findings' verdict from this run is UNPROVEN. Do not read it as clean."
+        trivy sbom /tmp/trivy-canary.spdx.json --exit-code 1 --quiet >/dev/null 2>&1 || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          echo "::error::Trivy sensitivity canary found NOTHING in a package with known vulnerabilities."
+          echo "::error::  Any 'no findings' verdict from this run is UNPROVEN. Do not read it as clean."
           echo "::error::  This is the family=none failure mode: trivy skips what it cannot"
           echo "::error::  classify and still exits 0."
           exit 1
+        elif [ "$rc" -ne 1 ]; then
+          echo "::error::Trivy sensitivity canary could not run (exit $rc)."
+          echo "::error::  The scanner is unusable, so no verdict from this run is trustworthy."
+          exit 1
         fi
-        echo "sensitivity canary OK: trivy found $n known vulnerabilities in the canary SBOM"
+        echo "sensitivity canary OK: trivy flagged the known-vulnerable canary package"
 
     - name: Load stdlib + run.tlisp
       id: src
