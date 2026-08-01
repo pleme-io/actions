@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                338
-# routing tatara-script  316
-# distinct keys written  289
+# actions                339
+# routing tatara-script  317
+# distinct keys written  291
 # dynamic key expansions 8
-# inner union (generated)297
+# inner union (generated)299
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -53,6 +53,7 @@ aws-cost-report	tatara-script	run.tlisp	1	1
 aws-s3-upload	tatara-script	run.tlisp	1	1
 azure-deploy	tatara-script	run.tlisp	1	1
 bandit	tatara-script	run.tlisp	1	1
+banned-tool-lint	tatara-script	run.tlisp	3	3
 benchmark-runner	own-runner	-	0	2
 bigorna	tatara-script	run.tlisp	7	7
 branch-protect-sync	tatara-script	run.tlisp	1	1
@@ -324,7 +325,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	297
+tatara-script	own-runner	-	0	299
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -424,6 +425,9 @@ aws-cost-report	total-usd	static	declared	forwarded
 aws-s3-upload	s3-uri	static	declared	forwarded
 azure-deploy	deployed	static	declared	forwarded
 bandit	findings-count	static	declared	forwarded
+banned-tool-lint	baselined	static	declared	forwarded
+banned-tool-lint	call-sites	static	declared	forwarded
+banned-tool-lint	new-call-sites	static	declared	forwarded
 bigorna	builder	static	declared	forwarded
 bigorna	cache-from	static	declared	forwarded
 bigorna	cache-to	static	declared	forwarded

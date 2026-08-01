@@ -178,6 +178,9 @@ outputs:
   caixa-path:
     description: "Forwarded (key: caixa-path) — written by 1 action dir(s): caixa-detect"
     value: ${{ steps.exec.outputs.caixa-path }}
+  call-sites:
+    description: "Forwarded (key: call-sites) — banned-tool-lint total banned-tool call sites found (baselined + new)"
+    value: ${{ steps.exec.outputs.call-sites }}
   capacity-type:
     description: "Forwarded (key: capacity-type) — breathe-runner spot|on-demand|unknown"
     value: ${{ steps.exec.outputs.capacity-type }}
@@ -502,6 +505,9 @@ outputs:
   never-touch-disk:
     description: "Forwarded (key: never-touch-disk) — computed postgres∧redis∧tmpfs predicate"
     value: ${{ steps.exec.outputs.never-touch-disk }}
+  new-call-sites:
+    description: "Forwarded (key: new-call-sites) — banned-tool-lint count of NEW (non-baselined) banned-tool call sites; the number that fails the build"
+    value: ${{ steps.exec.outputs.new-call-sites }}
   new-sha:
     description: "Forwarded (key: new-sha) — spec-watch sha256 of the upstream spec fetched this run"
     value: ${{ steps.exec.outputs.new-sha }}

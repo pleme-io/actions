@@ -29,9 +29,9 @@ outputs:
   baselined:
     description: "Count of already-tracked call sites (reported, not failed)."
     value: ${{ steps.scan.outputs.baselined }}
-  new:
+  new-call-sites:
     description: "Count of NEW (non-baselined) call sites -- the number that fails the build."
-    value: ${{ steps.scan.outputs.new }}
+    value: ${{ steps.scan.outputs.new-call-sites }}
 
 runs:
   using: composite
