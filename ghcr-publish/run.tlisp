@@ -42,26 +42,45 @@
 
 (define (target-ref base tag) (string-append base ":" tag))
 
-;; ── skopeo wrappers ──────────────────────────────────────────────
+;; ── doca wrappers (replacing skopeo) ─────────────────────────────
+;;
+;; Reading a Nix-produced `docker-archive` tarball and pushing it IS doca's
+;; primary job (oci-push's own module doc), so `push` replaces
+;; `skopeo copy docker-archive: docker://` one-for-one rather than
+;; approximating it.
+;;
+;; AUTH IS UNCHANGED for every caller: doca resolves credentials from the
+;; ambient docker config (`docker_config_credentials`, which tries the bare
+;; host, both schemed spellings, and docker-hub's legacy index key), exactly
+;; as skopeo did. This action never took user/pass inputs and still doesn't --
+;; the calling workflow's existing login step keeps working untouched.
+;;
+;; The one shape difference: skopeo took ONE composed `<registry>/<image>:<tag>`
+;; ref; doca wants --registry/--image/--tag separately. `oci:split-registry` /
+;; `oci:split-image` in the stdlib are the shared splitters (every branch of
+;; oci:compose-base yields host[:port]/path..., so splitting on the FIRST "/"
+;; is safe).
 (define
-  (skopeo-copy-archive tarball dst-ref)
+  (doca-push-archive tarball base tag)
   (status-of
-    (exec-capture
-      "skopeo"
-      "--insecure-policy"
-      "copy"
-      (string-append "docker-archive:" tarball)
-      (string-append "docker://" dst-ref))))
+    (apply
+      exec-capture
+      (append
+        (oci:doca-argv "push")
+        (list
+          "--tarball" tarball
+          "--registry" (oci:split-registry base)
+          "--image" (oci:split-image base)
+          "--tag" tag)))))
 
+;; Registry -> registry. doca's `transfer` takes whole refs (no docker:// scheme
+;; prefix -- that was skopeo's transport syntax, not part of the reference).
 (define
-  (skopeo-copy-remote src-ref dst-ref)
+  (doca-transfer src-ref dst-ref)
   (status-of
-    (exec-capture
-      "skopeo"
-      "--insecure-policy"
-      "copy"
-      (string-append "docker://" src-ref)
-      (string-append "docker://" dst-ref))))
+    (apply
+      exec-capture
+      (append (oci:doca-argv "transfer") (list "--src" src-ref "--dest" dst-ref)))))
 
 (define
   (main)
@@ -83,14 +102,17 @@
       (else
         (let*
           ((tag (autobump-tag arch run sha)) (ref (target-ref base tag)))
-          (log-info (string-append "==> ghcr-publish " tarball " -> docker://" ref))
+          (log-info (string-append "==> ghcr-publish " tarball " -> " ref))
+          ;; Record WHICH doca the job resolved (baked vs job-time), so a run is
+          ;; never ambiguous about which binary produced the artifact.
+          (log-info (oci:doca-source-note))
           (let
-            ((s (skopeo-copy-archive tarball ref)))
+            ((s (doca-push-archive tarball base tag)))
             (cond
               ((not (= s 0))
                 (log-error
                   (string-append
-                    "ghcr-publish: skopeo push failed (exit "
+                    "ghcr-publish: doca push failed (exit "
                     (string-format "{}" s)
                     ") for "
                     ref))
@@ -105,7 +127,7 @@
                 (when
                   (equal? moving "true")
                   (let
-                    ((ms (skopeo-copy-remote ref (target-ref base (moving-tag arch)))))
+                    ((ms (doca-transfer ref (target-ref base (moving-tag arch)))))
                     (when
                       (not (= ms 0))
                       (log-info
