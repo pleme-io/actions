@@ -1,5 +1,5 @@
 name: 'pleme-io · banned-tool-lint'
-description: 'Fail on a NEW call site of a banned external tool (today: skopeo, replaced fleet-wide by doca). Matches INVOCATIONS -- a quoted exec argument, `command -v <tool>`, `<tool> copy|inspect|login|delete|list-tags|sync`, or a `#<tool>` nix attr -- never a mention in prose or a comment. Existing call sites are baselined and reported every run; only a new one fails. Scope is pleme-io-owned repos; akeylesslabs/* and akeyless-community/* are deliberately out of scope.'
+description: 'Fail on a NEW call site of a banned external tool (today: skopeo, replaced fleet-wide by doca). Matches INVOCATIONS -- a quoted exec argument, `command -v <tool>`, `<tool> copy|inspect|login|delete|list-tags|sync`, or a `#<tool>` nix attr -- never a mention in prose or a comment. Existing call sites are baselined and reported every run; a new one fails. The baseline is checked in BOTH directions: a row matching no call site also fails, so a converted call site must drop its row in the same change and the migration can observe its own completion. Scope is pleme-io-owned repos; akeylesslabs/* and akeyless-community/* are deliberately out of scope.'
 branding:
   icon: 'shield-off'
   color: 'red'
@@ -32,6 +32,9 @@ outputs:
   new-call-sites:
     description: "Count of NEW (non-baselined) call sites -- the number that fails the build."
     value: ${{ steps.scan.outputs.new-call-sites }}
+  stale-baseline:
+    description: "Count of baseline rows matching NO call site. Non-zero means the tool is already gone from those paths and the rows must be deleted -- each one is a standing per-file permission for it to reappear there. Fails the build (fail-on-violation=true), and is how the migration can finally report DONE: baselined and stale both reaching zero is the finish line, which the one-directional check could never observe."
+    value: ${{ steps.scan.outputs.stale-baseline }}
 
 runs:
   using: composite

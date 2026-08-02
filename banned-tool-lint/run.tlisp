@@ -143,6 +143,33 @@
 
 (define known-rows (filter known? found))
 
+;; ── THE RATCHET: a baseline row matching NOTHING is a standing permission ───
+;; Until now this lint only ever asked "is each FOUND row baselined?" -- never
+;; the reverse. That one-directional check is what lets a migration stall
+;; without anyone noticing, and it does so in the direction that reads as
+;; success:
+;;
+;;   The baseline key is `path TAB tool`, so a row grants a PER-FILE
+;;   permission, not a per-line one. When a call site is finally converted,
+;;   its row keeps matching nothing and keeps granting that permission
+;;   forever. The run still prints "no NEW call sites", the count of
+;;   `baselined` quietly drops, and nothing anywhere says the entry is now
+;;   dead. Re-introducing skopeo at that exact path -- for a NEW purpose the
+;;   stated reason never covered -- is then reported as "baselined".
+;;
+;; So "tracked to zero" was a slogan with no mechanism: nothing forced the
+;; baseline to shrink as the fleet converted, and nothing could ever notice
+;; the migration had FINISHED. Now a converted call site must delete its row
+;; in the same change, and the lint says so by name.
+;;
+;; This is deliberately an ERROR and not a warning. A warning here would be
+;; the same defect one level up: a signal that is emitted, logged, and acted
+;; on by nobody, while the run stays green.
+(define found-keys (map norm found))
+
+(define stale-rows
+  (filter (lambda (b) (not (list-has? found-keys (norm b)))) baseline-rows))
+
 ;; ── report ─────────────────────────────────────────────────────────────────
 (for-each
   (lambda (r) (log-info (string-append "  baselined  " (norm r))))
@@ -158,6 +185,12 @@
 
 (append-output (string-append "new-call-sites=" (string-format "{}" (length new-rows))))
 
+(for-each
+  (lambda (r) (log-error (string-append "  STALE      " (norm r))))
+  stale-rows)
+
+(append-output (string-append "stale-baseline=" (string-format "{}" (length stale-rows))))
+
 (define
   (replacement-for tool rows)
   (cond
@@ -166,12 +199,30 @@
     (else (replacement-for tool (cdr rows)))))
 
 (cond
+  ;; Stale rows are checked BEFORE the all-clear, or a run with zero new call
+  ;; sites would exit 0 and never reach this at all -- which is precisely the
+  ;; state a finished migration produces.
+  ((and (not (null? stale-rows)) (equal? fail-on "true"))
+    (log-error
+      (string-append
+        "banned-tool-lint: "
+        (string-format "{}" (length stale-rows))
+        " baseline row(s) match NO call site. The tool is gone from"
+        " those paths -- delete each row above from "
+        baseline-path
+        " in the same change that converted it. A row left behind is not"
+        " harmless bookkeeping: the key is `path TAB tool`, so it grants a"
+        " standing PER-FILE permission for the banned tool to reappear there,"
+        " and the run reports it as \"baselined\" when it does."))
+    (exit 1))
   ((null? new-rows)
     (log-info
       (string-append
         "banned-tool-lint: no NEW call sites ("
         (string-format "{}" (length known-rows))
-        " baselined, tracked to zero)."))
+        " baselined"
+        (if (null? stale-rows) ", none stale" ", STALE ROWS REPORTED ABOVE")
+        ")."))
     (exit 0))
   ((not (equal? fail-on "true"))
     (log-info
