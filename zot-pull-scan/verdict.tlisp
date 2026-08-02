@@ -92,6 +92,26 @@
               "ADMIT is not evidence of a clean image; it is the absence of "
               "evidence from this scanner. Coverage for such images comes from "
               "vulnix over the Nix closure in the release gate."
+              ;; ── ★★ AND THE REPO ALREADY CAUGHT MY BREAK. I DID NOT LOOK. ────────
+              ;; The commit that broke this file (3d40a3f) triggered ci.yml run
+              ;; 30724190130 THREE SECONDS after the push, and it went RED --
+              ;; both `lint-tlisp` and `tlisp-tests` failed, naming the parse
+              ;; error. The fix commit went green. The guard existed, was wired,
+              ;; defaulted to `run-parser-check: true`, and worked exactly as
+              ;; designed.
+              ;;
+              ;; What failed was the loop, not the gate: I pushed, wrote up the
+              ;; finding, and never read my own CI result. That is strictly
+              ;; worse than having no gate -- a missing gate is a known hole,
+              ;; while an unread red is a hole that LOOKS covered, to me and to
+              ;; anyone who checks that a lint job exists.
+              ;;
+              ;; The rule that follows is duller than any of the clever ones in
+              ;; this file: after pushing a change to a linted file, read the
+              ;; run. Not "a gate exists" -- the actual verdict on the actual
+              ;; commit. Every sophisticated probe-design lesson in this repo is
+              ;; downstream of that, and none of them substitute for it.
+              ;;
               ;; ── VERIFIED BY EXECUTION 2026-08-02, not by reading ─────────────────
               ;; stdlib prepended as action.yml does, three cases:
               ;;   scanned-targets=0, severity=none  -> "ADMIT ... (scanned-
