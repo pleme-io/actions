@@ -85,6 +85,92 @@
     (exec-check "git" "push" "--atomic" "origin" branch "--tags")
     (exec-check "git" "push" "origin" branch)))
 
+;; ---------- derived-file conflict resolution ---------- ;;
+;;
+;; A conflict in a GENERATED file is not a semantic conflict, and treating
+;; it as one is what stranded egaku-term at crates.io 0.3.1 while its repo
+;; sat at 0.3.4 — three releases that bumped, tagged, and never shipped.
+;;
+;; The mechanism, measured 2026-08-03: `auto-release` and `gen-spec` fire on
+;; the SAME push event. gen-spec finishes first (~2m) and pushes a
+;; regenerated `Cargo.gen.lock`; auto-release finishes later (~4m), gets a
+;; non-ff rejection, rebases — and its bump commit ALSO touches
+;; `Cargo.gen.lock`. So the two collide every single time, on a file neither
+;; human wrote. The retry logic below was built assuming the racer touches
+;; only `flake.lock` ("disjoint, so the replay is conflict-free"); that
+;; assumption held for the racer it was written against and is false for the
+;; one that actually races.
+;;
+;; Resolution: take the REPLAYED side (our bump) for a declared-derived path.
+;; That deliberately discards the racer's regeneration, and it is safe
+;; precisely because the file is derived — the generator re-runs on the push
+;; we are about to make and reconciles it. The tree we push is exactly the
+;; tree that would have been pushed had the racer not existed, which is the
+;; bar to clear. The version bump — the part that MUST land — survives.
+;;
+;; A conflict touching anything OUTSIDE the declared list still aborts. This
+;; never silently resolves an authored file.
+
+;; `string-split` is strictly 2-arity (no whitespace-splitting overload), so
+;; fold newlines and tabs to spaces first — a YAML block scalar delivers this
+;; input newline-separated, a one-liner delivers it space-separated, and both
+;; must work. `string-replace` is Rust's `str::replace`, i.e. global.
+(define
+  (split-ws s)
+  (filter
+    (lambda (p) (not (equal? p "")))
+    (string-split (string-replace (string-replace s "\n" " ") "\t" " ") " ")))
+
+(define
+  regenerable
+  (split-ws (string-trim (env-get "INPUT_REGENERABLE_PATHS" (env-get "REGENERABLE_PATHS" "")))))
+
+(define
+  (conflicted-paths)
+  (let
+    ((out (capture-out (exec-capture "git" "diff" "--name-only" "--diff-filter=U"))))
+    (if (equal? out "") (list) (string-split out "\n"))))
+
+;; During a REBASE the sides are inverted relative to a merge: `--theirs` is
+;; the commit being replayed (our bump) and `--ours` is the upstream we are
+;; landing on. Naming it here because reaching for `--ours` is the intuitive
+;; and wrong move, and it would silently drop the version bump.
+(define
+  (take-replayed-side path)
+  (exec-check "git" "checkout" "--theirs" "--" path)
+  (exec-check "git" "add" "--" path))
+
+(define
+  (resolve-derived-conflict)
+  (let
+    ((stuck (conflicted-paths)))
+    (cond
+      ((null? stuck) #f)
+      ((not (every? (lambda (p) (member? p regenerable)) stuck))
+        (log-error
+          (string-append
+            "rebase conflicted on a path that is not declared regenerable: "
+            (string-join ", " stuck)))
+        #f)
+      (else
+        (log-info
+          (string-append
+            "rebase conflicted only in derived file(s): "
+            (string-join ", " stuck)
+            " — taking the replayed side; the generator reconciles on the next push"))
+        (for-each take-replayed-side stuck)
+        ;; `git rebase --continue` re-opens the commit-message editor, and it
+        ;; has NO `--no-edit` (that is a `git rebase` error, not an option).
+        ;; So the editor must be neutralised through the environment — and it
+        ;; must be `GIT_EDITOR`, because `GIT_EDITOR` OUTRANKS `-c
+        ;; core.editor`. Measured 2026-08-03: with `-c core.editor=true` alone
+        ;; and a developer's `GIT_EDITOR=blnvim` exported, `--continue`
+        ;; launched nvim and hung until killed. A runner usually has neither
+        ;; set, so this would have looked fine in CI and hung the first time
+        ;; anyone ran the action anywhere else — a silent wedge with no output.
+        (env-set "GIT_EDITOR" "true")
+        (= 0 (exec-check "git" "rebase" "--continue"))))))
+
 ;; Re-point each tag to new-head (force). Lightweight is fine: the
 ;; release workflow fires on the tag REF regardless of annotation, and
 ;; `git describe --tags` (the bump's last-tag) honours lightweight tags.
@@ -131,7 +217,7 @@
                       "rebase"
                       onto)))
                 (cond
-                  ((not (= rebase-s 0))
+                  ((and (not (= rebase-s 0)) (not (resolve-derived-conflict)))
                     ;; lint:allow git-mutation-discard — abort-cleanup; we return rebase-s
                     (exec-check "git" "rebase" "--abort")
                     (log-error
