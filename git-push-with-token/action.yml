@@ -16,11 +16,23 @@ inputs:
     description: "Whether to also push --tags (default: true)"
     required: false
     default: "true"
+  regenerable-paths:
+    description: >
+      Whitespace-separated paths that are DERIVED artifacts, not authored
+      ones. If a push is rejected and the retry rebase conflicts, a conflict
+      confined to these paths is resolved in favour of the commit being
+      replayed instead of aborting — the generator that owns the file
+      reconciles it on the next push. A conflict touching ANY path outside
+      this list still aborts. Empty (the default) means abort on any conflict,
+      the pre-2026-08-03 behaviour.
+    required: false
+    default: ""
 
 runs:
   using: docker
   image: docker://ghcr.io/pleme-io/action-git-push-with-token:latest
   env:
-    GIT_PUSH_TOKEN: ${{ inputs.token }}
-    BRANCH:         ${{ inputs.branch }}
-    PUSH_TAGS:      ${{ inputs.push-tags }}
+    GIT_PUSH_TOKEN:     ${{ inputs.token }}
+    BRANCH:             ${{ inputs.branch }}
+    PUSH_TAGS:          ${{ inputs.push-tags }}
+    REGENERABLE_PATHS:  ${{ inputs.regenerable-paths }}
