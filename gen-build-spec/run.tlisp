@@ -144,7 +144,7 @@
       (else
         (let*
           ((before (supercache:content-key spec))
-            (r (exec-capture "nix" "shell" "nixpkgs#cargo" "--command" "gen" "build" "."))
+            (r (exec-capture "nix" "shell" "nixpkgs#cargo" "nixpkgs#rustc" "--command" "gen" "build" "."))
             (rc (status-of r)))
           (cond
             ((not (= rc 0))

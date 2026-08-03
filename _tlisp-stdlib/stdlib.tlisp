@@ -396,6 +396,15 @@
     "nix"
     "shell"
     "nixpkgs#cargo"
+    ;; rustc, NOT optional padding: `cargo metadata` shells out to
+    ;; `rustc -vV`, and cargo alone leaves that resolving against the
+    ;; runner's rustup SHIM, which then reads the consumer's
+    ;; rust-toolchain.toml and tries to materialize the pinned channel
+    ;; mid-job. Confirmed live 2026-08-02: tatara's workspace bump died
+    ;; "Cargo.gen.lock stale after bump and `gen build` could not restore
+    ;; the D2 tie", and hanabi's image build died on the clippy component
+    ;; download. Same hole, same fix, three call sites.
+    "nixpkgs#rustc"
     "--command"
     "nix"
     "run"
