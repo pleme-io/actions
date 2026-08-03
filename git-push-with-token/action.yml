@@ -16,15 +16,11 @@ inputs:
     description: "Whether to also push --tags (default: true)"
     required: false
     default: "true"
+  # Kept to ONE line: this description is rendered verbatim into a markdown
+  # table cell by pleme-doc-gen. The reasoning lives in run.tlisp, next to the
+  # code it governs.
   regenerable-paths:
-    description: >
-      Whitespace-separated paths that are DERIVED artifacts, not authored
-      ones. If a push is rejected and the retry rebase conflicts, a conflict
-      confined to these paths is resolved in favour of the commit being
-      replayed instead of aborting — the generator that owns the file
-      reconciles it on the next push. A conflict touching ANY path outside
-      this list still aborts. Empty (the default) means abort on any conflict,
-      the pre-2026-08-03 behaviour.
+    description: "Whitespace-separated DERIVED paths (e.g. Cargo.lock Cargo.gen.lock). A retry-rebase conflict confined to these resolves in favour of the replayed commit instead of aborting; a conflict anywhere else still aborts. Empty (default) = always abort."
     required: false
     default: ""
 

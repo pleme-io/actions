@@ -24,6 +24,7 @@ steps:
 |---|---|---|---|
 | `branch` | no | `main` | Branch to push (default: main) |
 | `push-tags` | no | `true` | Whether to also push --tags (default: true) |
+| `regenerable-paths` | no | — | Whitespace-separated DERIVED paths (e.g. Cargo.lock Cargo.gen.lock). A retry-rebase conflict confined to these resolves in favour of the replayed commit instead of aborting; a conflict anywhere else still aborts. Empty (default) = always abort. |
 | `token` | yes | — | Token used as x-access-token in the rewritten origin URL |
 
 ## Configuration via `.pleme-io-release.toml`
