@@ -6,18 +6,26 @@
 
 (define wd (env-get "PROJECT_PATH" "."))
 
-(let
-  ((env-file (env-get "GITHUB_ENV" "")))
+(let ((env-file (env-get "GITHUB_ENV" "")))
   (cond
     ((not (equal? env-file ""))
-      (exec-check "sh" "-c" (string-append "echo 'SNYK_TOKEN=" token "' >> " env-file)))))
+      (exec-check
+        "sh"
+        "-c"
+        (string-append
+          "echo 'SNYK_TOKEN="
+          token
+          "' >> "
+          env-file)))))
 
-(exec-check "npm" "install" "-g" "snyk")
+(exec-check
+  "npm"
+  "install"
+  "-g"
+  "snyk")
 
-(define
-  r
-  (exec-capture
-    "sh"
+(define r
+  (exec-capture "sh"
     "-c"
     (string-append
       "cd "
@@ -30,14 +38,15 @@
 
 (define out (stdout-of r))
 
-(define
-  count-r
-  (exec-capture
-    "sh"
+(define count-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "echo '"
-      (string-replace out "'" "'\"'\"'")
+      (string-replace
+        out
+        "'"
+        "'\"'\"'")
       "' | jq '.vulnerabilities | length' 2>/dev/null || echo 0")))
 
 (define cnt (string-trim (stdout-of count-r)))

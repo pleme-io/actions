@@ -26,17 +26,18 @@
 
 (define gpcc-ref (env-get "GPCC_REF" "HEAD"))
 
-(exec-capture "git" "config" "--global" "--add" "safe.directory" "*")
+(exec-capture "git"
+  "config"
+  "--global"
+  "--add" "safe.directory"
+  "*")
 
-(define
-  (main)
+(define (main)
   (cond
     ((equal? gpcc-path "") (log-error "git-path-commit-count: PATH input is required") 1)
     (else
-      (let
-        ((shallow (exec-capture "git" "rev-parse" "--is-shallow-repository")))
-        (if
-          (equal? (string-trim (stdout-of shallow)) "true")
+      (let ((shallow (exec-capture "git" "rev-parse" "--is-shallow-repository")))
+        (if (equal? (string-trim (stdout-of shallow)) "true")
           (begin
             (log-error
               (string-append
@@ -45,10 +46,8 @@
                 "under-counts (git rev-list only sees fetched history). "
                 "Use `actions/checkout` with `fetch-depth: 0`."))
             1)
-          (let
-            ((r (exec-capture "git" "rev-list" "--count" gpcc-ref "--" gpcc-path)))
-            (if
-              (not (= 0 (status-of r)))
+          (let ((r (exec-capture "git" "rev-list" "--count" gpcc-ref "--" gpcc-path)))
+            (if (not (= 0 (status-of r)))
               (begin
                 (log-error
                   (string-append
@@ -60,8 +59,7 @@
                     (string-format "{}" (status-of r))
                     ")"))
                 1)
-              (let
-                ((count (string-trim (stdout-of r))))
+              (let ((count (string-trim (stdout-of r))))
                 (log-info
                   (string-append
                     "==> "

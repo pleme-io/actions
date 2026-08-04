@@ -16,8 +16,7 @@
 
 (cond
   ((= (status-of r) 0)
-    (let
-      ((path (string-trim (stdout-of r))))
+    (let ((path (string-trim (stdout-of r))))
       (log-info (string-append "built: " path))
       (append-output (string-append "out-path=" path))
       (exit 0)))

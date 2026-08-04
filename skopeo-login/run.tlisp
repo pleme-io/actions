@@ -44,8 +44,7 @@
 ;; Inputs (env): REGISTRY, USERNAME, PASSWORD
 ;; Outputs: logged-in=true|false
 
-(define
-  (skopeo:list-ref lst i)
+(define (skopeo:list-ref lst i)
   (cond ((= i 0) (car lst)) (else (skopeo:list-ref (cdr lst) (- i 1)))))
 
 (define (skopeo:ecr-public? r) (equal? r "public.ecr.aws"))
@@ -54,32 +53,36 @@
 
 ;; <account>.dkr.ecr.<region>.amazonaws.com -- region is 3rd-from-last
 ;; of the dot-split parts; any registry not shaped like this yields "".
-(define
-  (skopeo:ecr-region r)
-  (let*
-    ((parts (string-split r ".")) (n (length parts)))
-    (if (< n 6) "" (skopeo:list-ref parts (- n 3)))))
+(define (skopeo:ecr-region r)
+  (let* ((parts (string-split r ".")) (n (length parts)))
+    (if (< n 6)
+      ""
+      (skopeo:list-ref parts (- n 3)))))
 
-(define
-  (skopeo:ecr-password username password region public?)
+(define (skopeo:ecr-password username password region public?)
   (env-set "AWS_ACCESS_KEY_ID" username)
   (env-set "AWS_SECRET_ACCESS_KEY" password)
   (let
     ((r
-       (if
-         public?
-         (exec-capture "aws" "ecr-public" "get-login-password" "--region" "us-east-1")
-         (exec-capture "aws" "ecr" "get-login-password" "--region" region))))
-    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+       (if public?
+         (exec-capture "aws"
+           "ecr-public"
+           "get-login-password"
+           "--region" "us-east-1")
+         (exec-capture "aws"
+           "ecr"
+           "get-login-password"
+           "--region" region))))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
 
-(define
-  (skopeo:fail reason)
+(define (skopeo:fail reason)
   (log-error (string-append "skopeo-login: " reason))
   (append-output "logged-in=false")
   (exit 1))
 
-(define
-  (main)
+(define (main)
   (let*
     ((registry (env-required "REGISTRY"))
       (username (env-required "USERNAME"))
@@ -94,7 +97,14 @@
       (else
         (let*
           ((login-user (if ecr? "AWS" username))
-            (login-pass (if ecr? (skopeo:ecr-password username password region public?) password)))
+            (login-pass
+              (if ecr?
+                (skopeo:ecr-password
+                  username
+                  password
+                  region
+                  public?)
+                password)))
           (cond
             ((and ecr? (equal? login-pass ""))
               (skopeo:fail "aws ecr get-login-password failed — see the log above"))
@@ -103,7 +113,9 @@
                 (string-append
                   "==> skopeo login "
                   registry
-                  (if ecr? " (ECR — resolved a short-lived token)" "")))
+                  (if ecr?
+                    " (ECR — resolved a short-lived token)"
+                    "")))
               (let
                 ((r
                    (exec-check
@@ -118,7 +130,10 @@
                   ((= r 0) (append-output "logged-in=true") (exit 0))
                   (else
                     (skopeo:fail
-                      (string-append "skopeo login failed (exit " (string-format "{}" r) ")"))))))))))))
+                      (string-append
+                        "skopeo login failed (exit "
+                        (string-format "{}" r)
+                        ")"))))))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")

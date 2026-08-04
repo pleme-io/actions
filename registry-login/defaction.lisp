@@ -20,15 +20,38 @@
 ;; overlays of yaml" + the PRIME DIRECTIVE (duplication is a bug), the
 ;; priority lives here once and each reusable overlays it with one `uses:`.
 
-(defaction "registry-login"
-  :description "Resolve an OCI-registry credential from the typed fallback (BOT_PAT > GHCR_TOKEN > GITHUB_TOKEN) and log the chosen client (helm | docker) into the registry. The single overlay every publish reusable calls in place of a hand-repeated `secrets.BOT_PAT || secrets.GHCR_TOKEN || ...` expression. BOT_PAT carries write:packages on the org-shared ghcr.io/pleme-io/* namespace (a repo-scoped GITHUB_TOKEN 403s on cross-namespace push); on the Free plan it reaches public repos only, so a private caller passes it empty and the fallback lands on GITHUB_TOKEN — the two approved tracks, expressed once. The product is the login SIDE-EFFECT on the runner's credential store, which the caller's publish step consumes."
-  :inputs  ((:name "registry"     :type :string :required t)
-            (:name "client"       :type :string :required nil :default "docker")
-            (:name "username"     :type :string :required t)
-            (:name "bot-pat"      :type :string :required nil :default "")
-            (:name "ghcr-token"   :type :string :required nil :default "")
-            (:name "github-token" :type :string :required nil :default ""))
-  :outputs ((:name "logged-in"))
-  :behavior      (:runtime :tatara-script :run-tlisp "registry-login/run.tlisp")
-  :semver-compat :minor
-  :attestation   :required)
+(defaction
+  "registry-login"
+  :description
+  "Resolve an OCI-registry credential from the typed fallback (BOT_PAT > GHCR_TOKEN > GITHUB_TOKEN) and log the chosen client (helm | docker) into the registry. The single overlay every publish reusable calls in place of a hand-repeated `secrets.BOT_PAT || secrets.GHCR_TOKEN || ...` expression. BOT_PAT carries write:packages on the org-shared ghcr.io/pleme-io/* namespace (a repo-scoped GITHUB_TOKEN 403s on cross-namespace push); on the Free plan it reaches public repos only, so a private caller passes it empty and the fallback lands on GITHUB_TOKEN — the two approved tracks, expressed once. The product is the login SIDE-EFFECT on the runner's credential store, which the caller's publish step consumes."
+  :inputs
+  ((:name "registry" :type :string :required t)
+    (
+      :name "client"
+      :type :string
+      :required nil
+      :default "docker")
+    (:name "username" :type :string :required t)
+    (
+      :name "bot-pat"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "ghcr-token"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "github-token"
+      :type :string
+      :required nil
+      :default ""))
+  :outputs
+  ((:name "logged-in"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "registry-login/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :required)

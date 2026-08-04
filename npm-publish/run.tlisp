@@ -7,30 +7,28 @@
 
 (define max-retries 20)
 
-(define
-  (read-name)
-  (let
-    ((r (exec-capture "sh" "-c" "jq -r '.name' package.json 2>/dev/null")))
-    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+(define (read-name)
+  (let ((r (exec-capture "sh" "-c" "jq -r '.name' package.json 2>/dev/null")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
 
-(define
-  (read-version)
-  (let
-    ((r (exec-capture "sh" "-c" "jq -r '.version' package.json 2>/dev/null")))
-    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+(define (read-version)
+  (let ((r (exec-capture "sh" "-c" "jq -r '.version' package.json 2>/dev/null")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
 
 ;; npm's existence-check endpoint returns 200 when (name, version) is
 ;; available, 404 otherwise. Scoped packages need URL-encoding (@ -> %40).
-(define
-  (npm-published? name version)
+(define (npm-published? name version)
   (let*
     ((url-name (string-replace name "@" "%40"))
       (url-name (string-replace url-name "/" "%2F"))
       (url (string-append "https://registry.npmjs.org/" url-name "/" version)))
     (http-200? url)))
 
-(define
-  (publish-args)
+(define (publish-args)
   (let*
     ((base (list "publish" "--access" access))
       (with-dry (if (equal? dry-run "true") (append base (list "--dry-run")) base)))
@@ -40,15 +38,13 @@
 
 (define (rate-limit? log) (log-contains? log "429"))
 
-(define
-  (already-uploaded? log)
+(define (already-uploaded? log)
   (or
     (log-contains? log "cannot publish over the previously published versions")
     (log-contains? log "You cannot publish over the previously published versions")
     (log-contains? log "EPUBLISHCONFLICT")))
 
-(define
-  (try-publish attempt)
+(define (try-publish attempt)
   (cond
     ((>= attempt max-retries)
       (log-error "exceeded max retries")
@@ -61,7 +57,10 @@
           (code (status-of r))
           (log (string-append (stdout-of r) "\n" (stderr-of r))))
         (cond
-          ((= code 0) (log-info "published successfully") (append-output "shipped=true") (exit 0))
+          ((= code 0)
+            (log-info "published successfully")
+            (append-output "shipped=true")
+            (exit 0))
           ((already-uploaded? log)
             (log-info "already published — treating as success")
             (append-output "shipped=true")

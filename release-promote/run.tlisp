@@ -40,9 +40,10 @@
 
 ;; The version to write: an explicit VERSION wins; else fall back to
 ;; SOURCE_TAG (the artifact coordinate being promoted).
-(define
-  (promote:version-or version source-tag)
-  (if (equal? (string-trim version) "") source-tag version))
+(define (promote:version-or version source-tag)
+  (if (equal? (string-trim version) "")
+    source-tag
+    version))
 
 ;; The yq set-expression for a scalar string assignment. RETAINED for the
 ;; unit tests below and for callers that still shell out; the promote path
@@ -59,19 +60,22 @@
 ;; private copy here would have fixed one call site and left the class
 ;; intact. See stdlib.tlisp's header for the measurement (run 30555068358).
 
-(define
-  (promote:commit-msg values-file version target-env)
+(define (promote:commit-msg values-file version target-env)
   (string-append
     "promote: pin "
     values-file
     " -> "
     version
-    (if (equal? (string-trim target-env) "") "" (string-append " (" target-env ")"))))
+    (if (equal? (string-trim target-env) "")
+      ""
+      (string-append
+        " ("
+        target-env
+        ")"))))
 
 ;; ── Mode 1: image-retag (the original behavior) ──────────────────
 
-(define
-  (promote:image-retag)
+(define (promote:image-retag)
   (let*
     ((img (env-required "IMAGE"))
       (src (env-required "SOURCE_TAG"))
@@ -79,8 +83,7 @@
       (src-ref (promote:ref img src))
       (tgt-ref (promote:ref img tgt)))
     (log-info (string-append "==> docker buildx imagetools create " tgt-ref " from " src-ref))
-    (let
-      ((r (exec-capture "docker" "buildx" "imagetools" "create" "-t" tgt-ref src-ref)))
+    (let ((r (exec-capture "docker" "buildx" "imagetools" "create" "-t" tgt-ref src-ref)))
       (cond
         ((= (status-of r) 0)
           (log-info (string-append "promoted " src-ref " -> " tgt-ref))
@@ -106,22 +109,24 @@
 ;; it (push=false here) rather than re-forking its logic.
 (define (promote:git-push branch) (status-of (exec-capture "git" "push" "origin" branch)))
 
-(define
-  (promote:emit-fail reason)
+(define (promote:emit-fail reason)
   (append-output "promoted=false")
   (append-output "kind=helm-chart-version")
   (append-output "committed=false")
   (append-output "pushed=false")
   (append-output (string-append "reason=" reason)))
 
-(define
-  (promote:helm-chart-version)
+(define (promote:helm-chart-version)
   (let*
     ((values-file (config-resolve "VALUES_FILE" "release-promote" "values-file" ""))
       (yaml-path (config-resolve "YAML_PATH" "release-promote" "yaml-path" ".version"))
       (version
         (promote:version-or
-          (config-resolve "VERSION" "release-promote" "version" "")
+          (config-resolve
+            "VERSION"
+            "release-promote"
+            "version"
+            "")
           (env-get "SOURCE_TAG" "")))
       (target-env (env-get "TARGET_ENV" (env-get "TARGET_TAG" "")))
       (do-commit (promote:norm-bool (config-resolve "COMMIT" "release-promote" "commit" "true")))
@@ -134,7 +139,9 @@
         (exit 1))
       ((not (path-exists? values-file))
         (log-error
-          (string-append "release-promote(helm-chart-version): values-file not found: " values-file))
+          (string-append
+            "release-promote(helm-chart-version): values-file not found: "
+            values-file))
         (promote:emit-fail "values-file-not-found")
         (exit 1))
       ((equal? (string-trim version) "")
@@ -150,14 +157,10 @@
             version
             " in "
             values-file
-            (if (equal? (string-trim target-env) "") "" (string-append " for " target-env))))
-        (let
-          ;; In-process read, NOT stdlib's yaml-read-field: that one runs
-          ;; `yq … 2>/dev/null` and returns "" on any non-zero exit, so on a
-          ;; runner without yq "the binary is missing" and "the field is
-          ;; absent" are the same answer. That is why this idempotency check
-          ;; never once matched -- it compared against "" every time.
-          ((current (yaml-read-field values-file yaml-path)))
+            (if (equal? (string-trim target-env) "")
+              ""
+              (string-append " for " target-env))))
+        (let ((current (yaml-read-field values-file yaml-path)))
           (cond
             ;; Idempotent: already at the target version — nothing to do.
             ((equal? current version)
@@ -174,25 +177,29 @@
               ;; TYPED write, in-process — no yq, no sed, no subprocess.
               ;; See stdlib's yaml-read-field header for why the previous
               ;; `exec-capture "yq"` could never succeed on the ARC runner.
-              (let
-                ((new-text (yaml-set-field (read-file values-file) yaml-path version)))
+              (let ((new-text (yaml-set-field (read-file values-file) yaml-path version)))
                 (cond
                   ((null? new-text)
-                    (log-error (string-append
-                      "release-promote(helm-chart-version): cannot set '" yaml-path "' in "
-                      values-file " -- the path must name a top-level scalar (e.g."
-                      " '.version') defined exactly once. Refusing to guess which line"
-                      " to rewrite."))
+                    (log-error
+                      (string-append
+                        "release-promote(helm-chart-version): cannot set '"
+                        yaml-path
+                        "' in "
+                        values-file
+                        " -- the path must name a top-level scalar (e.g."
+                        " '.version') defined exactly once. Refusing to guess which line"
+                        " to rewrite."))
                     (promote:emit-fail "yaml-set-unsupported-or-ambiguous")
                     (exit 1))
                   ;; Write, then verify by reading the file back IN-PROCESS,
                   ;; so a missing binary can no longer masquerade as a
                   ;; missing field the way the yq path did.
-                  ((not (equal?
-                          (begin
-                            (write-file values-file new-text)
-                            (yaml-read-field values-file yaml-path))
-                          version))
+                  ((not
+                     (equal?
+                       (begin
+                         (write-file values-file new-text)
+                         (yaml-read-field values-file yaml-path))
+                       version))
                     (log-error "release-promote(helm-chart-version): post-write verify mismatch")
                     (promote:emit-fail "write-verify-mismatch")
                     (exit 1))
@@ -217,15 +224,17 @@
                             "git"
                             "commit"
                             "-m"
-                            (promote:commit-msg values-file version target-env)))
+                            (promote:commit-msg
+                              values-file
+                              version
+                              target-env)))
                         (log-info (string-append "committed " values-file " @ " version))
                         (let
                           ((pushed
                              (cond
                                ((not (equal? do-push "true")) "false")
                                (else
-                                 (let
-                                   ((ps (promote:git-push branch)))
+                                 (let ((ps (promote:git-push branch)))
                                    (cond
                                      ((= ps 0) (log-info (string-append "pushed " branch)) "true")
                                      (else
@@ -244,10 +253,8 @@
 
 ;; ── Dispatch ─────────────────────────────────────────────────────
 
-(define
-  (main)
-  (let
-    ((kind (config-resolve "KIND" "release-promote" "kind" "image-retag")))
+(define (main)
+  (let ((kind (config-resolve "KIND" "release-promote" "kind" "image-retag")))
     (cond
       ((equal? kind "helm-chart-version") (promote:helm-chart-version))
       (else (promote:image-retag)))))

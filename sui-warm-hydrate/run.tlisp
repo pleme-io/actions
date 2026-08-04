@@ -63,8 +63,7 @@
 
 ;; Split a comma-separated list, dropping empties (trailing commas,
 ;; blank entries). Pure — the key/spec counter.
-(define
-  (swh:split-nonempty s)
+(define (swh:split-nonempty s)
   (filter (lambda (x) (not (equal? (string-trim x) ""))) (string-split s ",")))
 
 ;; Count the non-empty entries of a comma-separated list.
@@ -72,23 +71,23 @@
 
 ;; Explicit KEYS win over SPEC_PATHS (both comma-separated). Returns the
 ;; raw source string; the caller derives content keys from spec paths.
-(define
-  (swh:source-str keys-in spec-paths)
+(define (swh:source-str keys-in spec-paths)
   (cond ((not (equal? (string-trim keys-in) "")) keys-in) (else spec-paths)))
 
 ;; Can we actually warm? Only when the tiered backend + warm RPC are
 ;; shipped AND the endpoint is reachable AND there is >0 key to warm.
-(define
-  (swh:can-warm? tiered-shipped? endpoint-alive? requested-count)
-  (and tiered-shipped? endpoint-alive? (> requested-count 0)))
+(define (swh:can-warm? tiered-shipped? endpoint-alive? requested-count)
+  (and
+    tiered-shipped?
+    endpoint-alive?
+    (> requested-count 0)))
 
 ;; The reason discriminant — WHY this run ended where it did.
 ;;   no-keys                       nothing requested (a benign no-op)
 ;;   store-absent-degraded         the tiered backend/warm RPC is unshipped
 ;;   endpoint-unreachable-degraded backend shipped but the daemon isn't reachable
 ;;   warmed                        keys pre-loaded into the tiers
-(define
-  (swh:reason tiered-shipped? endpoint-alive? requested-count)
+(define (swh:reason tiered-shipped? endpoint-alive? requested-count)
   (cond
     ((<= requested-count 0) "no-keys")
     ((not tiered-shipped?) "store-absent-degraded")
@@ -96,8 +95,7 @@
     (else "warmed")))
 
 ;; The keyway exit-code contract over the reason + the require gate.
-(define
-  (swh:exit-code reason require-warm)
+(define (swh:exit-code reason require-warm)
   (cond
     ((equal? reason "warmed") 0)
     ((equal? reason "no-keys") 0)
@@ -110,16 +108,14 @@
 ;; The count of keys actually warmed. Today always 0 (the warm RPC is a
 ;; LiveTODO); becomes `requested-count` on a real warm once the keystone
 ;; flips. Pure so the warm branch is provable before the RPC exists.
-(define
-  (swh:warmed-count reason requested-count)
+(define (swh:warmed-count reason requested-count)
   (cond ((equal? reason "warmed") requested-count) (else 0)))
 
 ;; The warmest tier reached. "none" until a real warm loads a tier.
 (define (swh:hit-tier reason) (cond ((equal? reason "warmed") "redis") (else "none")))
 
 ;; ── emit (stable output set on EVERY path) ───────────────────────
-(define
-  (swh:emit warmed warm-count hit-tier ntd reason)
+(define (swh:emit warmed warm-count hit-tier ntd reason)
   (append-output (string-append "warmed=" warmed))
   (append-output (string-append "warm-count=" (string-format "{}" warm-count)))
   (append-output (string-append "hit-tier=" hit-tier))
@@ -127,8 +123,7 @@
   (append-output (string-append "reason=" reason)))
 
 ;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
-(define
-  (main)
+(define (main)
   (let*
     ((keys-in (env-get "KEYS" ""))
       (spec-paths (env-get "SPEC_PATHS" ""))
@@ -138,8 +133,7 @@
       (sandbox (config-resolve "SANDBOX" "super-cache-ci" "sandbox" "tmpfs"))
       (require-warm (config-resolve "REQUIRE_WARM" "super-cache-ci" "require-warm" "false"))
       (endpoint
-        (let
-          ((e (env-get "ENDPOINT" "")))
+        (let ((e (env-get "ENDPOINT" "")))
           (cond ((not (equal? e "")) e) (else (supercache:endpoint-resolve)))))
       (source (swh:source-str keys-in spec-paths))
       (requested (swh:count source))
@@ -163,8 +157,7 @@
         cache
         " sandbox="
         sandbox))
-    (when
-      (not swh:tiered-warm-shipped?)
+    (when (not swh:tiered-warm-shipped?)
       (log-info
         (string-append
           "  pending-super-cache-ci: the tiered warm path is a LiveTODO — "
@@ -193,7 +186,14 @@
             "sui-warm-hydrate: "
             reason
             " — require-warm=false, honest degrade (exit 2, handle in YAML)"))))
-    (swh:emit (if (equal? reason "warmed") "true" "false") warm-count hit-tier ntd reason)
+    (swh:emit
+      (if (equal? reason "warmed")
+        "true"
+        "false")
+      warm-count
+      hit-tier
+      ntd
+      reason)
     code))
 
 ;; TLISP_TEST=1 (tlisp-test harness): define the helpers, skip main.

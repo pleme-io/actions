@@ -1,31 +1,33 @@
 ;; caixa-detect/run.tlisp — find a (defcaixa ...) in the tree.
 
 ;; Try a small set of canonical locations first.
-(define
-  candidates
-  (list "caixa.tlisp" "caixa.lisp" "Caixa.tlisp" ".caixa/main.tlisp" "src/caixa.tlisp"))
+(define candidates
+  (list
+    "caixa.tlisp"
+    "caixa.lisp"
+    "Caixa.tlisp"
+    ".caixa/main.tlisp"
+    "src/caixa.tlisp"))
 
-(define
-  (find-canonical)
-  (define
-    (first-existing-path xs)
-    (cond ((null? xs) "") ((path-exists? (car xs)) (car xs)) (else (first-existing-path (cdr xs)))))
+(define (find-canonical)
+  (define (first-existing-path xs)
+    (cond
+      ((null? xs) "")
+      ((path-exists? (car xs)) (car xs))
+      (else (first-existing-path (cdr xs)))))
   (first-existing-path candidates))
 
 ;; Fallback: grep across *.tlisp / *.lisp for the (defcaixa form.
-(define
-  (grep-defcaixa)
+(define (grep-defcaixa)
   (let*
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          "grep -rln --include='*.tlisp' --include='*.lisp' '(defcaixa' . 2>/dev/null | head -1"))
       (out (string-trim (stdout-of r))))
     out))
 
-(define
-  caixa-path
+(define caixa-path
   (let ((p (find-canonical))) (cond ((not (equal? p "")) p) (else (grep-defcaixa)))))
 
 (cond
@@ -40,25 +42,21 @@
 
 ;; Extract :kind value via grep (regex matches :kind X within a few
 ;; lines of (defcaixa). Falls back to empty when absent.
-(define
-  (extract field)
+(define (extract field)
   (let*
-    ((cmd
-       (string-append
-         "grep -A20 '(defcaixa' "
-         caixa-path
-         " | grep -oE ':"
-         field
-         " [^[:space:])]+' | head -1 | awk '{print $2}'"))
+    ((cmd (string-append
+        "grep -A20 '(defcaixa' "
+        caixa-path
+        " | grep -oE ':"
+        field
+        " [^[:space:])]+' | head -1 | awk '{print $2}'"))
       (r (exec-capture "sh" "-c" cmd)))
     (string-trim (stdout-of r))))
 
-(define
-  caixa-name
+(define caixa-name
   (let*
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "grep -oE '\\(defcaixa[[:space:]]+[^[:space:])]+' "

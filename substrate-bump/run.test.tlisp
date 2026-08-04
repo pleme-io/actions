@@ -11,8 +11,7 @@
 ;; ran (pangea-consul, 2026-08-04). `extract-gem-version` extends the stdlib
 ;; helper locally, gem-scoped, and falls back to it for the " and ' shapes.
 
-(deftest
-  "extract-gem-version: %(...) percent-literal (ruby-gem-flake convention)"
+(deftest "extract-gem-version: %(...) percent-literal (ruby-gem-flake convention)"
   (assert
     (equal? (extract-gem-version "  VERSION = %(0.1.1).freeze") "0.1.1")
     "%(...) literal extracts the inner version")
@@ -20,20 +19,10 @@
     (equal? (extract-gem-version "  VERSION = %(0.1.10).freeze") "0.1.10")
     "two-digit patch still extracts"))
 
-(deftest
-  "extract-gem-version: legacy \" and ' conventions still work"
-  (assert
-    (equal? (extract-gem-version "  VERSION = \"0.1.0\"") "0.1.0")
-    "double-quoted convention")
-  (assert
-    (equal? (extract-gem-version "  VERSION = '0.1.2'") "0.1.2")
-    "single-quoted convention"))
+(deftest "extract-gem-version: legacy \" and ' conventions still work"
+  (assert (equal? (extract-gem-version "  VERSION = \"0.1.0\"") "0.1.0") "double-quoted convention")
+  (assert (equal? (extract-gem-version "  VERSION = '0.1.2'") "0.1.2") "single-quoted convention"))
 
-(deftest
-  "extract-gem-version: non-version lines extract to empty"
-  (assert
-    (equal? (extract-gem-version "module PangeaConsul") "")
-    "no VERSION= marker yields empty")
-  (assert
-    (equal? (extract-gem-version "") "")
-    "empty line yields empty"))
+(deftest "extract-gem-version: non-version lines extract to empty"
+  (assert (equal? (extract-gem-version "module PangeaConsul") "") "no VERSION= marker yields empty")
+  (assert (equal? (extract-gem-version "") "") "empty line yields empty"))

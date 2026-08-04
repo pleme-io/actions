@@ -3,8 +3,7 @@
 ;; by the tlisp-test action (auto-discovered fleet-wide against every
 ;; <base>.tlisp / <base>.test.tlisp pair, see ci.yml's tlisp-tests job).
 
-(deftest
-  "admitted-outcome? is true only for a genuine success outcome"
+(deftest "admitted-outcome? is true only for a genuine success outcome"
   (assert (admitted-outcome? "success") "success admits")
   (assert (not (admitted-outcome? "failure")) "failure rejects")
   (assert
@@ -17,8 +16,7 @@
     (not (admitted-outcome? ""))
     "an unset/unrecognized outcome rejects — fail closed, never permissive"))
 
-(deftest
-  "verdict-of maps outcome to the typed admitted|rejected vocabulary"
+(deftest "verdict-of maps outcome to the typed admitted|rejected vocabulary"
   (assert (equal? (verdict-of "success") "admitted") "success -> admitted")
   (assert (equal? (verdict-of "failure") "rejected") "failure -> rejected")
   (assert (equal? (verdict-of "cancelled") "rejected") "cancelled -> rejected")

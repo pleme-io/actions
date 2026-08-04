@@ -17,14 +17,15 @@
 
 (define ar:result-path "/tmp/aldrava-resolve-result.json")
 
-(define
-  (main)
+(define (main)
   (let*
     ((label-name (env-get "LABEL_NAME" ""))
       (argv
         (append
           (list "aldrava" "resolve")
-          (if (equal? label-name "") (list) (list "--label-name" label-name))))
+          (if (equal? label-name "")
+            (list)
+            (list "--label-name" label-name))))
       (result (apply exec-capture argv)))
     (cond
       ((not (= (status-of result) 0))

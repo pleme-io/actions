@@ -16,21 +16,74 @@
 ;; clause names the tatara-script runtime + its run.tlisp explicitly and
 ;; is NOT claimed to parse into the shipped Rust struct.
 
-(defaction "super-cache-build"
-  :description "THE CORE super-cache-ci verb: build a derivation via the sui service against the tiered super-cache, keyed by the gen build-spec (RAM eval, tmpfs sandbox, DB store). Skips the derive on a restore cache hit; the live derive (sui-graph build RPC/CLI) is a named LiveTODO reported honestly, never a faked green."
-  :inputs  ((:name "spec-path"        :type :string :required nil :default "")
-            (:name "key"              :type :string :required nil :default "")
-            (:name "cache-hit"        :type :string :required nil :default "false")
-            (:name "restored-outputs" :type :string :required nil :default "")
-            (:name "force"            :type :string :required nil :default "false")
-            (:name "endpoint"         :type :string :required nil :default "")
-            (:name "sandbox"          :type :string :required nil :default "tmpfs")
-            (:name "store-backend"    :type :string :required nil :default "graphstore")
-            (:name "cache-backend"    :type :string :required nil :default "local")
-            (:name "require-build"    :type :string :required nil :default "false"))
-  :outputs ((:name "built") (:name "from-cache") (:name "outputs")
-            (:name "output-hashes") (:name "eval-ms") (:name "build-ms")
-            (:name "key") (:name "never-touch-disk") (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "super-cache-build/run.tlisp")
-  :semver-compat :minor
-  :attestation   :required)
+(defaction
+  "super-cache-build"
+  :description
+  "THE CORE super-cache-ci verb: build a derivation via the sui service against the tiered super-cache, keyed by the gen build-spec (RAM eval, tmpfs sandbox, DB store). Skips the derive on a restore cache hit; the live derive (sui-graph build RPC/CLI) is a named LiveTODO reported honestly, never a faked green."
+  :inputs
+  ((
+     :name "spec-path"
+     :type :string
+     :required nil
+     :default "")
+    (
+      :name "key"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "cache-hit"
+      :type :string
+      :required nil
+      :default "false")
+    (
+      :name "restored-outputs"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "force"
+      :type :string
+      :required nil
+      :default "false")
+    (
+      :name "endpoint"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "sandbox"
+      :type :string
+      :required nil
+      :default "tmpfs")
+    (
+      :name "store-backend"
+      :type :string
+      :required nil
+      :default "graphstore")
+    (
+      :name "cache-backend"
+      :type :string
+      :required nil
+      :default "local")
+    (
+      :name "require-build"
+      :type :string
+      :required nil
+      :default "false"))
+  :outputs
+  ((:name "built")
+    (:name "from-cache")
+    (:name "outputs")
+    (:name "output-hashes")
+    (:name "eval-ms")
+    (:name "build-ms")
+    (:name "key")
+    (:name "never-touch-disk")
+    (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "super-cache-build/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :required)

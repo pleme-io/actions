@@ -28,23 +28,82 @@
 ;; run.tlisp explicitly and is NOT claimed to parse into the shipped Rust
 ;; struct.
 
-(defaction "cartorio-attest"
-  :description "The FedRAMP THREE-PILLAR compliance receipt for a delivered image digest: (1) a BLAKE3 chain-linked receipt (chain.prev binds delivery to the tameshi build receipt); (2) an SBOM from Nix inputs — CycloneDX 1.5 derived from the built image's Nix runtime closure (nix path-info -r), the exact derivation inputs, NOT a filesystem re-scan; (3) SLSA v1.0 provenance (in-toto Statement) binding the digest to its build definition. Sibling of tameshi-attest (build receipt), sharing the BLAKE3 core, adding the SBOM+SLSA pillars. TYPED EMISSION: all JSON via jq; receipt_hash is a real b3sum (fails rather than lie about its algorithm). Nix-closure SBOM given a store path is SHIPPABLE-NOW; a digest-only SBOM, DSSE/cosign signing, and kensa OutcomeChain append are named LiveTODOs (honest empty SBOM / signed=false / outcome_chain=false, never faked)."
-  :inputs  ((:name "subject"            :type :string :required nil :default "")
-            (:name "image-ref"          :type :string :required nil :default "")
-            (:name "image-digest"       :type :string :required nil :default "")
-            (:name "nix-store-path"     :type :string :required nil :default "")
-            (:name "prev-receipt-hash"  :type :string :required nil :default "")
-            (:name "builder-id"         :type :string :required nil :default "")
-            (:name "sbom-path"          :type :string :required nil :default "cartorio-sbom.cdx.json")
-            (:name "slsa-path"          :type :string :required nil :default "cartorio-slsa.json")
-            (:name "receipt-path"       :type :string :required nil :default "cartorio-receipt.json")
-            (:name "sign"               :type :string :required nil :default "false")
-            (:name "emit-outcome-chain" :type :string :required nil :default "false"))
-  :outputs ((:name "attested") (:name "receipt-path") (:name "receipt-hash")
-            (:name "receipt-algo") (:name "sbom-path") (:name "sbom-format")
-            (:name "sbom-components") (:name "slsa-path") (:name "slsa-predicate-type")
-            (:name "signed") (:name "outcome-chain") (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "cartorio-attest/run.tlisp")
-  :semver-compat :minor
-  :attestation   :required)
+(defaction
+  "cartorio-attest"
+  :description
+  "The FedRAMP THREE-PILLAR compliance receipt for a delivered image digest: (1) a BLAKE3 chain-linked receipt (chain.prev binds delivery to the tameshi build receipt); (2) an SBOM from Nix inputs — CycloneDX 1.5 derived from the built image's Nix runtime closure (nix path-info -r), the exact derivation inputs, NOT a filesystem re-scan; (3) SLSA v1.0 provenance (in-toto Statement) binding the digest to its build definition. Sibling of tameshi-attest (build receipt), sharing the BLAKE3 core, adding the SBOM+SLSA pillars. TYPED EMISSION: all JSON via jq; receipt_hash is a real b3sum (fails rather than lie about its algorithm). Nix-closure SBOM given a store path is SHIPPABLE-NOW; a digest-only SBOM, DSSE/cosign signing, and kensa OutcomeChain append are named LiveTODOs (honest empty SBOM / signed=false / outcome_chain=false, never faked)."
+  :inputs
+  ((
+     :name "subject"
+     :type :string
+     :required nil
+     :default "")
+    (
+      :name "image-ref"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "image-digest"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "nix-store-path"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "prev-receipt-hash"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "builder-id"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "sbom-path"
+      :type :string
+      :required nil
+      :default "cartorio-sbom.cdx.json")
+    (
+      :name "slsa-path"
+      :type :string
+      :required nil
+      :default "cartorio-slsa.json")
+    (
+      :name "receipt-path"
+      :type :string
+      :required nil
+      :default "cartorio-receipt.json")
+    (
+      :name "sign"
+      :type :string
+      :required nil
+      :default "false")
+    (
+      :name "emit-outcome-chain"
+      :type :string
+      :required nil
+      :default "false"))
+  :outputs
+  ((:name "attested")
+    (:name "receipt-path")
+    (:name "receipt-hash")
+    (:name "receipt-algo")
+    (:name "sbom-path")
+    (:name "sbom-format")
+    (:name "sbom-components")
+    (:name "slsa-path")
+    (:name "slsa-predicate-type")
+    (:name "signed")
+    (:name "outcome-chain")
+    (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "cartorio-attest/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :required)

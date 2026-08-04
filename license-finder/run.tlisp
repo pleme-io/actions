@@ -4,14 +4,20 @@
 
 (define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
 
-(exec-check "gem" "install" "license_finder" "--no-document")
+(exec-check
+  "gem"
+  "install"
+  "license_finder"
+  "--no-document")
 
-(define
-  (add-permitted-licenses licenses)
+(define (add-permitted-licenses licenses)
   (cond
     ((null? licenses) #t)
     (else
-      (exec-capture "license_finder" "permitted_licenses" "add" (car licenses))
+      (exec-capture "license_finder"
+        "permitted_licenses"
+        "add"
+        (car licenses))
       (add-permitted-licenses (cdr licenses)))))
 
 (add-permitted-licenses (string-split permitted ","))
@@ -20,14 +26,15 @@
 
 (define out (stdout-of r))
 
-(define
-  viol-r
-  (exec-capture
-    "sh"
+(define viol-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "echo '"
-      (string-replace out "'" "'\"'\"'")
+      (string-replace
+        out
+        "'"
+        "'\"'\"'")
       "' | jq '.unapproved + .restricted | length' 2>/dev/null || echo 0")))
 
 (define viol (string-trim (stdout-of viol-r)))

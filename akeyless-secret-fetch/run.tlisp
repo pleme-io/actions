@@ -13,29 +13,26 @@
 ;; Single secret static-secret-value flow.
 (define payload (string-append "{\"token\":\"" token "\",\"names\":[\"" secret "\"]}"))
 
-(define
-  r
-  (exec-capture
-    "curl"
+(define r
+  (exec-capture "curl"
     "-sS"
-    "-X"
-    "POST"
-    "-H"
-    "Content-Type: application/json"
-    "-d"
-    payload
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
     (string-append api-url "/get-secret-value")))
 
 (cond ((not (= (status-of r) 0)) (log-error "get-secret-value POST failed") (exit 1)))
 
 (let*
   ((jq-r
-     (exec-capture
-       "sh"
+     (exec-capture "sh"
        "-c"
        (string-append
          "echo '"
-         (string-replace (stdout-of r) "'" "'\"'\"'")
+         (string-replace
+           (stdout-of r)
+           "'"
+           "'\"'\"'")
          "' | jq -r '.[\""
          secret
          "\"]'")))
@@ -51,12 +48,17 @@
       (log-info (string-append "::add-mask::" value))
       (cond
         ((not (equal? output-env ""))
-          (let
-            ((env-file (env-get "GITHUB_ENV" "")))
+          (let ((env-file (env-get "GITHUB_ENV" "")))
             (cond
               ((not (equal? env-file ""))
                 (exec-check
                   "sh"
                   "-c"
-                  (string-append "echo '" output-env "=" value "' >> " env-file)))))))
+                  (string-append
+                    "echo '"
+                    output-env
+                    "="
+                    value
+                    "' >> "
+                    env-file)))))))
       (exit 0))))

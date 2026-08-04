@@ -20,13 +20,11 @@
 ;; Resolve the content-addressed lookup key: an explicit key wins, else
 ;; sha256 the build-spec (supercache:content-key). An unresolvable key
 ;; ⇒ "" ⇒ an honest miss downstream.
-(define
-  (restore-key key-in spec-path)
+(define (restore-key key-in spec-path)
   (cond ((not (equal? key-in "")) key-in) (else (supercache:content-key spec-path))))
 
 ;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
-(define
-  (main)
+(define (main)
   (let*
     ((key-in (env-get "KEY" ""))
       (spec-path (env-get "SPEC_PATH" ""))
@@ -49,8 +47,7 @@
           (append-output (string-append "key=" key))
           (cond
             (local-hit
-              (let
-                ((outs (string-trim (read-file (supercache:local-entry-path cache-dir key)))))
+              (let ((outs (string-trim (read-file (supercache:local-entry-path cache-dir key)))))
                 (log-info (string-append "super-cache-restore: cache HIT (" tier ") " key))
                 (append-output "cache-hit=true")
                 (append-output (string-append "hit-tier=" tier))
@@ -59,8 +56,7 @@
             (else
               ;; No local hit. The Redis L1 / Postgres L2 tiers reachable
               ;; via the sui service endpoint are a LiveTODO — never faked.
-              (when
-                (not (equal? endpoint ""))
+              (when (not (equal? endpoint ""))
                 (log-info
                   (string-append
                     "super-cache-restore: local miss for "

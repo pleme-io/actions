@@ -13,10 +13,8 @@
 
 (define id-tok (env-required "ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
 
-(define
-  jwt-r
-  (exec-capture
-    "sh"
+(define jwt-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "curl -sH 'Authorization: Bearer "
@@ -30,10 +28,8 @@
 ;; 2. Vault JWT login
 (define login-payload (string-append "{\"role\":\"" role "\",\"jwt\":\"" jwt "\"}"))
 
-(define
-  login-r
-  (exec-capture
-    "sh"
+(define login-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "curl -sS -X POST -d '"
@@ -45,10 +41,8 @@
 (define client-tok (string-trim (stdout-of login-r)))
 
 ;; 3. Read secret
-(define
-  sec-r
-  (exec-capture
-    "sh"
+(define sec-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "curl -sS -H 'X-Vault-Token: "
@@ -67,10 +61,18 @@
 
 (cond
   ((not (equal? out-env ""))
-    (let
-      ((env-file (env-get "GITHUB_ENV" "")))
+    (let ((env-file (env-get "GITHUB_ENV" "")))
       (cond
         ((not (equal? env-file ""))
-          (exec-check "sh" "-c" (string-append "echo '" out-env "=" value "' >> " env-file)))))))
+          (exec-check
+            "sh"
+            "-c"
+            (string-append
+              "echo '"
+              out-env
+              "="
+              value
+              "' >> "
+              env-file)))))))
 
 (exit 0)

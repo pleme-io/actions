@@ -14,15 +14,14 @@
 (define head-ref (cond ((equal? base-ref "") "HEAD") (else (string-append base-ref "..HEAD"))))
 
 ;; Pull commits as `<sha>|<subject>` lines for parsing flexibility.
-(define
-  (commit-lines)
-  (let
-    ((r (exec-capture "git" "log" head-ref "--no-merges" "--pretty=format:%h|%s")))
+(define (commit-lines)
+  (let ((r (exec-capture "git" "log" head-ref "--no-merges" "--pretty=format:%h|%s")))
     (cond
       ((= (status-of r) 0)
-        (let
-          ((out (string-trim (stdout-of r))))
-          (if (equal? out "") (list) (string-split out "\n"))))
+        (let ((out (string-trim (stdout-of r))))
+          (if (equal? out "")
+            (list)
+            (string-split out "\n"))))
       (else (list)))))
 
 (define commits (commit-lines))
@@ -31,17 +30,14 @@
 
 ;; ── Format renderers ──────────────────────────────────────────── ;;
 
-(define
-  (render-markdown commits)
+(define (render-markdown commits)
   (define (bullet line) (string-append "- " line))
-  (define
-    (commit-bullets ls)
+  (define (commit-bullets ls)
     (cond ((null? ls) (list)) (else (cons (bullet (car ls)) (commit-bullets (cdr ls))))))
   (string-join "\n" (commit-bullets commits)))
 
 ;; Keep-a-changelog buckets by conventional-commit prefix.
-(define
-  (commit-bucket line)
+(define (commit-bucket line)
   (cond
     ((string-contains? line "|feat") "Added")
     ((string-contains? line "|fix") "Fixed")
@@ -55,29 +51,24 @@
     ((string-contains? line "|breaking") "Removed")
     (else "Other")))
 
-(define
-  (group-by-bucket lines)
+(define (group-by-bucket lines)
   ;; Naive: pass through; we group in the rendering step below.
   lines)
 
-(define
-  (lines-in-bucket lines bucket)
+(define (lines-in-bucket lines bucket)
   (cond
     ((null? lines) (list))
     ((equal? (commit-bucket (car lines)) bucket)
       (cons (car lines) (lines-in-bucket (cdr lines) bucket)))
     (else (lines-in-bucket (cdr lines) bucket))))
 
-(define
-  (render-bucket lines bucket)
-  (let
-    ((b-lines (lines-in-bucket lines bucket)))
+(define (render-bucket lines bucket)
+  (let ((b-lines (lines-in-bucket lines bucket)))
     (cond
       ((null? b-lines) "")
       (else (string-append "### " bucket "\n" (render-markdown b-lines) "\n\n")))))
 
-(define
-  (render-keepachangelog lines)
+(define (render-keepachangelog lines)
   (string-append
     (render-bucket lines "Added")
     (render-bucket lines "Changed")
@@ -90,13 +81,11 @@
     (render-bucket lines "Maintenance")
     (render-bucket lines "Other")))
 
-(define
-  (render-conventional commits)
+(define (render-conventional commits)
   ;; Just emit raw conventional-commit-formatted lines.
   (render-markdown commits))
 
-(define
-  rendered
+(define rendered
   (cond
     ((equal? format-name "markdown") (render-markdown commits))
     ((equal? format-name "keepachangelog") (render-keepachangelog commits))
@@ -110,14 +99,12 @@
       ((equal? fragment "true") (write-file output-file rendered))
       (else
         ;; Prepend new content to existing file.
-        (let
-          ((existing (if (path-exists? output-file) (read-file output-file) "")))
+        (let ((existing (if (path-exists? output-file) (read-file output-file) "")))
           (write-file output-file (string-append rendered "\n\n" existing)))))))
 
 ;; Emit outputs. Multi-line strings use the heredoc form supported
 ;; by GITHUB_OUTPUT.
-(let
-  ((eof-marker "TLISP_OUTPUT_EOF"))
+(let ((eof-marker "TLISP_OUTPUT_EOF"))
   (append-output (string-append "changelog<<" eof-marker))
   (append-output rendered)
   (append-output eof-marker))

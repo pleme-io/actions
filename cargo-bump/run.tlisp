@@ -11,20 +11,28 @@
 
 (define bump-type (config-resolve "BUMP_TYPE" "bump" "default-type" "patch"))
 
-(define
-  skip-flag
-  (config-resolve "SKIP_WHEN_NO_SOURCE_CHANGES" "bump" "skip-when-no-source-changes" "true"))
+(define skip-flag
+  (config-resolve
+    "SKIP_WHEN_NO_SOURCE_CHANGES"
+    "bump"
+    "skip-when-no-source-changes"
+    "true"))
 
-(define
-  source-paths
-  (config-resolve "SOURCE_PATHS" "bump" "source-paths" "src Cargo.toml Cargo.lock"))
+(define source-paths
+  (config-resolve
+    "SOURCE_PATHS"
+    "bump"
+    "source-paths"
+    "src Cargo.toml Cargo.lock"))
 
-(define
-  regenerate-cargo-nix
-  (config-resolve "REGENERATE_CARGO_NIX" "bump" "regenerate-cargo-nix" "true"))
+(define regenerate-cargo-nix
+  (config-resolve
+    "REGENERATE_CARGO_NIX"
+    "bump"
+    "regenerate-cargo-nix"
+    "true"))
 
-(define
-  (should-bump?)
+(define (should-bump?)
   (cond ((not (equal? skip-flag "true")) #t) (else (has-changes-since? (last-tag) source-paths))))
 
 ;; ── Release monotonicity ──────────────────────────────────────────────
@@ -44,15 +52,13 @@
 ;; computed from the tags. Either way `cargo set-version` — not a hand
 ;; rewrite — does the writing, so its dependent-requirement updates are
 ;; preserved.
-(define
-  (bump-target old-v max-v type)
+(define (bump-target old-v max-v type)
   (cond
     ((equal? (semver:bump-seed old-v max-v) old-v) "")
     ;; "" = use --bump
     (else (semver:bump (semver:bump-seed old-v max-v) type))))
 
-(define
-  (do-bump target)
+(define (do-bump target)
   (cond
     ((equal? target "") (status-of (exec-capture "cargo" "set-version" "--bump" bump-type)))
     (else
@@ -78,14 +84,11 @@
 ;; "crate2nix generate failed" and no reason attached, so the true
 ;; sub-split (isolated-resolve vs a private git dep vs a real break)
 ;; could not be read off the logs at all.
-(define
-  (do-regen)
-  (exec-capture
-    "nix"
+(define (do-regen)
+  (exec-capture "nix"
     "run"
     (string-append "github:nix-community/crate2nix/" crate2nix-pinned-rev)
-    "--"
-    "generate"))
+    "--" "generate"))
 
 ;; A repo only owes a Cargo.nix if it SHIPS one. Regenerating (and
 ;; failing on) an artifact the repo does not carry is a fabricated
@@ -93,29 +96,25 @@
 ;; `ensure-gen-lock-fresh` uses for Cargo.gen.lock (stdlib.tlisp:194).
 (define (repo-ships-cargo-nix?) (path-exists? "Cargo.nix"))
 
-(define
-  (emit-skip msg old-v)
+(define (emit-skip msg old-v)
   (log-info msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
   (append-output "new-version="))
 
-(define
-  (emit-success old-v new-v)
+(define (emit-success old-v new-v)
   (log-info (string-append "bumped: " old-v " -> " new-v))
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=true")
   (append-output (string-append "new-version=" new-v)))
 
-(define
-  (emit-failure msg old-v)
+(define (emit-failure msg old-v)
   (log-error msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
   (append-output "new-version="))
 
-(define
-  (post-bump-checks old-v)
+(define (post-bump-checks old-v)
   (exec-capture "cargo" "update")
   ;; D2 gate (stdlib ensure-gen-lock-fresh): delta-only repos must leave
   ;; with Cargo.gen.lock sha-tied to the rewritten Cargo.lock, else every
@@ -128,8 +127,7 @@
         old-v)
       1)
     (else
-      (let
-        ((new-v (cargo-package-version)))
+      (let ((new-v (cargo-package-version)))
         (cond
           ((equal? new-v old-v)
             (emit-failure (string-append "version unchanged after bump: " old-v) old-v)
@@ -150,11 +148,9 @@
             1)
           (else (emit-success old-v new-v) 0))))))
 
-(define
-  (run-bump-pipeline old-v)
+(define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
-  (let
-    ((bump-status (do-bump (bump-target old-v (git:max-released-version "v") bump-type))))
+  (let ((bump-status (do-bump (bump-target old-v (git:max-released-version "v") bump-type))))
     (cond
       ((not (= bump-status 0)) (emit-failure "cargo set-version failed" old-v) bump-status)
       ((not (equal? regenerate-cargo-nix "true"))
@@ -178,10 +174,8 @@
         ;; The D2 gate in `post-bump-checks` stays FATAL: a STALE
         ;; committed artifact is a real, verifiable defect, whereas an
         ;; un-regenerable one is an environment limit.
-        (let
-          ((regen (do-regen)))
-          (if
-            (= (status-of regen) 0)
+        (let ((regen (do-regen)))
+          (if (= (status-of regen) 0)
             (log-info "Cargo.nix regenerated")
             (begin
               ;; Surface the reason — never swallow it. This is the one
@@ -192,10 +186,8 @@
               (log-info (string-append "crate2nix stderr: " (stderr-of regen)))))
           (post-bump-checks old-v))))))
 
-(define
-  (main)
-  (let
-    ((old-version (cargo-package-version)))
+(define (main)
+  (let ((old-version (cargo-package-version)))
     (cond
       ((not (path-exists? "Cargo.toml"))
         (emit-failure
@@ -209,7 +201,10 @@
         (exit 1))
       ((not (should-bump?))
         (emit-skip
-          (string-append "no changes since last tag — skipping (at " old-version ")")
+          (string-append
+            "no changes since last tag — skipping (at "
+            old-version
+            ")")
           old-version)
         (exit 0))
       (else (exit (run-bump-pipeline old-version))))))

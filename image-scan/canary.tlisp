@@ -51,8 +51,7 @@
 
 ;; The whole verdict, as a pure function of trivy's exit code.
 ;; Returns one of: 'working  'blind  'unusable
-(define
-  (classify-canary-exit code)
+(define (classify-canary-exit code)
   (cond
     ((= code 1) 'working)
     ((= code 0) 'blind)
@@ -64,8 +63,7 @@
 ;; Operator-facing explanation. Kept beside the classifier so a new verdict
 ;; cannot be added without a message — the `else` names the gap rather than
 ;; printing something vague.
-(define
-  (canary-message verdict code)
+(define (canary-message verdict code)
   (cond
     ((equal? verdict 'working)
       "sensitivity canary OK: trivy flagged the known-vulnerable canary package")
@@ -81,26 +79,24 @@
         (string-format "{}" code)
         "). The scanner is unusable, so no verdict from this run is "
         "trustworthy."))
-    (else
-      (string-append
-        "canary: unhandled verdict for exit " (string-format "{}" code)))))
+    (else (string-append "canary: unhandled verdict for exit " (string-format "{}" code)))))
 
-(define
-  (main)
+(define (main)
   (cond
     ((not (path-exists? fixture))
       ;; Fail closed. A missing fixture means the canary did not run, and a
       ;; canary that did not run must never read as a canary that passed.
       (log-error
         (string-append
-          "canary fixture not found: " fixture
+          "canary fixture not found: "
+          fixture
           " — refusing to pass a gate that never executed."))
       1)
     (else
       (let*
         ((r (exec-capture "trivy" "sbom" fixture "--exit-code" "1" "--quiet"))
-         (code (status-of r))
-         (verdict (classify-canary-exit code)))
+          (code (status-of r))
+          (verdict (classify-canary-exit code)))
         (cond
           ((canary-ok? verdict) (log-info (canary-message verdict code)) 0)
           (else (log-error (canary-message verdict code)) 1))))))

@@ -13,16 +13,51 @@
 ;; tatara-script runtime + run.tlisp explicitly and is NOT claimed to
 ;; parse into the shipped Rust struct.
 
-(defaction "build-matrix"
-  :description "Enumerate a flake's colon-triple image attrs (dockerImage:<arch>:<svc>) and emit the GitHub Actions image×arch build matrix. Step 2 of the super-cache-ci graph job — the single-responsibility sibling of gen-build-spec (spec freshness gate); this fans the fresh spec across every (service, arch) the flake actually exposes. Deterministic `nix eval` enumeration, honest per-service arch discovery (never a hard-coded arch pair); the matrix JSON is composed by jq (TYPED EMISSION), never hand-concatenated."
-  :inputs  ((:name "flake-ref"        :type :string :required nil :default ".")
-            (:name "eval-system"      :type :string :required nil :default "x86_64-linux")
-            (:name "image-base"       :type :string :required nil :default "dockerImage")
-            (:name "services"         :type :string :required nil :default "")
-            (:name "arches"           :type :string :required nil :default "")
-            (:name "exclude"          :type :string :required nil :default "")
-            (:name "require-nonempty" :type :string :required nil :default "true"))
-  :outputs ((:name "matrix") (:name "count") (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "build-matrix/run.tlisp")
-  :semver-compat :minor
-  :attestation   :optional)
+(defaction
+  "build-matrix"
+  :description
+  "Enumerate a flake's colon-triple image attrs (dockerImage:<arch>:<svc>) and emit the GitHub Actions image×arch build matrix. Step 2 of the super-cache-ci graph job — the single-responsibility sibling of gen-build-spec (spec freshness gate); this fans the fresh spec across every (service, arch) the flake actually exposes. Deterministic `nix eval` enumeration, honest per-service arch discovery (never a hard-coded arch pair); the matrix JSON is composed by jq (TYPED EMISSION), never hand-concatenated."
+  :inputs
+  ((
+     :name "flake-ref"
+     :type :string
+     :required nil
+     :default ".")
+    (
+      :name "eval-system"
+      :type :string
+      :required nil
+      :default "x86_64-linux")
+    (
+      :name "image-base"
+      :type :string
+      :required nil
+      :default "dockerImage")
+    (
+      :name "services"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "arches"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "exclude"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "require-nonempty"
+      :type :string
+      :required nil
+      :default "true"))
+  :outputs
+  ((:name "matrix") (:name "count") (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "build-matrix/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :optional)

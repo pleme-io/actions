@@ -41,10 +41,8 @@
 ;; Normalize a raw capacity-type env value to spot | on-demand |
 ;; unknown | <passthrough>. Karpenter emits exactly "spot" /
 ;; "on-demand".
-(define
-  (br:classify-capacity raw)
-  (let
-    ((v (string-trim raw)))
+(define (br:classify-capacity raw)
+  (let ((v (string-trim raw)))
     (cond
       ((equal? v "") "unknown")
       ((equal? v "spot") "spot")
@@ -53,46 +51,37 @@
 
 ;; A requirement is satisfied when it is not required, OR the signal
 ;; meets it.
-(define
-  (br:spot-ok? capacity require-spot)
+(define (br:spot-ok? capacity require-spot)
   (or (not (equal? require-spot "true")) (equal? capacity "spot")))
 
-(define
-  (br:taint-ok? node-group require-taint)
+(define (br:taint-ok? node-group require-taint)
   (or (not (equal? require-taint "true")) (not (equal? (string-trim node-group) ""))))
 
-(define
-  (br:scale-ok? min-runners require-s2z)
+(define (br:scale-ok? min-runners require-s2z)
   (or (not (equal? require-s2z "true")) (equal? (string-trim min-runners) "0")))
 
 ;; The retirada drain hook is armed only when explicitly requested AND
 ;; the handler is actually present. Never claims armed otherwise.
-(define
-  (br:drain-armed? drain-handler retirada-ready)
+(define (br:drain-armed? drain-handler retirada-ready)
   (and (equal? drain-handler "true") (equal? retirada-ready "ready")))
 
 ;; scale-to-zero output value: true | false | unknown (empty signal).
-(define
-  (br:scale-value min-runners)
+(define (br:scale-value min-runners)
   (cond
     ((equal? (string-trim min-runners) "0") "true")
     ((equal? (string-trim min-runners) "") "unknown")
     (else "false")))
 
 ;; Collect the unmet-requirement messages (empty list = posture OK).
-(define
-  (br:assess capacity node-group min-runners require-spot require-taint require-s2z)
+(define (br:assess capacity node-group min-runners require-spot require-taint require-s2z)
   (append
-    (if
-      (br:spot-ok? capacity require-spot)
+    (if (br:spot-ok? capacity require-spot)
       (list)
       (list (string-append "not on a spot node (capacity-type=" capacity ", require-spot=true)")))
-    (if
-      (br:taint-ok? node-group require-taint)
+    (if (br:taint-ok? node-group require-taint)
       (list)
       (list "not on a camelot-isolated node group (node-group empty, require-camelot-taint=true)"))
-    (if
-      (br:scale-ok? min-runners require-s2z)
+    (if (br:scale-ok? min-runners require-s2z)
       (list)
       (list
         (string-append
@@ -100,22 +89,28 @@
           min-runners
           ", require-scale-to-zero=true)")))))
 
-(define
-  (br:log-failures failures)
+(define (br:log-failures failures)
   (cond
     ((null? failures) #t)
     (else (log-error (string-append "  - " (car failures))) (br:log-failures (cdr failures)))))
 
 ;; ── Main ─────────────────────────────────────────────────────────
 
-(define
-  (main)
+(define (main)
   (let*
     ((require-spot (config-resolve "REQUIRE_SPOT" "breathe-runner" "require-spot" "true"))
       (require-taint
-        (config-resolve "REQUIRE_CAMELOT_TAINT" "breathe-runner" "require-camelot-taint" "true"))
+        (config-resolve
+          "REQUIRE_CAMELOT_TAINT"
+          "breathe-runner"
+          "require-camelot-taint"
+          "true"))
       (require-s2z
-        (config-resolve "REQUIRE_SCALE_TO_ZERO" "breathe-runner" "require-scale-to-zero" "false"))
+        (config-resolve
+          "REQUIRE_SCALE_TO_ZERO"
+          "breathe-runner"
+          "require-scale-to-zero"
+          "false"))
       (drain-handler (config-resolve "DRAIN_HANDLER" "breathe-runner" "drain-handler" "true"))
       (enforce (config-resolve "ENFORCE" "breathe-runner" "enforce" "true"))
       (cap-env
@@ -125,15 +120,30 @@
           "capacity-type-env"
           "CAMELOT_CAPACITY_TYPE"))
       (ng-env
-        (config-resolve "NODE_GROUP_ENV" "breathe-runner" "node-group-env" "CAMELOT_NODE_GROUP"))
+        (config-resolve
+          "NODE_GROUP_ENV"
+          "breathe-runner"
+          "node-group-env"
+          "CAMELOT_NODE_GROUP"))
       (mr-env
-        (config-resolve "MIN_RUNNERS_ENV" "breathe-runner" "min-runners-env" "CAMELOT_MIN_RUNNERS"))
+        (config-resolve
+          "MIN_RUNNERS_ENV"
+          "breathe-runner"
+          "min-runners-env"
+          "CAMELOT_MIN_RUNNERS"))
       (capacity (br:classify-capacity (env-get cap-env "")))
       (node-group (string-trim (env-get ng-env "")))
       (min-runners (string-trim (env-get mr-env "")))
       (retirada-ready (env-get "CAMELOT_RETIRADA" ""))
       (drain-armed (br:drain-armed? drain-handler retirada-ready))
-      (failures (br:assess capacity node-group min-runners require-spot require-taint require-s2z)))
+      (failures
+        (br:assess
+          capacity
+          node-group
+          min-runners
+          require-spot
+          require-taint
+          require-s2z)))
     ;; posture outputs (always emitted, whatever the gate decides)
     (append-output (string-append "capacity-type=" capacity))
     (append-output (string-append "node-group=" node-group))

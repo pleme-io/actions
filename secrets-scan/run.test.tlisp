@@ -16,8 +16,7 @@
 ;; licensed it: "gitleaks exits 1 on findings, 0 on clean."
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest
-  "gitleaks-outcome: THE defect — non-zero exit with NO report is 'scan-error"
+(deftest "gitleaks-outcome: THE defect — non-zero exit with NO report is 'scan-error"
   ;; The historical false-green. Trigger: a CONFIG_PATH typo — one input away.
   (assert
     (equal? (gitleaks-outcome 1 #f #f) 'scan-error)
@@ -29,15 +28,13 @@
     (gitleaks-outcome-unknown? (gitleaks-outcome 1 #f #f))
     "and it is classified as UNKNOWN, not as zero findings"))
 
-(deftest
-  "gitleaks-outcome: exit 0 is the ONLY route to 'clean"
+(deftest "gitleaks-outcome: exit 0 is the ONLY route to 'clean"
   (assert
     (equal? (gitleaks-outcome 0 #f #f) 'clean)
     "gitleaks exited 0 — clean, and no report is needed to say so")
   (assert (not (gitleaks-outcome-unknown? 'clean)) "'clean is a known result"))
 
-(deftest
-  "gitleaks-outcome: a report that exists but cannot be counted is UNKNOWN"
+(deftest "gitleaks-outcome: a report that exists but cannot be counted is UNKNOWN"
   (assert
     (equal? (gitleaks-outcome 1 #t #f) 'report-unparseable)
     "a truncated or unexpected report is not zero findings")
@@ -45,15 +42,13 @@
     (gitleaks-outcome-unknown? (gitleaks-outcome 1 #t #f))
     "so it fails loudly rather than passing"))
 
-(deftest
-  "gitleaks-outcome: 'findings requires BOTH a report and a readable count"
+(deftest "gitleaks-outcome: 'findings requires BOTH a report and a readable count"
   (assert
     (equal? (gitleaks-outcome 1 #t #t) 'findings)
     "non-zero exit + readable report = real findings")
   (assert (not (gitleaks-outcome-unknown? 'findings)) "'findings is a known result"))
 
-(deftest
-  "the UNKNOWN outcomes ignore fail-on-found — THE inversion"
+(deftest "the UNKNOWN outcomes ignore fail-on-found — THE inversion"
   ;; fail-on-found=false means "I accept known findings". It has never meant
   ;; "I accept not knowing". This is the single most important property here:
   ;; a repo that sets fail-on-found=false must still go red on a broken scan.
@@ -62,10 +57,8 @@
   (assert (not (gitleaks-outcome-unknown? 'clean)) "only real verdicts consult the flag")
   (assert (not (gitleaks-outcome-unknown? 'findings)) "only real verdicts consult the flag"))
 
-(deftest
-  "gitleaks-outcome-message names the LIKELY CAUSE, not just the failure"
-  (let
-    ((m (gitleaks-outcome-message 'scan-error 1)))
+(deftest "gitleaks-outcome-message names the LIKELY CAUSE, not just the failure"
+  (let ((m (gitleaks-outcome-message 'scan-error 1)))
     (assert (string-contains? m "NOT a clean result") "it says out loud that this is not a pass")
     (assert
       (string-contains? m "CONFIG_PATH")

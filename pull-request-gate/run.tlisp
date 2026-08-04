@@ -30,8 +30,7 @@
 
 (define bot-allowlist (env-get "BOT_ALLOWLIST" ""))
 
-(define
-  restricted-pred
+(define restricted-pred
   (env-get
     "RESTRICTED_PATHS_JQ_PREDICATE"
     ". == \"README.md\" or . == \"LICENSE\" or startswith(\".github/\") or startswith(\"docs/\") or endswith(\".md\")"))
@@ -42,9 +41,10 @@
 
 (define pr-author (if tlisp-test-mode "" (json-read-field event-path ".pull_request.user.login")))
 
-(define
-  pr-association
-  (if tlisp-test-mode "" (json-read-field event-path ".pull_request.author_association")))
+(define pr-association
+  (if tlisp-test-mode
+    ""
+    (json-read-field event-path ".pull_request.author_association")))
 
 (cond
   (tlisp-test-mode #t)
@@ -61,26 +61,22 @@
 
 ;; ── predicates ────────────────────────────────────────────────────────
 
-(define
-  (author-in-list? author list-str)
+(define (author-in-list? author list-str)
   (any-line-matches?
     (string-split list-str "\n")
     (lambda (line) (equal? (string-trim line) author))))
 
-(define
-  (looks-like-bot? author)
+(define (looks-like-bot? author)
   (or (string-contains? author "[bot]") (author-in-list? author bot-allowlist)))
 
 ;; Run a typed jq predicate over every file in the PR. The predicate binds
 ;; `.` to the filename string and returns bool; all() across the file array
 ;; gives the "every file is documentation" decision. --paginate handles
 ;; large diffs (>30 files per page). Returns true|false on stdout.
-(define
-  (all-files-restricted?)
+(define (all-files-restricted?)
   (let
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "gh api /repos/"
@@ -96,8 +92,7 @@
 
 ;; ── actions ───────────────────────────────────────────────────────────
 
-(define
-  drive-by-comment-body
+(define drive-by-comment-body
   (string-append
     "This pull request was automatically closed by "
     "[`pleme-io/actions/pull-request-gate`]"
@@ -135,10 +130,8 @@
 ;; is "checked and reported", not "unrepresentable".
 
 ;; Run one gh mutation. Returns "" on success, else the step's label.
-(define
-  (gh-mutation label cmd-list)
-  (let
-    ((status (apply exec-check cmd-list)))
+(define (gh-mutation label cmd-list)
+  (let ((status (apply exec-check cmd-list)))
     (cond
       ((= status 0) (log-info (string-append "   [ok] " label)) "")
       (else
@@ -149,8 +142,7 @@
 ;; fatal here: this is the single tolerated discard in the file, and it is
 ;; tolerated because the NEXT step is the real check — if the label still does
 ;; not exist, `--add-label` fails and the gate goes red.
-(define
-  (ensure-label label color description)
+(define (ensure-label label color description)
   (exec-check
     "gh"
     "label"
@@ -165,10 +157,8 @@
     "--force"))
 
 ;; #t iff every mutation landed. Never announces success it cannot show.
-(define
-  (enforcement-complete? failures)
-  (let
-    ((bad (filter (lambda (f) (not (equal? f ""))) failures)))
+(define (enforcement-complete? failures)
+  (let ((bad (filter (lambda (f) (not (equal? f ""))) failures)))
     (cond
       ((null? bad) #t)
       (else
@@ -182,8 +172,7 @@
             "used to exit 0 here, reporting enforcement it never performed."))
         #f))))
 
-(define
-  (close-and-lock-drive-by)
+(define (close-and-lock-drive-by)
   (log-info "→ external drive-by detected; commenting, labeling, closing, locking")
   (ensure-label
     "external-drive-by"
@@ -193,10 +182,26 @@
     (list
       (gh-mutation
         "comment"
-        (list "gh" "pr" "comment" pr-number "--repo" repo "--body" drive-by-comment-body))
+        (list
+          "gh"
+          "pr"
+          "comment"
+          pr-number
+          "--repo"
+          repo
+          "--body"
+          drive-by-comment-body))
       (gh-mutation
         "add-label external-drive-by"
-        (list "gh" "pr" "edit" pr-number "--repo" repo "--add-label" "external-drive-by"))
+        (list
+          "gh"
+          "pr"
+          "edit"
+          pr-number
+          "--repo"
+          repo
+          "--add-label"
+          "external-drive-by"))
       (gh-mutation "close" (list "gh" "pr" "close" pr-number "--repo" repo))
       (gh-mutation
         "lock"
@@ -205,19 +210,34 @@
           "api"
           "--method"
           "PUT"
-          (string-append "/repos/" repo "/issues/" pr-number "/lock")
+          (string-append
+            "/repos/"
+            repo
+            "/issues/"
+            pr-number
+            "/lock")
           "-f"
           "lock_reason=spam")))))
 
-(define
-  (label-and-request-review label)
+(define (label-and-request-review label)
   (log-info (string-append "→ labeling PR '" label "'"))
-  (ensure-label label "FBCA04" "Set by pleme-io/actions/pull-request-gate")
+  (ensure-label
+    label
+    "FBCA04"
+    "Set by pleme-io/actions/pull-request-gate")
   (enforcement-complete?
     (list
       (gh-mutation
         (string-append "add-label " label)
-        (list "gh" "pr" "edit" pr-number "--repo" repo "--add-label" label)))))
+        (list
+          "gh"
+          "pr"
+          "edit"
+          pr-number
+          "--repo"
+          repo
+          "--add-label"
+          label)))))
 
 ;; ── decision tree ─────────────────────────────────────────────────────
 ;; Every enforcing branch now EXITS ON ITS OWN VERDICT. Branches (3) and (4)
@@ -241,13 +261,24 @@
   ;; (2) Bot — a label that does not land is a label we must not claim
   ((looks-like-bot? pr-author)
     (log-info (string-append "Author '" pr-author "' is a known bot; labeling 'bot-pr'."))
-    (ensure-label "bot-pr" "EDEDED" "Set by pleme-io/actions/pull-request-gate")
+    (ensure-label
+      "bot-pr"
+      "EDEDED"
+      "Set by pleme-io/actions/pull-request-gate")
     (exit-on-enforcement
       (enforcement-complete?
         (list
           (gh-mutation
             "add-label bot-pr"
-            (list "gh" "pr" "edit" pr-number "--repo" repo "--add-label" "bot-pr"))))))
+            (list
+              "gh"
+              "pr"
+              "edit"
+              pr-number
+              "--repo"
+              repo
+              "--add-label"
+              "bot-pr"))))))
 
   ;; (3) First-time external + restricted-only diff
   ((and (equal? pr-association "FIRST_TIME_CONTRIBUTOR") (all-files-restricted?))

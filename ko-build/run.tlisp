@@ -8,16 +8,21 @@
 
 (define push (env-get "PUSH" "true"))
 
-(let
-  ((env-file (env-get "GITHUB_ENV" "")))
+(let ((env-file (env-get "GITHUB_ENV" "")))
   (cond
     ((not (equal? env-file ""))
-      (exec-check "sh" "-c" (string-append "echo 'KO_DOCKER_REPO=" repo "' >> " env-file)))))
+      (exec-check
+        "sh"
+        "-c"
+        (string-append
+          "echo 'KO_DOCKER_REPO="
+          repo
+          "' >> "
+          env-file)))))
 
 (define push-flag (if (equal? push "true") "--push=true" "--push=false --local"))
 
-(define
-  cmd
+(define cmd
   (string-append
     "KO_DOCKER_REPO="
     repo
@@ -32,5 +37,7 @@
 
 (cond
   ((= (status-of r) 0)
-    (let ((img (string-trim (stdout-of r)))) (append-output (string-append "image=" img)) (exit 0)))
+    (let ((img (string-trim (stdout-of r))))
+      (append-output (string-append "image=" img))
+      (exit 0)))
   (else (append-output "image=") (exit 1)))

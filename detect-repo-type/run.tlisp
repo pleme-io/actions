@@ -21,13 +21,11 @@
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define
-  (append-output line)
+(define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
-(define
-  (emit type manifest)
+(define (emit type manifest)
   (log-info (string-append "detected: " type " (manifest: " manifest ")"))
   (append-output (string-append "repo-type=" type))
   (append-output (string-append "manifest-path=" manifest))
@@ -37,18 +35,15 @@
 ;; Rust detection — workspace vs single-crate                      ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (cargo-has-section? section)
+(define (cargo-has-section? section)
   (and (path-exists? "Cargo.toml") (string-contains? (read-file "Cargo.toml") section)))
 
 ;; -------------------------------------------------------------- ;;
 ;; Ruby gem — find any *.gemspec at root                           ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (find-gemspec)
-  (let
-    ((r (exec-capture "sh" "-c" "ls *.gemspec 2>/dev/null | head -1")))
+(define (find-gemspec)
+  (let ((r (exec-capture "sh" "-c" "ls *.gemspec 2>/dev/null | head -1")))
     (string-trim (alist-get r "stdout" ""))))
 
 ;; -------------------------------------------------------------- ;;
@@ -63,10 +58,8 @@
 ;; repo, which is exactly the pure-tlisp library case.              ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (find-caixa-manifest)
-  (let
-    ((r (exec-capture "sh" "-c" "ls *.caixa.lisp 2>/dev/null | head -1")))
+(define (find-caixa-manifest)
+  (let ((r (exec-capture "sh" "-c" "ls *.caixa.lisp 2>/dev/null | head -1")))
     (string-trim (alist-get r "stdout" ""))))
 
 ;; -------------------------------------------------------------- ;;

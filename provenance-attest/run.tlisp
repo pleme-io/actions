@@ -14,16 +14,12 @@
 
 ;; cosign sign-blob with keyless OIDC. The Y prompt is bypassed
 ;; by --yes flag; tlog uploads to Rekor automatically.
-(define
-  r
-  (exec-capture
-    "cosign"
+(define r
+  (exec-capture "cosign"
     "sign-blob"
     "--yes"
-    "--output-signature"
-    sig
-    "--output-certificate"
-    cert
+    "--output-signature" sig
+    "--output-certificate" cert
     artifact))
 
 (cond

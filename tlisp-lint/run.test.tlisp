@@ -3,8 +3,7 @@
 ;;   <stdlib> + run.tlisp + run.test.tlisp   with TLISP_TEST=1
 ;; so no `find`, no python and no repo walk happens.
 
-(deftest
-  "top-level-define-name: reads the defined name, ignores non-defines"
+(deftest "top-level-define-name: reads the defined name, ignores non-defines"
   (assert
     (equal? (top-level-define-name "(define (dep-missing-on-line? line)") "dep-missing-on-line?")
     "function define")
@@ -22,8 +21,7 @@
     (equal? (top-level-define-name "(cond ((null? xs) 0))") "")
     "a non-define line yields \"\""))
 
-(deftest
-  "collect-define-names: only column-0 defines, in order"
+(deftest "collect-define-names: only column-0 defines, in order"
   (let
     ((src
        (list
@@ -37,10 +35,8 @@
       (equal? (collect-define-names src (list)) (list "alpha" "beta" "gamma"))
       "alpha/beta/gamma only — ghost is a comment, inner is indented")))
 
-(deftest
-  "shadowed-names: the intersection with the stdlib, nothing else"
-  (let
-    ((stdlib-names (list "append-output" "status-of" "cargo-publish-dep-missing-line?")))
+(deftest "shadowed-names: the intersection with the stdlib, nothing else"
+  (let ((stdlib-names (list "append-output" "status-of" "cargo-publish-dep-missing-line?")))
     (assert
       (equal?
         (shadowed-names (list "publish-args" "append-output" "do-publish") stdlib-names)
@@ -50,8 +46,7 @@
       (null? (shadowed-names (list "publish-args" "do-publish") stdlib-names))
       "a clean action shadows nothing")))
 
-(deftest
-  "the REAL regression: a local dep-missing predicate is caught as a shadow"
+(deftest "the REAL regression: a local dep-missing predicate is caught as a shadow"
   ;; This is the exact defect the rule exists for. rust-workspace-publish
   ;; re-defined the stdlib's cargo-publish predicate family; the local copies
   ;; won, diverged, and stalled the tatara-lisp 0.3.x line at 0.2.5.
@@ -63,15 +58,18 @@
          "cargo-publish-rate-limited-line?"
          "any-line-matches?"))
       (action-names
-        (list "publish-args" "cargo-publish-dep-missing-line?" "any-line-matches?" "topo-order")))
+        (list
+          "publish-args"
+          "cargo-publish-dep-missing-line?"
+          "any-line-matches?"
+          "topo-order")))
     (assert
       (equal?
         (shadowed-names action-names stdlib-names)
         (list "cargo-publish-dep-missing-line?" "any-line-matches?"))
       "both re-declared predicates are reported")))
 
-(deftest
-  "shadow-row: the baseline row format is path TAB name, path normalized"
+(deftest "shadow-row: the baseline row format is path TAB name, path normalized"
   (assert
     (equal?
       (shadow-row "some-action/run.tlisp" "append-output")
@@ -90,8 +88,7 @@
     (equal? (repo-relative "x/run.tlisp") "x/run.tlisp")
     "an already-relative path is untouched"))
 
-(deftest
-  "the shipped baseline is loaded, non-empty, and comment-free"
+(deftest "the shipped baseline is loaded, non-empty, and comment-free"
   ;; A baseline that silently fails to load would make the gate VACUOUS in the
   ;; other direction — every existing shadow would read as new and CI would be
   ;; permanently red, which is the pressure that gets a gate deleted.
@@ -101,21 +98,21 @@
     (name-member? "cargo-publish-crate/run.tlisp\tappend-output" baselined-shadows)
     "a known pre-existing shadow is baselined"))
 
-(deftest
-  "new-shadow-rows: baselined shadows pass, an unlisted one is NEW"
-  (let
-    ((stdlib-names (list "append-output" "status-of")))
+(deftest "new-shadow-rows: baselined shadows pass, an unlisted one is NEW"
+  (let ((stdlib-names (list "append-output" "status-of")))
     (assert
       (null? (new-shadow-rows "cargo-publish-crate/run.tlisp" (list "append-output") stdlib-names))
       "a baselined row is not a new violation")
     (assert
       (equal?
-        (new-shadow-rows "brand-new-action/run.tlisp" (list "append-output") stdlib-names)
+        (new-shadow-rows
+          "brand-new-action/run.tlisp"
+          (list "append-output")
+          stdlib-names)
         (list "brand-new-action/run.tlisp\tappend-output"))
       "an unlisted shadow IS a new violation")))
 
-(deftest
-  "rust-workspace-publish is at ZERO stdlib shadows (it is not baselined)"
+(deftest "rust-workspace-publish is at ZERO stdlib shadows (it is not baselined)"
   ;; The action the whole fix is about must not be carrying any private copy —
   ;; and must not have been quietly baselined instead of cleaned.
   (assert
@@ -136,8 +133,7 @@
 ;; a fresh file turning the run red while Layer 1 logs OK) is in the commit.
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest
-  "line-code-literals: a literal in a COMMENT is not a literal"
+(deftest "line-code-literals: a literal in a COMMENT is not a literal"
   ;; This is the single most load-bearing narrowing. Un-stripped, 6 of 14 raw
   ;; rows were rust-workspace-publish's own prose EXPLAINING the historical bug
   ;; — a gate that fails you for documenting the defect you fixed gets deleted.
@@ -156,8 +152,7 @@
     (equal? (line-code-literals "(f \"a\" \"b\")") (list "a" "b"))
     "two literals on one line both extract"))
 
-(deftest
-  "diagnostic-literal?: a sentence, not a word, and not shell plumbing"
+(deftest "diagnostic-literal?: a sentence, not a word, and not shell plumbing"
   (assert
     (diagnostic-literal? "failed to select a version")
     "a cargo diagnostic sentence qualifies")
@@ -172,8 +167,7 @@
     (not (diagnostic-literal? "echo $HOME is a home"))
     "interpolation is shell, not diagnostic"))
 
-(deftest
-  "literal-kin?: CONTAINMENT either way — equality would MISS the defect"
+(deftest "literal-kin?: CONTAINMENT either way — equality would MISS the defect"
   ;; The historical local literal was a strict PREFIX of the stdlib's.
   (assert
     (literal-kin? "failed to select a version" "failed to select a version for")
@@ -186,10 +180,8 @@
     (not (literal-kin? "failed to select a version" "no matching package named"))
     "unrelated diagnostics are not kin"))
 
-(deftest
-  "kin-stdlib-literal names WHICH stdlib literal was re-typed"
-  (let
-    ((std (list "no matching package named" "failed to select a version for")))
+(deftest "kin-stdlib-literal names WHICH stdlib literal was re-typed"
+  (let ((std (list "no matching package named" "failed to select a version for")))
     (assert
       (equal?
         (kin-stdlib-literal "failed to select a version" std)
@@ -199,8 +191,7 @@
       (equal? (kin-stdlib-literal "totally unrelated text here" std) "")
       "and \"\" means no kinship")))
 
-(deftest
-  "literal-exempt-file?: *.test.tlisp holds VERBATIM tool output by design"
+(deftest "literal-exempt-file?: *.test.tlisp holds VERBATIM tool output by design"
   ;; MEASURED: including test files the gate reported 20 errors, essentially all
   ;; fixtures and deftest titles. A fixture that is the real cargo log is the
   ;; thing we want authors to write.
@@ -212,8 +203,7 @@
     (not (literal-exempt-file? "./zot-pull-scan/pull.tlisp"))
     "a non-run entrypoint is still scanned"))
 
-(deftest
-  "literal-row TRIMS the literal — a trailing-space baseline row never matches"
+(deftest "literal-row TRIMS the literal — a trailing-space baseline row never matches"
   ;; Found by RUNNING the gate: the "Authorization: token " literal has a
   ;; trailing space, so its untrimmed baseline row silently never matched and
   ;; the row read as NEW forever.
@@ -233,8 +223,7 @@
 ;; the baseline is keyed on.
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest
-  "row-field: TSV by index, and a short row yields \"\" not nil"
+(deftest "row-field: TSV by index, and a short row yields \"\" not nil"
   (assert
     (equal? (row-field "CALL\tp\t7\tstring-replace\t4" 3) "string-replace")
     "the head is field 3")
@@ -249,8 +238,7 @@
     (equal? (row-field "HEAD\tcar" 5) "")
     "past the end is \"\" — nth returns nil there, and a nil in a string-append is a runtime error, so the length guard is load-bearing"))
 
-(deftest
-  "probe-exact-arity: reads the arity OUT OF THE INTERPRETER'S OWN ERROR"
+(deftest "probe-exact-arity: reads the arity OUT OF THE INTERPRETER'S OWN ERROR"
   ;; These verdict strings are the interpreter's real output, captured by
   ;;   (try (string-replace #f #f #f #f) (catch (e) e))
   ;; That is the whole reason Layer 6 hand-lists nothing.
@@ -290,8 +278,7 @@
     (equal? (probe-exact-arity "list" "[Bool(false), Bool(false)]") "")
     "a variadic that ACCEPTED 23 args answers with a value, not an error"))
 
-(deftest
-  "probe-row->arity-row: one arity-table row per probed native primitive"
+(deftest "probe-row->arity-row: one arity-table row per probed native primitive"
   (assert
     (equal?
       (probe-row->arity-row
@@ -305,8 +292,7 @@
     (equal? (probe-row->arity-row "[05:30:57] INFO ARITYPROBE\tlist\t[Bool(false)]") "")
     "a marked line with no arity verdict contributes nothing"))
 
-(deftest
-  "arity-probe-line: the probe can only ARITY-FAIL, never run the body"
+(deftest "arity-probe-line: the probe can only ARITY-FAIL, never run the body"
   ;; Load-bearing safety property. `Interpreter::apply` checks arity BEFORE it
   ;; invokes the callable, so a probe at an absurd count never reaches an
   ;; effectful primitive's body. And when the count IS accepted (a variadic),
@@ -323,8 +309,7 @@
     (not (string-contains? (arity-probe-line "exec-capture") "\"\""))
     "the dummy is #f, never an empty string — a string ARG would satisfy the marshaller and let a variadic effectful primitive actually run"))
 
-(deftest
-  "the crash-certain row formats the baseline is keyed on"
+(deftest "the crash-certain row formats the baseline is keyed on"
   (assert
     (equal?
       (namedlet-row "NAMEDLET\t./helm-deploy/run.tlisp\t21\tlet")
@@ -339,8 +324,7 @@
       "kafka-publish/run.tlisp:10\tstring-replace/4 (wants 3)")
     "got/want are both in the row, so a baseline entry pins the exact defect"))
 
-(deftest
-  "the crash-certain baseline is loaded AND EMPTY — zero tolerated debt"
+(deftest "the crash-certain baseline is loaded AND EMPTY — zero tolerated debt"
   ;; Layers 4 and 5 baseline real debt because a stdlib shadow is survivable.
   ;; A crash-certain form is not survivable: it is code that cannot run. Every
   ;; instance found on the day this landed was FIXED, not baselined, so the
@@ -350,23 +334,19 @@
     (path-exists? crash-baseline-path)
     "and the file itself exists, so the filter above is reading a real file rather than silently defaulting to an empty list"))
 
-(deftest
-  "crash-row-new?: an unbaselined row is NEW"
+(deftest "crash-row-new?: an unbaselined row is NEW"
   (assert
     (crash-row-new? "some-action/run.tlisp:9\tnamed-let")
     "with an empty baseline every crash-certain row is new"))
 
-(deftest
-  "nonblank-lines drops blanks so a trailing newline is not a row"
+(deftest "nonblank-lines drops blanks so a trailing newline is not a row"
   (assert
     (equal? (nonblank-lines "a\nb\n") (list "a" "b"))
     "the trailing newline python's print adds does not become an empty row")
   (assert (null? (nonblank-lines "\n  \n")) "whitespace-only input yields nothing"))
 
-(deftest
-  "rows-of-kind: the reader's row kinds do not bleed into each other"
-  (let
-    ((rows (list "NAMEDLET\tp\t1\tlet" "HEAD\tcar" "HEAD\tcdr")))
+(deftest "rows-of-kind: the reader's row kinds do not bleed into each other"
+  (let ((rows (list "NAMEDLET\tp\t1\tlet" "HEAD\tcar" "HEAD\tcdr")))
     (assert (equal? (rows-of-kind rows "HEAD") (list "HEAD\tcar" "HEAD\tcdr")) "only HEAD rows")
     (assert (equal? (length (rows-of-kind rows "NAMEDLET")) 1) "only NAMEDLET rows")
     (assert (null? (rows-of-kind rows "ARITYVIOL")) "an absent kind yields nothing")))

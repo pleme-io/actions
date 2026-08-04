@@ -5,14 +5,12 @@
 
 (define token (env-get "ANSIBLE_GALAXY_TOKEN" ""))
 
-(when
-  (equal? token "")
+(when (equal? token "")
   (log-info "ANSIBLE_GALAXY_TOKEN not set — skipping publish (no-op)")
   (exit 0))
 
 (define status (exec-check "nix" "run" ".#publish"))
 
-(unless
-  (= status 0)
+(unless (= status 0)
   (log-error (string-append "nix run .#publish failed with status " (string-format "{}" status)))
   (exit status))

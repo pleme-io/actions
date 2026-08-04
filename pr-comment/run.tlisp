@@ -13,14 +13,17 @@
 (define full-body (string-append marker-line "\n" body))
 
 ;; Find an existing comment by walking the issue's comments + grepping for marker.
-(define
-  (find-existing)
+(define (find-existing)
   (let*
     ((r
-       (exec-capture
-         "gh"
+       (exec-capture "gh"
          "api"
-         (string-append "repos/" repo "/issues/" pr-num "/comments")
+         (string-append
+           "repos/"
+           repo
+           "/issues/"
+           pr-num
+           "/comments")
          "--paginate")))
     (cond
       ((not (= (status-of r) 0)) "")
@@ -28,12 +31,14 @@
         (let*
           ((out (stdout-of r))
             (jq-r
-              (exec-capture
-                "sh"
+              (exec-capture "sh"
                 "-c"
                 (string-append
                   "echo "
-                  (string-replace out "'" "'\"'\"'")
+                  (string-replace
+                    out
+                    "'"
+                    "'\"'\"'")
                   " | jq -r '.[] | select(.body | contains(\""
                   marker-line
                   "\")) | .id' | head -1"))))
@@ -46,24 +51,29 @@
     (log-info "no existing comment — creating")
     (let
       ((r
-         (exec-capture
-           "gh"
+         (exec-capture "gh"
            "api"
-           (string-append "repos/" repo "/issues/" pr-num "/comments")
-           "-f"
-           (string-append "body=" full-body))))
+           (string-append
+             "repos/"
+             repo
+             "/issues/"
+             pr-num
+             "/comments")
+           "-f" (string-append "body=" full-body))))
       (cond
         ((= (status-of r) 0)
           (let
             ((id
                (string-trim
                  (stdout-of
-                   (exec-capture
-                     "sh"
+                   (exec-capture "sh"
                      "-c"
                      (string-append
                        "echo "
-                       (string-replace (stdout-of r) "'" "'\"'\"'")
+                       (string-replace
+                         (stdout-of r)
+                         "'"
+                         "'\"'\"'")
                        " | jq '.id'"))))))
             (append-output (string-append "comment-id=" id))
             (append-output "action-taken=created")
@@ -77,14 +87,15 @@
     (log-info (string-append "updating existing comment " existing-id))
     (let
       ((r
-         (exec-capture
-           "gh"
+         (exec-capture "gh"
            "api"
-           "-X"
-           "PATCH"
-           (string-append "repos/" repo "/issues/comments/" existing-id)
-           "-f"
-           (string-append "body=" full-body))))
+           "-X" "PATCH"
+           (string-append
+             "repos/"
+             repo
+             "/issues/comments/"
+             existing-id)
+           "-f" (string-append "body=" full-body))))
       (cond
         ((= (status-of r) 0)
           (append-output (string-append "comment-id=" existing-id))

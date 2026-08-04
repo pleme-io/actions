@@ -5,8 +5,7 @@
 
 (define ignore-list (env-get "IGNORE_LIST" ""))
 
-(define
-  (severity-rank s)
+(define (severity-rank s)
   (cond
     ((equal? s "critical") 4)
     ((equal? s "high") 3)
@@ -18,8 +17,7 @@
 
 ;; ── Per-ecosystem runners. Each emits (ecosystem, severity, count). ──
 
-(define
-  (run-cargo-audit)
+(define (run-cargo-audit)
   (log-info "==> cargo audit")
   (let*
     ((r (exec-capture "cargo" "audit" "--json"))
@@ -39,10 +37,12 @@
            ((= (status-of r) 0) "none")
            (else "high"))))
       ;; non-zero exit with no parseable sev → conservative
-      (list "cargo-audit" sev n))))
+      (list
+        "cargo-audit"
+        sev
+        n))))
 
-(define
-  (run-npm-audit)
+(define (run-npm-audit)
   (log-info "==> npm audit")
   (let*
     ((r (exec-capture "npm" "audit" "--json"))
@@ -57,10 +57,12 @@
            ((log-contains? out "low") "low")
            ((= (status-of r) 0) "none")
            (else "high"))))
-      (list "npm-audit" sev n))))
+      (list
+        "npm-audit"
+        sev
+        n))))
 
-(define
-  (run-pip-audit)
+(define (run-pip-audit)
   (log-info "==> pip-audit")
   (let*
     ((r (exec-capture "sh" "-c" "uv tool run pip-audit 2>&1"))
@@ -75,12 +77,14 @@
            ((log-contains? out "LOW") "low")
            ((= (status-of r) 0) "none")
            (else "high"))))
-      (list "pip-audit" sev n))))
+      (list
+        "pip-audit"
+        sev
+        n))))
 
 ;; ── Dispatch by manifest presence ────────────────────────────────
 
-(define
-  result
+(define result
   (cond
     ((path-exists? "Cargo.toml") (run-cargo-audit))
     ((path-exists? "package.json") (run-npm-audit))
@@ -100,7 +104,13 @@
 (append-output (string-append "vuln-count=" (string-format "{}" vuln-count)))
 
 (log-info
-  (string-append "result: " ecosystem " sev=" severity " count=" (string-format "{}" vuln-count)))
+  (string-append
+    "result: "
+    ecosystem
+    " sev="
+    severity
+    " count="
+    (string-format "{}" vuln-count)))
 
 (cond
   ((equal? fail-on "none") (log-info "fail-on=none — passing regardless of findings") (exit 0))

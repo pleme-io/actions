@@ -34,8 +34,7 @@
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 
-(define
-  (severity-rank s)
+(define (severity-rank s)
   (cond
     ((equal? s "CRITICAL") 5)
     ((equal? s "HIGH") 4)
@@ -48,8 +47,7 @@
 ;; Case-sensitive, matching trivy's own JSON casing exactly -- a lowercase
 ;; or misspelled value is exactly the "malformed config" case this gate
 ;; must never treat as permissive.
-(define
-  (known-fail-on? s)
+(define (known-fail-on? s)
   (or
     (equal? s "CRITICAL")
     (equal? s "HIGH")
@@ -70,14 +68,12 @@
 
 ;; #t iff a scan run whose max SEVERITY meets/exceeds the FAIL-ON threshold
 ;; should be rejected (gate fails). fail-on "none" never rejects.
-(define
-  (gate-rejects? severity fail-on)
+(define (gate-rejects? severity fail-on)
   (cond ((equal? fail-on "none") #f) (else (>= (severity-rank severity) (severity-rank fail-on)))))
 
 ;; ── main: every side effect lives here ───────────────────────────
 
-(define
-  (main)
+(define (main)
   (let*
     ((image (env-required "IMAGE_REF"))
       ;; Pre-publish gate shape: a non-empty LOCAL_ARCHIVE means scan a
@@ -107,8 +103,7 @@
       ;; finding, the other answers it.
       (vex-file (env-get "VEX_FILE" "")))
 
-    (if
-      (not (equal? fail-on-raw fail-on))
+    (if (not (equal? fail-on-raw fail-on))
       (log-error
         (string-append
           "FAIL_ON_SEVERITY='"
@@ -122,8 +117,7 @@
       #t)
 
     (log-info
-      (if
-        (equal? local-archive "")
+      (if (equal? local-archive "")
         (string-append "==> trivy image " image)
         (string-append
           "==> trivy image --input "
@@ -150,7 +144,10 @@
             unfixed-flag
             ignorefile-flag
             vex-flag
-            (list "--format" "json" "--quiet")
+            (list
+              "--format"
+              "json"
+              "--quiet")
             target-flag))
         (r (apply exec-capture (cons "trivy" args))))
 
@@ -175,8 +172,7 @@
           (append-output "vuln-count=0")
           1)
         (else
-          (let
-            ((out (stdout-of r)))
+          (let ((out (stdout-of r)))
             ;; Written to a temp file first and read BY PATH (a short
             ;; argument), never embedded inline in a shell command string --
             ;; a real image's trivy JSON (Neo4j: 574 findings on the stock
@@ -189,7 +185,9 @@
             ;; reason" discipline this gate exists for.
             (let
               ((trivy-output-file
-                 (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-output.json")))
+                 (string-append
+                   (env-get "RUNNER_TEMP" "/tmp")
+                   "/image-scan-trivy-output.json")))
               (write-file trivy-output-file out)
 
               ;; Pull the MAX severity from the json via a real jq parse over
@@ -218,8 +216,7 @@
                      "elif any(.==\"UNKNOWN\") then \"UNKNOWN\" "
                      "else \"none\" end"))
                   (severity-r
-                    (exec-capture
-                      "sh"
+                    (exec-capture "sh"
                       "-c"
                       (string-append
                         "jq -r '"
@@ -250,9 +247,10 @@
                   (else
                     (let
                       ((severity
-                         (let
-                           ((v (string-trim (stdout-of severity-r))))
-                           (if (equal? v "") "none" v))))
+                         (let ((v (string-trim (stdout-of severity-r))))
+                           (if (equal? v "")
+                             "none"
+                             v))))
 
                       ;; Count occurrences of "Severity" — coarse but useful,
                       ;; and NOT broken the same way severity was: this is a
@@ -269,12 +267,17 @@
                       ;; treatment as severity above.
                       (let*
                         ((count-r
-                           (exec-capture
-                             "sh"
+                           (exec-capture "sh"
                              "-c"
-                             (string-append "grep -c '\"Severity\":' " trivy-output-file " || true")))
+                             (string-append
+                               "grep -c '\"Severity\":' "
+                               trivy-output-file
+                               " || true")))
                           (vuln-count
-                            (let ((v (string-trim (stdout-of count-r)))) (if (equal? v "") "0" v))))
+                            (let ((v (string-trim (stdout-of count-r))))
+                              (if (equal? v "")
+                                "0"
+                                v))))
 
                         ;; ── THE DENOMINATOR (added 2026-07-31) ──────────────
                         ;; `count=0` printed identically whether trivy examined
@@ -301,8 +304,7 @@
                         ;; "0 of 0" can never again be read as "0 of many".
                         (let*
                           ((targets-r
-                             (exec-capture
-                               "sh"
+                             (exec-capture "sh"
                                "-c"
                                (string-append
                                  "jq -r '[.Results[]?] | length' "
@@ -310,7 +312,9 @@
                                  " 2>/dev/null || echo unknown")))
                             (targets
                               (let ((v (string-trim (stdout-of targets-r))))
-                                (if (equal? v "") "unknown" v))))
+                                (if (equal? v "")
+                                  "unknown"
+                                  v))))
                           (append-output (string-append "severity=" severity))
                           (append-output (string-append "vuln-count=" vuln-count))
                           (append-output (string-append "scanned-targets=" targets))
@@ -342,7 +346,11 @@
                             0)
                           ((gate-rejects? severity fail-on)
                             (log-error
-                              (string-append "severity " severity " >= threshold " fail-on))
+                              (string-append
+                                "severity "
+                                severity
+                                " >= threshold "
+                                fail-on))
                             1)
                           (else (log-info "below threshold — passing") 0))))))))))))))
 

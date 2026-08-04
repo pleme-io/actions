@@ -10,8 +10,7 @@
 (define open-issue (env-get "OPEN_ISSUE" "false"))
 
 ;; List repos via gh api with pagination.
-(define
-  list-cmd
+(define list-cmd
   (string-append
     "gh repo list "
     org
@@ -20,7 +19,9 @@
     vis
     " --json name,isArchived"
     " --jq '.[] | select("
-    (if (equal? excl-arch "true") ".isArchived == false" "true")
+    (if (equal? excl-arch "true")
+      ".isArchived == false"
+      "true")
     ") | .name'"))
 
 (log-info (string-append "==> listing repos: " list-cmd))
@@ -34,25 +35,22 @@
 (log-info (string-append "scanning " (string-format "{}" (length repos)) " repos"))
 
 ;; For each repo: check if .github/workflows/auto-release.yml exists.
-(define
-  (check-repo r)
+(define (check-repo r)
   (let
-    ((cmd
-       (string-append
-         "gh api repos/"
-         org
-         "/"
-         r
-         "/contents/.github/workflows/auto-release.yml"
-         " --silent 2>/dev/null")))
+    ((cmd (string-append
+        "gh api repos/"
+        org
+        "/"
+        r
+        "/contents/.github/workflows/auto-release.yml"
+        " --silent 2>/dev/null")))
     (= (status-of (exec-capture "sh" "-c" cmd)) 0)))
 
 (define adopted 0)
 
 (define gap-list (list))
 
-(define
-  (audit-repos rs)
+(define (audit-repos rs)
   (cond
     ((null? rs) #t)
     ((equal? (car rs) "") (audit-repos (cdr rs)))
@@ -68,15 +66,13 @@
 
 (define gaps (length gap-list))
 
-(define
-  pct
+(define pct
   (cond
     ((= total 0) "0")
     (else
       (let
         ((p-r
-           (exec-capture
-             "sh"
+           (exec-capture "sh"
              "-c"
              (string-append
                "echo "
@@ -95,8 +91,7 @@
 (append-output (string-append "adoption-pct=" pct))
 
 ;; Emit markdown report.
-(define
-  report
+(define report
   (string-append
     "# pleme-io ★★ AUTO-RELEASE adoption audit\n\n"
     "**Org**: "
@@ -107,7 +102,9 @@
     " "
     vis
     " repos"
-    (if (equal? excl-arch "true") " (excl. archived)" "")
+    (if (equal? excl-arch "true")
+      " (excl. archived)"
+      "")
     "\n"
     "**Adopted**: "
     (string-format "{}" adopted)
@@ -119,8 +116,7 @@
     "\n\n"
     "## Gap repos (no .github/workflows/auto-release.yml)\n\n"))
 
-(define
-  (render-gap-rows gs acc)
+(define (render-gap-rows gs acc)
   (cond
     ((null? gs)
       (write-file "/tmp/adoption-audit.md" (string-append report acc))

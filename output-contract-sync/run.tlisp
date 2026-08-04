@@ -119,7 +119,8 @@
 
 (define dyn-spec-path (env-get "DYNAMIC_KEYS" "output-contract-sync/dynamic-keys.tsv"))
 
-(define wrapper-baseline-path (env-get "WRAPPER_BASELINE" "output-contract-sync/wrapper-baseline.txt"))
+(define wrapper-baseline-path
+  (env-get "WRAPPER_BASELINE" "output-contract-sync/wrapper-baseline.txt"))
 
 (define BEGIN-MARK "# BEGIN GENERATED OUTPUTS -- output-contract-sync; do not hand-edit below.")
 
@@ -141,15 +142,13 @@
 
 (define (num n) (string-format "{}" n))
 
-(define
-  (die msg)
+(define (die msg)
   (log-error (string-append "output-contract-sync: " msg))
   (exit 1))
 
 ;; ── corpus enumeration (ls sorts; glob does not) ──────────────────────────
 
-(define
-  action-dirs
+(define action-dirs
   (filter
     (fn (d)
       (and
@@ -172,12 +171,10 @@
 ;; exactly the multi-line outputs — changelog-generate's `changelog` is one
 ;; today — i.e. the keys most likely to carry real payload.
 
-(define
-  STATIC-RE
+(define STATIC-RE
   "append-output[ \t\n]*\\(?[ \t\n]*(\\(string-append[ \t\n]*)?\"([a-zA-Z0-9_-]+)(=|<<)")
 
-(define
-  DYN-RE
+(define DYN-RE
   "append-output[ \t\n]*\\(string-append[ \t\n]*\"([a-zA-Z0-9_-]*)\"[ \t\n]+([a-z][a-zA-Z0-9?!*-]*)")
 
 (define REF-RE "steps\\.([a-zA-Z0-9_-]+)\\.outputs\\.([a-zA-Z0-9_-]+)")
@@ -189,70 +186,68 @@
 ;; otherwise claim them as its own. Only lines whose first non-whitespace
 ;; character is `;` are blanked: a trailing comment after real code is left
 ;; alone, since the code before it IS a real write.
-(define
-  (strip-comments src)
+(define (strip-comments src)
   (string-join
     "\n"
     (map (fn (l) (if (string-starts-with? (string-trim l) ";") "" l)) (lines-of src))))
 
-(define
-  (scan-static src)
-  (let
-    ((s (strip-comments src)))
+(define (scan-static src)
+  (let ((s (strip-comments src)))
     (map (fn (m) (nth 2 (re-captures STATIC-RE m))) (re-find-all STATIC-RE s))))
 
-(define
-  (scan-dynamic src)
-  (let
-    ((s (strip-comments src)))
+(define (scan-dynamic src)
+  (let ((s (strip-comments src)))
     (map (fn (m) (nth 1 (re-captures DYN-RE m))) (re-find-all DYN-RE s))))
 
 ;; ── manifest readers ─────────────────────────────────────────────────────
 
-(define (declared-of yml-text) (uniq-sorted (map car (alist-get (yaml-parse yml-text) "outputs" (list)))))
+(define (declared-of yml-text)
+  (uniq-sorted (map car (alist-get (yaml-parse yml-text) "outputs" (list)))))
 
 ;; The `outputs:` block as raw lines, so `steps.<id>.outputs.<key>` forwards
 ;; are read from the FORWARDS ONLY — a step's `if:` or `env:` may reference the
 ;; same expression, and counting those would mask a real outer-boundary gap.
-(define
-  (top-level? line)
+(define (top-level? line)
   (and
     (not (equal? line ""))
     (not (string-starts-with? line " "))
     (not (string-starts-with? line "#"))))
 
-(define
-  (outputs-lines ls-in inside acc)
+(define (outputs-lines ls-in inside acc)
   (cond
     ((null? ls-in) acc)
     (else
-      (let
-        ((line (car ls-in)) (rest (cdr ls-in)))
+      (let ((line (car ls-in)) (rest (cdr ls-in)))
         (cond
           ((string-starts-with? line "outputs:") (outputs-lines rest #t acc))
           ((and inside (top-level? line)) acc)
           (inside (outputs-lines rest #t (cons line acc)))
           (else (outputs-lines rest inside acc)))))))
 
-(define (outputs-block-text yml-text) (string-join "\n" (outputs-lines (lines-of yml-text) #f (list))))
+(define (outputs-block-text yml-text)
+  (string-join "\n" (outputs-lines (lines-of yml-text) #f (list))))
 
-(define
-  (forwards-of yml-text)
-  (let
-    ((blk (outputs-block-text yml-text)))
+(define (forwards-of yml-text)
+  (let ((blk (outputs-block-text yml-text)))
     (map (fn (m) (re-captures REF-RE m)) (re-find-all REF-RE blk))))
 
-(define (step-ids-of yml-text) (uniq-sorted (map (fn (m) (nth 1 (re-captures "id: *([a-zA-Z0-9_-]+)" m))) (re-find-all "id: *([a-zA-Z0-9_-]+)" yml-text))))
+(define (step-ids-of yml-text)
+  (uniq-sorted
+    (map
+      (fn (m) (nth 1 (re-captures "id: *([a-zA-Z0-9_-]+)" m)))
+      (re-find-all "id: *([a-zA-Z0-9_-]+)" yml-text))))
 
 ;; Which .tlisp files an action cats into the runner. Line-oriented on purpose:
 ;; `${{ github.action_path }}` contains SPACES, so a `cat [^ ]*\.tlisp` match
 ;; silently finds NOTHING and the whole measurement reads zero and looks green.
-(define
-  (script-files-of yml-text)
+(define (script-files-of yml-text)
   (uniq-sorted
     (flat
       (map
-        (fn (l) (map (fn (m) (nth 1 (re-captures "([a-zA-Z0-9_-]+\\.tlisp)" m))) (re-find-all "([a-zA-Z0-9_-]+\\.tlisp)" l)))
+        (fn (l)
+          (map
+            (fn (m) (nth 1 (re-captures "([a-zA-Z0-9_-]+\\.tlisp)" m)))
+            (re-find-all "([a-zA-Z0-9_-]+\\.tlisp)" l)))
         (filter (fn (l) (string-contains? l "cat ")) (lines-of yml-text))))))
 
 (define (routes? yml-text) (string-contains? yml-text "actions/tatara-script@"))
@@ -269,49 +264,50 @@
 
 (define ident-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
 
-(define
-  (all-ident-chars? s)
+(define (all-ident-chars? s)
   (cond
     ((equal? s "") #f)
     (else (null? (filter (fn (c) (not (string-contains? ident-chars c))) (string-split s ""))))))
 
-(define
-  (declared-entry line)
+(define (declared-entry line)
   (cond
     ((not (string-starts-with? line "  ")) "")
     ((string-starts-with? line "   ") "")
     (else
-      (let
-        ((name (car (string-split (string-trim line) ":"))))
-        (if (and (string-ends-with? (string-trim line) ":") (all-ident-chars? name)) name "")))))
+      (let ((name (car (string-split (string-trim line) ":"))))
+        (if (and (string-ends-with? (string-trim line) ":") (all-ident-chars? name))
+          name
+          "")))))
 
-(define
-  (scan-declared ls-in inside acc)
+(define (scan-declared ls-in inside acc)
   (cond
     ((null? ls-in) acc)
     (else
-      (let
-        ((line (car ls-in)) (rest (cdr ls-in)))
+      (let ((line (car ls-in)) (rest (cdr ls-in)))
         (cond
           ((string-starts-with? line "outputs:") (scan-declared rest #t acc))
           ((and inside (top-level? line)) acc)
           (inside
-            (let
-              ((e (declared-entry line)))
-              (scan-declared rest #t (if (equal? e "") acc (cons e acc)))))
+            (let ((e (declared-entry line)))
+              (scan-declared
+                rest
+                #t
+                (if (equal? e "")
+                  acc
+                  (cons e acc)))))
           (else (scan-declared rest inside acc)))))))
 
 (define (declared-oracle yml-text) (uniq-sorted (scan-declared (lines-of yml-text) #f (list))))
 
 ;; ── the dynamic-key spec ─────────────────────────────────────────────────
 
-(define
-  spec-rows
-  (if
-    (path-exists? dyn-spec-path)
+(define spec-rows
+  (if (path-exists? dyn-spec-path)
     (map
       (fn (l) (string-split l "\t"))
-      (filter (fn (l) (not (string-starts-with? l "#"))) (nonempty (lines-of (read-file dyn-spec-path)))))
+      (filter
+        (fn (l) (not (string-starts-with? l "#")))
+        (nonempty (lines-of (read-file dyn-spec-path)))))
     (list)))
 
 (define (spec-action r) (nth 0 r))
@@ -329,8 +325,7 @@
 ;; against this union — a dynamic key that only the INNER contract declares is
 ;; still dropped at the wrapper, so covering only the static half would leave
 ;; exactly the arch variants nobody tested (tarball-x86_64) silently broken.
-(define
-  (all-keys-for r)
+(define (all-keys-for r)
   (uniq-sorted
     (append
       (f-get r "static")
@@ -342,8 +337,7 @@
 ;; is prepended into 308 actions, so a file->keys map would attribute a single
 ;; stdlib key to all of them at once.
 
-(define
-  (facts-for a)
+(define (facts-for a)
   (let*
     ((name (path-basename a))
       (yml (read-file (path-join a "action.yml")))
@@ -374,10 +368,10 @@
 
 ;; ── L3  dynamic-spec reconciliation, both directions ─────────────────────
 
-(define
-  detected-sites
+(define detected-sites
   (uniq-sorted
-    (flat (map (fn (r) (map (fn (p) (string-append (f-name r) "\t" p)) (f-get r "dynamic"))) facts))))
+    (flat
+      (map (fn (r) (map (fn (p) (string-append (f-name r) "\t" p)) (f-get r "dynamic"))) facts))))
 
 (define declared-sites (uniq-sorted (map spec-key spec-rows)))
 
@@ -401,18 +395,17 @@
 
 (define inner-missing (minus (uniq-sorted (append written-static dynamic-expanded)) inner-declared))
 
-(define stale-declared (minus inner-declared (uniq-sorted (append written-static dynamic-expanded))))
+(define stale-declared
+  (minus inner-declared (uniq-sorted (append written-static dynamic-expanded))))
 
 ;; ── the generated inner outputs block ────────────────────────────────────
 
-(define
-  (harvest ls-in acc)
+(define (harvest ls-in acc)
   (cond
     ((null? ls-in) acc)
     ((null? (cdr ls-in)) acc)
     (else
-      (let*
-        ((line (car ls-in)) (nxt (car (cdr ls-in))) (e (declared-entry line)))
+      (let* ((line (car ls-in)) (nxt (car (cdr ls-in))) (e (declared-entry line)))
         (cond
           ((and (not (equal? e "")) (string-starts-with? nxt "    description:"))
             (harvest (cdr ls-in) (cons (list e nxt) acc)))
@@ -420,19 +413,28 @@
 
 (define descriptions (harvest (lines-of inner-yml) (list)))
 
-(define
-  (description-for k)
+(define (description-for k)
   (alist-get
     descriptions
     k
-    (string-append "    description: \"Forwarded from the script's GITHUB_OUTPUT (key: " k ")\"")))
+    (string-append
+      "    description: \"Forwarded from the script's GITHUB_OUTPUT (key: "
+      k
+      ")\"")))
 
-(define
-  (entry-lines k)
+(define (entry-lines k)
   (list
-    (string-append "  " k ":")
+    (string-append
+      "  "
+      k
+      ":")
     (description-for k)
-    (string-append "    value: ${{ steps." INNER-STEP ".outputs." k " }}")))
+    (string-append
+      "    value: ${{ steps."
+      INNER-STEP
+      ".outputs."
+      k
+      " }}")))
 
 (define generated-block (append (list "outputs:") (flat (map entry-lines inner-union))))
 
@@ -444,8 +446,7 @@
 
 (define end-ix (find-index (fn (l) (equal? l END-MARK)) inner-lines))
 
-(when
-  (or (< begin-ix 0) (< end-ix 0))
+(when (or (< begin-ix 0) (< end-ix 0))
   (die
     (string-append
       "the generated-region markers are absent from "
@@ -458,15 +459,10 @@
       "\n  "
       END-MARK)))
 
-(when
-  (>= begin-ix end-ix)
-  (die "the END marker precedes the BEGIN marker in the inner manifest"))
+(when (>= begin-ix end-ix) (die "the END marker precedes the BEGIN marker in the inner manifest"))
 
-(define
-  spliced
-  (append
-    (append (take (+ begin-ix 1) inner-lines) generated-block)
-    (drop end-ix inner-lines)))
+(define spliced
+  (append (append (take (+ begin-ix 1) inner-lines) generated-block) (drop end-ix inner-lines)))
 
 (define rendered-inner (string-join "\n" spliced))
 
@@ -478,34 +474,40 @@
 ;; per-action routing summary, then one row per (action, key) carrying its
 ;; status at BOTH boundaries.
 
-(define
-  (outer-status r k)
-  (let
-    ((fwd (map (fn (c) (nth 2 c)) (f-get r "forwards"))))
-    (if (member? k fwd) "forwarded" "MISSING")))
+(define (outer-status r k)
+  (let ((fwd (map (fn (c) (nth 2 c)) (f-get r "forwards"))))
+    (if (member? k fwd)
+      "forwarded"
+      "MISSING")))
 
 ;; Tested against the GENERATED union, never against the currently-committed
 ;; declared set. Both artifacts are written in the SAME pass, so reporting
 ;; pre-write state here would make one write pass produce a catalog describing a
 ;; manifest that no longer exists — convergence would need a second pass, and a
 ;; human who ran write once and committed would land a red gate.
-(define
-  (inner-status r k)
-  (cond ((not (f-routes? r)) "n/a") ((member? k inner-union) "declared") (else "MISSING")))
+(define (inner-status r k)
+  (cond
+    ((not (f-routes? r)) "n/a")
+    ((member? k inner-union) "declared")
+    (else "MISSING")))
 
 ;; One definition of "the keys this action may emit", shared by the catalog and
 ;; by the outer-boundary gate, so the artifact and the check can never describe
 ;; different key sets.
-(define
-  (kind-of r k)
+(define (kind-of r k)
   (let
-    ((hit (filter (fn (s) (and (equal? (spec-action s) (f-name r)) (member? k (spec-expand s)))) spec-rows)))
-    (if (null? hit) "static" (string-append "dynamic:" (spec-prefix (car hit))))))
+    ((hit
+       (filter
+         (fn (s) (and (equal? (spec-action s) (f-name r)) (member? k (spec-expand s))))
+         spec-rows)))
+    (if (null? hit)
+      "static"
+      (string-append "dynamic:" (spec-prefix (car hit))))))
 
-(define
-  (key-rows r)
+(define (key-rows r)
   (map
-    (fn (k) (string-join "\t" (list (f-name r) k (kind-of r k) (inner-status r k) (outer-status r k))))
+    (fn (k)
+      (string-join "\t" (list (f-name r) k (kind-of r k) (inner-status r k) (outer-status r k))))
     (all-keys-for r)))
 
 (define inner-dir (path-basename (path-dirname inner-manifest)))
@@ -515,23 +517,26 @@
 ;; than from disk. Without this the catalog describes the manifest as it was
 ;; before the write, and convergence costs a second pass — which a human who
 ;; ran write once and committed would discover as a red gate.
-(define
-  (declared-count r)
-  (if (equal? (f-name r) inner-dir) (length inner-union) (length (f-get r "declared"))))
+(define (declared-count r)
+  (if (equal? (f-name r) inner-dir)
+    (length inner-union)
+    (length (f-get r "declared"))))
 
-(define
-  (summary-row r)
+(define (summary-row r)
   (string-join
     "\t"
     (list
       (f-name r)
-      (if (f-routes? r) "tatara-script" "own-runner")
-      (if (null? (f-get r "scripts")) "-" (string-join "," (f-get r "scripts")))
+      (if (f-routes? r)
+        "tatara-script"
+        "own-runner")
+      (if (null? (f-get r "scripts"))
+        "-"
+        (string-join "," (f-get r "scripts")))
       (num (length (f-get r "static")))
       (num (declared-count r)))))
 
-(define
-  catalog-lines
+(define catalog-lines
   (append
     (append
       (list
@@ -565,14 +570,13 @@
 
 ;; ── L4  outer boundary: written but never forwarded by the OWN manifest ───
 
-(define
-  wrapper-baseline
-  (if (path-exists? wrapper-baseline-path) (nonempty (lines-of (read-file wrapper-baseline-path))) (list)))
+(define wrapper-baseline
+  (if (path-exists? wrapper-baseline-path)
+    (nonempty (lines-of (read-file wrapper-baseline-path)))
+    (list)))
 
-(define
-  (wrapper-gaps r)
-  (let
-    ((fwd (map (fn (c) (nth 2 c)) (f-get r "forwards"))))
+(define (wrapper-gaps r)
+  (let ((fwd (map (fn (c) (nth 2 c)) (f-get r "forwards"))))
     (map
       (fn (k) (string-append (f-name r) "\t" k))
       (filter (fn (k) (not (member? k fwd))) (all-keys-for r)))))
@@ -585,10 +589,8 @@
 
 ;; ── L5  ghost step: a forward from a step id that does not exist ──────────
 
-(define
-  (ghost-of r)
-  (let
-    ((ids (f-get r "step-ids")))
+(define (ghost-of r)
+  (let ((ids (f-get r "step-ids")))
     (map
       (fn (c) (string-append (f-name r) "\t" (nth 1 c) "\t" (nth 2 c)))
       (filter (fn (c) (not (member? (nth 1 c) ids))) (f-get r "forwards")))))
@@ -597,12 +599,15 @@
 
 ;; ── L6  parser parity ────────────────────────────────────────────────────
 
-(define
-  parity-bad
+(define parity-bad
   (uniq-sorted
     (map
       f-name
-      (filter (fn (r) (not (equal? (string-join "," (f-get r "declared")) (string-join "," (f-get r "oracle"))))) facts))))
+      (filter
+        (fn (r)
+          (not
+            (equal? (string-join "," (f-get r "declared")) (string-join "," (f-get r "oracle")))))
+        facts))))
 
 ;; ── L7  non-vacuity ──────────────────────────────────────────────────────
 ;;
@@ -611,21 +616,33 @@
 ;; green is the defect, not the feature. These sit far below today's corpus
 ;; (337 / 315 / 283) and far above zero.
 
-(when
-  (< (length action-dirs) 200)
-  (die (string-append "vacuous scan: only " (num (length action-dirs)) " action dirs found (floor 200)")))
+(when (< (length action-dirs) 200)
+  (die
+    (string-append
+      "vacuous scan: only "
+      (num (length action-dirs))
+      " action dirs found (floor 200)")))
 
-(when
-  (< (length routing) 200)
-  (die (string-append "vacuous scan: only " (num (length routing)) " routing actions found (floor 200)")))
+(when (< (length routing) 200)
+  (die
+    (string-append
+      "vacuous scan: only "
+      (num (length routing))
+      " routing actions found (floor 200)")))
 
-(when
-  (< (length written-static) 100)
-  (die (string-append "vacuous scan: only " (num (length written-static)) " written keys found (floor 100)")))
+(when (< (length written-static) 100)
+  (die
+    (string-append
+      "vacuous scan: only "
+      (num (length written-static))
+      " written keys found (floor 100)")))
 
-(when
-  (null? spec-rows)
-  (die (string-append "vacuous scan: the dynamic-key spec at " dyn-spec-path " is empty or absent")))
+(when (null? spec-rows)
+  (die
+    (string-append
+      "vacuous scan: the dynamic-key spec at "
+      dyn-spec-path
+      " is empty or absent")))
 
 ;; ── verdict values (pure; computed even under the test harness) ───────────
 
@@ -633,22 +650,17 @@
 
 (define inner-drift (if (equal? rendered-inner inner-yml) 0 1))
 
-(define
-  catalog-drift
-  (if
-    (and (path-exists? catalog-path) (equal? rendered-catalog (read-file catalog-path)))
+(define catalog-drift
+  (if (and (path-exists? catalog-path) (equal? rendered-catalog (read-file catalog-path)))
     0
     1))
 
-
 (define drift (if (equal? mode "write") 0 (+ inner-drift catalog-drift)))
 
-(define
-  failures
+(define failures
   (+ (+ drift spec-violations) (+ (length wrapper-new) (+ (length ghosts) (length parity-bad)))))
 
-(define
-  reason
+(define reason
   (cond
     ((> drift 0) "drift")
     ((> spec-violations 0) "dynamic-spec-unreconciled")
@@ -667,8 +679,7 @@
 ;; program before a single (deftest …) ran, which is how a test file ends up
 ;; reporting green while never having executed.
 
-(define
-  (report)
+(define (report)
   (log-info
     (string-append
       "==> corpus: "
@@ -691,8 +702,7 @@
       " missing, "
       (num (length stale-declared))
       " declared with no discoverable writer"))
-  (when
-    (> inner-drift 0)
+  (when (> inner-drift 0)
     (cond
       ((equal? mode "write") #t)
       (else
@@ -701,42 +711,42 @@
             inner-manifest
             " is out of date: the generated `outputs:` block differs from what is committed."))
         (report-list "inner MISSING" inner-missing)
-        (log-error "regenerate with the sync action in write mode; do not hand-edit between the markers"))))
-  (when
-    (> catalog-drift 0)
+        (log-error
+          "regenerate with the sync action in write mode; do not hand-edit between the markers"))))
+  (when (> catalog-drift 0)
     (cond
       ((equal? mode "write") #t)
       (else
         (log-error
-          (string-append catalog-path " is out of date: regenerate it in the same commit as the change that moved it.")))))
-  (when
-    (> spec-violations 0)
+          (string-append
+            catalog-path
+            " is out of date: regenerate it in the same commit as the change that moved it.")))))
+  (when (> spec-violations 0)
     (log-error "dynamic-key spec is not reconciled with the corpus:")
     (report-list "site with NO spec row (add it to dynamic-keys.tsv)" undeclared-sites)
     (report-list "spec row matching NO site (stale; remove it)" stale-sites))
-  (when
-    (> (length wrapper-new) 0)
+  (when (> (length wrapper-new) 0)
     (log-error
       (string-append
         "OUTER boundary: key(s) written by a script that the action's OWN outputs "
         "block never forwards — dropped before the caller ever sees them, and "
         "invisible to the runtime gate, which reads tatara-script's manifest:"))
     (report-list "outer MISSING" wrapper-new))
-  (for-each (fn (g) (log-info (string-append "  outer MISSING (baselined, tracked debt) " g))) wrapper-baselined)
-  (when
-    (> (length ghosts) 0)
-    (log-error "outputs value forwards from a step id that does not exist (the forward resolves to '' forever):")
+  (for-each
+    (fn (g) (log-info (string-append "  outer MISSING (baselined, tracked debt) " g)))
+    wrapper-baselined)
+  (when (> (length ghosts) 0)
+    (log-error
+      "outputs value forwards from a step id that does not exist (the forward resolves to '' forever):")
     (report-list "ghost step" ghosts))
-  (when
-    (> (length parity-bad) 0)
+  (when (> (length parity-bad) 0)
     (log-error
       (string-append
         "parser parity: yaml-parse and output-contract.tlisp's line scanner "
         "disagree about the declared set, so the runtime gate would enforce a "
         "different contract than the one generated here:"))
     (report-list "parity" parity-bad))
-  (when
-    (> (length stale-declared) 0)
+  (when (> (length stale-declared) 0)
     (log-info
       (string-append
         "  note: "
@@ -745,22 +755,17 @@
         "(a dropped forward breaks a consumer; an extra one is inert): "
         (string-join ", " stale-declared)))))
 
-(define
-  (apply-writes)
-  (when
-    (> inner-drift 0)
+(define (apply-writes)
+  (when (> inner-drift 0)
     (write-file inner-manifest rendered-inner)
     (log-info (string-append "wrote " inner-manifest)))
-  (when
-    (> catalog-drift 0)
+  (when (> catalog-drift 0)
     (write-file catalog-path rendered-catalog)
     (log-info (string-append "wrote " catalog-path)))
-  (when
-    (and (equal? inner-drift 0) (equal? catalog-drift 0))
+  (when (and (equal? inner-drift 0) (equal? catalog-drift 0))
     (log-info "both artifacts already match the corpus — nothing to write")))
 
-(define
-  (emit-outputs)
+(define (emit-outputs)
   (append-output (string-append "drift=" (num drift)))
   (append-output (string-append "wrapper-violations=" (num (length wrapper-new))))
   (append-output (string-append "wrapper-baselined=" (num (length wrapper-baselined))))
@@ -771,21 +776,26 @@
   (append-output (string-append "keys-checked=" (num (length inner-union))))
   (append-output (string-append "reason=" reason)))
 
-(define
-  (main)
+(define (main)
   (report)
   (when (equal? mode "write") (apply-writes))
   (emit-outputs)
   (cond
-    ((equal? failures 0) (log-info (string-append "output-contract-sync: ok — reason=" reason)) (exit 0))
+    ((equal? failures 0)
+      (log-info (string-append "output-contract-sync: ok — reason=" reason))
+      (exit 0))
     ((equal? fail-on "true")
       (log-error (string-append "output-contract-sync: FAILED — reason=" reason))
       (exit 1))
     (else
-      (log-info (string-append "output-contract-sync: issues found, fail-on-drift=false — reason=" reason))
+      (log-info
+        (string-append
+          "output-contract-sync: issues found, fail-on-drift=false — reason="
+          reason))
       (exit 0))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-    (log-info "TLISP_TEST=1 — contract computed; report/write/exit skipped (the harness drives the assertions)"))
+    (log-info
+      "TLISP_TEST=1 — contract computed; report/write/exit skipped (the harness drives the assertions)"))
   (else (main)))

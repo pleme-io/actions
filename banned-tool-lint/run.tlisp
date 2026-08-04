@@ -39,8 +39,7 @@
 (define baseline-path (env-get "BASELINE_PATH" "banned-tool-lint/baseline.txt"))
 
 ;; ── read a TAB-separated table, dropping comments and blanks ───────────────
-(define
-  (nonblank-rows text)
+(define (nonblank-rows text)
   (filter
     (lambda (l)
       (let ((t (string-trim l))) (and (not (equal? t "")) (not (string-starts-with? t "#")))))
@@ -67,21 +66,27 @@
 (cond
   ((null? tool-rows)
     (log-error
-      (string-append "banned-tool-lint: " tools-path " has zero rules. Refusing to report a"
-                     " vacuous pass -- add a row or remove the gate."))
+      (string-append
+        "banned-tool-lint: "
+        tools-path
+        " has zero rules. Refusing to report a"
+        " vacuous pass -- add a row or remove the gate."))
     (exit 1)))
 
 (define baseline-rows
-  (if (path-exists? baseline-path) (nonblank-rows (read-file baseline-path)) (list)))
+  (if (path-exists? baseline-path)
+    (nonblank-rows (read-file baseline-path))
+    (list)))
 
 ;; ── the scan ───────────────────────────────────────────────────────────────
 ;; One awk per tool, over the source kinds a call site can live in. Emits
 ;; "<path>\t<tool>" rows -- the same key shape the baseline uses, so a baseline
 ;; row is compared against exactly what the scanner produces.
-(define
-  (scan-cmd tool)
+(define (scan-cmd tool)
   (string-append
-    "find " paths " \\( -path '*/.git' -o -path '*/target' -o -path '*/node_modules' "
+    "find "
+    paths
+    " \\( -path '*/.git' -o -path '*/target' -o -path '*/node_modules' "
     "-o -path './banned-tool-lint' \\) -prune -o "
     "\\( -name '*.rs' -o -name '*.go' -o -name '*.tlisp' -o -name '*.nix' "
     "-o -name '*.yml' -o -name '*.yaml' -o -name '*.sh' \\) -print "
@@ -89,20 +94,29 @@
     "/^[ \\t]*#/ { next; }\n"
     "/^[ \\t]*;;/ { next; }\n"
     "/^[ \\t]*\\/\\// { next; }\n"
-    "/\"" tool "\"/ || /command -v " tool "/ "
-    "|| /[^a-zA-Z0-9_-]" tool " (copy|inspect|login|delete|list-tags|sync)/ "
-    "|| /#" tool "/ {\n"
-    "  print FILENAME \"\\t" tool "\"; nextfile;\n"
+    "/\""
+    tool
+    "\"/ || /command -v "
+    tool
+    "/ "
+    "|| /[^a-zA-Z0-9_-]"
+    tool
+    " (copy|inspect|login|delete|list-tags|sync)/ "
+    "|| /#"
+    tool
+    "/ {\n"
+    "  print FILENAME \"\\t"
+    tool
+    "\"; nextfile;\n"
     "}' {}"))
 
-(define
-  (scan-tool tool)
+(define (scan-tool tool)
   (let ((r (exec-capture "sh" "-c" (scan-cmd tool))))
-    (filter (lambda (l) (not (equal? (string-trim l) "")))
-            (string-split (string-trim (stdout-of r)) "\n"))))
+    (filter
+      (lambda (l) (not (equal? (string-trim l) "")))
+      (string-split (string-trim (stdout-of r)) "\n"))))
 
-(define
-  (scan-all tools acc)
+(define (scan-all tools acc)
   (cond
     ((null? tools) acc)
     (else (scan-all (cdr tools) (append acc (scan-tool (row-field (car tools) 0)))))))
@@ -121,11 +135,15 @@
 ;; Normalize a scanner row to its baseline key. `find .` yields "./a/b.rs"; a
 ;; baseline written by hand may omit the "./" -- comparing raw strings would
 ;; make every baseline row miss and every known site read as NEW.
-(define
-  (norm row)
+(define (norm row)
   (let ((p (row-field row 0)) (t (row-field row 1)))
     (string-append
-      (if (string-starts-with? p "./") (string-replace p "./" "") p)
+      (if (string-starts-with? p "./")
+        (string-replace
+          p
+          "./"
+          "")
+        p)
       "\t"
       t)))
 
@@ -133,9 +151,11 @@
 
 ;; tatara-lisp has no `contains?` (probed: unbound symbol), so membership is
 ;; spelled out rather than assumed.
-(define
-  (list-has? xs s)
-  (cond ((null? xs) #f) ((equal? (car xs) s) #t) (else (list-has? (cdr xs) s))))
+(define (list-has? xs s)
+  (cond
+    ((null? xs) #f)
+    ((equal? (car xs) s) #t)
+    (else (list-has? (cdr xs) s))))
 
 (define (known? row) (list-has? baseline-keys (norm row)))
 
@@ -167,17 +187,12 @@
 ;; on by nobody, while the run stays green.
 (define found-keys (map norm found))
 
-(define stale-rows
-  (filter (lambda (b) (not (list-has? found-keys (norm b)))) baseline-rows))
+(define stale-rows (filter (lambda (b) (not (list-has? found-keys (norm b)))) baseline-rows))
 
 ;; ── report ─────────────────────────────────────────────────────────────────
-(for-each
-  (lambda (r) (log-info (string-append "  baselined  " (norm r))))
-  known-rows)
+(for-each (lambda (r) (log-info (string-append "  baselined  " (norm r)))) known-rows)
 
-(for-each
-  (lambda (r) (log-error (string-append "  NEW        " (norm r))))
-  new-rows)
+(for-each (lambda (r) (log-error (string-append "  NEW        " (norm r)))) new-rows)
 
 (append-output (string-append "call-sites=" (string-format "{}" (length found))))
 
@@ -185,14 +200,11 @@
 
 (append-output (string-append "new-call-sites=" (string-format "{}" (length new-rows))))
 
-(for-each
-  (lambda (r) (log-error (string-append "  STALE      " (norm r))))
-  stale-rows)
+(for-each (lambda (r) (log-error (string-append "  STALE      " (norm r)))) stale-rows)
 
 (append-output (string-append "stale-baseline=" (string-format "{}" (length stale-rows))))
 
-(define
-  (replacement-for tool rows)
+(define (replacement-for tool rows)
   (cond
     ((null? rows) "")
     ((equal? (row-field (car rows) 0) tool) (row-field (car rows) 1))
@@ -221,7 +233,9 @@
         "banned-tool-lint: no NEW call sites ("
         (string-format "{}" (length known-rows))
         " baselined"
-        (if (null? stale-rows) ", none stale" ", STALE ROWS REPORTED ABOVE")
+        (if (null? stale-rows)
+          ", none stale"
+          ", STALE ROWS REPORTED ABOVE")
         ")."))
     (exit 0))
   ((not (equal? fail-on "true"))

@@ -50,20 +50,19 @@
 
 ;; First whitespace-delimited field of a b3sum result alist, or ""
 ;; when the command failed. b3sum prints "<hex>  <path>".
-(define
-  (attest:b3-first result)
-  (if (= (status-of result) 0) (car (string-split (string-trim (stdout-of result)) " ")) ""))
+(define (attest:b3-first result)
+  (if (= (status-of result) 0)
+    (car (string-split (string-trim (stdout-of result)) " "))
+    ""))
 
 ;; ── BLAKE3 resolver — real hash or honest failure ───────────────
 
-(define
-  (attest:cmd-present? name)
+(define (attest:cmd-present? name)
   (= 0 (status-of (exec-capture "sh" "-c" (string-append "command -v " name " >/dev/null 2>&1")))))
 
 ;; BLAKE3 of a file. Prefer an on-PATH b3sum (baked nix runner),
 ;; fall back to `nix run nixpkgs#b3sum`. "" iff no tool is available.
-(define
-  (attest:blake3-file path)
+(define (attest:blake3-file path)
   (cond
     ((attest:cmd-present? "b3sum") (attest:b3-first (exec-capture "b3sum" path)))
     ((attest:cmd-present? "nix")
@@ -75,8 +74,7 @@
 ;; literal (schema, algo, separator, empty) is passed as a --arg, so
 ;; the whole program embeds inside a tlisp string with zero escaping.
 
-(define
-  attest:jq-program
+(define attest:jq-program
   "{ schema: $schema, subject: $subject, git: { sha: $git_sha, ref: $git_ref }, run: { id: $run_id, number: $run_num, workflow: $workflow }, timestamp: $ts, build_spec: { hash: $spec_hash }, outputs: { hashes: ($outs | split($sep) | map(select(length>0))) }, cache: { hit: $cache_hit, tier: $tier }, timings_ms: { eval: (if $evalms == $empty then null else ($evalms|tonumber) end), build: (if $buildms == $empty then null else ($buildms|tonumber) end) }, images: ($imgs | split($sep) | map(select(length>0))), attestation: { hash_algorithm: $algo, receipt_hash: $rhash, signed: $signed, signature: null, outcome_chain: $ochain } }")
 
 (define
@@ -169,8 +167,7 @@
 
 ;; ── LiveTODO honesty for the unshipped signing / chain seams ────
 
-(define
-  (attest:warn-livetodos sign-flag chain-flag)
+(define (attest:warn-livetodos sign-flag chain-flag)
   (cond
     ((equal? sign-flag "true")
       (log-info
@@ -184,35 +181,51 @@
 
 ;; ── Main ─────────────────────────────────────────────────────────
 
-(define
-  (attest:emit-failure msg)
+(define (attest:emit-failure msg)
   (log-error msg)
   (append-output "attested=false")
   (append-output "receipt-path=")
   (append-output "receipt-hash=")
   (append-output "receipt-algo="))
 
-(define
-  (main)
+(define (main)
   (let*
     ((repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
       (subject
         (attest:normalize-subject (config-resolve "SUBJECT" "tameshi-attest" "subject" "") repo))
       (spec-hash (config-resolve "SPEC_HASH" "tameshi-attest" "spec-hash" ""))
       (outs
-        (attest:normalize-list (config-resolve "OUTPUT_HASHES" "tameshi-attest" "output-hashes" "")))
+        (attest:normalize-list
+          (config-resolve
+            "OUTPUT_HASHES"
+            "tameshi-attest"
+            "output-hashes"
+            "")))
       (imgs
-        (attest:normalize-list (config-resolve "IMAGE_DIGESTS" "tameshi-attest" "image-digests" "")))
+        (attest:normalize-list
+          (config-resolve
+            "IMAGE_DIGESTS"
+            "tameshi-attest"
+            "image-digests"
+            "")))
       (cache-hit
         (attest:norm-bool (config-resolve "CACHE_HIT" "tameshi-attest" "cache-hit" "false")))
       (tier (config-resolve "HIT_TIER" "tameshi-attest" "hit-tier" "miss"))
       (evalms (config-resolve "EVAL_MS" "tameshi-attest" "eval-ms" ""))
       (buildms (config-resolve "BUILD_MS" "tameshi-attest" "build-ms" ""))
       (receipt-path
-        (config-resolve "RECEIPT_PATH" "tameshi-attest" "receipt-path" "tameshi-receipt.json"))
+        (config-resolve
+          "RECEIPT_PATH"
+          "tameshi-attest"
+          "receipt-path"
+          "tameshi-receipt.json"))
       (sign-flag (config-resolve "SIGN" "tameshi-attest" "sign" "false"))
       (chain-flag
-        (config-resolve "EMIT_OUTCOME_CHAIN" "tameshi-attest" "emit-outcome-chain" "false"))
+        (config-resolve
+          "EMIT_OUTCOME_CHAIN"
+          "tameshi-attest"
+          "emit-outcome-chain"
+          "false"))
       (git-sha (env-get "GITHUB_SHA" ""))
       (git-ref (env-get "GITHUB_REF" ""))
       (run-id (env-get "GITHUB_RUN_ID" ""))
@@ -252,8 +265,7 @@
         (else
           (write-file base-path (stdout-of base))
           ;; 2. canonicalize (sorted, compact) for a stable hash pre-image
-          (let
-            ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+          (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
             (cond
               ((not (= (status-of canon) 0))
                 (attest:emit-failure "tameshi-attest: jq failed to canonicalize the receipt")
@@ -261,8 +273,7 @@
               (else
                 (write-file canon-path (string-trim (stdout-of canon)))
                 ;; 3. real BLAKE3 over the canonical pre-image
-                (let
-                  ((rhash (attest:blake3-file canon-path)))
+                (let ((rhash (attest:blake3-file canon-path)))
                   (cond
                     ((equal? rhash "")
                       (attest:emit-failure
@@ -272,11 +283,9 @@
                       ;; 4. inject the hash into the final receipt
                       (let
                         ((final
-                           (exec-capture
-                             "jq"
+                           (exec-capture "jq"
                              "-S"
-                             "--arg"
-                             "rhash"
+                             "--arg" "rhash"
                              rhash
                              ".attestation.receipt_hash = $rhash"
                              base-path)))
@@ -303,5 +312,6 @@
 ;; pipeline.
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
-    (log-info "TLISP_TEST=1 — attest helpers loaded; main skipped (the test harness drives them)"))
+    (log-info
+      "TLISP_TEST=1 — attest helpers loaded; main skipped (the test harness drives them)"))
   (else (main)))

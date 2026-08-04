@@ -17,15 +17,13 @@
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define
-  (append-output line)
+(define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
 ;; -------------------------------------------------------------- ;;
 ;; Read package.name + version from Cargo.toml                     ;;
 ;; -------------------------------------------------------------- ;;
-
 
 ;; `line-is-section-header?` is DELIBERATELY NOT DEFINED HERE. It used to be,
 ;; as `(and (> (string-length line) 0) (string-contains? line "["))` — any line
@@ -44,29 +42,31 @@
 ;; dedup the header called for; it also un-breaks `walk-for-field` below, which
 ;; would mis-read name/version on any manifest with an array above them.
 
-(define
-  (walk-for-field field lines in-section)
+(define (walk-for-field field lines in-section)
   (cond
     ((null? lines) "")
     ((string-contains? (car lines) "[package]") (walk-for-field field (cdr lines) #t))
     ((and in-section (line-is-section-header? (car lines))) "")
-    ((and in-section (string-contains? (car lines) field) (string-contains? (car lines) "="))
+    ((and
+       in-section
+       (string-contains? (car lines) field)
+       (string-contains? (car lines) "="))
       (extract-quoted-value (car lines)))
     (else (walk-for-field field (cdr lines) in-section))))
 
-(define
-  (read-field field)
-  (if
-    (path-exists? "Cargo.toml")
-    (walk-for-field field (string-split (read-file "Cargo.toml") "\n") #f)
+(define (read-field field)
+  (if (path-exists? "Cargo.toml")
+    (walk-for-field
+      field
+      (string-split (read-file "Cargo.toml") "\n")
+      #f)
     ""))
 
 ;; -------------------------------------------------------------- ;;
 ;; Already-published check                                         ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (already-published? name version)
+(define (already-published? name version)
   (let*
     ((url (string-append "https://crates.io/api/v1/crates/" name "/" version))
       (r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url))
@@ -77,12 +77,13 @@
 ;; Build cargo publish argv                                        ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (publish-args)
+(define (publish-args)
   (let*
     ((base (list "publish"))
       (with-dry (if (equal? dry-run "true") (append base (list "--dry-run")) base)))
-    (if (equal? no-verify "true") (append with-dry (list "--no-verify")) with-dry)))
+    (if (equal? no-verify "true")
+      (append with-dry (list "--no-verify"))
+      with-dry)))
 
 (define (do-publish) (apply exec-capture (cons "cargo" (publish-args))))
 
@@ -138,8 +139,7 @@
 ;; Try-loop                                                        ;;
 ;; -------------------------------------------------------------- ;;
 
-(define
-  (try-publish attempt)
+(define (try-publish attempt)
   (cond
     ((>= attempt max-retries)
       (log-error "exceeded max retries")
@@ -251,23 +251,18 @@
 ;; Publishability preflight (the false-green seal): computed once, guarded so a
 ;; missing manifest degrades to "no blockers" (the name/version arms already
 ;; catch a missing Cargo.toml). See stdlib `manifest-publish-blockers`.
-(define
-  publish-blockers
-  (if
-    tlisp-test-mode
+(define publish-blockers
+  (if tlisp-test-mode
     (list)
     (manifest-publish-blockers (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") ""))))
 
 ;; `publish = false` — a declared non-publisher. Green no-op, not a failure.
 ;; See stdlib `manifest-declares-no-publish?` for why cargo's own refusal
 ;; would otherwise land in the 'failed arm and red the run.
-(define
-  declares-no-publish
-  (if
-    tlisp-test-mode
+(define declares-no-publish
+  (if tlisp-test-mode
     #f
-    (manifest-declares-no-publish?
-      (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") ""))))
+    (manifest-declares-no-publish? (if (path-exists? "Cargo.toml") (read-file "Cargo.toml") ""))))
 
 (cond
   (tlisp-test-mode

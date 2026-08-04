@@ -2,14 +2,25 @@
 
 (define config (env-required "CONFIG"))
 
-(exec-check "sudo" "apt-get" "install" "-y" "-qq" "wireguard-tools")
+(exec-check
+  "sudo"
+  "apt-get"
+  "install"
+  "-y"
+  "-qq"
+  "wireguard-tools")
 
 (define iface "wg0")
 
 (exec-check
   "sh"
   "-c"
-  (string-append "echo '" config "' | sudo tee /etc/wireguard/" iface ".conf > /dev/null"))
+  (string-append
+    "echo '"
+    config
+    "' | sudo tee /etc/wireguard/"
+    iface
+    ".conf > /dev/null"))
 
 (define r (exec-capture "sudo" "wg-quick" "up" iface))
 

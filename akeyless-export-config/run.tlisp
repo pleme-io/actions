@@ -6,20 +6,18 @@
 
 (define token (env-required "AKEYLESS_TOKEN"))
 
-(define
-  (call endpoint payload)
+(define (call endpoint payload)
   (let
     ((r
-       (exec-capture
-         "curl"
+       (exec-capture "curl"
          "-sS"
-         "-X"
-         "POST"
-         "-H"
-         "Content-Type: application/json"
-         "-d"
-         payload
-         (string-append api-url "/" endpoint))))
+         "-X" "POST"
+         "-H" "Content-Type: application/json"
+         "-d" payload
+         (string-append
+           api-url
+           "/"
+           endpoint))))
     (cond
       ((= (status-of r) 0) (stdout-of r))
       (else (log-error (string-append endpoint " failed")) ""))))
@@ -33,8 +31,7 @@
 (define auth-methods (call "list-auth-methods" (string-append "{\"token\":\"" token "\"}")))
 
 ;; Compose a single JSON snapshot via jq.
-(define
-  merge-cmd
+(define merge-cmd
   (string-append
     "jq -n "
     "--argjson items '"
@@ -50,11 +47,13 @@
     "> "
     out-path))
 
-(let
-  ((r (exec-capture "sh" "-c" merge-cmd)))
+(let ((r (exec-capture "sh" "-c" merge-cmd)))
   (cond
     ((= (status-of r) 0)
       (log-info (string-append "wrote " out-path))
       (append-output (string-append "config-path=" out-path))
       (exit 0))
-    (else (log-error "snapshot assembly failed") (append-output "config-path=") (exit 1))))
+    (else
+      (log-error "snapshot assembly failed")
+      (append-output "config-path=")
+      (exit 1))))

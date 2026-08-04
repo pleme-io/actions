@@ -46,8 +46,7 @@
 
 ;; ── main: every side effect lives here ───────────────────────────
 
-(define
-  (main)
+(define (main)
   (let*
     ((outcome (env-get "SCAN_OUTCOME" ""))
       (severity (env-get "SCAN_SEVERITY" "none"))
@@ -81,10 +80,16 @@
         ;; catch, committed in the fix for it. Attribute to a service block,
         ;; never grep a bare count.
         (log-info
-          (string-append "zot faucet ADMIT: severity " severity
-                         " below the configured threshold (scanned-targets="
-                         (if (equal? scanned-targets "") "UNREPORTED" scanned-targets)
-                         ", vuln-count=" vuln-count ")"))
+          (string-append
+            "zot faucet ADMIT: severity "
+            severity
+            " below the configured threshold (scanned-targets="
+            (if (equal? scanned-targets "")
+              "UNREPORTED"
+              scanned-targets)
+            ", vuln-count="
+            vuln-count
+            ")"))
         (if (equal? (string-trim scanned-targets) "0")
           (log-info
             (string-append
@@ -150,7 +155,7 @@
               ;;  truth. Admission policy is a separate question -- rejecting
               ;;  vendor rewraps outright is an operator decision, not this
               ;;  gate's to make unilaterally.`
-              ))
+            ))
           #t)
         0)
       (else

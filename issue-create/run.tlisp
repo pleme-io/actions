@@ -12,24 +12,23 @@
 
 (define repo (env-required "REPO"))
 
-(define
-  (find-open-by-title)
+(define (find-open-by-title)
   (let
     ((r
-       (exec-capture
-         "gh"
+       (exec-capture "gh"
          "issue"
          "list"
-         "--repo"
-         repo
-         "--state"
-         "open"
-         "--search"
-         (string-append "\"" title "\" in:title")
-         "--json"
-         "number,url,title"
-         "--jq"
-         (string-append ".[] | select(.title == \"" title "\") | .url"))))
+         "--repo" repo
+         "--state" "open"
+         "--search" (string-append
+           "\""
+           title
+           "\" in:title")
+         "--json" "number,url,title"
+         "--jq" (string-append
+           ".[] | select(.title == \""
+           title
+           "\") | .url"))))
     (cond ((= (status-of r) 0) (string-trim (stdout-of r))) (else ""))))
 
 (define existing (cond ((equal? reuse-open "true") (find-open-by-title)) (else "")))
@@ -45,14 +44,25 @@
     (let*
       ((args
          (append
-           (list "issue" "create" "--repo" repo "--title" title "--body" body)
-           (if (equal? labels "") (list) (list "--label" labels))
-           (if (equal? assignees "") (list) (list "--assignee" assignees))))
+           (list
+             "issue"
+             "create"
+             "--repo"
+             repo
+             "--title"
+             title
+             "--body"
+             body)
+           (if (equal? labels "")
+             (list)
+             (list "--label" labels))
+           (if (equal? assignees "")
+             (list)
+             (list "--assignee" assignees))))
         (r (apply exec-capture (cons "gh" args))))
       (cond
         ((= (status-of r) 0)
-          (let
-            ((url (string-trim (stdout-of r))))
+          (let ((url (string-trim (stdout-of r))))
             (log-info (string-append "created: " url))
             (append-output (string-append "issue-url=" url))
             (append-output "action-taken=created")

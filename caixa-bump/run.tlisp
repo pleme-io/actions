@@ -26,16 +26,18 @@
 
 (define bump-type (config-resolve "BUMP_TYPE" "bump" "default-type" "patch"))
 
-(define
-  skip-flag
-  (config-resolve "SKIP_WHEN_NO_SOURCE_CHANGES" "bump" "skip-when-no-source-changes" "true"))
+(define skip-flag
+  (config-resolve
+    "SKIP_WHEN_NO_SOURCE_CHANGES"
+    "bump"
+    "skip-when-no-source-changes"
+    "true"))
 
 (define source-paths (config-resolve "SOURCE_PATHS" "bump" "source-paths" "*.tlisp *.lisp"))
 
 (define caixa-path-in (env-get "CAIXA_PATH" ""))
 
-(define
-  (fail msg)
+(define (fail msg)
   (log-error (string-append "caixa-bump: " msg))
   (append-output "old-version=")
   (append-output "bumped=false")
@@ -44,15 +46,13 @@
 
 ;; <name>.caixa.lisp first, since that is what the org actually uses. The
 ;; legacy fixed names stay in the search so an older layout keeps working.
-(define
-  (find-caixa)
+(define (find-caixa)
   (cond
     ((not (equal? caixa-path-in "")) caixa-path-in)
     (else
       (let
         ((r
-           (exec-capture
-             "sh"
+           (exec-capture "sh"
              "-c"
              (string-append
                "ls *.caixa.lisp 2>/dev/null | head -1; "
@@ -62,8 +62,7 @@
 
 (define caixa-path (find-caixa))
 
-(when
-  (equal? caixa-path "")
+(when (equal? caixa-path "")
   (fail "no caixa manifest found (*.caixa.lisp or a legacy canonical path)"))
 
 (define text (read-file caixa-path))
@@ -74,36 +73,31 @@
 
 (define old-version (car (cdr version-captures)))
 
-(define
-  (should-bump?)
+(define (should-bump?)
   (cond ((not (equal? skip-flag "true")) #t) (else (has-changes-since? (last-tag) source-paths))))
 
-(when
-  (not (should-bump?))
+(when (not (should-bump?))
   (log-info (string-append "no changes since last tag — skipping (at " old-version ")"))
   (append-output (string-append "old-version=" old-version))
   (append-output "bumped=false")
   (append-output "new-version=")
   (exit 0))
 
-(define
-  (bump-semver v kind)
+(define (bump-semver v kind)
   ;; awk, not arithmetic in tlisp: the stdlib has no string->number, so a
   ;; single discrete exec is the honest way to add 1 to a semver component.
   (let*
-    ((cmd
-       (string-append
-         "echo "
-         v
-         " | awk -F. -v k="
-         kind
-         " '{ if (k==\"major\") print $1+1\".0.0\";"
-         "    else if (k==\"minor\") print $1\".\"$2+1\".0\";"
-         "    else print $1\".\"$2\".\"$3+1 }'"))
+    ((cmd (string-append
+        "echo "
+        v
+        " | awk -F. -v k="
+        kind
+        " '{ if (k==\"major\") print $1+1\".0.0\";"
+        "    else if (k==\"minor\") print $1\".\"$2+1\".0\";"
+        "    else print $1\".\"$2\".\"$3+1 }'"))
       (r (exec-capture "sh" "-c" cmd))
       (out (string-trim (stdout-of r))))
-    (when
-      (or (not (= (status-of r) 0)) (equal? out ""))
+    (when (or (not (= (status-of r) 0)) (equal? out ""))
       (fail (string-append "could not bump " v " as " kind)))
     out))
 
@@ -124,17 +118,13 @@
 ;; whose files contain any multi-byte glyph would then disagree with every
 ;; consumer that checks size against the file on disk (measured: 4540 vs 4870
 ;; on this repo's own stdlib.tlisp).
-(define
-  (byte-size path)
+(define (byte-size path)
   (let ((r (exec-capture "sh" "-c" (string-append "wc -c < " path)))) (string-trim (stdout-of r))))
 
-(define
-  (file-entry path)
-  (when
-    (not (path-exists? path))
+(define (file-entry path)
+  (when (not (path-exists? path))
     (fail (string-append caixa-path " declares " path ", which is not in the tree")))
-  (let
-    ((body (read-file path)))
+  (let ((body (read-file path)))
     (string-append
       "{:path "
       (json-stringify path)
@@ -153,16 +143,16 @@
 ;; bodies are arbitrary text, so an in-place edit would have to reason about
 ;; escaping inside data it did not produce. Everything above :files is carried
 ;; through untouched, which is where name/description/license/ci-config live.
-(define
-  (rewrite-with-files head)
-  (string-append head "\n  :files\n  [" (string-join " " (map file-entry declared)) "])\n"))
+(define (rewrite-with-files head)
+  (string-append
+    head
+    "\n  :files\n  ["
+    (string-join " " (map file-entry declared))
+    "])\n"))
 
-(when
-  has-files-block
-  (let
-    ((hits (re-find-all "\n  :files\n" text)))
-    (when
-      (not (= (length hits) 1))
+(when has-files-block
+  (let ((hits (re-find-all "\n  :files\n" text)))
+    (when (not (= (length hits) 1))
       (fail
         (string-append
           caixa-path
@@ -171,8 +161,7 @@
 
 (let
   ((r
-     (exec-capture
-       "sh"
+     (exec-capture "sh"
        "-c"
        (string-append
          "sed -i.bak 's/:version \""
@@ -189,32 +178,28 @@
 ;; Re-read so the files block is regenerated from the version-bumped text.
 (define bumped-text (read-file caixa-path))
 
-(when
-  has-files-block
+(when has-files-block
   (write-file caixa-path (rewrite-with-files (car (re-split "\n  :files\n" bumped-text)))))
 
 ;; ── verify by re-reading ─────────────────────────────────────────────
 
 (define after (read-file caixa-path))
 
-(define
-  after-version
-  (let
-    ((c (re-captures ":version \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" after)))
-    (if (null? c) "" (car (cdr c)))))
+(define after-version
+  (let ((c (re-captures ":version \"([0-9]+\\.[0-9]+\\.[0-9]+)\"" after)))
+    (if (null? c)
+      ""
+      (car (cdr c)))))
 
-(when
-  (not (equal? after-version new-version))
+(when (not (equal? after-version new-version))
   (fail (string-append "verify: version reads " after-version ", expected " new-version)))
 
-(when
-  (string-contains? after (string-append ":version \"" old-version "\""))
+(when (string-contains? after (string-append ":version \"" old-version "\""))
   (fail "verify: the old version string still appears in the manifest"))
 
 (define after-paths (map strip-path-key (re-find-all ":path \"[^\"]+\"" after)))
 
-(when
-  (not (= (length after-paths) (length declared)))
+(when (not (= (length after-paths) (length declared)))
   (fail
     (string-append
       "verify: declared "
@@ -223,12 +208,9 @@
       (string-format "{}" (length after-paths))
       " after")))
 
-(define
-  (verify-hash path)
-  (let
-    ((want (sha256 (read-file path))))
-    (when
-      (not (string-contains? after want))
+(define (verify-hash path)
+  (let ((want (sha256 (read-file path))))
+    (when (not (string-contains? after want))
       (fail (string-append "verify: manifest does not carry the current sha256 of " path)))))
 
 (map verify-hash declared)
@@ -239,9 +221,11 @@
     old-version
     " -> "
     new-version
-    (if
-      has-files-block
-      (string-append " (" (string-format "{}" (length declared)) " file(s) refreshed)")
+    (if has-files-block
+      (string-append
+        " ("
+        (string-format "{}" (length declared))
+        " file(s) refreshed)")
       " (no :files block)")))
 
 (append-output (string-append "old-version=" old-version))

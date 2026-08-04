@@ -12,14 +12,42 @@
 ;; tatara-script runtime + run.tlisp explicitly and is NOT claimed to
 ;; parse into the shipped Rust struct.
 
-(defaction "gen-build-spec"
-  :description "Emit the typed *.build-spec.json via `gen build .` and enforce the GEN-TYPED-SPEC-CONTRACT stale gate (a committed spec that drifts from the regen is a CI failure). Step 3 of the super-cache-ci pipeline — the spec producer the tiered cache verbs key on."
-  :inputs  ((:name "lang"           :type (:enum (:options ("auto" "cargo" "npm" "pip" "gomod"))) :required nil :default "auto")
-            (:name "spec-path"      :type :string :required nil :default "")
-            (:name "ci-stale-check" :type :string :required nil :default "true")
-            (:name "require-gen"    :type :string :required nil :default "false"))
-  :outputs ((:name "lang") (:name "spec-path") (:name "spec-hash")
-            (:name "regenerated") (:name "stale") (:name "changed") (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "gen-build-spec/run.tlisp")
-  :semver-compat :minor
-  :attestation   :optional)
+(defaction
+  "gen-build-spec"
+  :description
+  "Emit the typed *.build-spec.json via `gen build .` and enforce the GEN-TYPED-SPEC-CONTRACT stale gate (a committed spec that drifts from the regen is a CI failure). Step 3 of the super-cache-ci pipeline — the spec producer the tiered cache verbs key on."
+  :inputs
+  ((
+     :name "lang"
+     :type (:enum (:options ("auto" "cargo" "npm" "pip" "gomod")))
+     :required nil
+     :default "auto")
+    (
+      :name "spec-path"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "ci-stale-check"
+      :type :string
+      :required nil
+      :default "true")
+    (
+      :name "require-gen"
+      :type :string
+      :required nil
+      :default "false"))
+  :outputs
+  ((:name "lang")
+    (:name "spec-path")
+    (:name "spec-hash")
+    (:name "regenerated")
+    (:name "stale")
+    (:name "changed")
+    (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "gen-build-spec/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :optional)

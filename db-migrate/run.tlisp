@@ -1,6 +1,7 @@
 ;; db-migrate/run.tlisp
 
 (define wd (env-get "WORKDIR" "."))
+
 (define dir-arg (env-get "DIRECTION" "up"))
 
 (define (detect)
@@ -19,40 +20,51 @@
 ;; nix onto PATH.
 (cond
   ((equal? eco "rust")
-   (log-info "==> installing sqlx-cli (nix profile install, nixos-24.05)")
-   (exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#sqlx-cli")))
+    (log-info "==> installing sqlx-cli (nix profile install, nixos-24.05)")
+    (exec-check
+      "nix"
+      "profile"
+      "install"
+      "github:NixOS/nixpkgs/nixos-24.05#sqlx-cli")))
 
 (define cmd
   (cond
-    ((equal? eco "rust")
-     (string-append "cd " wd " && sqlx migrate run"))
-    ((equal? eco "python")
-     (string-append "cd " wd " && uv run alembic upgrade head"))
-    ((equal? eco "npm")
-     (string-append "cd " wd " && npm install && npx knex migrate:latest"))
+    ((equal? eco "rust") (string-append "cd " wd " && sqlx migrate run"))
+    ((equal? eco "python") (string-append "cd " wd " && uv run alembic upgrade head"))
+    ((equal? eco "npm") (string-append "cd " wd " && npm install && npx knex migrate:latest"))
     (else "")))
 
 (cond
   ((equal? cmd "")
-   (log-error (string-append "no migration tool detected for " eco))
-   (append-output "applied-count=0") (exit 1)))
+    (log-error (string-append "no migration tool detected for " eco))
+    (append-output "applied-count=0")
+    (exit 1)))
 
 (define r (exec-capture "sh" "-c" cmd))
+
 (cond
   ((= (status-of r) 0)
-   (let ((count-r (exec-capture "sh" "-c"
-                    (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'")
-                                   ;; -E, because the reader DROPS an unknown
-                                   ;; escape: `\|` in this source becomes a
-                                   ;; bare `|` in the string grep receives
-                                   ;; (verified against the reader). Under
-                                   ;; BRE that is a LITERAL pipe, so this
-                                   ;; counted only lines containing the exact
-                                   ;; text "Applied|migration|up to date" —
-                                   ;; i.e. always 0. -E makes `|` the
-                                   ;; alternation the author meant, without
-                                   ;; relying on escapes surviving the reader.
-                                   "' | grep -cE 'Applied|migration|up to date' || echo 0"))))
-     (append-output (string-append "applied-count=" (string-trim (stdout-of count-r))))
-     (exit 0)))
+    (let
+      ((count-r
+         (exec-capture "sh"
+           "-c"
+           (string-append
+             "echo '"
+             (string-replace
+               (stdout-of r)
+               "'"
+               "'\"'\"'")
+             ;; -E, because the reader DROPS an unknown
+             ;; escape: `\|` in this source becomes a
+             ;; bare `|` in the string grep receives
+             ;; (verified against the reader). Under
+             ;; BRE that is a LITERAL pipe, so this
+             ;; counted only lines containing the exact
+             ;; text "Applied|migration|up to date" —
+             ;; i.e. always 0. -E makes `|` the
+             ;; alternation the author meant, without
+             ;; relying on escapes surviving the reader.
+             "' | grep -cE 'Applied|migration|up to date' || echo 0"))))
+      (append-output (string-append "applied-count=" (string-trim (stdout-of count-r))))
+      (exit 0)))
   (else (append-output "applied-count=0") (exit 1)))

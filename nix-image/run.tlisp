@@ -95,8 +95,7 @@
 ;;      (an ambiguous-attr config error — a loud honest failure, never a faked green)
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
-(define
-  (arch->system arch)
+(define (arch->system arch)
   (cond
     ((equal? arch "amd64") "x86_64-linux")
     ((equal? arch "x86_64") "x86_64-linux")
@@ -110,11 +109,14 @@
 ;; sentinels: they saturate ANY node without per-box tuning (the whole point —
 ;; a hardcoded integer under-fills a bigger box). Returns a flat token list
 ;; ready to splice into the exec-capture argv (typed argv, not shell string).
-(define
-  (ni:parallel-flags max-jobs cores)
+(define (ni:parallel-flags max-jobs cores)
   (append
-    (if (equal? (string-trim max-jobs) "") (list) (list "--max-jobs" (string-trim max-jobs)))
-    (if (equal? (string-trim cores) "") (list) (list "--cores" (string-trim cores)))))
+    (if (equal? (string-trim max-jobs) "")
+      (list)
+      (list "--max-jobs" (string-trim max-jobs)))
+    (if (equal? (string-trim cores) "")
+      (list)
+      (list "--cores" (string-trim cores)))))
 
 ;; ── DYNAMIC CORE-PARTITION TUNER (the free config squeeze) ────────
 ;; Discover V (nproc) + N (parallel targets) at build time; compute the
@@ -124,10 +126,8 @@
 ;; tatara-lisp has NO string->number, and arithmetic rejects string operands,
 ;; so a numeric string ("96") is bridged to a number via json-parse (a bare
 ;; integer is valid JSON). A non-numeric / empty value falls back to `fallback`.
-(define
-  (ni:parse-int s fallback)
-  (let
-    ((t (string-trim s)))
+(define (ni:parse-int s fallback)
+  (let ((t (string-trim s)))
     (cond
       ((equal? t "") fallback)
       (else
@@ -144,8 +144,7 @@
 ;; each internally parallel); the wide case is many tiny independent
 ;; derivations (nix's list-scheduler fills the box with 1-core builds).
 ;; N<=0 degenerates to a lone build (jobs 1, cores V — the whole box).
-(define
-  (ni:tune-partition v n shape)
+(define (ni:tune-partition v n shape)
   (cond
     ((<= n 0) (list 1 (max 1 v)))
     ; lone build: whole box
@@ -173,14 +172,12 @@
 ;; nproc emits the count as a string; ni:parse-int bridges it to an Int.
 ;; A missing/failed nproc falls back to 1 (a lone all-cores build — never a
 ;; divide-by-a-guess). This is the ONE box-detect side effect the tuner needs.
-(define
-  (ni:discover-vcpu)
+(define (ni:discover-vcpu)
   (let ((r (exec-capture "nproc"))) (if (= (status-of r) 0) (ni:parse-int (stdout-of r) 1) 1)))
 
 ;; #t iff the operator passed a HARD numeric cap (a quota bound) that must
 ;; WIN over the tuner. "auto"/"0"/"" are the box-detect/tuner sentinels.
-(define
-  (ni:explicit-max-jobs? v)
+(define (ni:explicit-max-jobs? v)
   (not (or (equal? (string-trim v) "") (equal? (string-trim v) "auto"))))
 
 (define (ni:explicit-cores? v) (not (or (equal? (string-trim v) "") (equal? (string-trim v) "0"))))
@@ -191,12 +188,9 @@
 ;; INERT for a Go fleet unless GOMAXPROCS is ALSO bounded to `cores`. This
 ;; returns the env assignment list the caller exports before `nix build`
 ;; (sandbox=false => it reaches the compile). A blank cores drops it.
-(define
-  (ni:go-parallelism-env cores)
-  (let
-    ((c (string-trim cores)))
-    (if
-      (or (equal? c "") (equal? c "0"))
+(define (ni:go-parallelism-env cores)
+  (let ((c (string-trim cores)))
+    (if (or (equal? c "") (equal? c "0"))
       (list)
       (list (string-append "GOMAXPROCS=" c) (string-append "GOFLAGS=-p=" c)))))
 
@@ -211,16 +205,14 @@
 ;;     (V, N, shape), render the partition to strings.
 ;; `discover` is the V-provider (ni:discover-vcpu in production; a constant in
 ;; tests) so the resolver stays PURE + unit-testable without a live nproc.
-(define
-  (ni:resolve-flags auto-tune max-jobs-in cores-in n shape discover)
+(define (ni:resolve-flags auto-tune max-jobs-in cores-in n shape discover)
   (cond
     ((not (equal? (string-trim auto-tune) "true"))
       (list (string-trim max-jobs-in) (string-trim cores-in)))
     ((or (ni:explicit-max-jobs? max-jobs-in) (ni:explicit-cores? cores-in))
       (list (string-trim max-jobs-in) (string-trim cores-in)))
     (else
-      (let*
-        ((v (discover)) (p (ni:tune-partition v n shape)))
+      (let* ((v (discover)) (p (ni:tune-partition v n shape)))
         (list
           (string-format "{}" (ni:partition-jobs p))
           (string-format "{}" (ni:partition-cores p)))))))
@@ -233,10 +225,15 @@
 ;; substituted (all occurrences) — a typed template renderer, NOT string
 ;; concatenation, so a new convention is a new template value, never a code
 ;; fork. See the header for the four conventions this covers.
-(define
-  (render-attr template base arch svc)
+(define (render-attr template base arch svc)
   (string-replace
-    (string-replace (string-replace template "{base}" base) "{arch}" arch)
+    (string-replace
+      (string-replace
+        template
+        "{base}"
+        base)
+      "{arch}"
+      arch)
     "{svc}"
     svc))
 
@@ -251,16 +248,14 @@
 ;; #t iff building ARCH on a runner whose `uname -m` MACHINE is the same
 ;; machine class — an off-target build mislabels the arch and `exec format
 ;; error`s at runtime (substrate image-push.yml native-arch rule).
-(define
-  (native-arch? machine arch)
+(define (native-arch? machine arch)
   (and (not (equal? (arch->system arch) "")) (equal? (arch->system arch) (arch->system machine))))
 
 ;; ── build one arch ───────────────────────────────────────────────
 ;; Returns the out-path ("" on failure). `pflags` is the ni:parallel-flags
 ;; token list (--max-jobs/--cores) spliced into the nix build argv; `cores`
 ;; is the resolved per-build core count used to bound Go's OWN parallelism.
-(define
-  (build-one flake-ref template image-attr svc arch endpoint pflags cores)
+(define (build-one flake-ref template image-attr svc arch endpoint pflags cores)
   (let*
     ((sys (arch->system arch))
       (attr (render-attr template image-attr arch svc))
@@ -272,8 +267,7 @@
         ;; this derivation through the sui daemon for warm layer-cache reuse.
         ;; That seam is not yet live; log the LiveTODO + do a correct LOCAL
         ;; build rather than fake a warm hit. via-service stays false.
-        (when
-          (not (equal? endpoint ""))
+        (when (not (equal? endpoint ""))
           (log-info
             (string-append
               "::warning::nix-image: SUI_ENDPOINT set ("
@@ -287,10 +281,8 @@
         ;; fleet unless GOMAXPROCS/GOFLAGS are ALSO set. env-set → set_var; the
         ;; nix build child (sandbox=false) inherits it. (MEASURED: --cores alone
         ;; left peak load at 314 on 96 vCPU; the Go env is what bounds it.)
-        (let
-          ((goenv (ni:go-parallelism-env cores)))
-          (when
-            (not (null? goenv))
+        (let ((goenv (ni:go-parallelism-env cores)))
+          (when (not (null? goenv))
             (env-set "GOMAXPROCS" cores)
             (env-set "GOFLAGS" (string-append "-p=" cores))
             (log-info
@@ -301,19 +293,31 @@
                 (string-join " " goenv)
                 ") — nix --cores alone does not reach the raw `go install`"))))
         (log-info
-          (string-append "==> nix build --system " sys " " (string-join " " pflags) " " target))
+          (string-append
+            "==> nix build --system "
+            sys
+            " "
+            (string-join " " pflags)
+            " "
+            target))
         (let
           ((r
              (apply
                exec-capture
                (append
-                 (list "nix" "build" "--system" sys)
+                 (list
+                   "nix"
+                   "build"
+                   "--system"
+                   sys)
                  pflags
-                 (list "--print-out-paths" "--no-link" target)))))
+                 (list
+                   "--print-out-paths"
+                   "--no-link"
+                   target)))))
           (cond
             ((= (status-of r) 0)
-              (let
-                ((p (string-trim (stdout-of r))))
+              (let ((p (string-trim (stdout-of r))))
                 (log-info (string-append "built " arch " -> " p))
                 p))
             (else
@@ -347,12 +351,12 @@
       (append-output "via-service=false")
       (append-output (string-append "built=" (if acc-ok "true" "false")))
       (append-output (string-append "result=" first-path))
-      (if acc-ok 0 1))
+      (if acc-ok
+        0
+        1))
     (else
-      (let
-        ((arch (car arches)))
-        (when
-          (not (native-arch? machine arch))
+      (let ((arch (car arches)))
+        (when (not (native-arch? machine arch))
           (log-info
             (string-append
               "::warning::nix-image: building "
@@ -378,11 +382,14 @@
             pflags
             cores
             (and acc-ok ok)
-            (if ok (append acc-pairs (list (string-append arch ":" path))) acc-pairs)
-            (if (and (equal? first-path "") ok) path first-path)))))))
+            (if ok
+              (append acc-pairs (list (string-append arch ":" path)))
+              acc-pairs)
+            (if (and (equal? first-path "") ok)
+              path
+              first-path)))))))
 
-(define
-  (main)
+(define (main)
   (let*
     ((image-attr (env-get "IMAGE_ATTR" "dockerImage"))
       (template (env-get "ATTR_TEMPLATE" "{base}-{arch}"))
@@ -412,8 +419,7 @@
       (machine (string-trim (stdout-of (exec-capture "uname" "-m")))))
     ;; Observability: log the discovered box + the partition it chose, so the
     ;; adaptive tune is visible in the job log (a 96/N=9 → jobs 9 cores 10 line).
-    (let
-      ((nproc (string-trim (stdout-of (exec-capture "nproc")))))
+    (let ((nproc (string-trim (stdout-of (exec-capture "nproc")))))
       (log-info
         (string-append
           "nix-image: node has "

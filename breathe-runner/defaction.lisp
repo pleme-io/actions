@@ -19,18 +19,60 @@
 ;; runtime + its run.tlisp explicitly and is NOT claimed to parse into
 ;; the shipped Rust struct.
 
-(defaction "breathe-runner"
-  :description "Preflight posture gate for camelot breathable spot runners: assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner (never rio) via config-driven CAMELOT_* signals, and arm the retirada drain->checkpoint hook. Never claims drain-armed without the handler present; enforce=false makes every requirement advisory."
-  :inputs  ((:name "require-spot"          :type :string :required nil :default "true")
-            (:name "require-camelot-taint" :type :string :required nil :default "true")
-            (:name "require-scale-to-zero" :type :string :required nil :default "false")
-            (:name "drain-handler"         :type :string :required nil :default "true")
-            (:name "enforce"               :type :string :required nil :default "true")
-            (:name "capacity-type-env"     :type :string :required nil :default "CAMELOT_CAPACITY_TYPE")
-            (:name "node-group-env"        :type :string :required nil :default "CAMELOT_NODE_GROUP")
-            (:name "min-runners-env"       :type :string :required nil :default "CAMELOT_MIN_RUNNERS"))
-  :outputs ((:name "runner-ok") (:name "capacity-type") (:name "node-group")
-            (:name "scale-to-zero") (:name "drain-armed"))
-  :behavior      (:runtime :tatara-script :run-tlisp "breathe-runner/run.tlisp")
-  :semver-compat :minor
-  :attestation   :none)
+(defaction
+  "breathe-runner"
+  :description
+  "Preflight posture gate for camelot breathable spot runners: assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner (never rio) via config-driven CAMELOT_* signals, and arm the retirada drain->checkpoint hook. Never claims drain-armed without the handler present; enforce=false makes every requirement advisory."
+  :inputs
+  ((
+     :name "require-spot"
+     :type :string
+     :required nil
+     :default "true")
+    (
+      :name "require-camelot-taint"
+      :type :string
+      :required nil
+      :default "true")
+    (
+      :name "require-scale-to-zero"
+      :type :string
+      :required nil
+      :default "false")
+    (
+      :name "drain-handler"
+      :type :string
+      :required nil
+      :default "true")
+    (
+      :name "enforce"
+      :type :string
+      :required nil
+      :default "true")
+    (
+      :name "capacity-type-env"
+      :type :string
+      :required nil
+      :default "CAMELOT_CAPACITY_TYPE")
+    (
+      :name "node-group-env"
+      :type :string
+      :required nil
+      :default "CAMELOT_NODE_GROUP")
+    (
+      :name "min-runners-env"
+      :type :string
+      :required nil
+      :default "CAMELOT_MIN_RUNNERS"))
+  :outputs
+  ((:name "runner-ok")
+    (:name "capacity-type")
+    (:name "node-group")
+    (:name "scale-to-zero")
+    (:name "drain-armed"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "breathe-runner/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :none)

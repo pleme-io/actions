@@ -20,16 +20,17 @@
     (exit 1)))
 
 ;; Count "configured" / "created" / "unchanged" lines in the output.
-(define
-  count
+(define count
   (let
     ((r2
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "echo '"
-           (string-replace (stdout-of r) "'" "'\"'\"'")
+           (string-replace
+             (stdout-of r)
+             "'"
+             "'\"'\"'")
            "' | grep -cE '(configured|created|unchanged)$' || echo 0"))))
     (string-trim (stdout-of r2))))
 
@@ -41,13 +42,11 @@
 ;; plain top-level recursion — tatara-script has NO named `let`, and a
 ;; `(let loop ((ts …)) …)` here was a hard `bad let: bindings must be a list`
 ;; the moment control reached it (gated by tlisp-lint Layer 6).
-(define
-  (wait-rollouts ts all-ok)
+(define (wait-rollouts ts all-ok)
   (cond
     ((null? ts) (cond (all-ok (exit 0)) (else (exit 1))))
     (else
-      (let
-        ((r4 (exec-capture "kubectl" "rollout" "status" "-n" ns (car ts) "--timeout" timeout)))
+      (let ((r4 (exec-capture "kubectl" "rollout" "status" "-n" ns (car ts) "--timeout" timeout)))
         (cond
           ((= (status-of r4) 0)
             (log-info (string-append "  ✓ " (car ts)))

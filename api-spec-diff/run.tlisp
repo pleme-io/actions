@@ -11,10 +11,13 @@
   "-c"
   "curl -fsSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz -o /tmp/oasdiff.tgz && tar xz -C /tmp -f /tmp/oasdiff.tgz && sudo mv /tmp/oasdiff /usr/local/bin/")
 
-(exec-capture
-  "sh"
-  "-c"
-  (string-append "git show " base ":" spec " > /tmp/base.spec 2>/dev/null || true"))
+(exec-capture "sh"
+  "-c" (string-append
+    "git show "
+    base
+    ":"
+    spec
+    " > /tmp/base.spec 2>/dev/null || true"))
 
 (cond
   ((not (path-exists? "/tmp/base.spec"))
@@ -26,12 +29,16 @@
 
 (define out (stdout-of r))
 
-(define
-  count-r
-  (exec-capture
-    "sh"
+(define count-r
+  (exec-capture "sh"
     "-c"
-    (string-append "echo '" (string-replace out "'" "'\"'\"'") "' | grep -c '^breaking' || echo 0")))
+    (string-append
+      "echo '"
+      (string-replace
+        out
+        "'"
+        "'\"'\"'")
+      "' | grep -c '^breaking' || echo 0")))
 
 (define cnt (string-trim (stdout-of count-r)))
 

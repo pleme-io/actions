@@ -53,16 +53,17 @@
 ;; Typed fallback — mirrors registry-login's `rl:pick`, two rungs.
 (define (gc:pick a b) (cond ((not (equal? a "")) a) (else b)))
 
-(define
-  (gc:which bot gh)
-  (cond ((not (equal? bot "")) "bot-pat") ((not (equal? gh "")) "github-token") (else "none")))
+(define (gc:which bot gh)
+  (cond
+    ((not (equal? bot "")) "bot-pat")
+    ((not (equal? gh "")) "github-token")
+    (else "none")))
 
 ;; Install the rewrite. Returns #t on success. The unset is best-effort by
 ;; design: a runner with no extraheader set (a job that never ran
 ;; actions/checkout) makes `--unset-all` exit non-zero, which is not a
 ;; failure of this action.
-(define
-  (gc:configure host token)
+(define (gc:configure host token)
   (let*
     ((url (string-append "https://x-access-token:" token "@" host "/"))
       (key (string-append "url." url ".insteadOf"))
@@ -74,8 +75,7 @@
       (set (exec-capture "git" "config" "--global" key plain)))
     (= (status-of set) 0)))
 
-(define
-  (gc:run)
+(define (gc:run)
   (let*
     ((bot (env-get "BOT_PAT" ""))
       (gh (env-get "GITHUB_TOKEN" ""))
@@ -118,7 +118,10 @@
             0)
           (else
             (log-error
-              (string-append "git-credentials: `git config` failed installing the " host " rewrite"))
+              (string-append
+                "git-credentials: `git config` failed installing the "
+                host
+                " rewrite"))
             (append-output "result=false")
             1))))))
 

@@ -6,14 +6,33 @@
 
 (define paths (env-required "PATHS_ARG"))
 
-(exec-check "sudo" "apt-get" "install" "-y" "-qq" "restic")
+(exec-check
+  "sudo"
+  "apt-get"
+  "install"
+  "-y"
+  "-qq"
+  "restic")
 
-(let
-  ((env-file (env-get "GITHUB_ENV" "")))
+(let ((env-file (env-get "GITHUB_ENV" "")))
   (cond
     ((not (equal? env-file ""))
-      (exec-check "sh" "-c" (string-append "echo 'RESTIC_REPOSITORY=" repo "' >> " env-file))
-      (exec-check "sh" "-c" (string-append "echo 'RESTIC_PASSWORD=" passwd "' >> " env-file)))))
+      (exec-check
+        "sh"
+        "-c"
+        (string-append
+          "echo 'RESTIC_REPOSITORY="
+          repo
+          "' >> "
+          env-file))
+      (exec-check
+        "sh"
+        "-c"
+        (string-append
+          "echo 'RESTIC_PASSWORD="
+          passwd
+          "' >> "
+          env-file)))))
 
 (define args (append (list "backup") (string-split paths " ")))
 

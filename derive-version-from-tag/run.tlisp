@@ -15,20 +15,16 @@
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(when
-  (equal? ref-name "")
+(when (equal? ref-name "")
   (log-error "no ref-name supplied (set INPUT_REF_NAME or REF_NAME)")
   (exit 1))
 
-(define
-  (append-output line)
+(define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
-(define
-  version
-  (if
-    (string-starts-with? ref-name "v")
+(define version
+  (if (string-starts-with? ref-name "v")
     ;; Drop only the leading "v": split on "v", drop the empty first
     ;; segment, rejoin the remainder on "v". Matches bash's `${X#v}`
     ;; semantics even when the version itself contains a "v".

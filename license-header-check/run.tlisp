@@ -7,17 +7,14 @@
 (define excludes (env-get "EXCLUDE_PATHS" "target node_modules .git vendor dist build"))
 
 ;; Build a find expression: -name '*.rs' -o -name '*.ts' ...
-(define
-  (build-find-args ext-list exclude-list)
+(define (build-find-args ext-list exclude-list)
   ;; First the prune clauses
-  (define
-    (prune-clauses xs)
+  (define (prune-clauses xs)
     (cond
       ((null? xs) "")
       (else (string-append "-path './" (car xs) "' -prune -o " (prune-clauses (cdr xs))))))
   ;; Then the name clauses joined by -o
-  (define
-    (name-clauses xs)
+  (define (name-clauses xs)
     (cond
       ((null? xs) "")
       ((null? (cdr xs)) (string-append "-name '*." (car xs) "'"))
@@ -34,10 +31,8 @@
 
 (log-info (string-append "scanning for license header: SPDX-License-Identifier: " license))
 
-(define
-  files
-  (let*
-    ((r (exec-capture "sh" "-c" find-cmd)) (out (string-trim (stdout-of r))))
+(define files
+  (let* ((r (exec-capture "sh" "-c" find-cmd)) (out (string-trim (stdout-of r))))
     (cond ((equal? out "") (list)) (else (string-split out "\n")))))
 
 (define file-count (length files))
@@ -45,12 +40,10 @@
 ;; A file passes if it contains either:
 ;;   SPDX-License-Identifier: <license>
 ;;   or "Licensed under <license>" / "License: <license>"
-(define
-  (file-has-header? path)
+(define (file-has-header? path)
   (let
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "head -20 "
@@ -67,8 +60,7 @@
            "' >/dev/null 2>&1"))))
     (= (status-of r) 0)))
 
-(define
-  (count-missing files acc)
+(define (count-missing files acc)
   (cond
     ((null? files) acc)
     ((file-has-header? (car files)) (count-missing (cdr files) acc))

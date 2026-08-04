@@ -26,19 +26,16 @@
 
 (define lib-chart-name (env-get "INPUT_LIB_CHART_NAME" (env-get "LIB_CHART_NAME" "pleme-lib")))
 
-(when
-  (or (equal? chart-path "") (equal? registry ""))
+(when (or (equal? chart-path "") (equal? registry ""))
   (log-error "helm-oci-publish: missing INPUT_CHART_PATH or INPUT_REGISTRY")
   (exit 1))
 
 (define (forge-available?) (exec-ok? "nix" "run" ".#forge" "--" "--help"))
 
-(define
-  (push-via-forge)
+(define (push-via-forge)
   ;; Build args list dynamically: --version and --lib-chart-dir are
   ;; only included when their inputs are non-empty.
-  (define
-    base
+  (define base
     (list
       "nix"
       "run"
@@ -51,20 +48,29 @@
       "--registry"
       registry))
   (define with-version (if (equal? version "") base (append base (list "--version" version))))
-  (define
-    final
-    (if
-      (equal? lib-chart-dir "")
+  (define final
+    (if (equal? lib-chart-dir "")
       with-version
-      (append with-version (list "--lib-chart-dir" lib-chart-dir "--lib-chart-name" lib-chart-name))))
+      (append
+        with-version
+        (list
+          "--lib-chart-dir"
+          lib-chart-dir
+          "--lib-chart-name"
+          lib-chart-name))))
   (apply exec-check final))
 
-(define
-  (helm-lint)
-  (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command" "helm" "lint" chart-path))
+(define (helm-lint)
+  (exec-check
+    "nix"
+    "shell"
+    "nixpkgs#kubernetes-helm"
+    "--command"
+    "helm"
+    "lint"
+    chart-path))
 
-(define
-  (helm-package)
+(define (helm-package)
   ;; Always package into ./dist so a subsequent helm-push knows where
   ;; to look. If VERSION is empty, helm uses Chart.yaml's version.
   (exec-check
@@ -78,10 +84,11 @@
       "mkdir -p dist && helm package "
       chart-path
       " --destination dist"
-      (if (equal? version "") "" (string-append " --version " version)))))
+      (if (equal? version "")
+        ""
+        (string-append " --version " version)))))
 
-(define
-  (helm-push)
+(define (helm-push)
   (exec-check
     "nix"
     "shell"
@@ -89,10 +96,12 @@
     "--command"
     "sh"
     "-c"
-    (string-append "tgz=$(ls -1 dist/*.tgz | head -n1) && " "helm push \"$tgz\" " registry)))
+    (string-append
+      "tgz=$(ls -1 dist/*.tgz | head -n1) && "
+      "helm push \"$tgz\" "
+      registry)))
 
-(define
-  (push-via-helm-cli)
+(define (push-via-helm-cli)
   (define lint-status (helm-lint))
   (cond
     ((not (= lint-status 0)) (exit lint-status))
@@ -102,15 +111,12 @@
 
 (log-info (string-append "publishing " chart-path " -> " registry))
 
-(define
-  status
-  (if
-    (forge-available?)
+(define status
+  (if (forge-available?)
     (begin (log-info "using forge helm release") (push-via-forge))
     (begin (log-info "forge not in flake; using helm CLI") (push-via-helm-cli))))
 
-(when
-  (not (= status 0))
+(when (not (= status 0))
   (log-error (string-append "helm publish failed (status " (string-format "{}" status) ")"))
   (exit status))
 

@@ -76,14 +76,12 @@
 
 ;; Split each element of `parts` on `sep` and concatenate — a two-level
 ;; split so "a, b  c" yields ("a" "b" "c").
-(define
-  (flatten-split parts sep)
+(define (flatten-split parts sep)
   (cond
     ((null? parts) (list))
     (else (append (string-split (car parts) sep) (flatten-split (cdr parts) sep)))))
 
-(define
-  (nonempty-tokens toks)
+(define (nonempty-tokens toks)
   (cond
     ((null? toks) (list))
     ((equal? (string-trim (car toks)) "") (nonempty-tokens (cdr toks)))
@@ -92,10 +90,8 @@
 ;; The OCI arch half of a platform token ("linux/arm64/v8" -> "arm64").
 ;; A bare "arm64" maps to itself so ARCH_ENDPOINTS keys and PLATFORMS
 ;; entries meet on the same arch token.
-(define
-  (platform-arch p)
-  (let
-    ((parts (string-split (string-trim p) "/")))
+(define (platform-arch p)
+  (let ((parts (string-split (string-trim p) "/")))
     (cond
       ((null? parts) "")
       ((null? (cdr parts)) (string-trim (car parts)))
@@ -107,10 +103,8 @@
 ;; The canonical host-arch token bigorna's Arch::host() derives from
 ;; std::env::consts::ARCH. `uname -m` gives x86_64 / aarch64; normalize to
 ;; the OCI token so host_arch == platform.arch can hold.
-(define
-  (normalize-arch a)
-  (let
-    ((t (string-trim a)))
+(define (normalize-arch a)
+  (let ((t (string-trim a)))
     (cond
       ((equal? t "x86_64") "amd64")
       ((equal? t "amd64") "amd64")
@@ -124,23 +118,22 @@
 ;; 2-list read with (car (cdr entry)). A token with no "=" is skipped.
 (define (parse-arch-endpoints raw) (ae-fold (tokens raw) (list)))
 
-(define
-  (ae-fold toks acc)
+(define (ae-fold toks acc)
   (cond
     ((null? toks) acc)
     (else
-      (let
-        ((kv (string-split (car toks) "=")))
+      (let ((kv (string-split (car toks) "=")))
         (cond
           ((null? (cdr kv)) (ae-fold (cdr toks) acc))
           ; no "=" → skip
           (else
             (ae-fold
               (cdr toks)
-              (cons (list (normalize-arch (string-trim (car kv))) (string-trim (car (cdr kv)))) acc))))))))
+              (cons
+                (list (normalize-arch (string-trim (car kv))) (string-trim (car (cdr kv))))
+                acc))))))))
 
-(define
-  (alist-lookup key alist)
+(define (alist-lookup key alist)
   (cond
     ((null? alist) "")
     ((equal? (car (car alist)) key) (car (cdr (car alist))))
@@ -149,36 +142,37 @@
 ;; A platform gets a NATIVE node iff it targets the runner's own arch
 ;; (the create node) OR the consumer supplied a native endpoint for its
 ;; arch. Anything else would be emulated.
-(define
-  (platform-native? p host-arch endpoints)
-  (let
-    ((a (normalize-arch (platform-arch p))))
+(define (platform-native? p host-arch endpoints)
+  (let ((a (normalize-arch (platform-arch p))))
     (or (equal? a host-arch) (not (equal? (alist-lookup a endpoints) "")))))
 
 ;; Partition the requested platforms into (native . emulated) by policy.
-(define
-  (native-platforms plats host-arch endpoints)
-  (filter-platforms plats host-arch endpoints #t))
+(define (native-platforms plats host-arch endpoints)
+  (filter-platforms
+    plats
+    host-arch
+    endpoints
+    #t))
 
-(define
-  (emulated-platforms plats host-arch endpoints)
-  (filter-platforms plats host-arch endpoints #f))
+(define (emulated-platforms plats host-arch endpoints)
+  (filter-platforms
+    plats
+    host-arch
+    endpoints
+    #f))
 
-(define
-  (filter-platforms plats host-arch endpoints want-native)
+(define (filter-platforms plats host-arch endpoints want-native)
   (cond
     ((null? plats) (list))
     (else
-      (let
-        ((keep (equal? (platform-native? (car plats) host-arch endpoints) want-native)))
+      (let ((keep (equal? (platform-native? (car plats) host-arch endpoints) want-native)))
         (cond
           (keep (cons (car plats) (filter-platforms (cdr plats) host-arch endpoints want-native)))
           (else (filter-platforms (cdr plats) host-arch endpoints want-native)))))))
 
 ;; Comma-join a token list for the receipt output (a plain view — the
 ;; typed builder emits the real --platform flag).
-(define
-  (join-comma toks)
+(define (join-comma toks)
   (cond
     ((null? toks) "")
     ((null? (cdr toks)) (car toks))
@@ -188,15 +182,17 @@
 ;; sui-bigorna CacheEndpoint::Registry Display: type=registry,ref=…,mode=…).
 ;; Registry is symmetric — the same token is a valid --cache-from and
 ;; --cache-to; only mode changes the export usefulness.
-(define
-  (cache-token ref mode)
+(define (cache-token ref mode)
   (cond
     ((equal? (string-trim ref) "") "")
     (else
-      (string-append "type=registry,ref=" (string-trim ref) ",mode=" (normalize-cache-mode mode)))))
+      (string-append
+        "type=registry,ref="
+        (string-trim ref)
+        ",mode="
+        (normalize-cache-mode mode)))))
 
-(define
-  (normalize-cache-mode m)
+(define (normalize-cache-mode m)
   (let ((t (string-trim m))) (cond ((equal? t "min") "min") (else "max"))))
 
 ;; ── config rendering — one BigornaConfig node block per native platform.
@@ -211,8 +207,7 @@
 
 ;; Render one node's YAML block. The runner's own-arch node is the
 ;; create node (no endpoint); a foreign native node carries its endpoint.
-(define
-  (render-node builder p host-arch endpoints)
+(define (render-node builder p host-arch endpoints)
   (let*
     ((arch (normalize-arch (platform-arch p)))
       (ep (cond ((equal? arch host-arch) "") (else (alist-lookup arch endpoints)))))
@@ -228,20 +223,26 @@
       "\n"
       (cond ((equal? ep "") "") (else (string-append "    endpoint: " ep "\n"))))))
 
-(define
-  (render-nodes builder plats host-arch endpoints)
+(define (render-nodes builder plats host-arch endpoints)
   (cond
     ((null? plats) "")
     (else
       (string-append
-        (render-node builder (car plats) host-arch endpoints)
-        (render-nodes builder (cdr plats) host-arch endpoints)))))
+        (render-node
+          builder
+          (car plats)
+          host-arch
+          endpoints)
+        (render-nodes
+          builder
+          (cdr plats)
+          host-arch
+          endpoints)))))
 
 ;; The full BigornaConfig document. bootstrap + use_as_default default to
 ;; true in the Rust struct (serde default) so the builder is usable and
 ;; picked up by an unchanged `docker buildx build` the moment setup returns.
-(define
-  (render-config builder driver plats host-arch endpoints)
+(define (render-config builder driver plats host-arch endpoints)
   (string-append
     "builder_name: "
     builder
@@ -252,32 +253,36 @@
     "bootstrap: true\n"
     "use_as_default: true\n"
     "nodes:\n"
-    (render-nodes builder plats host-arch endpoints)))
+    (render-nodes
+      builder
+      plats
+      host-arch
+      endpoints)))
 
 ;; ── side-effecting main (gated off under TLISP_TEST) ─────────────────
 
 ;; Resolve a runnable `bigorna` argv. Prefer a bigorna already on PATH
 ;; (baked into a pleme-io nix runner image — the native fast path, same
 ;; short-circuit tatara-script uses), else `nix run github:pleme-io/sui`.
-(define
-  (bigorna-argv version)
+(define (bigorna-argv version)
   (cond
     ((exec-ok? "sh" "-c" "command -v bigorna") (list "bigorna"))
     (else
       (list
         "nix"
         "run"
-        (string-append "github:pleme-io/sui/" (string-trim version) "#bigorna")
+        (string-append
+          "github:pleme-io/sui/"
+          (string-trim version)
+          "#bigorna")
         "--"))))
 
-(define
-  (run-setup argv config-path)
+(define (run-setup argv config-path)
   ;; argv already ends at the subcommand boundary ("--" for nix run, or
   ;; nothing for a PATH bigorna); append the keyway subcommand + config.
   (apply exec-capture (append argv (list "setup" "--config" config-path))))
 
-(define
-  (main)
+(define (main)
   (let*
     ((plats-raw (env-get "PLATFORMS" "linux/amd64"))
       (cache-ref (env-get "CACHE" ""))
@@ -285,12 +290,10 @@
       (ae-raw (env-get "ARCH_ENDPOINTS" ""))
       (fallthrough (env-get "FALLTHROUGH" "error"))
       (builder
-        (let
-          ((b (string-trim (env-get "BUILDER_NAME" "bigorna"))))
+        (let ((b (string-trim (env-get "BUILDER_NAME" "bigorna"))))
           (cond ((equal? b "") "bigorna") (else b))))
       (driver
-        (let
-          ((d (string-trim (env-get "DRIVER" "docker-container"))))
+        (let ((d (string-trim (env-get "DRIVER" "docker-container"))))
           (cond ((equal? d "") "docker-container") (else d))))
       (version (env-get "BIGORNA_VERSION" "main"))
       (host-arch (normalize-arch (host-uname-arch)))
@@ -416,10 +419,8 @@
                 st))))))))
 
 ;; ── host-arch probe (isolated so main's helpers stay pure) ───────────
-(define
-  (host-uname-arch)
-  (let
-    ((r (exec-capture "uname" "-m")))
+(define (host-uname-arch)
+  (let ((r (exec-capture "uname" "-m")))
     (cond ((= (status-of r) 0) (string-trim (stdout-of r))) (else "x86_64"))))
 
 ; sane default; normalize-arch maps it

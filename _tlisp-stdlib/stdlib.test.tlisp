@@ -6,8 +6,7 @@
 ;; cargo-publish-each-member (all read versions through cargo-workspace-version
 ;; / toml-read-field).
 
-(deftest
-  "line-is-section-header?: a bracket with no '=' — array fields are NOT headers"
+(deftest "line-is-section-header?: a bracket with no '=' — array fields are NOT headers"
   (assert (line-is-section-header? "[workspace.package]") "real section header")
   (assert (line-is-section-header? "  [package]  ") "trimmed section header")
   (assert
@@ -17,18 +16,18 @@
   (assert
     (not (line-is-section-header? "# see [lib] below"))
     "bracketed COMMENT is NOT a header (kazari 2026-07-21)")
-  (assert (not (line-is-section-header? "  # a [b] c")) "trimmed bracketed comment is NOT a header"))
+  (assert
+    (not (line-is-section-header? "  # a [b] c"))
+    "trimmed bracketed comment is NOT a header"))
 
-(deftest
-  "line-assigns-field?: exact field name, not a substring"
+(deftest "line-assigns-field?: exact field name, not a substring"
   (assert (line-assigns-field? "version = \"1.0\"" "version") "version assigns version")
   (assert (line-assigns-field? "  version=\"1.0\"" "version") "tight/trimmed still assigns version")
   (assert
     (not (line-assigns-field? "rust-version = \"1.89\"" "version"))
     "rust-version is NOT version"))
 
-(deftest
-  "line-is-named-section?: exact, not subsection or array value"
+(deftest "line-is-named-section?: exact, not subsection or array value"
   (assert (line-is-named-section? "[package]" "[package]") "exact section matches")
   (assert
     (not (line-is-named-section? "[package.metadata.docs.rs]" "[package]"))
@@ -37,15 +36,12 @@
     (not (line-is-named-section? "keywords = [\"package\"]" "[package]"))
     "array value is not a section"))
 
-(deftest
-  "extract-quoted-value: double + single quotes"
+(deftest "extract-quoted-value: double + single quotes"
   (assert (equal? (extract-quoted-value "version = \"1.2.3\"") "1.2.3") "double-quoted value")
   (assert (equal? (extract-quoted-value "name = 'foo'") "foo") "single-quoted value"))
 
-(deftest
-  "toml-read-field reads version past an array field + a rust-version trap"
-  (let
-    ((p "/tmp/stdlib-test-cargo.toml"))
+(deftest "toml-read-field reads version past an array field + a rust-version trap"
+  (let ((p "/tmp/stdlib-test-cargo.toml"))
     (write-file
       p
       "[workspace.package]\nkeywords = [\"x\", \"y\"]\nversion = \"4.5.6\"\nrust-version = \"1.89.0\"\n")
@@ -53,24 +49,20 @@
       (equal? (toml-read-field p "[workspace.package]" "version") "4.5.6")
       "reads 4.5.6 despite array field above + rust-version below")))
 
-(deftest
-  "toml-read-field stops at the next section (does not leak across)"
-  (let
-    ((p "/tmp/stdlib-test-cargo2.toml"))
+(deftest "toml-read-field stops at the next section (does not leak across)"
+  (let ((p "/tmp/stdlib-test-cargo2.toml"))
     (write-file p "[package]\nname = \"a\"\n\n[dependencies]\nversion = \"9.9.9\"\n")
     (assert
       (equal? (toml-read-field p "[package]" "version") "")
       "no version in [package] — must not read [dependencies].version")))
 
-(deftest
-  "toml-read-field reads version past a bracketed [package] comment (kazari 2026-07-21)"
+(deftest "toml-read-field reads version past a bracketed [package] comment (kazari 2026-07-21)"
   ;; The recurring regression: a legal [package] comment that CONTAINS a bracket
   ;; (e.g. `# … (see [lib] below)`) was mis-read as a new section header, so the
   ;; walker left [package] before reaching `version` → cargo-bump reported
   ;; "package.version not found". The published-name-collision fix (renaming
   ;; kazari → pleme-io-kazari with an explanatory bracketed comment) tripped it.
-  (let
-    ((p "/tmp/stdlib-test-cargo3.toml"))
+  (let ((p "/tmp/stdlib-test-cargo3.toml"))
     (write-file
       p
       (string-append
@@ -92,8 +84,7 @@
 ;; as load-bearing, the NO-FALSE-POSITIVE cases — a clean manifest MUST pass or
 ;; wiring the preflight into the publish action would red-fail real publishes.
 
-(deftest
-  "manifest-publish-blockers: detects a git dep in a shipped table (the sui-spec bug)"
+(deftest "manifest-publish-blockers: detects a git dep in a shipped table (the sui-spec bug)"
   (assert
     (not
       (manifest-publishable?
@@ -103,11 +94,11 @@
     (=
       1
       (length
-        (manifest-publish-blockers "[package]\n[dependencies]\nkazari = { git = \"https://x\" }\n")))
+        (manifest-publish-blockers
+          "[package]\n[dependencies]\nkazari = { git = \"https://x\" }\n")))
     "exactly one blocker for one git dep"))
 
-(deftest
-  "manifest-publish-blockers: detects a versionless path dep in a shipped table"
+(deftest "manifest-publish-blockers: detects a versionless path dep in a shipped table"
   (assert
     (not (manifest-publishable? "[package]\n[dependencies]\nfoo = { path = \"../foo\" }\n"))
     "a path dep with no version is a blocker")
@@ -116,15 +107,13 @@
       "[package]\n[dependencies]\nfoo = { path = \"../foo\", version = \"0.1\" }\n")
     "a path dep WITH a version is fine (a common publish pattern)"))
 
-(deftest
-  "manifest-publish-blockers: dev-dependencies are EXEMT (stripped on publish)"
+(deftest "manifest-publish-blockers: dev-dependencies are EXEMT (stripped on publish)"
   (assert
     (manifest-publishable?
       "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1\"\n\n[dev-dependencies]\nhelper = { git = \"https://x\" }\n")
     "a git dev-dependency does NOT block publish"))
 
-(deftest
-  "manifest-publish-blockers: NO false positives on a clean real-shaped manifest"
+(deftest "manifest-publish-blockers: NO false positives on a clean real-shaped manifest"
   ;; version deps, a workspace dep, repository= in [package], a bracketed
   ;; comment, a target table, a [lib] — all clean. MUST be publishable.
   (assert
@@ -150,8 +139,7 @@
         "tempfile = \"3\"\n"))
     "a clean manifest with version/workspace/target deps must NOT be flagged"))
 
-(deftest
-  "manifest-publish-blockers: target dep tables ship (a git dep there IS caught)"
+(deftest "manifest-publish-blockers: target dep tables ship (a git dep there IS caught)"
   (assert
     (not
       (manifest-publishable?
@@ -162,8 +150,7 @@
       "[package]\n[target.'cfg(unix)'.dev-dependencies]\nfoo = { git = \"https://x\" }\n")
     "but a [target.*.dev-dependencies] git dep is exempt"))
 
-(deftest
-  "manifest-publish-blockers: a comment mentioning git is not a blocker"
+(deftest "manifest-publish-blockers: a comment mentioning git is not a blocker"
   (assert
     (manifest-publishable?
       "[package]\n[dependencies]\n# clone via git = \"…\" during dev only\nserde = \"1\"\n")
@@ -176,8 +163,7 @@
 ;; it fail — the ranking tests fail under any string comparison, and the
 ;; monotonicity tests fail under the old "is the exact tag free?" question.
 
-(deftest
-  "semver:parse — strict; only a bare X.Y.Z ranks"
+(deftest "semver:parse — strict; only a bare X.Y.Z ranks"
   (assert (semver:valid? "0.1.0") "bare three-segment parses")
   (assert (semver:valid? "10.20.30") "multi-digit segments parse")
   (assert (not (semver:valid? "v1")) "a moving action ref does not rank")
@@ -187,8 +173,7 @@
   (assert (not (semver:valid? "0.1.rc")) "a non-numeric segment does not rank")
   (assert (not (semver:valid? "")) "empty does not rank (read-string would raise)"))
 
-(deftest
-  "semver:gt? — NUMERIC, not lexical; 0.10.0 beats 0.9.0"
+(deftest "semver:gt? — NUMERIC, not lexical; 0.10.0 beats 0.9.0"
   ;; The load-bearing case. Every string comparison — and `sort` without
   ;; -V — gets this backwards, which is why the comparison is hand-written.
   (assert (semver:gt? "0.10.0" "0.9.0") "0.10.0 > 0.9.0 numerically")
@@ -200,8 +185,7 @@
   (assert (not (semver:gt? "junk" "0.1.0")) "an unrankable side is never greater")
   (assert (not (semver:gt? "0.1.0" "junk")) "…in either position (fail-closed)"))
 
-(deftest
-  "semver:max — highest, skipping everything unrankable"
+(deftest "semver:max — highest, skipping everything unrankable"
   (assert (equal? (semver:max (list "0.2.5" "0.10.0" "0.9.0")) "0.10.0") "numeric max, not lexical")
   (assert
     (equal? (semver:max (list "v1" "0.2-full-api" "0.1.0")) "0.1.0")
@@ -209,8 +193,7 @@
   (assert (equal? (semver:max (list "v1" "junk")) "") "no rankable entry means no max")
   (assert (equal? (semver:max '()) "") "empty list means no max"))
 
-(deftest
-  "string-prefix? / string-strip-prefix"
+(deftest "string-prefix? / string-strip-prefix"
   (assert (string-prefix? "v0.3.1" "v") "v-prefixed tag")
   (assert
     (not (string-prefix? "guardrail-v1.2.3" "v"))
@@ -222,8 +205,7 @@
     "strips ONE prefix only — a later occurrence survives")
   (assert (equal? (string-strip-prefix "0.3.1" "v") "0.3.1") "no prefix, unchanged"))
 
-(deftest
-  "git:max-released-version's filter over REAL fleet tag shapes"
+(deftest "git:max-released-version's filter over REAL fleet tag shapes"
   ;; The exact 264-of-2886 non-bare tag shapes measured across the 662
   ;; substrate-consuming repos. None of them may outrank a real release.
   (let
@@ -247,8 +229,7 @@
         "0.3.1")
       "only bare vX.Y.Z tags rank; guardrail-v9.9.9 must NOT win")))
 
-(deftest
-  "semver:release-monotone? — THE invariant (red under the old question)"
+(deftest "semver:release-monotone? — THE invariant (red under the old question)"
   ;; The engenho-shaped regression: 0.2.6 is a FREE tag, so the old
   ;; "is this exact tag taken?" check waved it through while v0.3.1 existed.
   (assert
@@ -266,8 +247,7 @@
     (not (semver:release-monotone? "1.0.0-rc1" "0.1.0"))
     "an unrankable release is refused, never assumed fine"))
 
-(deftest
-  "semver:bump-seed — seed from the MAX, not the manifest alone"
+(deftest "semver:bump-seed — seed from the MAX, not the manifest alone"
   (assert
     (equal? (semver:bump-seed "0.2.5" "0.3.1") "0.3.1")
     "manifest lags the tags -> seed from the tags (the STEP-2 fix)")
@@ -282,8 +262,7 @@
     (equal? (semver:bump-seed "not-a-version" "0.3.1") "0.3.1")
     "an unreadable manifest version cannot outrank a real release"))
 
-(deftest
-  "semver:bump — LENIENT arithmetic, byte-identical to the shipped behavior"
+(deftest "semver:bump — LENIENT arithmetic, byte-identical to the shipped behavior"
   (assert (equal? (semver:bump "0.2.3" "patch") "0.2.4") "patch")
   (assert (equal? (semver:bump "0.2.9" "patch") "0.2.10") "patch crosses two digits")
   (assert (equal? (semver:bump "1.4.7" "minor") "1.5.0") "minor resets patch")
@@ -293,12 +272,10 @@
     (equal? (semver:bump "1.2" "patch") "1.2.1")
     "a missing segment reads 0 — LENIENT on purpose, unlike semver:parse"))
 
-(deftest
-  "seed-then-bump composes into a monotone release (the STEP-1+STEP-2 tie)"
+(deftest "seed-then-bump composes into a monotone release (the STEP-1+STEP-2 tie)"
   ;; The end-to-end algebra: the skew fixture (manifest 0.2.5, tags to
   ;; v0.3.1) must produce 0.3.2, and that result must satisfy the gate.
-  (let*
-    ((seed (semver:bump-seed "0.2.5" "0.3.1")) (next (semver:bump seed "patch")))
+  (let* ((seed (semver:bump-seed "0.2.5" "0.3.1")) (next (semver:bump seed "patch")))
     (assert (equal? next "0.3.2") "0.2.5 seeded to 0.3.1 patch-bumps to 0.3.2")
     (assert
       (semver:release-monotone? next "0.3.1")
@@ -315,46 +292,42 @@
 
 (define tmp-toml "/tmp/stdlib-replace-verified.toml")
 
-(deftest
-  "replace-once-in-file-verified: 'needle-absent and NOTHING is written"
+(deftest "replace-once-in-file-verified: 'needle-absent and NOTHING is written"
   ;; THE defect. Before this primitive, string-replace returned the contents
   ;; unchanged, write-file rewrote them byte-identically, and the caller was
   ;; told nothing. MEASURED: (string-replace "abc" "ZZZ" "Q") ⇒ "abc".
   (write-file tmp-toml "name = \"keep-me\"\n")
-  (let
-    ((outcome (replace-once-in-file-verified tmp-toml "name = \"gone\"" "x")))
+  (let ((outcome (replace-once-in-file-verified tmp-toml "name = \"gone\"" "x")))
     (assert (equal? outcome 'needle-absent) "an absent needle is LOUD, not silent")
     (assert
       (equal? (read-file tmp-toml) "name = \"keep-me\"\n")
       "and the file is left untouched — no half-mutation before the give-up")))
 
-(deftest
-  "replace-once-in-file-verified: 'replaced verifies by RE-READING"
+(deftest "replace-once-in-file-verified: 'replaced verifies by RE-READING"
   (write-file tmp-toml "version = \"=0.3.3\"\n")
-  (let
-    ((outcome (replace-once-in-file-verified tmp-toml "=0.3.3" "=0.4.0")))
+  (let ((outcome (replace-once-in-file-verified tmp-toml "=0.3.3" "=0.4.0")))
     (assert (equal? outcome 'replaced) "a present needle replaces")
     (assert
       (equal? (read-file tmp-toml) "version = \"=0.4.0\"\n")
       "and the bytes on disk are the bytes we intended")))
 
-(deftest
-  "replace-once-in-file-verified: a tautological edit is 'unchanged, not 'replaced"
+(deftest "replace-once-in-file-verified: a tautological edit is 'unchanged, not 'replaced"
   (write-file tmp-toml "a = 1\n")
   (assert
     (equal? (replace-once-in-file-verified tmp-toml "a = 1" "a = 1") 'unchanged)
     "replacing a needle with itself changed nothing and says so"))
 
-(deftest
-  "replace-once-in-file-verified: a missing file is 'needle-absent, never a crash"
+(deftest "replace-once-in-file-verified: a missing file is 'needle-absent, never a crash"
   (assert
     (equal?
-      (replace-once-in-file-verified "/tmp/stdlib-no-such-file-xyz.toml" "a" "b")
+      (replace-once-in-file-verified
+        "/tmp/stdlib-no-such-file-xyz.toml"
+        "a"
+        "b")
       'needle-absent)
     "an absent path cannot contain the needle"))
 
-(deftest
-  "replace-outcome-reason: every non-replaced outcome gets a named diagnosis"
+(deftest "replace-outcome-reason: every non-replaced outcome gets a named diagnosis"
   (assert
     (string-contains? (replace-outcome-reason 'needle-absent "/p" "N") "nothing was written")
     "'needle-absent says the file was NOT touched")
@@ -369,8 +342,7 @@
 ;; TOML inline-table surgery — preserve what you did not come to change
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest
-  "string-suffix?: the sentinel trap in (string-split s \"\")"
+(deftest "string-suffix?: the sentinel trap in (string-split s \"\")"
   ;; MEASURED: (string-split "ab}" "") ⇒ ("" "a" "b" "}" "") — sentinels at
   ;; BOTH ends, so a "last char" test via split-on-empty reads "" not "}".
   (assert (string-suffix? "x = { a = 1 }" "}") "trailing brace detected")
@@ -378,8 +350,7 @@
   (assert (string-suffix? "a," ",") "trailing comma detected")
   (assert (not (string-suffix? "abc" "}")) "no false positive"))
 
-(deftest
-  "toml-inline-table-line?: refuses the shapes it must not mangle"
+(deftest "toml-inline-table-line?: refuses the shapes it must not mangle"
   (assert
     (toml-inline-table-line? "dep = { path = \"d\", version = \"=0.3.3\" }")
     "a single-line inline table is operable")
@@ -387,8 +358,7 @@
   (assert (not (toml-inline-table-line? "dep.workspace = true")) "inheritance is NOT")
   (assert (not (toml-inline-table-line? "dep = {")) "a multi-line table opener is NOT"))
 
-(deftest
-  "toml-inline-table-add-key PRESERVES an EXACT pin — the lib<->derive seal"
+(deftest "toml-inline-table-add-key PRESERVES an EXACT pin — the lib<->derive seal"
   ;; The seal that must survive: tatara-lisp/Cargo.toml pins its derive at
   ;; version = "=0.3.3". Re-synthesizing the line from cargo-workspace-version
   ;; would emit "0.3.3" and ERASE the `=`. Editing in place cannot.
@@ -404,37 +374,46 @@
       "and the rename key is added")
     (assert (string-suffix? out "}") "the table is still closed")))
 
-(deftest
-  "toml-inline-table-add-key: caret, plain and no-space closers all work"
+(deftest "toml-inline-table-add-key: caret, plain and no-space closers all work"
   (assert
     (string-contains?
-      (toml-inline-table-add-key "d = { path = \"d\", version = \"^0.3.3\" }" "package" "p")
+      (toml-inline-table-add-key
+        "d = { path = \"d\", version = \"^0.3.3\" }"
+        "package"
+        "p")
       "version = \"^0.3.3\", package = \"p\" }")
     "a caret requirement is preserved")
   (assert
     (string-contains?
-      (toml-inline-table-add-key "d = { path = \"d\", version = \"0.3.3\" }" "package" "p")
+      (toml-inline-table-add-key
+        "d = { path = \"d\", version = \"0.3.3\" }"
+        "package"
+        "p")
       "version = \"0.3.3\", package = \"p\" }")
     "a plain requirement is preserved")
   (assert
     (string-contains?
-      (toml-inline-table-add-key "d = { path = \"d\", version = \"0.3.3\"}" "package" "p")
+      (toml-inline-table-add-key
+        "d = { path = \"d\", version = \"0.3.3\"}"
+        "package"
+        "p")
       "version = \"0.3.3\", package = \"p\" }")
     "a brace with no leading space still normalizes"))
 
-(deftest
-  "toml-inline-table-add-key: indentation preserved, refusal is empty"
+(deftest "toml-inline-table-add-key: indentation preserved, refusal is empty"
   (assert
     (string-prefix?
-      (toml-inline-table-add-key "    d = { version = \"1\" }" "package" "p")
+      (toml-inline-table-add-key
+        "    d = { version = \"1\" }"
+        "package"
+        "p")
       "    d = ")
     "leading indentation is kept byte-for-byte")
   (assert
     (equal? (toml-inline-table-add-key "d.workspace = true" "package" "p") "")
     "a shape it cannot edit returns \"\" so the caller must refuse LOUDLY"))
 
-(deftest
-  "toml-line-in-section returns the VERBATIM line, not a reconstruction"
+(deftest "toml-line-in-section returns the VERBATIM line, not a reconstruction"
   (write-file
     tmp-toml
     (string-append
@@ -446,12 +425,18 @@
       "tatara-lisp = { path = \"tatara-lisp\", version = \"0.3.3\" }\n"))
   (assert
     (equal?
-      (toml-line-in-section tmp-toml "[workspace.dependencies]" "tatara-lisp-derive")
+      (toml-line-in-section
+        tmp-toml
+        "[workspace.dependencies]"
+        "tatara-lisp-derive")
       "tatara-lisp-derive = { path = \"tatara-lisp-derive\", version = \"=0.3.3\" }")
     "the exact-pinned row comes back with its `=` intact")
   (assert
     (equal?
-      (toml-line-in-section tmp-toml "[workspace.dependencies]" "tatara-lisp")
+      (toml-line-in-section
+        tmp-toml
+        "[workspace.dependencies]"
+        "tatara-lisp")
       "tatara-lisp = { path = \"tatara-lisp\", version = \"0.3.3\" }")
     "and the plain row is not confused with the derive row (strict field match)")
   (assert
@@ -461,14 +446,12 @@
     (equal? (toml-line-in-section tmp-toml "[workspace.package]" "tatara-lisp") "")
     "the walker stops at the next section header"))
 
-(deftest
-  "replace-once-in-file-verified: 'needle-ambiguous — ONCE is enforced"
+(deftest "replace-once-in-file-verified: 'needle-ambiguous — ONCE is enforced"
   ;; MEASURED: (string-replace "a X b X c" "X" "Y") ⇒ "a Y b Y c". A function
   ;; named replace-ONCE handing a 2-match needle to string-replace rewrites
   ;; BOTH and reports success — the same class, one level down.
   (write-file tmp-toml "name = \"dup\"\nother = 1\nname = \"dup\"\n")
-  (let
-    ((outcome (replace-once-in-file-verified tmp-toml "name = \"dup\"" "name = \"new\"")))
+  (let ((outcome (replace-once-in-file-verified tmp-toml "name = \"dup\"" "name = \"new\"")))
     (assert (equal? outcome 'needle-ambiguous) "two matches is a refusal, not a double rewrite")
     (assert
       (equal? (read-file tmp-toml) "name = \"dup\"\nother = 1\nname = \"dup\"\n")

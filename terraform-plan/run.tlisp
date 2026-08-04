@@ -6,25 +6,27 @@
 
 (define var-file (env-get "VAR_FILE" ""))
 
-(define
-  init-cmd
+(define init-cmd
   (string-append
     "cd "
     wd
     " && terraform init"
-    (if (equal? backend "") "" (string-append " -backend-config=" backend))))
+    (if (equal? backend "")
+      ""
+      (string-append " -backend-config=" backend))))
 
 (define r1 (exec-capture "sh" "-c" init-cmd))
 
 (cond ((not (= (status-of r1) 0)) (log-error "terraform init failed") (exit 1)))
 
-(define
-  plan-cmd
+(define plan-cmd
   (string-append
     "cd "
     wd
     " && terraform plan -out=tfplan -detailed-exitcode"
-    (if (equal? var-file "") "" (string-append " -var-file=" var-file))))
+    (if (equal? var-file "")
+      ""
+      (string-append " -var-file=" var-file))))
 
 (define r2 (exec-capture "sh" "-c" plan-cmd))
 

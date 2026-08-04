@@ -12,8 +12,7 @@
 
 (define site (env-get "SITE" "datadoghq.com"))
 
-(define
-  payload-jq
+(define payload-jq
   (string-append
     "jq -n --arg title '"
     title
@@ -29,16 +28,15 @@
     github
     " }'"))
 
-(define
-  payload
-  (let
-    ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond ((= (status-of r) 0) (stdout-of r)) (else (log-error "payload assembly failed") (exit 1)))))
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else (log-error "payload assembly failed") (exit 1)))))
 
 (define url (string-append "https://api." site "/api/v1/events"))
 
-(define
-  curl-cmd
+(define curl-cmd
   (string-append
     "curl -sS -o /dev/null -w '%{http_code}' "
     "-X POST -H 'Content-Type: application/json' "
@@ -46,7 +44,10 @@
     key
     "' "
     "-d '"
-    (string-replace payload "'" "'\"'\"'")
+    (string-replace
+      payload
+      "'"
+      "'\"'\"'")
     "' '"
     url
     "'"))

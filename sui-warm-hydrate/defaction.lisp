@@ -30,18 +30,60 @@
 ;; `warm-count=0` `reason=store-absent-degraded`, and NEVER fakes a warm
 ;; hit. `require-warm=true` turns the degrade into a loud exit 1.
 
-(defaction "sui-warm-hydrate"
-  :description "GRAPH-job warm verb: pre-load the sui daemon's tiered super-cache (Redis L1 -> Postgres L2 -> object L3) with the fan-out's content keys BEFORE the build matrix explodes, so every parallel job starts warm. DEGRADED-UNTIL-STORE: the warm-set RPC + TieredBackend are a named LiveTODO; today an honest no-op (warmed=false, never a faked warm), never a rounded-up hit."
-  :inputs  ((:name "endpoint"      :type :string :required nil :default "")
-            (:name "spec-paths"    :type :string :required nil :default "")
-            (:name "keys"          :type :string :required nil :default "")
-            (:name "tiers"         :type :string :required nil :default "redis,pg,object")
-            (:name "store-backend" :type :string :required nil :default "graphstore")
-            (:name "cache-backend" :type :string :required nil :default "local")
-            (:name "sandbox"       :type :string :required nil :default "tmpfs")
-            (:name "require-warm"  :type :string :required nil :default "false"))
-  :outputs ((:name "warmed") (:name "warm-count") (:name "hit-tier")
-            (:name "never-touch-disk") (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "sui-warm-hydrate/run.tlisp")
-  :semver-compat :minor
-  :attestation   :optional)
+(defaction
+  "sui-warm-hydrate"
+  :description
+  "GRAPH-job warm verb: pre-load the sui daemon's tiered super-cache (Redis L1 -> Postgres L2 -> object L3) with the fan-out's content keys BEFORE the build matrix explodes, so every parallel job starts warm. DEGRADED-UNTIL-STORE: the warm-set RPC + TieredBackend are a named LiveTODO; today an honest no-op (warmed=false, never a faked warm), never a rounded-up hit."
+  :inputs
+  ((
+     :name "endpoint"
+     :type :string
+     :required nil
+     :default "")
+    (
+      :name "spec-paths"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "keys"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "tiers"
+      :type :string
+      :required nil
+      :default "redis,pg,object")
+    (
+      :name "store-backend"
+      :type :string
+      :required nil
+      :default "graphstore")
+    (
+      :name "cache-backend"
+      :type :string
+      :required nil
+      :default "local")
+    (
+      :name "sandbox"
+      :type :string
+      :required nil
+      :default "tmpfs")
+    (
+      :name "require-warm"
+      :type :string
+      :required nil
+      :default "false"))
+  :outputs
+  ((:name "warmed")
+    (:name "warm-count")
+    (:name "hit-tier")
+    (:name "never-touch-disk")
+    (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "sui-warm-hydrate/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :optional)

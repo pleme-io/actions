@@ -10,11 +10,18 @@
 ;; nixos-24.05, not an ambient apt repo whose signing key/package version
 ;; can change under us. The "Install Nix" step in action.yml already wired
 ;; nix onto PATH.
-(exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#k6")
+(exec-check
+  "nix"
+  "profile"
+  "install"
+  "github:NixOS/nixpkgs/nixos-24.05#k6")
 
-(define
-  r
-  (exec-capture "k6" "run" "--vus" vus "--duration" dur "--summary-export=k6-summary.json" script))
+(define r
+  (exec-capture "k6"
+    "run"
+    "--vus" vus
+    "--duration" dur
+    "--summary-export=k6-summary.json" script))
 
 (append-output "summary-path=k6-summary.json")
 

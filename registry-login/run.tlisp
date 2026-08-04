@@ -30,15 +30,13 @@
 ;; oci://ghcr.io/pleme-io/charts -> ghcr.io ; ghcr.io -> ghcr.io
 ;; A scheme (contains "://") splits to (scheme: "" host ...); the host is
 ;; the 3rd dot-split part. A bare host splits to (host) — take the first.
-(define
-  (rl:host r)
+(define (rl:host r)
   (let ((parts (string-split r "/"))) (if (string-contains? r "://") (rl:nth parts 2) (car parts))))
 
 ;; First non-empty of the three candidates, in priority order.
 (define (rl:pick a b c) (cond ((not (equal? a "")) a) ((not (equal? b "")) b) (else c)))
 
-(define
-  (rl:fail reason)
+(define (rl:fail reason)
   (log-error (string-append "registry-login: " reason))
   (append-output "result=false")
   (exit 1))
@@ -47,8 +45,7 @@
 ;; docker/skopeo read ~/.docker/config.json. Pick the client whose store the
 ;; caller's publish step will consult. helm is fetched via `nix shell` (the
 ;; reusable installs Nix before this step).
-(define
-  (rl:login client host user token)
+(define (rl:login client host user token)
   (cond
     ((equal? client "helm")
       (exec-check
@@ -66,8 +63,7 @@
         token))
     (else (exec-check "docker" "login" host "--username" user "--password" token))))
 
-(define
-  (main)
+(define (main)
   (let*
     ((registry (env-required "REGISTRY"))
       (client (env-get "CLIENT" "docker"))
@@ -81,12 +77,16 @@
         (rl:fail (string-append "could not extract a host from registry '" registry "'")))
       (else
         (log-info (string-append "==> " client " registry login " host))
-        (let
-          ((r (rl:login client host user token)))
+        (let ((r (rl:login client host user token)))
           (cond
             ((= r 0) (append-output "result=true") (exit 0))
             (else
-              (rl:fail (string-append client " login failed (exit " (string-format "{}" r) ")")))))))))
+              (rl:fail
+                (string-append
+                  client
+                  " login failed (exit "
+                  (string-format "{}" r)
+                  ")")))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")

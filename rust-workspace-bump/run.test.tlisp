@@ -7,12 +7,13 @@
 ;; rewriter takes an injected membership predicate, so these tests drive the
 ;; REAL run.tlisp functions with a mock tag set and a mock workspace.
 
-(define
-  (in-list? x xs)
-  (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (in-list? x (cdr xs)))))
+(define (in-list? x xs)
+  (cond
+    ((null? xs) #f)
+    ((equal? (car xs) x) #t)
+    (else (in-list? x (cdr xs)))))
 
-(deftest
-  "bump-semver: pure patch/minor/major — no awk, no subprocess"
+(deftest "bump-semver: pure patch/minor/major — no awk, no subprocess"
   (assert (equal? (bump-semver "0.2.3" "patch") "0.2.4") "patch increments the last segment")
   (assert (equal? (bump-semver "0.2.9" "patch") "0.2.10") "patch crosses into two digits")
   (assert (equal? (bump-semver "1.4.7" "minor") "1.5.0") "minor bumps + resets patch")
@@ -20,93 +21,108 @@
   (assert (equal? (bump-semver "0.0.0" "patch") "0.0.1") "from all-zero")
   (assert (equal? (bump-semver "10.20.30" "minor") "10.21.0") "multi-digit segments"))
 
-(deftest
-  "next-free-version: free slot is taken as the naive bump"
+(deftest "next-free-version: free slot is taken as the naive bump"
   (assert
     (equal? (next-free-version "0.2.3" "patch" "" (lambda (v) #f)) "0.2.4")
     "no tags at all -> naive 0.2.4"))
 
-(deftest
-  "next-free-version: ABSORBED case — within-minor skew is unchanged"
+(deftest "next-free-version: ABSORBED case — within-minor skew is unchanged"
   ;; The 19 healthy pleme-*-derive repos. Cargo.toml lagged at 0.2.2 while
   ;; v0.2.3 was already cut. This produced 0.2.4 before the seed landed and
   ;; MUST still produce 0.2.4 — via the seed (max 0.2.3 -> patch -> 0.2.4)
   ;; rather than via the collision walk, but byte-identically. A fix that
   ;; turns these repos red is a regression, not a fix.
-  (let
-    ((existing (list "0.2.3")))
+  (let ((existing (list "0.2.3")))
     (assert
       (equal?
-        (next-free-version "0.2.2" "patch" "0.2.3" (lambda (v) (in-list? v existing)))
+        (next-free-version
+          "0.2.2"
+          "patch"
+          "0.2.3"
+          (lambda (v) (in-list? v existing)))
         "0.2.4")
       "within-minor skew still lands on 0.2.4"))
-  (let
-    ((existing (list "0.2.3" "0.2.4" "0.2.5")))
+  (let ((existing (list "0.2.3" "0.2.4" "0.2.5")))
     (assert
       (equal?
-        (next-free-version "0.2.2" "patch" "0.2.5" (lambda (v) (in-list? v existing)))
+        (next-free-version
+          "0.2.2"
+          "patch"
+          "0.2.5"
+          (lambda (v) (in-list? v existing)))
         "0.2.6")
       "a RUN of existing tags still lands on 0.2.6")))
 
-(deftest
-  "next-free-version: THE FIX — cross-minor skew no longer goes backward"
+(deftest "next-free-version: THE FIX — cross-minor skew no longer goes backward"
   ;; The engenho-shaped regression, and the exact case the old code got
   ;; wrong. Committed 0.2.5, released through v0.3.1. The old seed bumped
   ;; from the manifest to 0.2.6, found that tag FREE, and released it —
   ;; below v0.3.1, on linear history, exit 0. Seeding from the max makes
   ;; 0.2.6 unnameable.
-  (let
-    ((existing (list "0.3.0" "0.3.1")))
+  (let ((existing (list "0.3.0" "0.3.1")))
     (assert
       (equal?
-        (next-free-version "0.2.5" "patch" "0.3.1" (lambda (v) (in-list? v existing)))
+        (next-free-version
+          "0.2.5"
+          "patch"
+          "0.3.1"
+          (lambda (v) (in-list? v existing)))
         "0.3.2")
       "seeds from v0.3.1 -> 0.3.2, NOT the free-but-backward 0.2.6")
     (assert
       (not
         (equal?
-          (next-free-version "0.2.5" "patch" "0.3.1" (lambda (v) (in-list? v existing)))
+          (next-free-version
+            "0.2.5"
+            "patch"
+            "0.3.1"
+            (lambda (v) (in-list? v existing)))
           "0.2.6"))
       "and specifically never the old answer")))
 
-(deftest
-  "next-free-version: the collision walk still runs BEHIND the seed"
+(deftest "next-free-version: the collision walk still runs BEHIND the seed"
   ;; Seed lands on a version whose tag was cut without a manifest bump:
   ;; max 0.3.1 -> patch -> 0.3.2, but v0.3.2 exists -> advance to 0.3.3.
-  (let
-    ((existing (list "0.3.1" "0.3.2")))
+  (let ((existing (list "0.3.1" "0.3.2")))
     (assert
       (equal?
-        (next-free-version "0.2.5" "patch" "0.3.1" (lambda (v) (in-list? v existing)))
+        (next-free-version
+          "0.2.5"
+          "patch"
+          "0.3.1"
+          (lambda (v) (in-list? v existing)))
         "0.3.3")
       "seeded candidate 0.3.2 collides -> 0.3.3")))
 
-(deftest
-  "next-free-version: manifest AHEAD of the tags is left alone"
+(deftest "next-free-version: manifest AHEAD of the tags is left alone"
   ;; The ordinary healthy repo: the manifest leads, the tags follow.
-  (let
-    ((existing (list "0.3.1")))
+  (let ((existing (list "0.3.1")))
     (assert
       (equal?
-        (next-free-version "0.4.0" "patch" "0.3.1" (lambda (v) (in-list? v existing)))
+        (next-free-version
+          "0.4.0"
+          "patch"
+          "0.3.1"
+          (lambda (v) (in-list? v existing)))
         "0.4.1")
       "a leading manifest is the seed; the max does not drag it back")))
 
-(deftest
-  "next-free-version: minor + major bumps compose with the seed"
-  (let
-    ((existing (list "0.3.0")))
+(deftest "next-free-version: minor + major bumps compose with the seed"
+  (let ((existing (list "0.3.0")))
     (assert
       (equal?
-        (next-free-version "0.2.7" "minor" "0.3.0" (lambda (v) (in-list? v existing)))
+        (next-free-version
+          "0.2.7"
+          "minor"
+          "0.3.0"
+          (lambda (v) (in-list? v existing)))
         "0.4.0")
       "minor over a 0.3.0 seed is 0.4.0 — above the max, as it must be"))
   (assert
     (equal? (next-free-version "0.2.5" "major" "0.3.1" (lambda (v) #f)) "1.0.0")
     "major over a 0.3.1 seed is 1.0.0"))
 
-(deftest
-  "next-free-version: every result is release-monotone (the tie to the gate)"
+(deftest "next-free-version: every result is release-monotone (the tie to the gate)"
   ;; The property the whole change exists to establish: whatever the
   ;; manifest says, the computed version is ABOVE the highest release, so
   ;; git-commit-tag's gate can never fire on our own output.
@@ -118,19 +134,21 @@
          (list "0.4.0" "0.3.1")
          (list "0.9.0" "0.10.0"))))
     (for-each
-      (lambda
-        (c)
+      (lambda (c)
         (let*
           ((old-v (car c))
             (max-v (car (cdr c)))
             (got (next-free-version old-v "patch" max-v (lambda (v) #f))))
           (assert
             (semver:release-monotone? got max-v)
-            (string-append "computed " got " must be above " max-v))))
+            (string-append
+              "computed "
+              got
+              " must be above "
+              max-v))))
       cases)))
 
-(deftest
-  "ensure-gen-lock-fresh: non-delta repo (no Cargo.gen.lock) passes"
+(deftest "ensure-gen-lock-fresh: non-delta repo (no Cargo.gen.lock) passes"
   ;; The D2 gate is freshness-driven and only engages for delta-only
   ;; repos. The test harness cwd has no Cargo.gen.lock, so this
   ;; exercises the not-delta short-circuit — no exec, no regen.
@@ -145,8 +163,7 @@
 
 (define (never-inherits p) #f)
 
-(deftest
-  "key-before-quoted: the word before the FINAL '=', not a substring"
+(deftest "key-before-quoted: the word before the FINAL '=', not a substring"
   (assert (equal? (key-before-quoted ", version = ") "version") "version key")
   (assert
     (equal? (key-before-quoted "engenho-types          = { path = ") "path")
@@ -156,8 +173,7 @@
     "a dep NAMED versioned-thing resolves to path, not version")
   (assert (equal? (key-before-quoted "no-equals-here") "") "no '=' means no key"))
 
-(deftest
-  "rewrite-workspace-dep-pins: engenho's real stale pins move to the new version"
+(deftest "rewrite-workspace-dep-pins: engenho's real stale pins move to the new version"
   (let*
     ((toml
        (string-append
@@ -182,8 +198,7 @@
       (string-contains? out "version = \"0.1.5\"")
       "[workspace.package].version is NOT touched here — that write is separate")))
 
-(deftest
-  "rewrite-workspace-dep-pins: only inside [workspace.dependencies]"
+(deftest "rewrite-workspace-dep-pins: only inside [workspace.dependencies]"
   (let*
     ((toml
        (string-append
@@ -198,8 +213,7 @@
       (string-contains? out "path = \"b\", version = \"0.1.0\"")
       "a [dependencies] table after the section ends is NOT rewritten")))
 
-(deftest
-  "rewrite-workspace-dep-pins: a non-inheriting member is left alone"
+(deftest "rewrite-workspace-dep-pins: a non-inheriting member is left alone"
   ;; The caixa-ratatui shape — members that version INDEPENDENTLY. Without
   ;; the version.workspace proof this rewrite would retarget them.
   (let*
@@ -209,8 +223,7 @@
       (equal? (string-trim out) (string-trim toml))
       "no version.workspace = true means no rewrite")))
 
-(deftest
-  "rewrite-workspace-dep-pins: a dep NAMED 'versioned-*' keeps its path"
+(deftest "rewrite-workspace-dep-pins: a dep NAMED 'versioned-*' keeps its path"
   ;; The false-positive a `string-contains? \"version\"` test would cause:
   ;; the dep NAME contains 'version', so a sloppy match rewrites the PATH.
   (let*
@@ -220,16 +233,13 @@
     (assert (string-contains? out "path = \"crates/vt\"") "the path survives verbatim")
     (assert (string-contains? out "version = \"9.9.9\"") "and only the version moves")))
 
-(deftest
-  "rewrite-workspace-dep-pins: nothing to do is a byte-identical no-op"
-  (let
-    ((toml "[workspace.package]\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n"))
+(deftest "rewrite-workspace-dep-pins: nothing to do is a byte-identical no-op"
+  (let ((toml "[workspace.package]\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n"))
     (assert
       (equal? (rewrite-workspace-dep-pins toml "9.9.9" always-inherits) toml)
       "a workspace with no intra-workspace pins is returned unchanged")))
 
-(deftest
-  "rewrite-workspace-dep-pins: a versionless path dep is not given one"
+(deftest "rewrite-workspace-dep-pins: a versionless path dep is not given one"
   ;; stdlib's publish preflight classifies this as a blocker; the rewriter
   ;; must not paper over it by inventing a version.
   (let*
@@ -246,15 +256,13 @@
 ;; `exact-pin?` branch in run.tlisp and the first assert below goes red;
 ;; that is the fail-once proof that this gate is not vacuous.
 
-(deftest
-  "exact-pin?: distinguishes an exact requirement from a caret"
+(deftest "exact-pin?: distinguishes an exact requirement from a caret"
   (assert (exact-pin? "=0.2.5") "a leading '=' is an exact pin")
   (assert (not (exact-pin? "0.2.5")) "a bare version is a caret requirement")
   (assert (not (exact-pin? "")) "the empty string is not an exact pin")
   (assert (not (exact-pin? "1")) "a bare major is not an exact pin"))
 
-(deftest
-  "rewrite-workspace-dep-pins: an EXACT pin stays exact across the bump"
+(deftest "rewrite-workspace-dep-pins: an EXACT pin stays exact across the bump"
   ;; The tatara-lisp lib↔derive shape: the lib exact-pins its own proc-macro
   ;; so the pair can never drift. The bump must move the version and KEEP
   ;; the '='.

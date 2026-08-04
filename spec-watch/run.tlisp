@@ -17,8 +17,7 @@
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define
-  (append-output line)
+(define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 

@@ -18,8 +18,7 @@
 
 ;; The verbatim crates.io refusal, as cargo prints it. This is the string
 ;; that must never again classify as 'failed.
-(define
-  tear-403-log
+(define tear-403-log
   (string-append
     "    Updating crates.io index\n"
     "   Packaging tear v0.1.8 (/home/runner/work/tear/tear/tear)\n"
@@ -32,8 +31,7 @@
     "this is a mistake, perhaps you need to accept an invitation to be an "
     "owner before publishing.\n"))
 
-(deftest
-  "the tear 403 not-an-owner refusal classifies as 'conflict, never 'failed"
+(deftest "the tear 403 not-an-owner refusal classifies as 'conflict, never 'failed"
   (assert
     (equal? (classify-cargo-publish-outcome tear-403-log 101) 'conflict)
     "403 not-an-owner -> 'conflict (the rename trigger)")
@@ -46,15 +44,13 @@
     (cargo-publish-conflict? tear-403-log)
     "the conflict predicate matches 'seem to be an owner'"))
 
-(deftest
-  "a zero status is 'published regardless of log noise"
+(deftest "a zero status is 'published regardless of log noise"
   (assert (equal? (classify-cargo-publish-outcome "" 0) 'published) "status 0 -> 'published")
   (assert
     (equal? (classify-cargo-publish-outcome tear-403-log 0) 'published)
     "status dominates: a 0 exit is a publish even if the log looks scary"))
 
-(deftest
-  "every other outcome keeps its own arm (no arm swallows another)"
+(deftest "every other outcome keeps its own arm (no arm swallows another)"
   (assert
     (equal?
       (classify-cargo-publish-outcome "error: crate version 0.1.8 is already uploaded" 101)
@@ -80,8 +76,7 @@
       'failed)
     "a genuine build failure still reaches 'failed"))
 
-(deftest
-  "'conflict is terminal — it must not be retried"
+(deftest "'conflict is terminal — it must not be retried"
   ;; A 403 not-an-owner can never succeed on a later attempt, so the action
   ;; fails fast rather than burning the retry budget. Guarding the CLASS:
   ;; 'conflict is distinct from 'rate-limited, the one retryable outcome.
@@ -97,8 +92,7 @@
 ;; matches that refusal, and the run reds. These pin the preflight that makes
 ;; the recommended remedy actually safe to adopt.
 
-(define
-  bevy-fork-manifest
+(define bevy-fork-manifest
   (string-append
     "[package]\n"
     "name = \"bevy_scene\"\n"
@@ -109,16 +103,14 @@
     "[dependencies]\n"
     "bevy_ecs = { path = \"../bevy_ecs\", version = \"0.19.0-dev\" }\n"))
 
-(define
-  ordinary-manifest
+(define ordinary-manifest
   (string-append
     "[package]\n"
     "name = \"shikumi\"\n"
     "version = \"0.1.437\"\n"
     "edition = \"2024\"\n"))
 
-(deftest
-  "publish = false is detected on the manifest, before cargo runs"
+(deftest "publish = false is detected on the manifest, before cargo runs"
   (assert
     (manifest-declares-no-publish? bevy-fork-manifest)
     "a fork declaring publish = false is recognized as a declared non-publisher")
@@ -126,8 +118,7 @@
     (not (manifest-declares-no-publish? ordinary-manifest))
     "a normal crate is NOT mistaken for a non-publisher"))
 
-(deftest
-  "the detector reads [package], not any section that mentions publish"
+(deftest "the detector reads [package], not any section that mentions publish"
   ;; publish belongs to [package] alone. A key of the same name under another
   ;; table must not silently disable a real crate's release — that would be a
   ;; false GREEN, the exact class this action exists to remove.
@@ -145,11 +136,13 @@
   (assert
     (not
       (manifest-declares-no-publish?
-        (string-append "[package]\n" "name = \"real\"\n" "# publish = false\n")))
+        (string-append
+          "[package]\n"
+          "name = \"real\"\n"
+          "# publish = false\n")))
     "a commented-out publish = false is not honoured"))
 
-(deftest
-  "publish = false outranks a structural blocker"
+(deftest "publish = false outranks a structural blocker"
   ;; A fork carries versionless path deps and would trip the blocker preflight.
   ;; It never publishes, so those deps are irrelevant and the honest verdict is
   ;; the green skip — which is why run.tlisp checks this arm FIRST.
@@ -165,8 +158,7 @@
         "bevy_utils = { path = \"../bevy_utils\" }\n"))
     "a publish=false fork with a versionless path dep is still a clean skip"))
 
-(deftest
-  "an array field above `publish` does not end the [package] walk"
+(deftest "an array field above `publish` does not end the [package] walk"
   ;; THE REGRESSION. Every fixture above put `publish` immediately after
   ;; `version`, so all four passed while the real thing was broken: run.tlisp
   ;; carried a local `line-is-section-header?` that called ANY line containing

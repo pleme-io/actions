@@ -24,17 +24,12 @@
 
 (define out-path (string-append artifact ".slsa.json"))
 
-(define
-  r
-  (exec-capture
-    "witness"
+(define r
+  (exec-capture "witness"
     "run"
-    "--step"
-    "build"
-    "--attestations"
-    "command-run,git,github,oci"
-    "--outfile"
-    out-path))
+    "--step" "build"
+    "--attestations" "command-run,git,github,oci"
+    "--outfile" out-path))
 
 (cond
   ((= (status-of r) 0) (append-output (string-append "attestation-path=" out-path)) (exit 0))

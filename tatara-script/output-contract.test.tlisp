@@ -8,8 +8,7 @@
 ;;
 ;;   tatara-script --test tatara-script/output-contract.test.tlisp
 
-(define
-  gate
+(define gate
   (let ((d (env-get "GATE_PATH" ""))) (if (equal? d "") "tatara-script/output-contract.tlisp" d)))
 
 ;; status-of / stdout-of live in the caixa + pleme stdlibs, which are NOT
@@ -24,12 +23,12 @@
 ;;
 ;; fail! logs the reason, then dereferences an empty list to raise a real error,
 ;; which is the only mechanism that actually reddens a case here.
-(define (fail! msg) (log-error (string-append "ASSERTION FAILED: " msg)) (car (list)))
+(define (fail! msg)
+  (log-error (string-append "ASSERTION FAILED: " msg))
+  (car (list)))
 
-(define
-  (expect-rc want got label)
-  (if
-    (= want got)
+(define (expect-rc want got label)
+  (if (= want got)
     #t
     (fail!
       (string-append
@@ -41,79 +40,84 @@
 
 ;; Returns (dir out) — the manifest is always <dir>/action.yml, so the gate's
 ;; GITHUB_ACTION_PATH is just the dir and no path-dirname is needed.
-(define
-  (write-case out-body manifest-body)
-  (let*
-    ((dir (tmp-dir)) (out (path-join dir "gh_out")))
+(define (write-case out-body manifest-body)
+  (let* ((dir (tmp-dir)) (out (path-join dir "gh_out")))
     (write-file out out-body)
     (write-file (path-join dir "action.yml") manifest-body)
     (list dir out)))
 
 ;; The gate reads its inputs from the environment, so each case sets them
 ;; immediately before invoking rather than relying on prior state.
-(define
-  (run-case c)
+(define (run-case c)
   (env-set "GITHUB_ACTION_PATH" (car c))
   (env-set "GITHUB_OUTPUT" (car (cdr c)))
   (exit-code (exec-capture "tatara-script" gate)))
 
-(define
-  declares-all
+(define declares-all
   "name: x\noutputs:\n  version:\n    value: a\n  repo-type:\n    value: b\n  manifest-path:\n    value: c\n  big:\n    value: d\nruns:\n  using: composite\n")
 
-(define
-  declares-some
+(define declares-some
   "name: x\noutputs:\n  version:\n    value: a\n  bumped:\n    value: b\nruns:\n  using: composite\n")
 
-(deftest
-  "passes when every written key is declared"
-  (let*
-    ((c (write-case "version=1.2.3\nrepo-type=caixa\n" declares-all)) (rc (run-case c)))
-    (expect-rc 0 rc (string-append "expected 0, got " (string-format "{}" rc)))))
+(deftest "passes when every written key is declared"
+  (let* ((c (write-case "version=1.2.3\nrepo-type=caixa\n" declares-all)) (rc (run-case c)))
+    (expect-rc
+      0
+      rc
+      (string-append "expected 0, got " (string-format "{}" rc)))))
 
-(deftest
-  "FAILS when a written key is undeclared — the dispatcher bug"
+(deftest "FAILS when a written key is undeclared — the dispatcher bug"
   (let*
-    ((c (write-case "version=1.2.3\nrepo-type=caixa\nmanifest-path=gha.caixa.lisp\n" declares-some))
+    ((c
+       (write-case "version=1.2.3\nrepo-type=caixa\nmanifest-path=gha.caixa.lisp\n" declares-some))
       (rc (run-case c)))
-    (expect-rc 1 rc (string-append "expected 1, got " (string-format "{}" rc)))))
+    (expect-rc
+      1
+      rc
+      (string-append "expected 1, got " (string-format "{}" rc)))))
 
-(deftest
-  "recognises the heredoc key form"
-  (let*
-    ((c (write-case "big<<EOF\nline one\nline two\nEOF\n" declares-some)) (rc (run-case c)))
+(deftest "recognises the heredoc key form"
+  (let* ((c (write-case "big<<EOF\nline one\nline two\nEOF\n" declares-some)) (rc (run-case c)))
     ;; `big` is undeclared in declares-some, so a gate that sees the heredoc key
     ;; must fail. A gate that missed it would pass, so this asserts detection.
-    (expect-rc 1 rc "heredoc key not detected")))
+    (expect-rc
+      1
+      rc
+      "heredoc key not detected")))
 
-(deftest
-  "heredoc BODY lines are not mistaken for keys"
+(deftest "heredoc BODY lines are not mistaken for keys"
   (let*
     ((c (write-case "version<<EOF\nnot-a-key=value\nalso not a key\nEOF\n" declares-some))
       (rc (run-case c)))
     ;; version IS declared; the body contains a line that looks like `k=v`. If
     ;; the parser counted it, the gate would fail on a legitimate payload.
-    (expect-rc 0 rc "a heredoc body line was counted as a key")))
+    (expect-rc
+      0
+      rc
+      "a heredoc body line was counted as a key")))
 
-(deftest
-  "passes when the script wrote nothing at all"
-  (let*
-    ((c (write-case "" declares-some)) (rc (run-case c)))
-    (expect-rc 0 rc "an empty output file must not be a violation")))
+(deftest "passes when the script wrote nothing at all"
+  (let* ((c (write-case "" declares-some)) (rc (run-case c)))
+    (expect-rc
+      0
+      rc
+      "an empty output file must not be a violation")))
 
-(deftest
-  "skips rather than fails when GITHUB_OUTPUT is unset"
+(deftest "skips rather than fails when GITHUB_OUTPUT is unset"
   (begin
     (env-set "GITHUB_OUTPUT" "")
     (env-set "GITHUB_ACTION_PATH" "")
-    (let
-      ((rc (exit-code (exec-capture "tatara-script" gate))))
-      (expect-rc 0 rc "an unset environment must skip, not fail"))))
+    (let ((rc (exit-code (exec-capture "tatara-script" gate))))
+      (expect-rc
+        0
+        rc
+        "an unset environment must skip, not fail"))))
 
-(deftest
-  "nested keys under a declared output are not counted as declarations"
+(deftest "nested keys under a declared output are not counted as declarations"
   ;; `value:` and `description:` sit deeper than two spaces; if the manifest
   ;; scanner counted them, an undeclared key named `value` would wrongly pass.
-  (let*
-    ((c (write-case "value=oops\n" declares-some)) (rc (run-case c)))
-    (expect-rc 1 rc "a nested yaml key leaked into the declared set")))
+  (let* ((c (write-case "value=oops\n" declares-some)) (rc (run-case c)))
+    (expect-rc
+      1
+      rc
+      "a nested yaml key leaked into the declared set")))

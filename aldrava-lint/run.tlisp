@@ -13,11 +13,14 @@
 
 (define al:result-path "/tmp/aldrava-lint-result.json")
 
-(define
-  (main)
+(define (main)
   (let*
     ((catalog-path
-       (config-resolve "CATALOG_PATH" "aldrava-lint" "catalog-path" ".github/aldrava.lisp"))
+       (config-resolve
+         "CATALOG_PATH"
+         "aldrava-lint"
+         "catalog-path"
+         ".github/aldrava.lisp"))
       (result (exec-capture "aldrava" "lint" catalog-path)))
     (cond
       ((= (status-of result) 0)

@@ -10,15 +10,13 @@
 
 (define deps-dir (env-get "DEPS_DIR" ".caixa-deps"))
 
-(define
-  (find-caixa)
+(define (find-caixa)
   (cond
     ((not (equal? caixa-in "")) caixa-in)
     (else
       (let
         ((r
-           (exec-capture
-             "sh"
+           (exec-capture "sh"
              "-c"
              "for p in caixa.lisp *.caixa.lisp .caixa/main.lisp; do [ -f \"$p\" ] && echo \"$p\" && break; done")))
         (string-trim (stdout-of r))))))
@@ -33,10 +31,8 @@
 
 ;; Extract :depends-on vector from caixa source. Naive grep-based
 ;; until pleme-doc-gen exposes a parser as a library.
-(define
-  deps-r
-  (exec-capture
-    "sh"
+(define deps-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "grep -A20 ':depends-on' "
@@ -49,12 +45,14 @@
 
 (log-info (string-append "found " (string-format "{}" (length deps)) " :depends-on entries"))
 
-(exec-check "mkdir" "-p" deps-dir)
+(exec-check
+  "mkdir"
+  "-p"
+  deps-dir)
 
 (define resolved 0)
 
-(define
-  (resolve-deps ds)
+(define (resolve-deps ds)
   (cond
     ((null? ds) #t)
     ((equal? (car ds) "") (resolve-deps (cdr ds)))
@@ -69,8 +67,7 @@
         (log-info (string-append "resolving " repo "@" ref " → " target))
         (let
           ((r
-             (exec-capture
-               "sh"
+             (exec-capture "sh"
                "-c"
                (string-append
                  "rm -rf "

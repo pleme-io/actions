@@ -64,8 +64,7 @@
 ;; answer on an unrecognized/empty value, not the more expensive one).
 (define (rr:is-private? is-private) (equal? (string-trim is-private) "true"))
 
-(define
-  (rr:effective-default explicit-default is-private private-default public-default)
+(define (rr:effective-default explicit-default is-private private-default public-default)
   (cond
     ((not (equal? (string-trim explicit-default) "")) (string-trim explicit-default))
     ((rr:is-private? is-private) (string-trim private-default))
@@ -74,9 +73,10 @@
 ;; Which tier tier-4 itself resolved to — kept separate from
 ;; rr:effective-default (not derived from its output) for the same
 ;; test-both-agree discipline rr:resolve-provenance already uses.
-(define
-  (rr:effective-default-provenance explicit-default)
-  (if (not (equal? (string-trim explicit-default) "")) "default" "visibility-default"))
+(define (rr:effective-default-provenance explicit-default)
+  (if (not (equal? (string-trim explicit-default) ""))
+    "default"
+    "visibility-default"))
 
 ;; The resolved runner label given all three PRIOR tiers as plain
 ;; strings, `effective-default` already folding in tier 3 vs tier 4 per
@@ -84,8 +84,7 @@
 ;; counts as empty (never wins). Signature unchanged from the original
 ;; 3-tier fold — tier 3/4 collapse into the one `effective-default`
 ;; argument the caller (main) computes first.
-(define
-  (rr:resolve-runner override file-runner effective-default)
+(define (rr:resolve-runner override file-runner effective-default)
   (cond
     ((not (equal? (string-trim override) "")) (string-trim override))
     ((not (equal? (string-trim file-runner) "")) (string-trim file-runner))
@@ -96,8 +95,7 @@
 ;; derived from the resolved value) so a test can assert the two never
 ;; disagree. `default-provenance` is rr:effective-default-provenance's
 ;; own output, threaded through rather than recomputed here.
-(define
-  (rr:resolve-provenance override file-runner default-provenance)
+(define (rr:resolve-provenance override file-runner default-provenance)
   (cond
     ((not (equal? (string-trim override) "")) "override")
     ((not (equal? (string-trim file-runner) "")) "file")
@@ -110,8 +108,7 @@
 ;; guard here just avoids invoking yq at all for the common "no config
 ;; file committed" case. ─────────────────────────────────────────────
 
-(define
-  (rr:read-file-runner config-path)
+(define (rr:read-file-runner config-path)
   (cond
     ((equal? (string-trim config-path) "") "")
     ((not (path-exists? config-path)) "")
@@ -119,8 +116,7 @@
 
 ;; ── Main ─────────────────────────────────────────────────────────────
 
-(define
-  (main)
+(define (main)
   (let*
     ((default (env-get "DEFAULT" ""))
       (override (env-get "OVERRIDE" ""))
