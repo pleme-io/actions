@@ -33,10 +33,20 @@ outputs:
     value: ${{ steps.ship.outputs.shipped }}
   deferred:
     description: >-
-      'true' when publish was deferred because a dependency is not yet on
-      crates.io (a GREEN outcome — the crate publishes once the dep lands).
-      Was emitted by run.tlisp but undeclared here; declared now so the
-      contract matches what the action actually returns.
+      'true' when publish stopped because a dependency is not yet on
+      crates.io. This is a RED outcome, and the wording here used to say the
+      opposite ("a GREEN outcome — the crate publishes once the dep lands").
+
+      That promise had no mechanism. This action publishes ONE crate in ONE
+      pass — unlike rust-workspace-publish, which loops over members and can
+      genuinely pick a sibling up on a later pass — and cargo-auto-release.yml
+      is `on: workflow_call` with no schedule, so nothing re-runs the repo
+      when the dep lands. Exiting green meant the run stayed green forever
+      while the crate never reached the registry.
+
+      Kept as an output rather than removed: a caller that wants to tell
+      "blocked on an upstream" apart from "publish itself failed" still can,
+      it just no longer inherits a green run for it.
     value: ${{ steps.ship.outputs.deferred }}
   skipped-no-publish:
     description: >-

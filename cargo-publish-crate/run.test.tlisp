@@ -71,7 +71,7 @@
     (equal?
       (classify-cargo-publish-outcome "error: no matching package named `meimei` found" 101)
       'dep-missing)
-    "dep-missing -> 'dep-missing (deferred green)")
+    "dep-missing -> 'dep-missing (terminal RED — see the disposition tests)")
   (assert
     (equal?
       (classify-cargo-publish-outcome
@@ -211,3 +211,66 @@
         "# see [lib] below for the library target\n"
         "publish = false\n"))
     "a comment naming [lib] ended the walk"))
+
+;; ────────────────────────────────────────────────────────────────
+;; Outcome DISPOSITION — green/red/retry, the part that was wrong
+;; ────────────────────────────────────────────────────────────────
+;; The classifier above was never the bug. `'dep-missing` was recognised
+;; perfectly and then dispatched to `exit 0`, so the action reported SUCCESS
+;; while the crate never reached crates.io — measured on pleme-io/iac-forge
+;; run 30911832147, whose green run left `iac-forge` 404, which blocked
+;; caixa's release, which blocked engenho, which broke `nix run .#rebuild`.
+;;
+;; These pin the disposition rather than the classification, because that is
+;; the layer that decides whether a run lies.
+
+(deftest
+  "a deferral is RED — green is a claim about the registry, not about blame"
+  ;; The single-crate action publishes ONE crate in ONE pass, and
+  ;; cargo-auto-release.yml is `on: workflow_call` with no schedule, so
+  ;; NOTHING re-drives the repo when the missing dep lands. Exiting green
+  ;; made the run green forever while the crate stayed absent.
+  ;;
+  ;; rust-workspace-publish may legitimately defer the identical outcome:
+  ;; it loops over members, so a sibling absent on pass 1 is present on a
+  ;; later pass OF THE SAME RUN. That mechanism does not exist here.
+  (assert
+    (equal? (publish-outcome-disposition 'dep-missing) 'red)
+    "'dep-missing must not report success")
+  (assert
+    (not (equal? (publish-outcome-disposition 'dep-missing) 'green))
+    "a crate absent from the registry is never a green run")
+  (assert
+    (not (equal? (publish-outcome-disposition 'dep-missing) 'retry))
+    "retrying in-run cannot make an external crate appear"))
+
+(deftest
+  "only outcomes that leave the crate ON the registry are green"
+  ;; The whole green set, stated positively so a NEW outcome added to the
+  ;; classifier cannot quietly inherit success: the disposition's `else` arm
+  ;; is 'red, so an unmapped outcome fails loudly instead of shipping a lie.
+  (assert (equal? (publish-outcome-disposition 'published) 'green) "published is green")
+  (assert
+    (equal? (publish-outcome-disposition 'already-uploaded) 'green)
+    "already-uploaded is green — the registry holds it either way")
+  (assert
+    (equal? (publish-outcome-disposition 'conflict) 'red)
+    "a name owned by someone else is red")
+  (assert
+    (equal? (publish-outcome-disposition 'failed) 'red)
+    "a build failure is red")
+  (assert
+    (equal? (publish-outcome-disposition 'some-outcome-invented-tomorrow) 'red)
+    "an UNKNOWN outcome defaults to red, never to green"))
+
+(deftest
+  "rate-limiting is the ONLY retryable disposition"
+  ;; Guarding the class: if a future edit makes something else retryable,
+  ;; the retry budget gets burned on a condition that cannot resolve.
+  (assert (equal? (publish-outcome-disposition 'rate-limited) 'retry) "429 retries")
+  (assert
+    (not (equal? (publish-outcome-disposition 'conflict) 'retry))
+    "'conflict is terminal, not retryable")
+  (assert
+    (not (equal? (publish-outcome-disposition 'failed) 'retry))
+    "'failed is terminal, not retryable"))
