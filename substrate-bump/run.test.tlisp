@@ -1,0 +1,39 @@
+;; substrate-bump/run.test.tlisp — (deftest …) unit tests for the version
+;; extraction surface. Run by the tlisp-test action as
+;;   <stdlib> + run.tlisp + run.test.tlisp   with TLISP_TEST=1
+;; so the extract functions are driven with no flake app, no nix and no network.
+;;
+;; THE DEFECT: ruby-gem-flake repos write `VERSION = %(0.1.0).freeze` (a Ruby
+;; percent-literal). The shared stdlib `extract-quoted-value` only parses " or '
+;; quoting, so a %(...) line extracted to "" on BOTH the before and after reads
+;; and the bump reported "no version change detected" even though forge wrote
+;; the file — the workflow skipped its commit/tag/push and the release never
+;; ran (pangea-consul, 2026-08-04). `extract-gem-version` extends the stdlib
+;; helper locally, gem-scoped, and falls back to it for the " and ' shapes.
+
+(deftest
+  "extract-gem-version: %(...) percent-literal (ruby-gem-flake convention)"
+  (assert
+    (equal? (extract-gem-version "  VERSION = %(0.1.1).freeze") "0.1.1")
+    "%(...) literal extracts the inner version")
+  (assert
+    (equal? (extract-gem-version "  VERSION = %(0.1.10).freeze") "0.1.10")
+    "two-digit patch still extracts"))
+
+(deftest
+  "extract-gem-version: legacy \" and ' conventions still work"
+  (assert
+    (equal? (extract-gem-version "  VERSION = \"0.1.0\"") "0.1.0")
+    "double-quoted convention")
+  (assert
+    (equal? (extract-gem-version "  VERSION = '0.1.2'") "0.1.2")
+    "single-quoted convention"))
+
+(deftest
+  "extract-gem-version: non-version lines extract to empty"
+  (assert
+    (equal? (extract-gem-version "module PangeaConsul") "")
+    "no VERSION= marker yields empty")
+  (assert
+    (equal? (extract-gem-version "") "")
+    "empty line yields empty"))
