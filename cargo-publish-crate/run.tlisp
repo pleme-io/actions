@@ -105,6 +105,36 @@
 ;; and it closes the TODO it carried.
 
 ;; -------------------------------------------------------------- ;;
+;; Outcome disposition — the GREEN/RED/RETRY policy, as a pure function ;;
+;; -------------------------------------------------------------- ;;
+;;
+;; Split out of the try-loop's `cond` so it can be TESTED. While the policy
+;; lived inline, the only thing a test could reach was the classifier — which
+;; log text maps to which outcome symbol — and the classifier was never the
+;; part that was wrong. `'dep-missing` was classified perfectly and then
+;; dispatched to `exit 0`, so every test passed while the action reported
+;; success without publishing anything.
+;;
+;; Three dispositions, total over the classifier's five outcomes:
+;;   'green — the registry now holds this (name, version). Nothing to do.
+;;   'retry — a transient the same run can outlast (rate limit).
+;;   'red   — this run did not publish and re-running THIS action, unchanged,
+;;            cannot change that.
+;;
+;; The rule that decides between 'green and 'red is not "was it our fault" but
+;; "is the artifact on the registry". A deferral fails that test, and green is
+;; a claim about the registry, not an apology for the build.
+(define
+  (publish-outcome-disposition outcome)
+  (cond
+    ((equal? outcome 'published) 'green)
+    ((equal? outcome 'already-uploaded) 'green)
+    ((equal? outcome 'rate-limited) 'retry)
+    ((equal? outcome 'dep-missing) 'red)
+    ((equal? outcome 'conflict) 'red)
+    (else 'red)))
+
+;; -------------------------------------------------------------- ;;
 ;; Try-loop                                                        ;;
 ;; -------------------------------------------------------------- ;;
 
@@ -131,12 +161,43 @@
             (log-info "already published — treating as success")
             (append-output "shipped=true")
             (exit 0))
+          ;; DEP MISSING — terminal RED here, deliberately, even though the
+          ;; identical outcome is a green defer in rust-workspace-publish.
+          ;;
+          ;; The difference is that deferring is only honest when something
+          ;; comes back. In rust-workspace-publish it does: that action runs a
+          ;; multi-pass loop over the members, so a sibling missing on pass 1
+          ;; is present on pass 3 once its own publish lands. THIS action
+          ;; publishes ONE crate in ONE pass. There is no second pass, and
+          ;; `cargo-auto-release.yml` is `on: workflow_call` with no schedule,
+          ;; so nothing re-drives the repo when the dep finally lands. The
+          ;; missing dep is by construction an EXTERNAL crate this run cannot
+          ;; influence.
+          ;;
+          ;; So the old message — "this crate publishes once the dep lands" —
+          ;; was a promise with no mechanism behind it, and `exit 0` made the
+          ;; run green forever while the crate stayed absent from the registry.
+          ;; Measured 2026-08-04: pleme-io/iac-forge run 30911832147 reported
+          ;; SUCCESS with `iac-forge` 404 on crates.io, on exactly this arm —
+          ;;
+          ;;   [13:03:29] INFO publish attempt 1
+          ;;   [13:03:31] INFO a dependency is not yet on crates.io — deferring (green)
+          ;;
+          ;; and that silence had in turn blocked pleme-io/caixa's release
+          ;; ("no matching package named `iac-forge` found"), which blocked
+          ;; engenho, which broke `nix run .#rebuild` fleet-wide. A green that
+          ;; hides a missing artifact does not stay local.
+          ;;
+          ;; This is the same verdict the file already gives two lines below
+          ;; for a structurally-unpublishable manifest, and for the same
+          ;; reason: retrying cannot fix it, so say so out loud.
           ((equal? outcome 'dep-missing)
-            (log-info
-              "a dependency is not yet on crates.io — deferring (green); this crate publishes once the dep lands")
+            (log-error
+              "a dependency is not yet on crates.io, and nothing will re-drive this repo when it lands (this action is single-pass; the release workflow has no schedule). Fix: publish the dependency, then re-run this workflow.")
+            (log-info log)
             (append-output "shipped=false")
             (append-output "deferred=true")
-            (exit 0))
+            (exit 1))
           ((equal? outcome 'rate-limited)
             (log-info "crates.io rate limit hit — sleeping 600s")
             (exec-capture "sleep" "600")
