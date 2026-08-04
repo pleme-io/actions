@@ -4,19 +4,16 @@
 
 (define timeout (env-get "TIMEOUT" "30m"))
 
-(define
-  (detect)
+(define (detect)
   (cond
     ((path-exists? "Cargo.toml") "rust")
     ((path-exists? "package.json") "npm")
     ((path-exists? "pyproject.toml") "python")
     (else "unknown")))
 
-(define
-  (run-rust)
+(define (run-rust)
   (log-info "==> cargo mutants --timeout 30")
-  (let
-    ((r (exec-capture "cargo" "mutants" "--timeout" "30")))
+  (let ((r (exec-capture "cargo" "mutants" "--timeout" "30")))
     (cons (stdout-of r) (= (status-of r) 0))))
 
 (define eco (detect))
@@ -35,28 +32,30 @@
 (define ok? (cdr result))
 
 ;; Parse "N caught" and "N missed" from cargo-mutants summary.
-(define
-  killed
+(define killed
   (string-trim
     (stdout-of
-      (exec-capture
-        "sh"
+      (exec-capture "sh"
         "-c"
         (string-append
           "echo '"
-          (string-replace out "'" "'\"'\"'")
+          (string-replace
+            out
+            "'"
+            "'\"'\"'")
           "' | grep -oE '[0-9]+ caught' | grep -oE '[0-9]+' | head -1 || echo 0")))))
 
-(define
-  survived
+(define survived
   (string-trim
     (stdout-of
-      (exec-capture
-        "sh"
+      (exec-capture "sh"
         "-c"
         (string-append
           "echo '"
-          (string-replace out "'" "'\"'\"'")
+          (string-replace
+            out
+            "'"
+            "'\"'\"'")
           "' | grep -oE '[0-9]+ missed' | grep -oE '[0-9]+' | head -1 || echo 0")))))
 
 (append-output (string-append "mutants-killed=" killed))

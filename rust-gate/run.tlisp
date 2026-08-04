@@ -7,11 +7,9 @@
 
 (define run-test (env-get "RUN_TEST" "true"))
 
-(define
-  (run-step label args)
+(define (run-step label args)
   (log-info (string-append "==> " label))
-  (let*
-    ((r (apply exec-capture (cons "cargo" args))) (code (status-of r)) (passed (= code 0)))
+  (let* ((r (apply exec-capture (cons "cargo" args))) (code (status-of r)) (passed (= code 0)))
     (cond
       ((not passed)
         (log-error (string-append label " FAILED (exit " (string-format "{}" code) ")"))
@@ -19,19 +17,16 @@
         (log-info (stderr-of r))))
     passed))
 
-(define
-  fmt-passed
+(define fmt-passed
   (cond ((equal? run-fmt "true") (run-step "cargo fmt --check" (list "fmt" "--check"))) (else #t)))
 
-(define
-  clippy-passed
+(define clippy-passed
   (cond
     ((equal? run-clippy "true")
       (run-step "cargo clippy" (list "clippy" "--all-targets" "--" "-D" "warnings")))
     (else #t)))
 
-(define
-  test-passed
+(define test-passed
   (cond ((equal? run-test "true") (run-step "cargo test" (list "test" "--workspace"))) (else #t)))
 
 (define (bool->string b) (if b "true" "false"))

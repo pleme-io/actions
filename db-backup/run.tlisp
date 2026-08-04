@@ -9,8 +9,7 @@
   ((log-contains? url "mysql") (log-info "==> mysqldump"))
   (else (log-error "unrecognized DB URL") (exit 1)))
 
-(define
-  cmd
+(define cmd
   (cond
     ((log-contains? url "postgres") (string-append "pg_dump '" url "' > '" out "'"))
     ((log-contains? url "mysql") (string-append "mysqldump --result-file='" out "' '" url "'"))

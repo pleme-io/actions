@@ -6,20 +6,14 @@
 
 (define issuer (env-required "ISSUER_ID"))
 
-(define
-  r
-  (exec-capture
-    "xcrun"
+(define r
+  (exec-capture "xcrun"
     "altool"
     "--upload-app"
-    "-f"
-    ipa
-    "--apiKey"
-    key-id
-    "--apiIssuer"
-    issuer
-    "--type"
-    "ios"))
+    "-f" ipa
+    "--apiKey" key-id
+    "--apiIssuer" issuer
+    "--type" "ios"))
 
 (cond
   ((= (status-of r) 0) (append-output "uploaded=true") (exit 0))

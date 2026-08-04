@@ -16,8 +16,7 @@
 
 (define scope (if (equal? dash "") "" (string-append ", dashboardId: " dash)))
 
-(define
-  payload-jq
+(define payload-jq
   (string-append
     "jq -n --arg text '"
     text
@@ -30,14 +29,13 @@
     scope
     " }'"))
 
-(define
-  payload
-  (let
-    ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond ((= (status-of r) 0) (stdout-of r)) (else (log-error "payload assembly failed") (exit 1)))))
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else (log-error "payload assembly failed") (exit 1)))))
 
-(define
-  curl-cmd
+(define curl-cmd
   (string-append
     "curl -sS -X POST "
     "-H 'Authorization: Bearer "
@@ -45,7 +43,10 @@
     "' "
     "-H 'Content-Type: application/json' "
     "-d '"
-    (string-replace payload "'" "'\"'\"'")
+    (string-replace
+      payload
+      "'"
+      "'\"'\"'")
     "' '"
     url
     "/api/annotations'"))
@@ -56,10 +57,15 @@
   ((= (status-of r) 0)
     (let*
       ((jq-r
-         (exec-capture
-           "sh"
+         (exec-capture "sh"
            "-c"
-           (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'") "' | jq -r '.id'")))
+           (string-append
+             "echo '"
+             (string-replace
+               (stdout-of r)
+               "'"
+               "'\"'\"'")
+             "' | jq -r '.id'")))
         (id (string-trim (stdout-of jq-r))))
       (append-output (string-append "annotation-id=" id))
       (exit 0)))

@@ -8,8 +8,7 @@
 
 (define color (env-get "COLOR" "3066993"))
 
-(define
-  payload-jq
+(define payload-jq
   (string-append
     "jq -n "
     "--arg title \"$TITLE\" "
@@ -17,21 +16,21 @@
     "--arg color \"$COLOR\" "
     "'{ embeds: [ { title: $title, description: $body, color: ($color | tonumber) } ] }'"))
 
-(define
-  payload
-  (let
-    ((r (exec-capture "sh" "-c" payload-jq)))
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
     (cond
       ((= (status-of r) 0) (stdout-of r))
       (else (log-error "failed to build Discord payload") (exit 1)))))
 
-(define
-  curl-cmd
+(define curl-cmd
   (string-append
     "curl -sS -o /dev/null -w '%{http_code}' "
     "-X POST -H 'Content-Type: application/json' "
     "-d '"
-    (string-replace payload "'" "'\"'\"'")
+    (string-replace
+      payload
+      "'"
+      "'\"'\"'")
     "' "
     "'"
     webhook

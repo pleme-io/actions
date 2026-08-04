@@ -4,12 +4,14 @@
 
 (let*
   ((jq-r
-     (exec-capture
-       "sh"
+     (exec-capture "sh"
        "-c"
        (string-append
          "echo '"
-         (string-replace (stdout-of host-r) "'" "'\"'\"'")
+         (string-replace
+           (stdout-of host-r)
+           "'"
+           "'\"'\"'")
          "' | jq -r '.Self.HostName'")))
     (host (string-trim (stdout-of jq-r))))
   (append-output (string-append "hostname=" host))

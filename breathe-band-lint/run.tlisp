@@ -50,8 +50,7 @@
 ;; ────────────────────────────────────────────────────────────────
 
 ;; W|kind|ns|name|nContainers|nCpuLimits|nMemLimits|nWithRequests|nGuaranteed
-(define
-  w-expr
+(define w-expr
   (string-append
     "select(.kind == \"Deployment\" or .kind == \"StatefulSet\" or .kind == \"DaemonSet\") | "
     "\"W|\" + .kind + \"|\" + (.metadata.namespace // \"\") + \"|\" + .metadata.name"
@@ -67,8 +66,7 @@
 ;; targetRef.namespace is optional and in practice never set on this fleet,
 ;; so it falls back to the band's own metadata.namespace — which is what
 ;; breathe itself resolves against.
-(define
-  b-expr
+(define b-expr
   (string-append
     "select(.kind == \"MemoryBand\" or .kind == \"CpuBand\" or .kind == \"StorageBand\") | "
     "\"B|\" + .kind + \"|\" + (.metadata.namespace // \"\") + \"|\" + .metadata.name"
@@ -79,12 +77,10 @@
 
 ;; One yq invocation per file (xargs -I{}) rather than one over all files:
 ;; a single unparseable document must not abort the whole scan.
-(define
-  (scan expr tag)
+(define (scan expr tag)
   (let
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "cd "
@@ -106,19 +102,20 @@
 ;; Config + baseline
 ;; ────────────────────────────────────────────────────────────────
 
-(define
-  (config-list field)
-  (if
-    (path-exists? config-path)
+(define (config-list field)
+  (if (path-exists? config-path)
     (filter
       (lambda (l) (not (equal? l "")))
       (string-split
         (string-trim
           (stdout-of
-            (exec-capture
-              "sh"
-              "-c"
-              (string-append "yq -N '" field "[]' " config-path " 2>/dev/null"))))
+            (exec-capture "sh"
+              "-c" (string-append
+                "yq -N '"
+                field
+                "[]' "
+                config-path
+                " 2>/dev/null"))))
         "\n"))
     (list)))
 
@@ -141,10 +138,8 @@
 ;; slice: tatara-script has no `string-slice`, and reaching for one silently
 ;; worked until a baseline file first existed (the branch was simply never
 ;; evaluated). Filtering at read time keeps the failure mode impossible.
-(define
-  baseline-lines
-  (if
-    (path-exists? baseline-path)
+(define baseline-lines
+  (if (path-exists? baseline-path)
     (filter
       (lambda (l) (not (equal? l "")))
       (string-split
@@ -154,9 +149,11 @@
         "\n"))
     (list)))
 
-(define
-  (list-contains? lst item)
-  (cond ((null? lst) #f) ((equal? (car lst) item) #t) (else (list-contains? (cdr lst) item))))
+(define (list-contains? lst item)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) item) #t)
+    (else (list-contains? (cdr lst) item))))
 
 (define (nth lst n) (cond ((equal? n 0) (car lst)) (else (nth (cdr lst) (- n 1)))))
 
@@ -165,22 +162,18 @@
 ;; ────────────────────────────────────────────────────────────────
 
 ;; "Kind/namespace/name" is the join key everywhere.
-(define
-  (w-key rec)
+(define (w-key rec)
   (let ((p (string-split rec "|"))) (string-append (nth p 1) "/" (nth p 2) "/" (nth p 3))))
 
-(define
-  (b-target-key rec)
+(define (b-target-key rec)
   (let ((p (string-split rec "|"))) (string-append (nth p 4) "/" (nth p 6) "/" (nth p 5))))
 
-(define
-  (map-keys lst f acc)
+(define (map-keys lst f acc)
   (cond ((null? lst) acc) (else (map-keys (cdr lst) f (cons (f (car lst)) acc)))))
 
 (define workload-keys (map-keys workloads w-key (list)))
 
-(define
-  memory-band-targets
+(define memory-band-targets
   (map-keys
     (filter (lambda (b) (equal? (nth (string-split b "|") 1) "MemoryBand")) bands)
     b-target-key
@@ -197,8 +190,7 @@
 
 ;; R1 COVERAGE — a Deployment/StatefulSet/DaemonSet with a declared memory
 ;; limit, not Guaranteed, not waived, must have a MemoryBand.
-(define
-  (rule-coverage lst)
+(define (rule-coverage lst)
   (cond
     ((null? lst) #t)
     (else
@@ -224,8 +216,7 @@
         (rule-coverage (cdr lst))))))
 
 ;; R2 TARGET-RESOLVES — every band must point at something real.
-(define
-  (rule-target lst)
+(define (rule-target lst)
   (cond
     ((null? lst) #t)
     (else
@@ -249,8 +240,7 @@
 ;; R3 QOS — BestEffort is a hard fail for stateful/control-plane workloads.
 ;; A BestEffort pod has request 0, so kubelet ranks it FIRST for eviction
 ;; under node pressure and the kernel gives it oom_score_adj 1000.
-(define
-  (rule-qos lst)
+(define (rule-qos lst)
   (cond
     ((null? lst) #t)
     (else
@@ -275,8 +265,7 @@
         (rule-qos (cdr lst))))))
 
 ;; R4 MODE-SET — every band must declare spec.mode explicitly.
-(define
-  (rule-mode lst)
+(define (rule-mode lst)
   (cond
     ((null? lst) #t)
     (else
@@ -311,8 +300,7 @@
 
 (define (count lst n) (cond ((null? lst) n) (else (count (cdr lst) (+ n 1)))))
 
-(define
-  (report lst new-n base-n)
+(define (report lst new-n base-n)
   (cond
     ((null? lst)
       (append-output (string-append "violations=" (string-format "{}" new-n)))
@@ -334,12 +322,14 @@
           (string-format "{}" base-n)))
       (cond ((and (equal? fail-on "true") (> new-n 0)) (exit 1)) (else (exit 0))))
     (else
-      (let
-        ((f (car lst)))
+      (let ((f (car lst)))
         (cond
           ((list-contains? baseline-lines (finding-key f))
             (log-info (string-append "  (baseline, tracked debt) " (finding-key f)))
-            (report (cdr lst) new-n (+ base-n 1)))
+            (report
+              (cdr lst)
+              new-n
+              (+ base-n 1)))
           (else (log-error (string-append "  NEW " f)) (report (cdr lst) (+ new-n 1) base-n)))))))
 
 (cond

@@ -42,12 +42,10 @@
 ;; loader — i.e. contain neither 'TLISP_EOF' (heredoc form) nor
 ;; 'stdlib.tlisp' (file form) — and counts the run body. Emits
 ;; "<file>\t<lines>" per offender.
-(define
-  awk-prog
+(define awk-prog
   "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }\n   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }\n   in_run && /TLISP_EOF|stdlib\\.tlisp/ { is_loader=1; }\n   in_run && /run: \\|/ { in_body=1; next; }\n   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }\n   in_body { lines++; }\n   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
 
-(define
-  find-cmd
+(define find-cmd
   (string-append
     "find . -path './_*' -prune -o -name 'action.yml' -print "
     "| xargs -I{} awk -v THRESHOLD="
@@ -60,8 +58,7 @@
 
 (define out (string-trim (stdout-of r)))
 
-(define
-  files-r
+(define files-r
   (exec-capture "sh" "-c" "find . -path './_*' -prune -o -name 'action.yml' -print | wc -l"))
 
 (define files (string-trim (stdout-of files-r)))
@@ -86,23 +83,22 @@
 ;; violation and still fails the build.
 (define baseline-path "action-shell-lint/baseline.txt")
 
-(define
-  baseline-lines
-  (if
-    (path-exists? baseline-path)
+(define baseline-lines
+  (if (path-exists? baseline-path)
     (filter (lambda (l) (not (equal? l ""))) (string-split (read-file baseline-path) "\n"))
     (list)))
 
-(define
-  (list-contains? lst item)
-  (cond ((null? lst) #f) ((equal? (car lst) item) #t) (else (list-contains? (cdr lst) item))))
+(define (list-contains? lst item)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) item) #t)
+    (else (list-contains? (cdr lst) item))))
 
 ;; tatara-script's `let` has no named-let form (bindings must be a
 ;; plain list) -- a top-level `define` is the portable recursive-loop
 ;; idiom used everywhere else in this repo (see e.g.
 ;; cargo-publish-each-member/run.tlisp's resolve-member).
-(define
-  (report-violations lines new-n baseline-n)
+(define (report-violations lines new-n baseline-n)
   (cond
     ((null? lines)
       (append-output (string-append "violations=" (string-format "{}" new-n)))
@@ -111,14 +107,22 @@
       (cond ((and (equal? fail-on "true") (> new-n 0)) (exit 1)) (else (exit 0))))
     ((equal? (car lines) "") (report-violations (cdr lines) new-n baseline-n))
     (else
-      (let*
-        ((parts (string-split (car lines) "\t")) (offending-file (car parts)))
+      (let* ((parts (string-split (car lines) "\t")) (offending-file (car parts)))
         (cond
           ((list-contains? baseline-lines offending-file)
             (log-info (string-append "  (baseline, tracked debt) " (car lines)))
-            (report-violations (cdr lines) new-n (+ baseline-n 1)))
+            (report-violations
+              (cdr lines)
+              new-n
+              (+ baseline-n 1)))
           (else
             (log-error (string-append "  " (car lines)))
-            (report-violations (cdr lines) (+ new-n 1) baseline-n)))))))
+            (report-violations
+              (cdr lines)
+              (+ new-n 1)
+              baseline-n)))))))
 
-(report-violations (string-split out "\n") 0 0)
+(report-violations
+  (string-split out "\n")
+  0
+  0)

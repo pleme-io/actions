@@ -18,25 +18,93 @@
 ;; run.tlisp explicitly and is NOT claimed to parse into the shipped
 ;; Rust struct.
 
-(defaction "aldrava-dispatch"
-  :description "The typed knock: match a PR comment against a registered (defcommentcommand ...) catalog (or an inline single-command config), resolve commenter trust (PR author / allowlist / minimum repo permission), and dispatch the target — an idempotent label relabel, a workflow_dispatch, or a repository_dispatch. Never mutates on an untrusted or unmatched knock."
-  :inputs  ((:name "catalog-path"                       :type :string :required nil :default "")
-            (:name "command"                             :type :string :required nil :default "")
-            (:name "trigger"                             :type :string :required nil :default "")
-            (:name "min-permission"                      :type :string :required nil :default "write")
-            (:name "trust-pr-author"                     :type :string :required nil :default "true")
-            (:name "allowlist"                            :type :string :required nil :default "")
-            (:name "target-label"                        :type :string :required nil :default "")
-            (:name "target-workflow"                     :type :string :required nil :default "")
-            (:name "target-workflow-ref"                 :type :string :required nil :default "")
-            (:name "target-repository-dispatch-event"    :type :string :required nil :default "")
-            (:name "target-repository-dispatch-repo"     :type :string :required nil :default "")
-            (:name "repo"                                :type :string :required nil :default "${{ github.repository }}")
-            (:name "token"                               :type :string :required nil :default "${{ github.token }}"))
-  :outputs ((:name "dispatched") (:name "outcome") (:name "command") (:name "args")
-            (:name "commenter") (:name "checkout-ref") (:name "branch-ref") (:name "base-ref")
-            (:name "pr-author") (:name "is-develop") (:name "target-kind") (:name "target-detail")
-            (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "aldrava-dispatch/run.tlisp")
-  :semver-compat :minor
-  :attestation   :none)
+(defaction
+  "aldrava-dispatch"
+  :description
+  "The typed knock: match a PR comment against a registered (defcommentcommand ...) catalog (or an inline single-command config), resolve commenter trust (PR author / allowlist / minimum repo permission), and dispatch the target — an idempotent label relabel, a workflow_dispatch, or a repository_dispatch. Never mutates on an untrusted or unmatched knock."
+  :inputs
+  ((
+     :name "catalog-path"
+     :type :string
+     :required nil
+     :default "")
+    (
+      :name "command"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "trigger"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "min-permission"
+      :type :string
+      :required nil
+      :default "write")
+    (
+      :name "trust-pr-author"
+      :type :string
+      :required nil
+      :default "true")
+    (
+      :name "allowlist"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "target-label"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "target-workflow"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "target-workflow-ref"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "target-repository-dispatch-event"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "target-repository-dispatch-repo"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "repo"
+      :type :string
+      :required nil
+      :default "${{ github.repository }}")
+    (
+      :name "token"
+      :type :string
+      :required nil
+      :default "${{ github.token }}"))
+  :outputs
+  ((:name "dispatched")
+    (:name "outcome")
+    (:name "command")
+    (:name "args")
+    (:name "commenter")
+    (:name "checkout-ref")
+    (:name "branch-ref")
+    (:name "base-ref")
+    (:name "pr-author")
+    (:name "is-develop")
+    (:name "target-kind")
+    (:name "target-detail")
+    (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "aldrava-dispatch/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :none)

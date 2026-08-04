@@ -22,18 +22,26 @@
 ;; on PATH for the rest of this script (the "Install Nix" step in action.yml
 ;; already ran DeterminateSystems/nix-installer-action, wiring nix itself
 ;; onto PATH).
-(exec-check "nix" "profile" "install" "github:pleme-io/hardened-images#codeownersValidatorPkg")
+(exec-check
+  "nix"
+  "profile"
+  "install"
+  "github:pleme-io/hardened-images#codeownersValidatorPkg")
 
 (define r (exec-capture "codeowners-validator" "--repository" "."))
 
 (define out (stdout-of r))
 
-(define
-  unowned-r
-  (exec-capture
-    "sh"
+(define unowned-r
+  (exec-capture "sh"
     "-c"
-    (string-append "echo '" (string-replace out "'" "'\"'\"'") "' | grep -c 'unowned' || echo 0")))
+    (string-append
+      "echo '"
+      (string-replace
+        out
+        "'"
+        "'\"'\"'")
+      "' | grep -c 'unowned' || echo 0")))
 
 (define unowned (string-trim (stdout-of unowned-r)))
 

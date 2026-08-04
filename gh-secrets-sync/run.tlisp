@@ -12,26 +12,27 @@
     (append-output "synced-count=0")
     (exit 1)))
 
-(define
-  keys-r
+(define keys-r
   (exec-capture "sh" "-c" (string-append "yq '.secrets | keys | .[]' " spec " | tr -d '\"'")))
 
 (define keys (string-split (string-trim (stdout-of keys-r)) "\n"))
 
 (define synced 0)
 
-(define
-  (sync-secrets ks)
+(define (sync-secrets ks)
   (cond
     ((null? ks) #t)
     ((equal? (car ks) "") (sync-secrets (cdr ks)))
     (else
       (let*
         ((val-r
-           (exec-capture
-             "sh"
-             "-c"
-             (string-append "yq '.secrets.\"" (car ks) "\"' " spec " | tr -d '\"'")))
+           (exec-capture "sh"
+             "-c" (string-append
+               "yq '.secrets.\""
+               (car ks)
+               "\"' "
+               spec
+               " | tr -d '\"'")))
           (val (string-trim (stdout-of val-r))))
         (cond
           ((or (equal? val "") (equal? val "null"))

@@ -7,37 +7,34 @@
 
 (define source-paths (env-get "SOURCE_PATHS" "src pyproject.toml uv.lock"))
 
-(define
-  (read-python-version)
+(define (read-python-version)
   ;; PEP 621: [project].version in pyproject.toml.
-  (toml-read-field "pyproject.toml" "[project]" "version"))
+  (toml-read-field
+    "pyproject.toml"
+    "[project]"
+    "version"))
 
-(define
-  (should-bump?)
+(define (should-bump?)
   (cond ((not (equal? skip-flag "true")) #t) (else (has-changes-since? (last-tag) source-paths))))
 
-(define
-  (do-bump)
+(define (do-bump)
   ;; uv 0.5+ ships `uv version --bump <patch|minor|major>` which
   ;; edits pyproject.toml + refreshes uv.lock in one shot.
   (status-of (exec-capture "uv" "version" "--bump" bump-type)))
 
-(define
-  (emit-skip msg old-v)
+(define (emit-skip msg old-v)
   (log-info msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
   (append-output "new-version="))
 
-(define
-  (emit-success old-v new-v)
+(define (emit-success old-v new-v)
   (log-info (string-append "bumped: " old-v " -> " new-v))
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=true")
   (append-output (string-append "new-version=" new-v)))
 
-(define
-  (emit-failure msg old-v)
+(define (emit-failure msg old-v)
   (log-error msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
@@ -54,17 +51,18 @@
     (exit 1))
   ((not (should-bump?))
     (emit-skip
-      (string-append "no changes since last tag — skipping (at " old-version ")")
+      (string-append
+        "no changes since last tag — skipping (at "
+        old-version
+        ")")
       old-version)
     (exit 0))
   (else
-    (let
-      ((bump-status (do-bump)))
+    (let ((bump-status (do-bump)))
       (cond
         ((not (= bump-status 0)) (emit-failure "uv version failed" old-version) (exit bump-status))
         (else
-          (let
-            ((new-v (read-python-version)))
+          (let ((new-v (read-python-version)))
             (cond
               ((equal? new-v old-version)
                 (emit-failure

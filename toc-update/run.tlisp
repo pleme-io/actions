@@ -6,10 +6,13 @@
 
 (define repo (env-required "GITHUB_REPOSITORY"))
 
-(exec-check "npm" "install" "-g" "doctoc@latest")
+(exec-check
+  "npm"
+  "install"
+  "-g"
+  "doctoc@latest")
 
-(define
-  (doctoc-each fs)
+(define (doctoc-each fs)
   (cond
     ((null? fs) #t)
     ((equal? (car fs) "") (doctoc-each (cdr fs)))
@@ -27,7 +30,9 @@
 
 (configure-git-bot)
 
-(exec-capture "git" "checkout" "-b" "chore/toc-update")
+(exec-capture "git"
+  "checkout"
+  "-b" "chore/toc-update")
 
 (exec-or-die (list "git" "commit" "-am" "chore(docs): refresh TOC"))
 

@@ -12,12 +12,12 @@
 
 (define repo (env-required "REPO"))
 
-(define
-  dedup
-  (cond ((not (equal? dedup-in "")) dedup-in) (else (string-append "gh-actions:" repo ":" summary))))
+(define dedup
+  (cond
+    ((not (equal? dedup-in "")) dedup-in)
+    (else (string-append "gh-actions:" repo ":" summary))))
 
-(define
-  payload-jq
+(define payload-jq
   (string-append
     "jq -n "
     "--arg routing '"
@@ -39,29 +39,22 @@
     "'{ routing_key: $routing, event_action: $action, dedup_key: $dedup, "
     "   payload: { summary: $summary, severity: $severity, source: $source } }'"))
 
-(define
-  payload
-  (let
-    ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond ((= (status-of r) 0) (stdout-of r)) (else (log-error "payload assembly failed") (exit 1)))))
+(define payload
+  (let ((r (exec-capture "sh" "-c" payload-jq)))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else (log-error "payload assembly failed") (exit 1)))))
 
-(define
-  r
-  (exec-capture
-    "curl"
+(define r
+  (exec-capture "curl"
     "-sS"
-    "-w"
-    "\n%{http_code}"
-    "-X"
-    "POST"
-    "-H"
-    "Content-Type: application/json"
-    "-d"
-    payload
+    "-w" "\n%{http_code}"
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
     "https://events.pagerduty.com/v2/enqueue"))
 
-(let
-  ((out (stdout-of r)))
+(let ((out (stdout-of r)))
   (cond
     ((log-contains? out "202")
       (log-info (string-append action " dispatched (dedup=" dedup ")"))

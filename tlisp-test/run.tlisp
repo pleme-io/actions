@@ -18,16 +18,16 @@
 
 (define child-tmp "/tmp/tlisp-test-current.tlisp")
 
-(define
-  (find-test-files)
+(define (find-test-files)
   (let*
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          "find . -type f -name '*.test.tlisp' -not -path './.git/*' -not -path './target/*' -not -path './node_modules/*' | sort"))
       (out (string-trim (stdout-of r))))
-    (if (equal? out "") (list) (string-split out "\n"))))
+    (if (equal? out "")
+      (list)
+      (string-split out "\n"))))
 
 ;; <dir>/<base>.test.tlisp -> <dir>/<base>.tlisp
 (define (unit-of test-file) (string-replace test-file ".test.tlisp" ".tlisp"))
@@ -36,39 +36,44 @@
 ;; see status-of / append-output / TOML helpers / etc. Use the checked-out
 ;; copy when present (the actions repo); otherwise fetch the canonical one so
 ;; this action works in any consumer repo.
-(define
-  stdlib-src
+(define stdlib-src
   (cond
     ((path-exists? stdlib-path) (read-file stdlib-path))
     (else
       (stdout-of
-        (exec-capture
-          "curl"
+        (exec-capture "curl"
           "-sL"
           "https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp")))))
 
 ;; Run one test file. Returns 0 if every (deftest …) passed, non-zero otherwise.
-(define
-  (run-one test-file)
-  (let
-    ((unit (unit-of test-file)))
+(define (run-one test-file)
+  (let ((unit (unit-of test-file)))
     (cond
       ((not (path-exists? unit))
         (log-error
-          (string-append "tlisp-test: no unit-under-test for " test-file " (expected " unit ")"))
+          (string-append
+            "tlisp-test: no unit-under-test for "
+            test-file
+            " (expected "
+            unit
+            ")"))
         1)
       (else
         (write-file
           child-tmp
-          (string-append stdlib-src "\n" (read-file unit) "\n" (read-file test-file)))
+          (string-append
+            stdlib-src
+            "\n"
+            (read-file unit)
+            "\n"
+            (read-file test-file)))
         ;; Gate the unit's main + give it a throwaway GITHUB_OUTPUT so a
         ;; top-level (env-required "GITHUB_OUTPUT") doesn't abort. env-set
         ;; plumbs both into the child process. The runner's own append-output
         ;; uses the stdlib's GITHUB_OUTPUT captured at load, so it is unaffected.
         (env-set "TLISP_TEST" "1")
         (env-set "GITHUB_OUTPUT" "/tmp/tlisp-test-child-output")
-        (let*
-          ((r (exec-capture "tatara-script" "--test" child-tmp)) (s (status-of r)))
+        (let* ((r (exec-capture "tatara-script" "--test" child-tmp)) (s (status-of r)))
           (log-info (string-append "── " test-file (if (= s 0) "  [PASS]" "  [FAIL]")))
           (for-each
             (lambda (ln) (log-info (string-append "    " ln)))
@@ -77,8 +82,7 @@
               (string-split (string-append (stdout-of r) "\n" (stderr-of r)) "\n")))
           s)))))
 
-(define
-  (run-all files fails)
+(define (run-all files fails)
   (cond
     ((null? files) fails)
     (else (run-all (cdr files) (if (= (run-one (car files)) 0) fails (+ fails 1))))))
@@ -86,8 +90,7 @@
 ;; tatara-lisp has no string->number; bridge a numeric env string to an Int via
 ;; json-parse (a bare integer is valid JSON) -- the proven
 ;; container-boot-check / nix-image pattern.
-(define
-  (parse-int s fallback)
+(define (parse-int s fallback)
   (let ((t (string-trim s))) (cond ((equal? t "") fallback) (else (json-parse t)))))
 
 (define min-files (parse-int (env-get "MIN_FILES" "1") 1))
@@ -136,7 +139,10 @@
 (cond
   ((= failures 0)
     (log-info
-      (string-append "tlisp-test: all " (string-format "{}" (length test-files)) " file(s) passed"))
+      (string-append
+        "tlisp-test: all "
+        (string-format "{}" (length test-files))
+        " file(s) passed"))
     (exit 0))
   (else
     (log-error (string-append "tlisp-test: " (string-format "{}" failures) " file(s) failed"))

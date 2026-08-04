@@ -20,27 +20,22 @@
 
 (define tag-version (env-get "INPUT_TAG_VERSION" (env-get "TAG_VERSION" "")))
 
-(when
-  (or (equal? gem-name "") (equal? tag-version ""))
+(when (or (equal? gem-name "") (equal? tag-version ""))
   (log-error "gem-publish: missing INPUT_GEM_NAME or INPUT_TAG_VERSION")
   (exit 1))
 
 ;; ---------- version.rb parse ---------- ;;
 
-(define
-  (slice-between line open close)
+(define (slice-between line open close)
   ;; Substring after the first `open` token up to the next `close` token.
   ;; "" when either delimiter is absent. Used for Ruby's percent-literal
   ;; string form where the quote character isn't " or '.
-  (let
-    ((a (string-split line open)))
-    (if
-      (< (length a) 2)
+  (let ((a (string-split line open)))
+    (if (< (length a) 2)
       ""
       (let ((b (string-split (car (cdr a)) close))) (if (< (length b) 2) "" (car b))))))
 
-(define
-  (extract-quoted-value line)
+(define (extract-quoted-value line)
   ;; Extract a Ruby string literal's value from a `VERSION = …` line.
   ;; Handles the three forms that appear across the pleme-io gem fleet:
   ;;   VERSION = "0.1.0"      double-quote
@@ -50,8 +45,7 @@
   ;; The percent forms are checked before the plain quotes only matter
   ;; when no " or ' is present; an ordinary quoted line never contains
   ;; "%(" so the quote branches stay authoritative for it.
-  (let
-    ((dq (string-split line "\"")) (sq (string-split line "'")))
+  (let ((dq (string-split line "\"")) (sq (string-split line "'")))
     (cond
       ((>= (length dq) 2) (car (cdr dq)))
       ((>= (length sq) 2) (car (cdr sq)))
@@ -60,19 +54,18 @@
       ((string-contains? line "%(") (slice-between line "%(" ")"))
       (else ""))))
 
-(define
-  (first-version-line ls)
+(define (first-version-line ls)
   (cond
     ((null? ls) "")
     ((and (string-contains? (car ls) "VERSION") (string-contains? (car ls) "="))
       (extract-quoted-value (car ls)))
     (else (first-version-line (cdr ls)))))
 
-(define
-  (read-gem-version)
-  (let
-    ((path (string-append "lib/" gem-name "/version.rb")))
-    (if (not (path-exists? path)) "" (first-version-line (string-split (read-file path) "\n")))))
+(define (read-gem-version)
+  (let ((path (string-append "lib/" gem-name "/version.rb")))
+    (if (not (path-exists? path))
+      ""
+      (first-version-line (string-split (read-file path) "\n")))))
 
 ;; ---------- sanity check ---------- ;;
 
@@ -91,8 +84,7 @@
 
 (define build-status (exec-check "gem" "build" (string-append gem-name ".gemspec")))
 
-(when
-  (not (= build-status 0))
+(when (not (= build-status 0))
   (log-error (string-append "gem build failed (status " (string-format "{}" build-status) ")"))
   (exit build-status))
 

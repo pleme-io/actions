@@ -8,8 +8,7 @@
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define
-  (append-output line)
+(define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
@@ -27,28 +26,28 @@
 
 (define (stdout-of result) (alist-get result "stdout" ""))
 
-(define
-  (last-tag)
-  (let
-    ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
-    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+(define (last-tag)
+  (let ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
 
-(define
-  (has-changes? tag paths)
+(define (has-changes? tag paths)
   (let*
     ((path-list (string-split paths " "))
       (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
       (r (apply exec-capture (cons "git" args))))
     (not (= (status-of r) 0))))
 
-(define
-  (should-bump?)
+(define (should-bump?)
   (cond
     ((not (equal? skip-flag "true")) #t)
     (else
-      (let
-        ((tag (last-tag)))
-        (cond ((equal? tag "") #t) ((has-changes? tag source-paths) #t) (else #f))))))
+      (let ((tag (last-tag)))
+        (cond
+          ((equal? tag "") #t)
+          ((has-changes? tag source-paths) #t)
+          (else #f))))))
 
 ;; Compute next semver per bump-type. The arithmetic itself now lives in
 ;; the stdlib as `semver:bump` (byte-identical rules, LENIENT segment
@@ -91,15 +90,16 @@
 ;;
 ;; `max-v` and `tag-exists?` are both injected so the .test.tlisp drives
 ;; this with a mock tag set — no git, no network.
-(define
-  (next-free-version old-v type max-v tag-exists?)
-  (let
-    ((candidate (bump-semver (semver:bump-seed old-v max-v) type)))
-    (if (equal? candidate "") "" (advance-to-free candidate tag-exists?))))
+(define (next-free-version old-v type max-v tag-exists?)
+  (let ((candidate (bump-semver (semver:bump-seed old-v max-v) type)))
+    (if (equal? candidate "")
+      ""
+      (advance-to-free candidate tag-exists?))))
 
-(define
-  (advance-to-free version tag-exists?)
-  (if (tag-exists? version) (advance-to-free (bump-semver version "patch") tag-exists?) version))
+(define (advance-to-free version tag-exists?)
+  (if (tag-exists? version)
+    (advance-to-free (bump-semver version "patch") tag-exists?)
+    version))
 
 ;; Production tag-existence predicate: the version's `vX.Y.Z` tag. Reuses
 ;; the stdlib's git-tag-exists? (refs/tags/<tag> rev-parse). Tags must be
@@ -121,12 +121,10 @@
 ;; whole release fails. `[[:space:]]*` on both sides of `=` matches any
 ;; alignment; the replacement normalizes to a single space (TOML-valid,
 ;; self-consistent on the next bump).
-(define
-  (write-workspace-version old-v new-v)
+(define (write-workspace-version old-v new-v)
   (let
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "sed -i.bak 's/^version[[:space:]]*=[[:space:]]*\""
@@ -174,11 +172,11 @@
 ;; property rather than a coincidence).
 
 ;; The last non-empty whitespace-delimited word of S ("" when none).
-(define
-  (last-word s)
-  (let
-    ((ws (filter (lambda (w) (not (equal? w ""))) (string-split s " "))))
-    (if (null? ws) "" (car (reverse ws)))))
+(define (last-word s)
+  (let ((ws (filter (lambda (w) (not (equal? w ""))) (string-split s " "))))
+    (if (null? ws)
+      ""
+      (car (reverse ws)))))
 
 ;; The TOML key a quoted value belongs to, given the literal text
 ;; immediately preceding it: the word before that text's FINAL `=`.
@@ -187,10 +185,8 @@
 ;; The second example is why this is not a `string-contains? "version"`
 ;; test: that would match the DEP NAME and overwrite the path with a
 ;; version string.
-(define
-  (key-before-quoted seg)
-  (let
-    ((parts (string-split seg "=")))
+(define (key-before-quoted seg)
+  (let ((parts (string-split seg "=")))
     (cond ((< (length parts) 2) "") (else (last-word (car (cdr (reverse parts))))))))
 
 ;; #t iff V is an EXACT version requirement (`=X.Y.Z`) rather than the
@@ -221,31 +217,34 @@
 ;; silently downgraded the seal to a caret — green bump, green publish,
 ;; hole reopened. A guard that quietly weakens itself while reporting
 ;; success is worse than no guard, so the prefix is now carried through.
-(define
-  (exact-pin? v)
+(define (exact-pin? v)
   (let ((parts (string-split v "="))) (and (not (< (length parts) 2)) (equal? (car parts) ""))))
 
 ;; Rebuild one line, replacing every quoted value whose key is `version`
 ;; with NEW-V — PRESERVING an exact-pin `=` prefix when the old
 ;; requirement carried one (see `exact-pin?`). Walks the `"`-split pieces
 ;; alternating literal/quoted.
-(define
-  (rewrite-quoted-versions pieces in-quote? prev acc new-v)
+(define (rewrite-quoted-versions pieces in-quote? prev acc new-v)
   (cond
     ((null? pieces) (string-join "\"" (reverse acc)))
     (in-quote?
       (let
         ((v
-           (if
-             (equal? (key-before-quoted prev) "version")
-             (if (exact-pin? (car pieces)) (string-append "=" new-v) new-v)
+           (if (equal? (key-before-quoted prev) "version")
+             (if (exact-pin? (car pieces))
+               (string-append "=" new-v)
+               new-v)
              (car pieces))))
-        (rewrite-quoted-versions (cdr pieces) #f (car pieces) (cons v acc) new-v)))
+        (rewrite-quoted-versions
+          (cdr pieces)
+          #f
+          (car pieces)
+          (cons v acc)
+          new-v)))
     (else (rewrite-quoted-versions (cdr pieces) #t (car pieces) (cons (car pieces) acc) new-v))))
 
 ;; The quoted value for KEY on this line ("" when absent).
-(define
-  (quoted-value-for-key pieces in-quote? prev key)
+(define (quoted-value-for-key pieces in-quote? prev key)
   (cond
     ((null? pieces) "")
     ((and in-quote? (equal? (key-before-quoted prev) key)) (car pieces))
@@ -255,10 +254,8 @@
 (define (dep-line-value line key) (quoted-value-for-key (string-split line "\"") #f "" key))
 
 ;; #t iff the crate at PATH inherits the workspace version.
-(define
-  (member-inherits-workspace-version? path)
-  (let
-    ((p (string-append path "/Cargo.toml")))
+(define (member-inherits-workspace-version? path)
+  (let ((p (string-append path "/Cargo.toml")))
     (and
       (not (equal? path ""))
       (path-exists? p)
@@ -270,27 +267,39 @@
 ;; `path`, it has a `version`, its quotes are balanced (an odd piece count
 ;; == an even number of quotes -> malformed, left alone), and its target
 ;; inherits the workspace version.
-(define
-  (rewritable-pin-line? line inherits?)
+(define (rewritable-pin-line? line inherits?)
   (and
     (= (mod (length (string-split line "\"")) 2) 1)
     (not (equal? (dep-line-value line "path") ""))
     (not (equal? (dep-line-value line "version") ""))
     (inherits? (dep-line-value line "path"))))
 
-(define
-  (rewrite-pin-line line new-v)
-  (rewrite-quoted-versions (string-split line "\"") #f "" '() new-v))
+(define (rewrite-pin-line line new-v)
+  (rewrite-quoted-versions
+    (string-split line "\"")
+    #f
+    ""
+    '()
+    new-v))
 
 ;; Walk the file, rewriting only inside [workspace.dependencies].
-(define
-  (rewrite-pins-walk lines in-deps acc new-v inherits?)
+(define (rewrite-pins-walk lines in-deps acc new-v inherits?)
   (cond
     ((null? lines) (reverse acc))
     ((line-is-named-section? (car lines) "[workspace.dependencies]")
-      (rewrite-pins-walk (cdr lines) #t (cons (car lines) acc) new-v inherits?))
+      (rewrite-pins-walk
+        (cdr lines)
+        #t
+        (cons (car lines) acc)
+        new-v
+        inherits?))
     ((line-is-section-header? (car lines))
-      (rewrite-pins-walk (cdr lines) #f (cons (car lines) acc) new-v inherits?))
+      (rewrite-pins-walk
+        (cdr lines)
+        #f
+        (cons (car lines) acc)
+        new-v
+        inherits?))
     ((and in-deps (rewritable-pin-line? (car lines) inherits?))
       (rewrite-pins-walk
         (cdr lines)
@@ -302,16 +311,14 @@
 
 ;; Pure: TOML text in, TOML text out. `inherits?` is injected so the
 ;; .test.tlisp drives this with a mock membership set — no filesystem.
-(define
-  (rewrite-workspace-dep-pins toml-text new-v inherits?)
+(define (rewrite-workspace-dep-pins toml-text new-v inherits?)
   (string-join "\n" (rewrite-pins-walk (string-split toml-text "\n") #f '() new-v inherits?)))
 
 ;; Side-effecting wrapper: rewrite Cargo.toml in place. Returns #t when it
 ;; wrote (or had nothing to write); the caller treats it as best-effort —
 ;; a workspace with no intra-workspace pins is the common case and is a
 ;; no-op, not a failure.
-(define
-  (write-workspace-dep-pins new-v)
+(define (write-workspace-dep-pins new-v)
   (cond
     ((not (path-exists? "Cargo.toml")) #f)
     (else
@@ -329,8 +336,7 @@
                 " (path deps inheriting version.workspace = true)"))
             #t))))))
 
-(define
-  (do-regen)
+(define (do-regen)
   (status-of (exec-capture "nix" "run" "github:nix-community/crate2nix" "--" "generate")))
 
 (define (refresh-lock) (exec-capture "cargo" "update" "--workspace"))
@@ -342,22 +348,19 @@
 ;; the regen can't restore it. 2026-06-03: 11 fleet repos' mains went
 ;; stale exactly this way and bricked every consumer flake eval.
 
-(define
-  (emit-skip msg old-v)
+(define (emit-skip msg old-v)
   (log-info msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
   (append-output "new-version="))
 
-(define
-  (emit-success old-v new-v)
+(define (emit-success old-v new-v)
   (log-info (string-append "bumped: " old-v " -> " new-v))
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=true")
   (append-output (string-append "new-version=" new-v)))
 
-(define
-  (emit-failure msg old-v)
+(define (emit-failure msg old-v)
   (log-error msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
@@ -365,8 +368,7 @@
 
 ;; Run the full bump pipeline; returns 0 on success, non-zero exit code on
 ;; any of the sub-step failures. All branches set GITHUB_OUTPUT lines.
-(define
-  (run-bump-pipeline old-v)
+(define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
   (let*
     ((max-released (git:max-released-version "v"))
@@ -398,8 +400,7 @@
       (else
         ;; Say out loud when the seed did work, and which kind. These are
         ;; the two distinguishable histories behind one bumped version.
-        (if
-          (semver:gt? max-released old-v)
+        (if (semver:gt? max-released old-v)
           (log-info
             (string-append
               "manifest "
@@ -415,10 +416,13 @@
               max-released
               ")"))
           #t)
-        (if
-          (not (equal? new-v candidate))
+        (if (not (equal? new-v candidate))
           (log-info
-            (string-append "naive candidate was v" candidate " — released version is v" new-v))
+            (string-append
+              "naive candidate was v"
+              candidate
+              " — released version is v"
+              new-v))
           #t)
         ;; Keep the intra-workspace caret pins in step with the new
         ;; version. Best-effort by design: most workspaces have no such
@@ -430,10 +434,8 @@
         ;; an isolated runner; its Cargo.nix / Cargo.build-spec.json are
         ;; regenerated locally (siblings present) and committed. Repos
         ;; that DO resolve still get a fresh Cargo.nix here.
-        (let
-          ((regen-status (do-regen)))
-          (if
-            (= regen-status 0)
+        (let ((regen-status (do-regen)))
+          (if (= regen-status 0)
             (log-info "Cargo.nix regenerated")
             (log-info
               "Cargo.nix regen skipped (workspace not isolated-resolvable; regen + commit locally)")))
@@ -452,8 +454,7 @@
             1)
           (else
             ;; Confirm the textual bump took.
-            (let
-              ((check-v (read-workspace-version)))
+            (let ((check-v (read-workspace-version)))
               (cond
                 ((equal? check-v old-v)
                   (emit-failure (string-append "version unchanged after bump: " old-v) old-v)
@@ -462,10 +463,8 @@
 
 ;; ── Dispatch ───────────────────────────────────────────────────── ;;
 
-(define
-  (main)
-  (let
-    ((old-version (read-workspace-version)))
+(define (main)
+  (let ((old-version (read-workspace-version)))
     (cond
       ((not (path-exists? "Cargo.toml"))
         (emit-failure "rust-workspace-bump: no Cargo.toml at repo root" "")
@@ -475,7 +474,10 @@
         (exit 1))
       ((not (should-bump?))
         (emit-skip
-          (string-append "no changes since last tag — skipping (at " old-version ")")
+          (string-append
+            "no changes since last tag — skipping (at "
+            old-version
+            ")")
           old-version)
         (exit 0))
       (else (exit (run-bump-pipeline old-version))))))

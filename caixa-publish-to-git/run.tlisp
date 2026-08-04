@@ -7,15 +7,13 @@
 
 (define push-flag (env-get "PUSH_TAG" "true"))
 
-(define
-  (find-caixa)
+(define (find-caixa)
   (cond
     ((not (equal? caixa-in "")) caixa-in)
     (else
       (let
         ((r
-           (exec-capture
-             "sh"
+           (exec-capture "sh"
              "-c"
              "for p in caixa.lisp *.caixa.lisp .caixa/main.lisp; do [ -f \"$p\" ] && echo \"$p\" && break; done")))
         (string-trim (stdout-of r))))))
@@ -30,10 +28,8 @@
     (exit 1)))
 
 ;; Extract :version "x.y.z" from caixa source
-(define
-  ver-r
-  (exec-capture
-    "sh"
+(define ver-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "grep -oE ':version \"[^\"]+\"' "
@@ -67,8 +63,7 @@
 
 (cond
   ((equal? push-flag "true")
-    (let
-      ((r (exec-capture "git" "push" "origin" tag)))
+    (let ((r (exec-capture "git" "push" "origin" tag)))
       (cond
         ((= (status-of r) 0)
           (log-info (string-append "published " tag " to origin"))

@@ -48,7 +48,10 @@
 ;; identity string, which is precisely the substitution a keyless attack needs.
 ;; Refusing here rather than passing a partial constraint is the whole point.
 (cond
-  ((and keyless (equal? cert-identity "") (equal? identity-regexp ""))
+  ((and
+     keyless
+     (equal? cert-identity "")
+     (equal? identity-regexp ""))
     (log-error
       "cosign-verify: keyless verification requires certificate-identity (or certificate-identity-regexp); refusing to verify against any identity")
     (append-output "verified=false")
@@ -74,32 +77,31 @@
 (log-info
   (string-append
     "==> cosign verify "
-    (if keyless "(keyless Fulcio+Rekor) " (string-append "--key " key-ref " "))
+    (if keyless
+      "(keyless Fulcio+Rekor) "
+      (string-append
+        "--key "
+        key-ref
+        " "))
     image-ref))
 
-(define
-  r
-  (if
-    keyless
-    (if
-      (equal? identity-regexp "")
-      (exec-capture
-        "cosign"
+(define r
+  (if keyless
+    (if (equal? identity-regexp "")
+      (exec-capture "cosign"
         "verify"
-        "--certificate-identity"
-        cert-identity
-        "--certificate-oidc-issuer"
-        cert-issuer
+        "--certificate-identity" cert-identity
+        "--certificate-oidc-issuer" cert-issuer
         image-ref)
-      (exec-capture
-        "cosign"
+      (exec-capture "cosign"
         "verify"
-        "--certificate-identity-regexp"
-        identity-regexp
-        "--certificate-oidc-issuer"
-        cert-issuer
+        "--certificate-identity-regexp" identity-regexp
+        "--certificate-oidc-issuer" cert-issuer
         image-ref))
-    (exec-capture "cosign" "verify" "--key" key-ref image-ref)))
+    (exec-capture "cosign"
+      "verify"
+      "--key" key-ref
+      image-ref)))
 
 (cond
   ((= (status-of r) 0)

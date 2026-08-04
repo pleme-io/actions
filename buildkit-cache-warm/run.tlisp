@@ -8,18 +8,16 @@
 
 (log-info (string-append "==> warming cache " cache))
 
-(define
-  r
-  (exec-capture
-    "docker"
+(define r
+  (exec-capture "docker"
     "buildx"
     "build"
-    "--cache-from"
-    (string-append "type=registry,ref=" cache)
-    "--cache-to"
-    (string-append "type=registry,ref=" cache ",mode=max")
-    "--output"
-    "type=cacheonly"
+    "--cache-from" (string-append "type=registry,ref=" cache)
+    "--cache-to" (string-append
+      "type=registry,ref="
+      cache
+      ",mode=max")
+    "--output" "type=cacheonly"
     "."))
 
 (cond

@@ -17,12 +17,10 @@
     (exit 1)))
 
 ;; Count components — works for cyclonedx + spdx JSON shapes.
-(define
-  component-count
+(define component-count
   (let*
     ((r2
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          (string-append
            "jq '"

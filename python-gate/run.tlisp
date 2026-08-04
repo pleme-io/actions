@@ -6,11 +6,9 @@
 
 (define run-test (env-get "RUN_TEST" "true"))
 
-(define
-  (run-step label args)
+(define (run-step label args)
   (log-info (string-append "==> " label))
-  (let*
-    ((r (apply exec-capture (cons "uv" (cons "run" args)))) (passed (= (status-of r) 0)))
+  (let* ((r (apply exec-capture (cons "uv" (cons "run" args)))) (passed (= (status-of r) 0)))
     (cond
       ((not passed)
         (log-error (string-append label " FAILED"))
@@ -18,14 +16,12 @@
         (log-info (stderr-of r))))
     passed))
 
-(define
-  fmt-passed
+(define fmt-passed
   (cond
     ((equal? run-fmt "true") (run-step "ruff format --check" (list "ruff" "format" "--check" ".")))
     (else #t)))
 
-(define
-  lint-passed
+(define lint-passed
   (cond ((equal? run-lint "true") (run-step "ruff check" (list "ruff" "check" "."))) (else #t)))
 
 (define test-passed (cond ((equal? run-test "true") (run-step "pytest" (list "pytest"))) (else #t)))

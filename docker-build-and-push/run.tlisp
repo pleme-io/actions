@@ -14,8 +14,7 @@
 
 (define sha (env-get "SHA_SHORT" ""))
 
-(define
-  tag
+(define tag
   (cond
     ((not (equal? tag-in "")) tag-in)
     ((not (equal? sha "")) (substring sha 0 7))
@@ -27,11 +26,22 @@
 
 (log-info (string-append "==> docker buildx build " full-ref))
 
-(define
-  args
+(define args
   (append
-    (list "buildx" "build" "--platform" platforms "-f" dockerfile "-t" full-ref "-t" latest-ref)
-    (if (equal? push? "true") (list "--push") (list "--load"))
+    (list
+      "buildx"
+      "build"
+      "--platform"
+      platforms
+      "-f"
+      dockerfile
+      "-t"
+      full-ref
+      "-t"
+      latest-ref)
+    (if (equal? push? "true")
+      (list "--push")
+      (list "--load"))
     (list context)))
 
 (define r (apply exec-capture (cons "docker" args)))
@@ -43,8 +53,7 @@
     ;; Pull digest via inspect (best-effort).
     (let
       ((d
-         (exec-capture
-           "sh"
+         (exec-capture "sh"
            "-c"
            (string-append
              "docker buildx imagetools inspect "

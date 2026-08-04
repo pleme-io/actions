@@ -10,19 +10,13 @@
 
 (define payload (string-append "{\"token\":\"" token "\",\"name\":\"" secret "\"}"))
 
-(define
-  r
-  (exec-capture
-    "curl"
+(define r
+  (exec-capture "curl"
     "-sS"
-    "-w"
-    "\n%{http_code}"
-    "-X"
-    "POST"
-    "-H"
-    "Content-Type: application/json"
-    "-d"
-    payload
+    "-w" "\n%{http_code}"
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
     (string-append api-url "/gateway-rotate-secret")))
 
 (define out (stdout-of r))
@@ -32,4 +26,8 @@
     (log-info "rotated")
     (append-output "rotated=true")
     (exit 0))
-  (else (log-error "rotation failed") (log-info out) (append-output "rotated=false") (exit 1)))
+  (else
+    (log-error "rotation failed")
+    (log-info out)
+    (append-output "rotated=false")
+    (exit 1)))

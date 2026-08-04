@@ -4,7 +4,11 @@
 
 (define wd (env-get "WORKING_DIRECTORY" "."))
 
-(exec-check "gem" "install" "fastlane" "--no-document")
+(exec-check
+  "gem"
+  "install"
+  "fastlane"
+  "--no-document")
 
 (define r (exec-capture "sh" "-c" (string-append "cd " wd " && fastlane " lane)))
 

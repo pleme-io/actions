@@ -7,24 +7,22 @@
 
 (define source-paths (env-get "SOURCE_PATHS" "templates values.yaml Chart.yaml"))
 
-(define
-  (read-chart-version)
-  (let
-    ((r (exec-capture "sh" "-c" "yq '.version' Chart.yaml 2>/dev/null")))
-    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+(define (read-chart-version)
+  (let ((r (exec-capture "sh" "-c" "yq '.version' Chart.yaml 2>/dev/null")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
 
 ;; Compute next semver per bump-type. Helm has no built-in
 ;; equivalent of `cargo set-version --bump` so we do it ourselves.
-(define
-  (bump-semver version type)
+(define (bump-semver version type)
   (let*
     ((parts (string-split version "."))
       (major-s (if (>= (length parts) 1) (car parts) "0"))
       (minor-s (if (>= (length parts) 2) (car (cdr parts)) "0"))
       (patch-s (if (>= (length parts) 3) (car (cdr (cdr parts))) "0"))
       (r
-        (exec-capture
-          "sh"
+        (exec-capture "sh"
           "-c"
           (string-append
             "echo \""
@@ -41,34 +39,30 @@
             "  else if ($4==\"major\") print $1+1\".0.0\"; }'"))))
     (string-trim (stdout-of r))))
 
-(define
-  (write-chart-version new-v)
+(define (write-chart-version new-v)
   ;; yq -i edits Chart.yaml in place, bumping both version + appVersion.
   (let*
     ((r1 (exec-capture "sh" "-c" (string-append "yq -i '.version = \"" new-v "\"' Chart.yaml")))
-      (r2 (exec-capture "sh" "-c" (string-append "yq -i '.appVersion = \"" new-v "\"' Chart.yaml"))))
+      (r2
+        (exec-capture "sh" "-c" (string-append "yq -i '.appVersion = \"" new-v "\"' Chart.yaml"))))
     (and (= (status-of r1) 0) (= (status-of r2) 0))))
 
-(define
-  (should-bump?)
+(define (should-bump?)
   (cond ((not (equal? skip-flag "true")) #t) (else (has-changes-since? (last-tag) source-paths))))
 
-(define
-  (emit-skip msg old-v)
+(define (emit-skip msg old-v)
   (log-info msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
   (append-output "new-version="))
 
-(define
-  (emit-success old-v new-v)
+(define (emit-success old-v new-v)
   (log-info (string-append "bumped: " old-v " -> " new-v))
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=true")
   (append-output (string-append "new-version=" new-v)))
 
-(define
-  (emit-failure msg old-v)
+(define (emit-failure msg old-v)
   (log-error msg)
   (append-output (string-append "old-version=" old-v))
   (append-output "bumped=false")
@@ -83,12 +77,14 @@
   ((equal? old-version "") (emit-failure "helm-bump: .version not found in Chart.yaml" "") (exit 1))
   ((not (should-bump?))
     (emit-skip
-      (string-append "no changes since last tag — skipping (at " old-version ")")
+      (string-append
+        "no changes since last tag — skipping (at "
+        old-version
+        ")")
       old-version)
     (exit 0))
   (else
-    (let
-      ((new-v (bump-semver old-version bump-type)))
+    (let ((new-v (bump-semver old-version bump-type)))
       (cond
         ((equal? new-v "")
           (emit-failure "helm-bump: failed to compute new version" old-version)

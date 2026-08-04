@@ -6,12 +6,14 @@
 
 (log-info (string-append "==> terraform apply " plan " (in " workdir ")"))
 
-(define
-  r
+(define r
   (exec-capture "sh" "-c" (string-append "cd " workdir " && terraform apply -auto-approve " plan)))
 
 (cond
-  ((= (status-of r) 0) (log-info "applied") (append-output "applied=true") (exit 0))
+  ((= (status-of r) 0)
+    (log-info "applied")
+    (append-output "applied=true")
+    (exit 0))
   (else
     (log-error "terraform apply failed")
     (log-info (stderr-of r))

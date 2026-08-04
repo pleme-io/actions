@@ -11,14 +11,12 @@
 
 (define identity-name (env-get "IDENTITY_NAME" "github-actions[bot]"))
 
-(define
-  identity-email
+(define identity-email
   (env-get "IDENTITY_EMAIL" "41898282+github-actions[bot]@users.noreply.github.com"))
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 
-(define
-  (append-output line)
+(define (append-output line)
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
@@ -40,8 +38,7 @@
 ;; stale, pre-existing tag got pushed (the 2026-06-03 version-skew
 ;; bug). Refuse to release onto an existing tag; the operator must
 ;; reconcile the workspace version against it first.
-(when
-  (git-tag-exists? tag)
+(when (git-tag-exists? tag)
   (log-error
     (string-append
       "tag "
@@ -91,8 +88,7 @@
 ;; itself the defect, so surfacing it is the point.
 (define max-released (git:max-released-version tag-prefix))
 
-(when
-  (not (semver:release-monotone? version max-released))
+(when (not (semver:release-monotone? version max-released))
   (log-error
     (string-append
       "refusing to release "
@@ -110,8 +106,7 @@
       " and re-run."))
   (exit 1))
 
-(when
-  (equal? max-released "")
+(when (equal? max-released "")
   (log-info
     (string-append
       "no rankable "

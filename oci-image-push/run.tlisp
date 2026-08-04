@@ -77,8 +77,7 @@
 ;; specific self-signed cert is real verification, this is none.
 (define insecure (env-get "INPUT_INSECURE" (env-get "INSECURE" "")))
 
-(when
-  (or (equal? registry "") (equal? image "") (equal? tag ""))
+(when (or (equal? registry "") (equal? image "") (equal? tag ""))
   (log-error "oci-image-push: missing INPUT_REGISTRY, INPUT_IMAGE, or INPUT_TAG")
   (exit 1))
 
@@ -120,27 +119,45 @@
 ;; every generated patterns*.nix consumer relies on is therefore untouched.
 (define cred-args (list))
 
-(define
-  tls-args
+(define tls-args
   (append
-    (if (equal? ca-cert "") (list) (list "--dest-ca-cert" ca-cert))
-    (if (equal? insecure "true") (list "--insecure") (list))))
+    (if (equal? ca-cert "")
+      (list)
+      (list "--dest-ca-cert" ca-cert))
+    (if (equal? insecure "true")
+      (list "--insecure")
+      (list))))
 
 (define base-args (oci:doca-argv "push"))
 
 (log-info (oci:doca-source-note))
 
 (log-info
-  (string-append "pushing " tarball " -> " target
-                 (if (equal? user "") " (ambient credentials)" " (explicit credentials)")))
+  (string-append
+    "pushing "
+    tarball
+    " -> "
+    target
+    (if (equal? user "")
+      " (ambient credentials)"
+      " (explicit credentials)")))
 
-(define
-  r
+(define r
   (apply
     exec-capture
     (append
       base-args
-      (list "--backend" "native" "--registry" registry "--image" image "--tag" tag "--tarball" tarball)
+      (list
+        "--backend"
+        "native"
+        "--registry"
+        registry
+        "--image"
+        image
+        "--tag"
+        tag
+        "--tarball"
+        tarball)
       cred-args
       tls-args)))
 
@@ -149,14 +166,17 @@
 ;; enough: under `nix run`, nix's own warnings fill stderr and drown the tool's
 ;; actual error. A 401, a DNS miss, a missing tarball and an empty-output
 ;; timeout are four different pictures and must not render the same.
-(when
-  (not (= (status-of r) 0))
-  (log-error (string-append "oci-image-push: doca push FAILED, exit=" (string-format "{}" (status-of r))))
+(when (not (= (status-of r) 0))
+  (log-error
+    (string-append "oci-image-push: doca push FAILED, exit=" (string-format "{}" (status-of r))))
   (log-error (string-append "  stderr: " (string-trim (stderr-of r))))
   (log-error (string-append "  stdout: " (string-trim (stdout-of r))))
   (log-error
     (string-append
-      "  target=" target " tarball=" tarball
+      "  target="
+      target
+      " tarball="
+      tarball
       " -- a missing-dest-user error here means NOTHING supplied credentials: "
       "no --dest-user, no INPUT_USERNAME, and no ambient docker login. doca "
       "refuses to push anonymously rather than writing under an identity nobody "

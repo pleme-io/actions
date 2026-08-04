@@ -1,7 +1,6 @@
 ;; typecheck-gate/run.tlisp — polymorphic typecheck.
 
-(define
-  (detect)
+(define (detect)
   (cond
     ((path-exists? "Cargo.toml") "rust")
     ((path-exists? "tsconfig.json") "typescript")
@@ -12,27 +11,21 @@
 
 (append-output (string-append "tool=" eco))
 
-(define
-  (run-rust)
+(define (run-rust)
   (log-info "==> cargo check --workspace --all-targets")
   (= (status-of (exec-capture "cargo" "check" "--workspace" "--all-targets")) 0))
 
-(define
-  (run-ts)
+(define (run-ts)
   (log-info "==> npx tsc --noEmit")
-  (let
-    ((r (exec-capture "sh" "-c" "npm ci >/dev/null 2>&1 && npx tsc --noEmit")))
+  (let ((r (exec-capture "sh" "-c" "npm ci >/dev/null 2>&1 && npx tsc --noEmit")))
     (= (status-of r) 0)))
 
-(define
-  (run-python)
+(define (run-python)
   (log-info "==> uv run mypy .")
-  (let
-    ((r (exec-capture "sh" "-c" "uv sync --dev >/dev/null 2>&1 && uv run mypy .")))
+  (let ((r (exec-capture "sh" "-c" "uv sync --dev >/dev/null 2>&1 && uv run mypy .")))
     (= (status-of r) 0)))
 
-(define
-  passed
+(define passed
   (cond
     ((equal? eco "rust") (run-rust))
     ((equal? eco "typescript") (run-ts))

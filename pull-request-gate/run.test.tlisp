@@ -19,8 +19,7 @@
 ;; discarded statuses sat here unnoticed.
 ;; ─────────────────────────────────────────────────────────────────────
 
-(deftest
-  "enforcement-complete?: all-landed is the ONLY route to #t"
+(deftest "enforcement-complete?: all-landed is the ONLY route to #t"
   (assert (enforcement-complete? (list)) "no mutations attempted — vacuously complete")
   (assert (enforcement-complete? (list "" "" "" "")) "four empty strings = four successes")
   (assert
@@ -30,16 +29,14 @@
     (not (enforcement-complete? (list "comment" "add-label external-drive-by" "close" "lock")))
     "total failure is reported as failure, not as exit 0"))
 
-(deftest
-  "enforcement-complete?: the label failure specifically is caught"
+(deftest "enforcement-complete?: the label failure specifically is caught"
   ;; This is the exact historical trigger — a repo with no `external-drive-by`
   ;; label. Before the fix this produced a green gate on an open spam PR.
   (assert
     (not (enforcement-complete? (list "" "add-label external-drive-by" "" "")))
     "a missing label is now a red gate, not a silent pass"))
 
-(deftest
-  "enforcement-complete?: a close-only or lock-only failure still fails"
+(deftest "enforcement-complete?: a close-only or lock-only failure still fails"
   ;; Partial enforcement is not enforcement: a PR that was commented and
   ;; labelled but never closed is still an open spam PR.
   (assert
@@ -49,8 +46,7 @@
     (not (enforcement-complete? (list "" "" "" "lock")))
     "lock failed (no issues:write) → red"))
 
-(deftest
-  "gh-mutation's contract: \"\" means landed, the label means it did not"
+(deftest "gh-mutation's contract: \"\" means landed, the label means it did not"
   ;; Driven through enforcement-complete? because gh-mutation itself shells out.
   ;; The contract under test is the ENCODING: success is the empty string, so a
   ;; caller cannot accidentally read a failure as a success (a non-empty label

@@ -74,9 +74,13 @@
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 ;; Compose the target base with akeyless repo-shape (repo-prefix = "akeyless-").
-(define
-  (zot:compose-base repo registry image svc)
-  (oci:compose-base repo registry image "akeyless-" svc))
+(define (zot:compose-base repo registry image svc)
+  (oci:compose-base
+    repo
+    registry
+    image
+    "akeyless-"
+    svc))
 
 ;; Split a composed "<registry>/<image...>" base back into the two parts
 ;; doca's CLI wants separately -- every branch of oci:compose-base
@@ -98,31 +102,41 @@
 ;; empty token keeps the original unauthenticated path (public repo /
 ;; public cert) and a non-empty one adds the header -- no change to the
 ;; existing CA_CERT_URL param shape.
-(define
-  (zot:ca-cert-curl-args url path token)
-  (if
-    (equal? token "")
-    (list "curl" "-sL" "-f" "-o" path url)
-    (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
+(define (zot:ca-cert-curl-args url path token)
+  (if (equal? token "")
+    (list
+      "curl"
+      "-sL"
+      "-f"
+      "-o"
+      path
+      url)
+    (list
+      "curl"
+      "-sL"
+      "-f"
+      "-H"
+      (string-append "Authorization: token " token)
+      "-o"
+      path
+      url)))
 
 ;; Fetch the pinned CA cert to a local path via curl (universally
 ;; available on these runners, unlike skopeo -- this action's own loader
 ;; step already relies on curl to fetch stdlib.tlisp). Returns the local
 ;; path on success, "" on failure (an honest miss, not a silent lie).
-(define
-  (zot:fetch-ca-cert url path token)
-  (let
-    ((r (apply exec-capture (zot:ca-cert-curl-args url path token))))
-    (if (= (status-of r) 0) path "")))
+(define (zot:fetch-ca-cert url path token)
+  (let ((r (apply exec-capture (zot:ca-cert-curl-args url path token))))
+    (if (= (status-of r) 0)
+      path
+      "")))
 
 ;; ── main ──────────────────────────────────────────────────────────
-(define
-  (zot:emit-fail reason)
+(define (zot:emit-fail reason)
   (append-output "pushed=false")
   (append-output (string-append "reason=" reason)))
 
-(define
-  (main)
+(define (main)
   (let*
     ((registry (env-get "REGISTRY" "zot.zot-system.svc.cluster.local:5000"))
       (repo (env-get "REPO" ""))
@@ -168,8 +182,7 @@
                   (log-error
                     "zot-push: could not fetch the pinned CA cert and INSECURE fallback is not enabled -- refusing to push over an unverified or plaintext connection")
                   (list)))))
-          (if
-            (and (equal? ca-cert-path "") (not allow-insecure-fallback))
+          (if (and (equal? ca-cert-path "") (not allow-insecure-fallback))
             (begin (zot:emit-fail "no-ca-cert") 1)
             (let*
               ((tags-args (if moving (list "--additional-tags" (oci:moving-tag arch)) (list)))
@@ -230,8 +243,7 @@
                          tls-args))
                       (inspect-result (apply exec-capture inspect-args))
                       (digest
-                        (if
-                          (= (status-of inspect-result) 0)
+                        (if (= (status-of inspect-result) 0)
                           ;; oci-push's inspect subcommand prints "digest: <sha256:...>"
                           ;; to STDERR (eprintln!), never stdout (which carries the
                           ;; full manifest JSON) -- stderr-of, not stdout-of. Split on
@@ -240,15 +252,12 @@
                           ;; (verified live: a naive split-only-on-"digest: " captured
                           ;; everything after it, including a following line, in a
                           ;; local interpreter test before this fix landed).
-                          (let
-                            ((after (string-split (stderr-of inspect-result) "digest: ")))
-                            (if
-                              (> (length after) 1)
+                          (let ((after (string-split (stderr-of inspect-result) "digest: ")))
+                            (if (> (length after) 1)
                               (string-trim (car (string-split (car (cdr after)) "\n")))
                               ""))
                           "")))
-                    (when
-                      (equal? digest "")
+                    (when (equal? digest "")
                       (log-info
                         "::warning::zot-push: could not resolve pushed digest (doca inspect failed) — emitting digest= (honest empty), push itself succeeded"))
                     (append-output (string-append "tag=" tag))
@@ -261,7 +270,9 @@
                       (string-append
                         "pushed exact "
                         ref
-                        (if (equal? digest "") "" (string-append " @ " digest))))
+                        (if (equal? digest "")
+                          ""
+                          (string-append " @ " digest))))
                     0))))))))))
 
 (cond

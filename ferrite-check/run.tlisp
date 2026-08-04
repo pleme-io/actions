@@ -122,8 +122,7 @@
 
 ;; arch label → nix system double (shared shape with nix-image/arch->system
 ;; + build-matrix/bm:arch->system). "" for an unknown arch.
-(define
-  (ferrite:arch->system arch)
+(define (ferrite:arch->system arch)
   (cond
     ((equal? arch "amd64") "x86_64-linux")
     ((equal? arch "x86_64") "x86_64-linux")
@@ -138,10 +137,15 @@
 ;; trigger for a shared `attr:render` stdlib helper is now met; kept local
 ;; here to match the sibling precedent + git-least-disturbance on shipped
 ;; nix-image — queued as a named shared-helper refactor).
-(define
-  (ferrite:render-attr template base arch svc)
+(define (ferrite:render-attr template base arch svc)
   (string-replace
-    (string-replace (string-replace template "{base}" base) "{arch}" arch)
+    (string-replace
+      (string-replace
+        template
+        "{base}"
+        base)
+      "{arch}"
+      arch)
     "{svc}"
     svc))
 
@@ -151,28 +155,26 @@
 
 ;; The store-path basename (drop the /nix/store/ dir) — the sortable,
 ;; content-addressed source key. "" stays "".
-(define
-  (ferrite:store-basename p)
-  (let
-    ((parts (string-split (string-trim p) "/")))
+(define (ferrite:store-basename p)
+  (let ((parts (string-split (string-trim p) "/")))
     (cond ((null? parts) "") (else (ferrite:last-of parts)))))
 
-(define
-  (ferrite:last-of lst)
-  (cond ((null? lst) "") ((null? (cdr lst)) (car lst)) (else (ferrite:last-of (cdr lst)))))
+(define (ferrite:last-of lst)
+  (cond
+    ((null? lst) "")
+    ((null? (cdr lst)) (car lst))
+    (else (ferrite:last-of (cdr lst)))))
 
 ;; The cached-PoMS path for a source hash under a cache dir. "" for an empty
 ;; dir or empty key (⇒ no cache lookup possible — an honest always-miss).
-(define
-  (ferrite:poms-cache-path dir source-hash)
+(define (ferrite:poms-cache-path dir source-hash)
   (cond
     ((equal? dir "") "")
     ((equal? source-hash "") "")
     (else (string-append dir "/" source-hash ".poms.json"))))
 
 ;; #t iff a cached PoMS exists for (dir, source-hash).
-(define
-  (ferrite:cache-has? dir source-hash)
+(define (ferrite:cache-has? dir source-hash)
   (let ((p (ferrite:poms-cache-path dir source-hash))) (and (not (equal? p "")) (path-exists? p))))
 
 ;; Typed 2-slot result: (list ok? payload). Accessed via explicit accessors
@@ -185,8 +187,7 @@
 ;; ── the PoMS jq program — TYPED EMISSION, zero double-quote chars ────
 ;; (every literal is passed as --arg, so the whole program embeds in a
 ;; tlisp string with no escaping; the tameshi/cartorio precedent.)
-(define
-  ferrite:poms-jq
+(define ferrite:poms-jq
   "{ schema: $schema, subject: $subject, package: { svc: $svc, arch: $arch, system: $system, attr: $attr }, source: { hash: $srchash, algorithm: $srcalgo }, materialization: { materializable: $matable, drv_path: $drvpath }, git: { sha: $gitsha, ref: $gitref }, run: { id: $runid, number: $runnum, workflow: $workflow }, timestamp: $ts, chain: { chain_algorithm: $algo, prev: $prev }, attestation: { hash_algorithm: $algo, receipt_hash: $rhash, signed: $signed, signature: null, outcome_chain: $ochain } }")
 
 ;; ── side-effecting: eval / serialize / emit ──────────────────────
@@ -195,8 +196,7 @@
 ;; required tool's presence MUST be settled before it is invoked). Shared
 ;; shape with build-matrix/bm:on-path? + gen-build-spec — the shared-helper
 ;; extraction is a named LiveTODO across all three (git-least-disturbance).
-(define
-  (ferrite:any-dir-has? dirs bin)
+(define (ferrite:any-dir-has? dirs bin)
   (cond
     ((null? dirs) #f)
     ((and (not (equal? (car dirs) "")) (path-exists? (string-append (car dirs) "/" bin))) #t)
@@ -208,12 +208,13 @@
 ;; clean eval, (list #f stderr) on failure. Used for BOTH .drvPath
 ;; (materializability) and .outPath (the source content-address). --raw so a
 ;; string store path comes back bare (no JSON quoting).
-(define
-  (ferrite:eval-field flake-ref attr field)
+(define (ferrite:eval-field flake-ref attr field)
   (let*
     ((target (string-append flake-ref "#" attr "." field))
       (r (exec-capture "nix" "eval" "--raw" target)))
-    (if (= (status-of r) 0) (list #t (string-trim (stdout-of r))) (list #f (stderr-of r)))))
+    (if (= (status-of r) 0)
+      (list #t (string-trim (stdout-of r)))
+      (list #f (stderr-of r)))))
 
 ;; Build the PoMS base (receipt_hash="") via jq. Returns the exec result.
 (define
@@ -309,30 +310,25 @@
 ;; final PoMS. Returns (list #t rhash) on success, (list #f reason) on
 ;; failure. The single receipt-writing path for both the fresh + (re-emitted)
 ;; cache-write flows.
-(define
-  (ferrite:finalize-poms base-json poms-path tmp-dir)
+(define (ferrite:finalize-poms base-json poms-path tmp-dir)
   (let
     ((base-path (string-append tmp-dir "/ferrite-base.json"))
       (canon-path (string-append tmp-dir "/ferrite-canon.json")))
     (write-file base-path base-json)
-    (let
-      ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+    (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
       (cond
         ((not (= (status-of canon) 0)) (list #f "jq-fail"))
         (else
           (write-file canon-path (string-trim (stdout-of canon)))
-          (let
-            ((rhash (hash:blake3-file canon-path)))
+          (let ((rhash (hash:blake3-file canon-path)))
             (cond
               ((equal? rhash "") (list #f "no-blake3-tool"))
               (else
                 (let
                   ((final
-                     (exec-capture
-                       "jq"
+                     (exec-capture "jq"
                        "-S"
-                       "--arg"
-                       "rhash"
+                       "--arg" "rhash"
                        rhash
                        ".attestation.receipt_hash = $rhash"
                        base-path)))
@@ -341,8 +337,7 @@
                     (else (write-file poms-path (stdout-of final)) (list #t rhash))))))))))))
 
 ;; Emit the full typed output set + return the keyway exit code.
-(define
-  (ferrite:emit matable cached src-hash drv-path attr poms-path poms-hash reason code)
+(define (ferrite:emit matable cached src-hash drv-path attr poms-path poms-hash reason code)
   (append-output (string-append "materializable=" matable))
   (append-output (string-append "cached=" cached))
   (append-output (string-append "source-hash=" src-hash))
@@ -357,8 +352,7 @@
   code)
 
 ;; ── LiveTODO honesty for the unshipped signing / chain / tiered seams ──
-(define
-  (ferrite:warn-livetodos sign-flag chain-flag)
+(define (ferrite:warn-livetodos sign-flag chain-flag)
   (cond
     ((equal? sign-flag "true")
       (log-info
@@ -371,13 +365,16 @@
     (else #t)))
 
 ;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
-(define
-  (main)
+(define (main)
   (let*
     ((flake-ref (config-resolve "FLAKE_REF" "ferrite-check" "flake-ref" "."))
       (image-attr (config-resolve "IMAGE_ATTR" "ferrite-check" "image-attr" "dockerImage"))
       (template
-        (config-resolve "ATTR_TEMPLATE" "ferrite-check" "attr-template" "dockerImage:{arch}:{svc}"))
+        (config-resolve
+          "ATTR_TEMPLATE"
+          "ferrite-check"
+          "attr-template"
+          "dockerImage:{arch}:{svc}"))
       (svc (config-resolve "SVC" "ferrite-check" "svc" ""))
       (arch (config-resolve "ARCH" "ferrite-check" "arch" "amd64"))
       (poms-dir (config-resolve "POMS_DIR" "ferrite-check" "poms-dir" ""))
@@ -387,7 +384,11 @@
       (sign-flag (ferrite:norm-bool (config-resolve "SIGN" "ferrite-check" "sign" "false")))
       (chain-flag
         (ferrite:norm-bool
-          (config-resolve "EMIT_OUTCOME_CHAIN" "ferrite-check" "emit-outcome-chain" "false")))
+          (config-resolve
+            "EMIT_OUTCOME_CHAIN"
+            "ferrite-check"
+            "emit-outcome-chain"
+            "false")))
       (system (ferrite:arch->system arch))
       (attr (ferrite:render-attr template image-attr arch svc)))
     (ferrite:warn-livetodos sign-flag chain-flag)
@@ -399,22 +400,51 @@
             "ferrite-check: attr-template names {svc} (\""
             template
             "\") but the svc input is empty — refusing an ambiguous attr"))
-        (ferrite:emit "false" "false" "" "" "" "" "" "ambiguous-attr" 1))
+        (ferrite:emit
+          "false"
+          "false"
+          ""
+          ""
+          ""
+          ""
+          ""
+          "ambiguous-attr"
+          1))
       ;; ── config gate: unknown arch ⇒ no system double ──
       ((equal? system "")
         (log-error
-          (string-append "ferrite-check: unknown arch \"" arch "\" — no nix system double"))
-        (ferrite:emit "false" "false" "" "" attr "" "" "ambiguous-attr" 1))
+          (string-append
+            "ferrite-check: unknown arch \""
+            arch
+            "\" — no nix system double"))
+        (ferrite:emit
+          "false"
+          "false"
+          ""
+          ""
+          attr
+          ""
+          ""
+          "ambiguous-attr"
+          1))
       ;; ── required tool absent (probe BEFORE invoking) ──
       ((not (ferrite:on-path? "nix"))
         (log-error
           "ferrite-check: `nix` not on PATH — cannot eval the package (the runner must bake nix)")
-        (ferrite:emit "false" "false" "" "" attr "" "" "nix-absent" 1))
+        (ferrite:emit
+          "false"
+          "false"
+          ""
+          ""
+          attr
+          ""
+          ""
+          "nix-absent"
+          1))
       (else (ferrite:run flake-ref attr svc arch system poms-dir prev poms-path require-m)))))
 
 ;; The eval → cache-probe → serialize → emit body, entered once nix is on PATH.
-(define
-  (ferrite:run flake-ref attr svc arch system poms-dir prev poms-path require-m)
+(define (ferrite:run flake-ref attr svc arch system poms-dir prev poms-path require-m)
   (let*
     ((repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
       (subject (string-append (if (equal? svc "") repo svc) ":" arch))
@@ -443,7 +473,16 @@
                 attr
                 " is NOT materializable "
                 "(nix eval of .outPath failed) and require=true — failing"))
-            (ferrite:emit "false" "false" "" "" attr "" "" "not-materializable" 1))
+            (ferrite:emit
+              "false"
+              "false"
+              ""
+              ""
+              attr
+              ""
+              ""
+              "not-materializable"
+              1))
           (else
             (log-info
               (string-append
@@ -451,15 +490,23 @@
                 attr
                 " not materializable; "
                 "require=false — clean typed no (exit 2)"))
-            (ferrite:emit "false" "false" "" "" attr "" "" "not-materializable" 2))))
+            (ferrite:emit
+              "false"
+              "false"
+              ""
+              ""
+              attr
+              ""
+              ""
+              "not-materializable"
+              2))))
       (else
-        (let*
-          ((out-path (ferrite:payload out-eval)) (src-hash (ferrite:store-basename out-path)))
+        (let* ((out-path (ferrite:payload out-eval))
+           (src-hash (ferrite:store-basename out-path)))
           (cond
             ;; ── CACHE HIT: a PoMS already proves this exact source materializable ──
             ((ferrite:cache-has? poms-dir src-hash)
-              (let
-                ((cache-path (ferrite:poms-cache-path poms-dir src-hash)))
+              (let ((cache-path (ferrite:poms-cache-path poms-dir src-hash)))
                 (log-info
                   (string-append
                     "ferrite-check: cache HIT for source "
@@ -472,14 +519,25 @@
                 (write-file poms-path (read-file cache-path))
                 (let
                   ((cached-hash
-                     (let
-                       ((h (json-read-field cache-path ".attestation.receipt_hash")))
-                       (if (equal? h "") "" h)))
+                     (let ((h (json-read-field cache-path ".attestation.receipt_hash")))
+                       (if (equal? h "")
+                         ""
+                         h)))
                     (drv
-                      (let
-                        ((d (json-read-field cache-path ".materialization.drv_path")))
-                        (if (equal? d "") "" d))))
-                  (ferrite:emit "true" "true" src-hash drv attr poms-path cached-hash "cached" 0))))
+                      (let ((d (json-read-field cache-path ".materialization.drv_path")))
+                        (if (equal? d "")
+                          ""
+                          d))))
+                  (ferrite:emit
+                    "true"
+                    "true"
+                    src-hash
+                    drv
+                    attr
+                    poms-path
+                    cached-hash
+                    "cached"
+                    0))))
             ;; ── CACHE MISS: fresh — resolve the drvPath + emit a new PoMS ──
             (else
               ;; the drvPath is a nice-to-have detail on the receipt; an outPath
@@ -509,10 +567,18 @@
                 (cond
                   ((not (= (status-of base) 0))
                     (log-info (stderr-of base))
-                    (ferrite:emit "true" "false" src-hash drv-path attr "" "" "jq-fail" 1))
+                    (ferrite:emit
+                      "true"
+                      "false"
+                      src-hash
+                      drv-path
+                      attr
+                      ""
+                      ""
+                      "jq-fail"
+                      1))
                   (else
-                    (let
-                      ((fin (ferrite:finalize-poms (stdout-of base) poms-path tmp-dir)))
+                    (let ((fin (ferrite:finalize-poms (stdout-of base) poms-path tmp-dir)))
                       (cond
                         ((not (ferrite:ok? fin))
                           (log-error
@@ -531,8 +597,7 @@
                             (ferrite:payload fin)
                             1))
                         (else
-                          (let
-                            ((rhash (ferrite:payload fin)))
+                          (let ((rhash (ferrite:payload fin)))
                             (log-info
                               (string-append
                                 "PoMS -> "
@@ -540,14 +605,15 @@
                                 "  (source="
                                 src-hash
                                 ", chain.prev="
-                                (if (equal? prev "") "<root>" prev)
+                                (if (equal? prev "")
+                                  "<root>"
+                                  prev)
                                 ")"))
                             (log-info (string-append "blake3 poms-hash = " rhash))
                             ;; write-if-absent into the cache dir (content-addressed,
                             ;; no lock — two runners over the same source produce
                             ;; identical bytes, so the race is benign).
-                            (let
-                              ((cache-path (ferrite:poms-cache-path poms-dir src-hash)))
+                            (let ((cache-path (ferrite:poms-cache-path poms-dir src-hash)))
                               (when
                                 (and (not (equal? cache-path "")) (not (path-exists? cache-path)))
                                 (write-file cache-path (read-file poms-path))

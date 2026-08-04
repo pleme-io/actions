@@ -65,21 +65,33 @@
 ;; `Authorization: token <PAT>` header IS honored by raw.githubusercontent.com
 ;; for private repos (same as zot-push) — an empty token keeps the original
 ;; unauthenticated path, a non-empty one adds the header.
-(define
-  (pull:ca-cert-curl-args url path token)
-  (if
-    (equal? token "")
-    (list "curl" "-sL" "-f" "-o" path url)
-    (list "curl" "-sL" "-f" "-H" (string-append "Authorization: token " token) "-o" path url)))
+(define (pull:ca-cert-curl-args url path token)
+  (if (equal? token "")
+    (list
+      "curl"
+      "-sL"
+      "-f"
+      "-o"
+      path
+      url)
+    (list
+      "curl"
+      "-sL"
+      "-f"
+      "-H"
+      (string-append "Authorization: token " token)
+      "-o"
+      path
+      url)))
 
 ;; Fetch the pinned CA cert to a local path via curl (always present on
 ;; these runners — this action's own loader already relies on it). Returns
 ;; the path on success, "" on failure (an honest miss, not a silent lie).
-(define
-  (pull:fetch-ca-cert url path token)
-  (let
-    ((r (apply exec-capture (pull:ca-cert-curl-args url path token))))
-    (if (= (status-of r) 0) path "")))
+(define (pull:fetch-ca-cert url path token)
+  (let ((r (apply exec-capture (pull:ca-cert-curl-args url path token))))
+    (if (= (status-of r) 0)
+      path
+      "")))
 
 ;; skopeo copy docker://<ref> -> docker-archive:<dest>. `--insecure-policy`
 ;; is a GLOBAL flag (before the subcommand); `--src-cert-dir` /
@@ -87,8 +99,7 @@
 ;; cert-dir non-empty => pin the fetched CA; else insecure => skip verify;
 ;; else plain (publicly-trusted source). Auth to the zot registry is a
 ;; pre-condition (the consumer workflow logs in before this action runs).
-(define
-  (pull-image ref dest cert-dir insecure user pass)
+(define (pull-image ref dest cert-dir insecure user pass)
   (let*
     ;; doca (oci-push), NOT skopeo. `doca pull` IS registry ->
     ;; docker-archive, with the same three concerns this action already
@@ -109,8 +120,7 @@
     ;; fetched cert is written, so the file inside it is what we hand over.
     ((tls-args
        (cond
-         ((not (equal? cert-dir ""))
-           (list "--dest-ca-cert" (path-join cert-dir "src-ca.crt")))
+         ((not (equal? cert-dir "")) (list "--dest-ca-cert" (path-join cert-dir "src-ca.crt")))
          (insecure (list "--insecure"))
          (else (list))))
       ;; Credentials ONLY when a username is supplied, so a public source
@@ -179,12 +189,7 @@
       ;; to re-type all three; tlisp-lint Layer 5 correctly failed the duplicated
       ;; "(NOT baked ...)" literal, because a copy of a diagnostic string drifts
       ;; from its original and only one copy ever gets fixed.
-      (args
-        (append
-          (oci:doca-argv "pull")
-          (list "--ref" ref "--out" dest)
-          tls-args
-          cred-args))
+      (args (append (oci:doca-argv "pull") (list "--ref" ref "--out" dest) tls-args cred-args))
       (_which (log-info (oci:doca-source-note)))
       (r (apply exec-capture args)))
     ;; Surface skopeo's OWN stderr on failure. Returning a bare status threw
@@ -210,23 +215,23 @@
     ;; stderr, each labelled. A doca error printed to stdout, an empty-output
     ;; timeout, and a 401 are three different pictures and must not render the
     ;; same.
-    (when
-      (not (= (status-of r) 0))
-      (log-error
-        (string-append "doca pull FAILED, exit=" (string-format "{}" (status-of r))))
+    (when (not (= (status-of r) 0))
+      (log-error (string-append "doca pull FAILED, exit=" (string-format "{}" (status-of r))))
       (log-error (string-append "  stderr: " (string-trim (stderr-of r))))
       (log-error (string-append "  stdout: " (string-trim (stdout-of r))))
       (log-error
         (string-append
-          "  ref=" ref " out=" dest
+          "  ref="
+          ref
+          " out="
+          dest
           " -- if both streams are empty the pull produced no diagnostic at all; "
           "check whether doca was reachable and whether the source needed credentials.")))
     (status-of r)))
 
 ;; The full public output contract this action must emit itself on a
 ;; terminal pull-side failure (the scan + verdict steps never run).
-(define
-  (emit-pull-failed dest)
+(define (emit-pull-failed dest)
   (append-output "pulled=false")
   (append-output (string-append "local-archive=" dest))
   (append-output "admitted=false")
@@ -234,8 +239,7 @@
   (append-output "vuln-count=0")
   (append-output "result=pull-failed"))
 
-(define
-  (main)
+(define (main)
   (let*
     ((ref (env-required "REF"))
       (dest (env-get "DEST" "zot-pull.tar"))
@@ -253,25 +257,29 @@
       ;; When SRC_CA_CERT_URL is empty the consumer opted out of CA trust
       ;; (public source registry) -> keep the original plain-copy path.
       (fetched
-        (if
-          (equal? ca-cert-url "")
+        (if (equal? ca-cert-url "")
           ""
           (begin
             (exec-capture "mkdir" "-p" ca-cert-dir)
-            (pull:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token))))
+            (pull:fetch-ca-cert
+              ca-cert-url
+              ca-cert-path
+              ca-cert-token))))
       (effective-cert-dir (if (equal? fetched "") "" ca-cert-dir)))
     (cond
       ;; The CA was REQUESTED (non-empty URL) but couldn't be fetched, and no
       ;; insecure fallback is enabled -> refuse rather than pull over an
       ;; unverified/plaintext connection (matches zot-push).
-      ((and (not (equal? ca-cert-url "")) (equal? fetched "") (not allow-insecure))
+      ((and
+         (not (equal? ca-cert-url ""))
+         (equal? fetched "")
+         (not allow-insecure))
         (log-error
           "zot-pull-scan: could not fetch the pinned CA cert (SRC_CA_CERT_TOKEN may be required for the private default URL) and SRC_INSECURE fallback is not enabled -- refusing to pull over an unverified or plaintext connection")
         (emit-pull-failed dest)
         1)
       (else
-        (when
-          (and (not (equal? ca-cert-url "")) (equal? fetched ""))
+        (when (and (not (equal? ca-cert-url "")) (equal? fetched ""))
           (log-info
             "::warning::zot-pull-scan: CA cert fetch failed, falling back to --src-tls-verify=false -- this is a real, tracked degradation, not silent"))
         (log-info (string-append "==> zot faucet: pull docker://" ref " -> " dest))

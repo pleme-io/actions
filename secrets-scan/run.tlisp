@@ -49,8 +49,7 @@
 ;; the rest of this script (the "Install Nix" step in action.yml already
 ;; ran DeterminateSystems/nix-installer-action, wiring nix itself onto PATH).
 
-(define
-  args
+(define args
   (append
     (list
       "detect"
@@ -58,7 +57,9 @@
       "--redact"
       "--report-format=json"
       (string-append "--report-path=" report-path))
-    (if (equal? config "") (list) (list "--config" config))))
+    (if (equal? config "")
+      (list)
+      (list "--config" config))))
 
 ;; ── The PURE verdict, split out so it is provable ──────────────────────
 ;; Closed outcome vocabulary:
@@ -66,8 +67,7 @@
 ;;   'findings           — non-zero exit AND a report we could count
 ;;   'scan-error         — non-zero exit with NO report: it never really ran
 ;;   'report-unparseable — a report exists but no count could be read from it
-(define
-  (gitleaks-outcome code report-exists? count-readable?)
+(define (gitleaks-outcome code report-exists? count-readable?)
   (cond
     ((= code 0) 'clean)
     ((not report-exists?) 'scan-error)
@@ -76,12 +76,10 @@
 
 ;; #t iff the outcome means "we do not know whether this repo is clean".
 ;; These fail the build even when fail-on-found is "false".
-(define
-  (gitleaks-outcome-unknown? outcome)
+(define (gitleaks-outcome-unknown? outcome)
   (or (equal? outcome 'scan-error) (equal? outcome 'report-unparseable)))
 
-(define
-  (gitleaks-outcome-message outcome code)
+(define (gitleaks-outcome-message outcome code)
   (cond
     ((equal? outcome 'scan-error)
       (string-append
@@ -104,16 +102,22 @@
         "This is NOT a clean result."))
     (else "")))
 
-(define
-  (run-scan)
+(define (run-scan)
   ;; A STALE report from an earlier step, or from a previous job on a warm
   ;; self-hosted runner, would be read as THIS run's result — the same
   ;; silent-failure class one layer down. Remove it first and require our own
   ;; run to recreate it.
-  (exec-check "rm" "-f" report-path)
+  (exec-check
+    "rm"
+    "-f"
+    report-path)
 
   (log-info "==> installing gitleaks (nix profile install, nixos-24.05)")
-  (exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#gitleaks")
+  (exec-check
+    "nix"
+    "profile"
+    "install"
+    "github:NixOS/nixpkgs/nixos-24.05#gitleaks")
 
   (log-info "==> gitleaks detect")
   (let*

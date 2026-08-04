@@ -4,18 +4,25 @@
 
 (define fail-on (env-get "FAIL_ON_FINDING" "true"))
 
-(exec-check "pip" "install" "-q" "semgrep")
+(exec-check
+  "pip"
+  "install"
+  "-q"
+  "semgrep")
 
 (define r (exec-capture "semgrep" "--config" cfg "--json" "--quiet" "."))
 
 (define out (stdout-of r))
 
-(define
-  count-r
-  (exec-capture
-    "sh"
-    "-c"
-    (string-append "echo '" (string-replace out "'" "'\"'\"'") "' | jq '.results | length'")))
+(define count-r
+  (exec-capture "sh"
+    "-c" (string-append
+      "echo '"
+      (string-replace
+        out
+        "'"
+        "'\"'\"'")
+      "' | jq '.results | length'")))
 
 (define count (string-trim (stdout-of count-r)))
 

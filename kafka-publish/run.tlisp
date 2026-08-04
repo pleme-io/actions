@@ -6,13 +6,21 @@
 
 (define message (env-required "MESSAGE"))
 
-(exec-check "sudo" "apt-get" "install" "-y" "-qq" "kcat")
+(exec-check
+  "sudo"
+  "apt-get"
+  "install"
+  "-y"
+  "-qq"
+  "kcat")
 
-(define
-  cmd
+(define cmd
   (string-append
     "echo '"
-    (string-replace message "'" "'\"'\"'")
+    (string-replace
+      message
+      "'"
+      "'\"'\"'")
     "' | kcat -P -b '"
     brokers
     "' -t '"

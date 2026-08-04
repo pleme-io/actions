@@ -29,29 +29,34 @@
 ;; tatara-lisp has no string->number; bridge a numeric env string to an
 ;; Int via json-parse (a bare integer is valid JSON) -- the proven
 ;; nix-image/run.tlisp pattern.
-(define
-  (parse-int s fallback)
+(define (parse-int s fallback)
   (let ((t (string-trim s))) (cond ((equal? t "") fallback) (else (json-parse t)))))
 
 (define max-attempts (parse-int (env-get "MAX_ATTEMPTS" "30") 30))
 
 (define poll-interval (string-trim (env-get "POLL_INTERVAL_SECONDS" "3")))
 
-(define
-  (env-pairs)
+(define (env-pairs)
   (filter (lambda (l) (not (equal? l ""))) (string-split (string-trim container-env) "\n")))
 
-(define
-  (env-flags pairs)
+(define (env-flags pairs)
   (cond ((null? pairs) (list)) (else (append (list "-e" (car pairs)) (env-flags (cdr pairs))))))
 
 ;; Best-effort cleanup of a stale container from a previous attempt in
 ;; this same job -- ignored if none exists.
-(exec-capture "docker" "rm" "-f" container-name)
+(exec-capture "docker"
+  "rm"
+  "-f" container-name)
 
-(define
-  run-args
-  (append (list "run" "-d" "--name" container-name) (env-flags (env-pairs)) (list image)))
+(define run-args
+  (append
+    (list
+      "run"
+      "-d"
+      "--name"
+      container-name)
+    (env-flags (env-pairs))
+    (list image)))
 
 (log-info (string-append "==> starting " image))
 
@@ -73,13 +78,11 @@
 ;; RUNNER's own shell (always present), never inside the target
 ;; container -- the exec-into-target only happens for the health-cmd
 ;; branch below.
-(define
-  (poll attempt)
+(define (poll attempt)
   (cond
     ((> attempt max-attempts) 'timeout)
     (else
-      (let
-        ((r (exec-capture "docker" "exec" container-name "sh" "-c" health-cmd)))
+      (let ((r (exec-capture "docker" "exec" container-name "sh" "-c" health-cmd)))
         (cond
           ((= (status-of r) 0) 'healthy)
           (else
@@ -90,12 +93,12 @@
 ;; the container) whether it's still running. No exec into the target.
 (define wait-seconds (* max-attempts (parse-int poll-interval 3)))
 
-(define
-  (still-running-after-wait)
+(define (still-running-after-wait)
   (exec-capture "sh" "-c" (string-append "sleep " (string-format "{}" wait-seconds)))
-  (let
-    ((r (exec-capture "docker" "inspect" "--format" "{{.State.Running}}" container-name)))
-    (if (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true")) 'healthy 'timeout)))
+  (let ((r (exec-capture "docker" "inspect" "--format" "{{.State.Running}}" container-name)))
+    (if (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true"))
+      'healthy
+      'timeout)))
 
 ;; ── THIRD MODE: a binary that CANNOT fully start in isolation ──────────────
 ;; Measured 2026-08-01 on akeylesslabs' camelot-hardened-images run 30702469999:
@@ -160,15 +163,12 @@
 ;; either alone would have covered one class and silently failed the other.
 (define expect-log (env-get "EXPECT_LOG" ""))
 
-(define
-  (reached-expected-log)
+(define (reached-expected-log)
   (exec-capture "sh" "-c" (string-append "sleep " (string-format "{}" wait-seconds)))
   ;; 2>&1 is load-bearing: glog and most Go startup diagnostics go to STDERR,
   ;; and `docker logs` keeps the streams separate. Reading only stdout would
   ;; report "string absent" for a container that printed it.
-  (let
-    ((r (exec-capture "sh" "-c"
-          (string-append "docker logs " container-name " 2>&1"))))
+  (let ((r (exec-capture "sh" "-c" (string-append "docker logs " container-name " 2>&1"))))
     (if (and (= (status-of r) 0) (string-contains? (stdout-of r) expect-log))
       'expected-log-reached
       'timeout)))
@@ -231,16 +231,18 @@
     ;; when the runtime itself refused, a non-empty .Error for "exec format
     ;; error", OOMKilled for a memory limit. They cost one docker call and are
     ;; available precisely when the log dump is empty.
-    (let
-      ((logs (exec-capture "docker" "logs" container-name)))
-      (if (and (equal? (string-trim (stdout-of logs)) "")
-               (equal? (string-trim (stderr-of logs)) ""))
+    (let ((logs (exec-capture "docker" "logs" container-name)))
+      (if
+        (and (equal? (string-trim (stdout-of logs)) "") (equal? (string-trim (stderr-of logs)) ""))
         (log-error "container produced NO output on stdout or stderr")
         (begin (log-info (stdout-of logs)) (log-info (stderr-of logs)))))
     (let
-      ((st (exec-capture "docker" "inspect" "--format"
-             "exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}} status={{.State.Status}}"
-             container-name)))
+      ((st
+         (exec-capture "docker"
+           "inspect"
+           "--format"
+           "exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}} status={{.State.Status}}"
+           container-name)))
       (log-error (string-append "container state: " (string-trim (stdout-of st)))))
     (append-output "healthy=false")
     (cleanup)

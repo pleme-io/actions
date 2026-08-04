@@ -20,4 +20,8 @@
 
 (cond
   ((= (status-of r) 0) (append-output (string-append "s3-uri=s3://" bucket "/" key)) (exit 0))
-  (else (log-error "aws s3 cp failed") (log-info (stderr-of r)) (append-output "s3-uri=") (exit 1)))
+  (else
+    (log-error "aws s3 cp failed")
+    (log-info (stderr-of r))
+    (append-output "s3-uri=")
+    (exit 1)))

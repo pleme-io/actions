@@ -8,10 +8,8 @@
 
 (define repo (env-required "GITHUB_REPOSITORY"))
 
-(define
-  cutoff-r
-  (exec-capture
-    "sh"
+(define cutoff-r
+  (exec-capture "sh"
     "-c"
     (string-append
       "date -d '"
@@ -22,40 +20,29 @@
 
 (define cutoff (string-trim (stdout-of cutoff-r)))
 
-(define
-  r
-  (exec-capture
-    "gh"
+(define r
+  (exec-capture "gh"
     "issue"
     "list"
-    "--repo"
-    repo
-    "--state"
-    "open"
-    "--search"
-    (string-append "updated:<" cutoff)
-    "--json"
-    "number"
-    "--jq"
-    ".[].number"))
+    "--repo" repo
+    "--state" "open"
+    "--search" (string-append "updated:<" cutoff)
+    "--json" "number"
+    "--jq" ".[].number"))
 
 (define closed-count 0)
 
-(define
-  (comment-stale-issues nums)
+(define (comment-stale-issues nums)
   (cond
     ((null? nums) #t)
     ((equal? (car nums) "") (comment-stale-issues (cdr nums)))
     (else
-      (exec-capture
-        "gh"
+      (exec-capture "gh"
         "issue"
         "comment"
         (car nums)
-        "--repo"
-        repo
-        "--body"
-        "Marking stale per pleme-io/stale-issue-bot")
+        "--repo" repo
+        "--body" "Marking stale per pleme-io/stale-issue-bot")
       (set! closed-count (+ closed-count 1))
       (comment-stale-issues (cdr nums)))))
 

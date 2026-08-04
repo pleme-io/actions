@@ -14,10 +14,13 @@
 ;; DeterminateSystems/nix-installer-action, wiring nix itself onto PATH).
 (log-info "==> installing lhci (nix profile install, pleme-io/hardened-images)")
 
-(exec-check "nix" "profile" "install" "github:pleme-io/hardened-images#lhciCli")
+(exec-check
+  "nix"
+  "profile"
+  "install"
+  "github:pleme-io/hardened-images#lhciCli")
 
-(define
-  (run-lighthouse-urls us all-pass)
+(define (run-lighthouse-urls us all-pass)
   (cond
     ((null? us)
       (cond
@@ -27,8 +30,7 @@
     (else
       (let
         ((r
-           (exec-capture
-             "sh"
+           (exec-capture "sh"
              "-c"
              (string-append
                "lhci collect --url="
@@ -40,6 +42,8 @@
           ((= (status-of r) 0)
             (log-info (string-append "  PASS " (car us)))
             (run-lighthouse-urls (cdr us) all-pass))
-          (else (log-error (string-append "  FAIL " (car us))) (run-lighthouse-urls (cdr us) #f)))))))
+          (else
+            (log-error (string-append "  FAIL " (car us)))
+            (run-lighthouse-urls (cdr us) #f)))))))
 
 (run-lighthouse-urls (string-split urls " ") #t)

@@ -8,8 +8,7 @@
 
 (define api-url (env-get "API_URL" "https://api.akeyless.io"))
 
-(define
-  (build-payload)
+(define (build-payload)
   (cond
     ((equal? use-jwt "true")
       ;; Pull GH OIDC JWT first.
@@ -25,8 +24,7 @@
               "&audience=akeyless.io' | jq -r '.value'"))
           (r (exec-capture "sh" "-c" curl-cmd)))
         (cond ((not (= (status-of r) 0)) (log-error "failed to retrieve GH OIDC token") (exit 1)))
-        (let
-          ((jwt (string-trim (stdout-of r))))
+        (let ((jwt (string-trim (stdout-of r))))
           (string-append
             "{\"access-type\":\"jwt\",\"access-id\":\""
             access-id
@@ -46,17 +44,12 @@
 
 (log-info "==> akeyless auth")
 
-(define
-  r
-  (exec-capture
-    "curl"
+(define r
+  (exec-capture "curl"
     "-sS"
-    "-X"
-    "POST"
-    "-H"
-    "Content-Type: application/json"
-    "-d"
-    payload
+    "-X" "POST"
+    "-H" "Content-Type: application/json"
+    "-d" payload
     (string-append api-url "/auth")))
 
 (cond
@@ -67,10 +60,15 @@
 
 (let*
   ((jq-r
-     (exec-capture
-       "sh"
+     (exec-capture "sh"
        "-c"
-       (string-append "echo '" (string-replace (stdout-of r) "'" "'\"'\"'") "' | jq -r '.token'")))
+       (string-append
+         "echo '"
+         (string-replace
+           (stdout-of r)
+           "'"
+           "'\"'\"'")
+         "' | jq -r '.token'")))
     (token (string-trim (stdout-of jq-r))))
   (cond
     ((or (equal? token "") (equal? token "null"))
@@ -81,9 +79,15 @@
       (log-info "authenticated")
       (append-output (string-append "token=" token))
       ;; Also export to subsequent steps via GITHUB_ENV.
-      (let
-        ((env-file (env-get "GITHUB_ENV" "")))
+      (let ((env-file (env-get "GITHUB_ENV" "")))
         (cond
           ((not (equal? env-file ""))
-            (exec-check "sh" "-c" (string-append "echo 'AKEYLESS_TOKEN=" token "' >> " env-file)))))
+            (exec-check
+              "sh"
+              "-c"
+              (string-append
+                "echo 'AKEYLESS_TOKEN="
+                token
+                "' >> "
+                env-file)))))
       (exit 0))))

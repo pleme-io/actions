@@ -50,9 +50,17 @@
 
 ;; Grafana /api/health returns e.g. {"commit":"..","database":"ok",..}.
 ;; Strip whitespace so the substring check tolerates pretty-printing.
-(define
-  (pgc:strip-ws s)
-  (string-replace (string-replace (string-replace s " " "") "\n" "") "\t" ""))
+(define (pgc:strip-ws s)
+  (string-replace
+    (string-replace
+      (string-replace
+        s
+        " "
+        "")
+      "\n"
+      "")
+    "\t"
+    ""))
 
 (define (pgc:health-ok? body) (string-contains? (pgc:strip-ws body) "\"database\":\"ok\""))
 
@@ -63,8 +71,7 @@
 ;; nix signals that the requested flake app/attribute does not exist —
 ;; used only to pick an honest reason string (a non-zero status already
 ;; reports converged=false regardless).
-(define
-  (pgc:runner-target-missing? stderr)
+(define (pgc:runner-target-missing? stderr)
   (or
     (string-contains? stderr "does not provide attribute")
     (string-contains? stderr "is not a valid flake output")
@@ -73,31 +80,32 @@
 
 ;; ── Side-effecting legs ──────────────────────────────────────────
 
-(define
-  (pgc:probe-health url token)
-  (exec-capture
-    "curl"
+(define (pgc:probe-health url token)
+  (exec-capture "curl"
     "-sS"
-    "-H"
-    (string-append "Authorization: Bearer " token)
+    "-H" (string-append "Authorization: Bearer " token)
     (string-append url "/api/health")))
 
 ;; Build the converge argv: an explicit converge-cmd override wins
 ;; (space-split); else the default `nix run` argv + typed flags.
-(define
-  (pgc:converge-argv converge-cmd workspace app url provider dry?)
+(define (pgc:converge-argv converge-cmd workspace app url provider dry?)
   (cond
     ((not (equal? (string-trim converge-cmd) "")) (string-split (string-trim converge-cmd) " "))
     (else
       (append
         (pgc:default-argv workspace app)
-        (list "--provider" provider "--url" url)
-        (if (equal? dry? "true") (list "--dry-run") (list))))))
+        (list
+          "--provider"
+          provider
+          "--url"
+          url)
+        (if (equal? dry? "true")
+          (list "--dry-run")
+          (list))))))
 
 ;; ── Main ─────────────────────────────────────────────────────────
 
-(define
-  (main)
+(define (main)
   (let*
     ((url (config-resolve "GRAFANA_URL" "pangea-grafana-converge" "grafana-url" ""))
       (token (env-get "GRAFANA_TOKEN" ""))
@@ -113,10 +121,18 @@
       (dry? (pgc:norm-bool (config-resolve "DRY_RUN" "pangea-grafana-converge" "dry-run" "false")))
       (require-healthy
         (pgc:norm-bool
-          (config-resolve "REQUIRE_HEALTHY" "pangea-grafana-converge" "require-healthy" "true")))
+          (config-resolve
+            "REQUIRE_HEALTHY"
+            "pangea-grafana-converge"
+            "require-healthy"
+            "true")))
       (model (config-resolve "MODEL" "pangea-grafana-converge" "model" "2"))
       (executor
-        (config-resolve "PANGEA_EXECUTOR" "pangea-grafana-converge" "pangea-executor" "magma")))
+        (config-resolve
+          "PANGEA_EXECUTOR"
+          "pangea-grafana-converge"
+          "pangea-executor"
+          "magma")))
     (cond
       ((equal? (string-trim url) "")
         (log-error "pangea-grafana-converge: grafana-url is required")

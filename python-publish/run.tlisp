@@ -12,12 +12,10 @@
 ;; pypi's JSON endpoint returns 200 with versions list when the
 ;; package exists. The (name, version) pair we check by fetching
 ;; the version-specific endpoint.
-(define
-  (pypi-published? name version)
+(define (pypi-published? name version)
   (http-200? (string-append "https://pypi.org/pypi/" name "/" version "/json")))
 
-(define
-  (do-publish)
+(define (do-publish)
   (cond
     ((equal? dry-run "true")
       ;; uv build already happened in the composite; "dry-run" just
@@ -27,15 +25,13 @@
 
 (define (rate-limit? log) (or (log-contains? log "429") (log-contains? log "Too Many Requests")))
 
-(define
-  (already-uploaded? log)
+(define (already-uploaded? log)
   (or
     (log-contains? log "File already exists")
     (log-contains? log "already exists")
     (log-contains? log "previously published")))
 
-(define
-  (try-publish attempt)
+(define (try-publish attempt)
   (cond
     ((>= attempt max-retries)
       (log-error "exceeded max retries")
@@ -48,7 +44,10 @@
           (code (status-of r))
           (log (string-append (stdout-of r) "\n" (stderr-of r))))
         (cond
-          ((= code 0) (log-info "published successfully") (append-output "shipped=true") (exit 0))
+          ((= code 0)
+            (log-info "published successfully")
+            (append-output "shipped=true")
+            (exit 0))
           ((already-uploaded? log)
             (log-info "already published — treating as success")
             (append-output "shipped=true")

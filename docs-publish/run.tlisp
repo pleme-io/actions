@@ -7,8 +7,7 @@
 
 (define repo (env-required "REPO"))
 
-(define
-  (detect-tool)
+(define (detect-tool)
   (cond
     ((not (equal? force-tool "")) force-tool)
     ((path-exists? "mkdocs.yml") "mkdocs")
@@ -17,38 +16,39 @@
     ((path-exists? "Cargo.toml") "cargo-doc")
     (else "none")))
 
-(define
-  (run-cargo-doc)
+(define (run-cargo-doc)
   (log-info "==> cargo doc --no-deps --workspace")
-  (let
-    ((r (exec-capture "cargo" "doc" "--no-deps" "--workspace")))
+  (let ((r (exec-capture "cargo" "doc" "--no-deps" "--workspace")))
     (cond
       ((= (status-of r) 0) (cons "target/doc" #t))
       (else (log-error "cargo doc failed") (cons "" #f)))))
 
-(define
-  (run-mkdocs)
+(define (run-mkdocs)
   (log-info "==> uv tool run mkdocs build")
-  (let
-    ((r (exec-capture "sh" "-c" "uv tool run --from mkdocs mkdocs build")))
+  (let ((r (exec-capture "sh" "-c" "uv tool run --from mkdocs mkdocs build")))
     (cond
       ((= (status-of r) 0) (cons "site" #t))
       (else (log-error "mkdocs build failed") (cons "" #f)))))
 
-(define
-  (run-typedoc)
+(define (run-typedoc)
   (log-info "==> npx typedoc")
-  (let
-    ((r (exec-capture "sh" "-c" "npm ci && npx typedoc")))
+  (let ((r (exec-capture "sh" "-c" "npm ci && npx typedoc")))
     (cond ((= (status-of r) 0) (cons "docs" #t)) (else (log-error "typedoc failed") (cons "" #f)))))
 
-(define
-  (deploy-to-branch out-dir)
+(define (deploy-to-branch out-dir)
   ;; Use the ghp-import equivalent in pure git: orphan branch +
   ;; rsync out-dir + commit + force push.
   (log-info (string-append "deploying " out-dir " to " target-branch))
-  (exec-check "git" "config" "user.name" "github-actions[bot]")
-  (exec-check "git" "config" "user.email" "41898282+github-actions[bot]@users.noreply.github.com")
+  (exec-check
+    "git"
+    "config"
+    "user.name"
+    "github-actions[bot]")
+  (exec-check
+    "git"
+    "config"
+    "user.email"
+    "41898282+github-actions[bot]@users.noreply.github.com")
   (let*
     ((script
        (string-append
@@ -86,8 +86,7 @@
     (append-output "deployed=false")
     (exit 0)))
 
-(define
-  result
+(define result
   (cond
     ((equal? tool "cargo-doc") (run-cargo-doc))
     ((equal? tool "mkdocs") (run-mkdocs))
@@ -102,5 +101,11 @@
 
 (cond
   ((not built) (append-output "deployed=false") (exit 1))
-  ((deploy-to-branch out-dir) (log-info "deployed") (append-output "deployed=true") (exit 0))
-  (else (log-error "deploy step failed") (append-output "deployed=false") (exit 1)))
+  ((deploy-to-branch out-dir)
+    (log-info "deployed")
+    (append-output "deployed=true")
+    (exit 0))
+  (else
+    (log-error "deploy step failed")
+    (append-output "deployed=false")
+    (exit 1)))

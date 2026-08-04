@@ -50,9 +50,11 @@
 
 ;; Rebuild only on a miss OR an explicit force. A restore HIT with
 ;; force != "true" short-circuits — no re-derive. THE core invariant.
-(define
-  (scb:should-derive? cache-hit force)
-  (cond ((equal? force "true") #t) ((equal? cache-hit "true") #f) (else #t)))
+(define (scb:should-derive? cache-hit force)
+  (cond
+    ((equal? force "true") #t)
+    ((equal? cache-hit "true") #f)
+    (else #t)))
 
 ;; The build outcome as a decision string: "hit" => short-circuit (emit
 ;; from-cache, skip the daemon); "derive" => go to the sui service.
@@ -62,24 +64,19 @@
 
 ;; Explicit KEY wins; else sha256 the build-spec (content-addressed).
 ;; "" (unresolvable) is honest — downstream reports built=false.
-(define
-  (scb:resolve-key)
-  (let
-    ((key-in (env-get "KEY" "")))
+(define (scb:resolve-key)
+  (let ((key-in (env-get "KEY" "")))
     (cond
       ((not (equal? key-in "")) key-in)
       (else (supercache:content-key (env-get "SPEC_PATH" ""))))))
 
-(define
-  (scb:resolve-endpoint)
-  (let
-    ((e (env-get "ENDPOINT" "")))
+(define (scb:resolve-endpoint)
+  (let ((e (env-get "ENDPOINT" "")))
     (cond ((not (equal? e "")) e) (else (supercache:endpoint-resolve)))))
 
 ;; ── emit helpers (stable output set on BOTH paths) ───────────────
 
-(define
-  (scb:emit key built from-cache outputs ntd reason)
+(define (scb:emit key built from-cache outputs ntd reason)
   (append-output (string-append "key=" key))
   (append-output (string-append "built=" built))
   (append-output (string-append "from-cache=" from-cache))
@@ -91,8 +88,7 @@
   (append-output (string-append "reason=" reason)))
 
 ;; ── main ─────────────────────────────────────────────────────────
-(define
-  (scb:main)
+(define (scb:main)
   (let*
     ((cache-hit (env-get "CACHE_HIT" "false"))
       (force (env-get "FORCE" "false"))
@@ -107,7 +103,13 @@
       ;; 1 — restore HIT + no force: short-circuit, no daemon touch.
       ((equal? (scb:outcome cache-hit force) "hit")
         (log-info (string-append "super-cache-build: cache HIT " key " — skipping derive"))
-        (scb:emit key "false" "true" (env-get "RESTORED_OUTPUTS" "") ntd "cache-hit")
+        (scb:emit
+          key
+          "false"
+          "true"
+          (env-get "RESTORED_OUTPUTS" "")
+          ntd
+          "cache-hit")
         (exit 0))
       ;; 2 — derive. The sui-graph build RPC/CLI is a LiveTODO
       ;;     (sui-daemon-client is a library, not a binary). Report
@@ -129,19 +131,33 @@
         (log-info
           (string-append
             "  endpoint-alive="
-            (if (supercache:endpoint-alive? endpoint) "true" "false")))
+            (if (supercache:endpoint-alive? endpoint)
+              "true"
+              "false")))
         (log-info
           "  pending-super-cache-ci: rows 1,9 — the sui-graph build RPC/CLI is a LiveTODO (sui-daemon-client is a library; no build binary to invoke). never-touch-disk destination = rows 4,5,7.")
         (cond
           ((equal? require-build "true")
             (log-error
               "super-cache-build: require-build=true but no live sui build path (LiveTODO) — failing loud")
-            (scb:emit key "false" "false" "" ntd "derive-livetodo")
+            (scb:emit
+              key
+              "false"
+              "false"
+              ""
+              ntd
+              "derive-livetodo")
             (exit 1))
           (else
             (log-info
               "super-cache-build: require-build=false — reporting built=false (honest LiveTODO, no faked green)")
-            (scb:emit key "false" "false" "" ntd "derive-livetodo")
+            (scb:emit
+              key
+              "false"
+              "false"
+              ""
+              ntd
+              "derive-livetodo")
             (exit 0)))))))
 
 ;; TLISP_TEST=1 (tlisp-test harness): define the helpers, skip main.

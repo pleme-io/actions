@@ -63,16 +63,14 @@
 
 (define (gate:status ck) (car (cdr ck)))
 
-(define
-  (gate:any-fail? checks)
+(define (gate:any-fail? checks)
   (cond
     ((null? checks) #f)
     ((equal? (gate:status (car checks)) "fail") #t)
     (else (gate:any-fail? (cdr checks)))))
 
 ;; Name of the first failing check, or "" when none fail.
-(define
-  (gate:first-fail checks)
+(define (gate:first-fail checks)
   (cond
     ((null? checks) "")
     ((equal? (gate:status (car checks)) "fail") (gate:name (car checks)))
@@ -81,10 +79,8 @@
 ;; A gate passes iff no check failed (skips are benign).
 (define (gate:decision checks) (if (gate:any-fail? checks) "fail" "pass"))
 
-(define
-  (gate:reason decision checks)
-  (if
-    (equal? decision "pass")
+(define (gate:reason decision checks)
+  (if (equal? decision "pass")
     "all-checks-passed"
     (string-append "failed:" (gate:first-fail checks))))
 
@@ -99,8 +95,7 @@
 ;; Re-canonicalize the receipt with receipt_hash blanked, then BLAKE3 it
 ;; — the inverse of the producer's hashing. "" on jq failure or when no
 ;; BLAKE3 tool exists (caller treats "" as a hard FAIL, never a pass).
-(define
-  (gate:recompute-hash receipt-path tmp-dir)
+(define (gate:recompute-hash receipt-path tmp-dir)
   (let*
     ((base-path (string-append tmp-dir "/gate-base.json"))
       (canon-path (string-append tmp-dir "/gate-canon.json"))
@@ -109,8 +104,7 @@
       ((not (= (status-of base) 0)) "")
       (else
         (write-file base-path (stdout-of base))
-        (let
-          ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
+        (let ((canon (exec-capture "jq" "-S" "-c" "." base-path)))
           (cond
             ((not (= (status-of canon) 0)) "")
             (else
@@ -119,8 +113,7 @@
 
 ;; Optional pillar file check: "" file ⇒ skip; missing file ⇒ fail;
 ;; empty declared-hash ⇒ fail; else re-hash + compare.
-(define
-  (gate:pillar-status file declared-hash)
+(define (gate:pillar-status file declared-hash)
   (cond
     ((equal? (string-trim file) "") "skip")
     ((not (path-exists? file)) "fail")
@@ -131,8 +124,7 @@
 ;; ── Gate-decision receipt — jq is the typed serializer ───────────
 ;; Zero double-quote chars: every literal is passed as a --arg.
 
-(define
-  gate:decision-jq
+(define gate:decision-jq
   "{ schema: $schema, subject: $subject, receipt: { path: $rpath, hash: $rhash, algorithm: $algo }, checks: { present: $c_present, algorithm: $c_algo, content_address: $c_ca, chain: $c_chain, digest: $c_digest, sbom_pillar: $c_sbom, slsa_pillar: $c_slsa, signature: $c_sig }, decision: $decision, reason: $reason, git: { sha: $gitsha, ref: $gitref }, run: { id: $runid, number: $runnum, workflow: $workflow }, timestamp: $ts }")
 
 (define
@@ -230,12 +222,13 @@
            "ts"
            ts
            gate:decision-jq))))
-    (cond ((= (status-of r) 0) (write-file path (stdout-of r)) 0) (else (log-info (stderr-of r)) 1))))
+    (cond
+      ((= (status-of r) 0) (write-file path (stdout-of r)) 0)
+      (else (log-info (stderr-of r)) 1))))
 
 ;; ── Main ─────────────────────────────────────────────────────────
 
-(define
-  (gate:emit-missing receipt-path gate-receipt-path reason)
+(define (gate:emit-missing receipt-path gate-receipt-path reason)
   (log-error (string-append "attestation-gate: " reason))
   (append-output "passed=false")
   (append-output "decision=fail")
@@ -245,11 +238,14 @@
   (append-output (string-append "gate-receipt-path=" gate-receipt-path))
   (append-output "signed-verified=false"))
 
-(define
-  (main)
+(define (main)
   (let*
     ((receipt-path
-       (config-resolve "RECEIPT_PATH" "attestation-gate" "receipt-path" "cartorio-receipt.json"))
+       (config-resolve
+         "RECEIPT_PATH"
+         "attestation-gate"
+         "receipt-path"
+         "cartorio-receipt.json"))
       (repo (env-get "GITHUB_REPOSITORY" "unknown/unknown"))
       (subject (gate:subject-or (config-resolve "SUBJECT" "attestation-gate" "subject" "") repo))
       (expected-prev (config-resolve "EXPECTED_PREV" "attestation-gate" "expected-prev" ""))
@@ -258,9 +254,18 @@
       (slsa-path (config-resolve "SLSA_PATH" "attestation-gate" "slsa-path" ""))
       (require-signed
         (gate:norm-bool
-          (config-resolve "REQUIRE_SIGNED" "attestation-gate" "require-signed" "false")))
+          (config-resolve
+            "REQUIRE_SIGNED"
+            "attestation-gate"
+            "require-signed"
+            "false")))
       (require-chain
-        (gate:norm-bool (config-resolve "REQUIRE_CHAIN" "attestation-gate" "require-chain" "false")))
+        (gate:norm-bool
+          (config-resolve
+            "REQUIRE_CHAIN"
+            "attestation-gate"
+            "require-chain"
+            "false")))
       (fail-on-gate
         (gate:norm-bool (config-resolve "FAIL_ON_GATE" "attestation-gate" "fail-on-gate" "true")))
       (gate-receipt-path
@@ -277,12 +282,19 @@
       (tmp-dir (env-get "RUNNER_TEMP" "/tmp"))
       (ts (string-trim (stdout-of (exec-capture "date" "-u" "+%Y-%m-%dT%H:%M:%SZ")))))
     (log-info
-      (string-append "==> attestation-gate: verifying receipt " receipt-path " for " subject))
+      (string-append
+        "==> attestation-gate: verifying receipt "
+        receipt-path
+        " for "
+        subject))
     ;; PRESENCE — short-circuit; a missing/unparseable receipt is a hard,
     ;; early fail (every downstream field read would be "").
     (cond
       ((not (and (path-exists? receipt-path) (gate:json-valid? receipt-path)))
-        (gate:emit-missing receipt-path gate-receipt-path "receipt-missing-or-invalid-json")
+        (gate:emit-missing
+          receipt-path
+          gate-receipt-path
+          "receipt-missing-or-invalid-json")
         (cond ((equal? fail-on-gate "true") (exit 1)) (else (exit 0))))
       (else
         (let*
@@ -302,7 +314,9 @@
             (chain-status
               (cond
                 ((not (equal? expected-prev ""))
-                  (if (equal? ledger-prev expected-prev) "pass" "fail"))
+                  (if (equal? ledger-prev expected-prev)
+                    "pass"
+                    "fail"))
                 ((equal? require-chain "true") "fail")
                 (else "skip")))
             (digest-status

@@ -6,8 +6,7 @@
 
 (define reason (env-get "REASON" ""))
 
-(define
-  (detect)
+(define (detect)
   (cond
     ((path-exists? "Cargo.toml") "cargo")
     ((path-exists? "package.json") "npm")
@@ -28,14 +27,18 @@
 
 (cond ((not (equal? reason "")) (log-info (string-append "    reason: " reason))))
 
-(define
-  r
+(define r
   (cond
     ((equal? eco "cargo") (exec-capture "cargo" "yank" "--version" ver pkg))
     ((equal? eco "npm")
-      (let
-        ((msg (if (equal? reason "") (string-append pkg "@" ver " has been yanked") reason)))
-        (exec-capture "npm" "deprecate" (string-append pkg "@" ver) msg)))
+      (let ((msg (if (equal? reason "") (string-append pkg "@" ver " has been yanked") reason)))
+        (exec-capture "npm"
+          "deprecate"
+          (string-append
+            pkg
+            "@"
+            ver)
+          msg)))
     ((equal? eco "python")
       ;; pypi has no programmatic yank — operator must use the web UI.
       ;; Document the gap + exit non-zero.
@@ -47,7 +50,10 @@
 
 (cond
   ((not (list? r)) (begin (append-output "yanked=false") (exit 1)))
-  ((= (status-of r) 0) (log-info "yanked") (append-output "yanked=true") (exit 0))
+  ((= (status-of r) 0)
+    (log-info "yanked")
+    (append-output "yanked=true")
+    (exit 0))
   (else
     (log-error "yank command failed")
     (log-info (stderr-of r))

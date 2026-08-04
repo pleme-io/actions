@@ -29,20 +29,20 @@
 (define (profile-sandbox mode) (cond ((equal? mode "connect") "tmpfs") (else "disk")))
 
 ;; An explicit override wins over the mode profile.
-(define
-  (pick override profile-value)
+(define (pick override profile-value)
   (cond ((not (equal? override "")) override) (else profile-value)))
 
 ;; Why up is what it is. A reachable endpoint ⇒ ok; else a UDS that isn't
 ;; there ⇒ endpoint-not-reachable; else a TCP endpoint whose liveness we
 ;; cannot yet ping ⇒ tcp-liveness-livetodo.
-(define
-  (up-reason alive uds?)
-  (cond (alive "ok") (uds? "endpoint-not-reachable") (else "tcp-liveness-livetodo")))
+(define (up-reason alive uds?)
+  (cond
+    (alive "ok")
+    (uds? "endpoint-not-reachable")
+    (else "tcp-liveness-livetodo")))
 
 ;; ── main (side-effecting; gated off under TLISP_TEST) ────────────
-(define
-  (main)
+(define (main)
   (let*
     ((mode (config-resolve "MODE" "super-cache-ci" "mode" "ephemeral"))
       (store-ovr (config-resolve "STORE_BACKEND" "super-cache-ci" "store-backend" ""))
@@ -71,8 +71,7 @@
         cache
         " sandbox="
         sandbox))
-    (when
-      (equal? mode "connect")
+    (when (equal? mode "connect")
       (log-info
         "  pending-super-cache-ci: rows 4,5,7 — live Pg/Redis connect + never-touch-disk is a LiveTODO (PgStore/RedisBackend unwritten; no sui-graph client CLI to ping a .svc:port yet)"))
     (append-output (string-append "endpoint=" endpoint))

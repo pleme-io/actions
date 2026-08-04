@@ -31,19 +31,64 @@
 ;; local-fallback-derive-livetodo, NEVER a faked build; require-build=true
 ;; turns the fallback LiveTODO into a loud exit 1.
 
-(defaction "sui-remote-build"
-  :description "BUILD-job remote-execution verb: dispatch a derivation to a REAPI spot worker over the sui daemon (RAM eval, tmpfs sandbox, DB store), keyed by the gen build-spec. DEGRADED-UNTIL-STORE: the REAPI worker binary + TieredBackend are a named LiveTODO; gracefully falls back to the correct local daemon-node build (worker=local, built=false honest — super-cache-build's derive core is itself unshipped), never a faked build."
-  :inputs  ((:name "endpoint"      :type :string :required nil :default "")
-            (:name "spec-path"     :type :string :required nil :default "")
-            (:name "key"           :type :string :required nil :default "")
-            (:name "arch"          :type :string :required nil :default "amd64")
-            (:name "sandbox"       :type :string :required nil :default "tmpfs")
-            (:name "store-backend" :type :string :required nil :default "graphstore")
-            (:name "cache-backend" :type :string :required nil :default "local")
-            (:name "require-build" :type :string :required nil :default "false"))
-  :outputs ((:name "built") (:name "from-cache") (:name "outputs")
-            (:name "output-hashes") (:name "eval-ms") (:name "build-ms")
-            (:name "worker") (:name "never-touch-disk") (:name "reason"))
-  :behavior      (:runtime :tatara-script :run-tlisp "sui-remote-build/run.tlisp")
-  :semver-compat :minor
-  :attestation   :required)
+(defaction
+  "sui-remote-build"
+  :description
+  "BUILD-job remote-execution verb: dispatch a derivation to a REAPI spot worker over the sui daemon (RAM eval, tmpfs sandbox, DB store), keyed by the gen build-spec. DEGRADED-UNTIL-STORE: the REAPI worker binary + TieredBackend are a named LiveTODO; gracefully falls back to the correct local daemon-node build (worker=local, built=false honest — super-cache-build's derive core is itself unshipped), never a faked build."
+  :inputs
+  ((
+     :name "endpoint"
+     :type :string
+     :required nil
+     :default "")
+    (
+      :name "spec-path"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "key"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "arch"
+      :type :string
+      :required nil
+      :default "amd64")
+    (
+      :name "sandbox"
+      :type :string
+      :required nil
+      :default "tmpfs")
+    (
+      :name "store-backend"
+      :type :string
+      :required nil
+      :default "graphstore")
+    (
+      :name "cache-backend"
+      :type :string
+      :required nil
+      :default "local")
+    (
+      :name "require-build"
+      :type :string
+      :required nil
+      :default "false"))
+  :outputs
+  ((:name "built")
+    (:name "from-cache")
+    (:name "outputs")
+    (:name "output-hashes")
+    (:name "eval-ms")
+    (:name "build-ms")
+    (:name "worker")
+    (:name "never-touch-disk")
+    (:name "reason"))
+  :behavior
+  (:runtime :tatara-script :run-tlisp "sui-remote-build/run.tlisp")
+  :semver-compat
+  :minor
+  :attestation
+  :required)

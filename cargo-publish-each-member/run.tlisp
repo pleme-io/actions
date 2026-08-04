@@ -54,8 +54,7 @@
 ;;   'defer — sibling dep not on registry yet: re-attempt a later pass
 ;;   'fail  — genuine failure
 ;; ════════════════════════════════════════════════════════════════
-(define
-  (member-disposition outcome)
+(define (member-disposition outcome)
   (cond
     ((equal? outcome 'published) 'ship)
     ((equal? outcome 'already-uploaded) 'ship)
@@ -67,10 +66,8 @@
 ;; Resolve one member's publish, riding rate-limits inline.
 ;; Returns a TERMINAL disposition: 'ship / 'skip / 'defer / 'fail.
 ;; ops "publish": dir -> outcome ; ops "sleep": () -> unit.
-(define
-  (resolve-member ops dir attempt)
-  (let
-    ((disp (member-disposition ((op ops "publish") dir))))
+(define (resolve-member ops dir attempt)
+  (let ((disp (member-disposition ((op ops "publish") dir))))
     (cond
       ((not (equal? disp 'retry)) disp)
       ((>= attempt max-retries)
@@ -79,13 +76,15 @@
       (else
         (log-info (string-append "rate-limited; sleeping then retrying " dir))
         ((op ops "sleep"))
-        (resolve-member ops dir (+ attempt 1))))))
+        (resolve-member
+          ops
+          dir
+          (+ attempt 1))))))
 
 ;; One pass over members — each a (name dir ver) triple. Returns
 ;; (shipped skipped deferred); exits 1 on a genuine 'fail. On 'ship the
 ;; member's bump is committed + tagged via ops "commit-tag".
-(define
-  (publish-pass ops members shipped skipped deferred)
+(define (publish-pass ops members shipped skipped deferred)
   (cond
     ((null? members) (list shipped skipped deferred))
     (else
@@ -98,22 +97,39 @@
         (cond
           ((equal? disp 'ship)
             (log-info (string-append "shipped " name "@" ver " — committing + tagging"))
-            ((op ops "commit-tag") name ver dir)
-            (publish-pass ops (cdr members) (append shipped (list name)) skipped deferred))
+            ((op ops "commit-tag")
+              name
+              ver
+              dir)
+            (publish-pass
+              ops
+              (cdr members)
+              (append shipped (list name))
+              skipped
+              deferred))
           ((equal? disp 'skip)
             (log-info (string-append "skipped " name " (name owned upstream)"))
-            (publish-pass ops (cdr members) shipped (append skipped (list name)) deferred))
+            (publish-pass
+              ops
+              (cdr members)
+              shipped
+              (append skipped (list name))
+              deferred))
           ((equal? disp 'defer)
             (log-info (string-append "deferring " name " — dep not on registry yet"))
-            (publish-pass ops (cdr members) shipped skipped (append deferred (list m))))
+            (publish-pass
+              ops
+              (cdr members)
+              shipped
+              skipped
+              (append deferred (list m))))
           (else (log-error (string-append "permanent publish failure for " name)) (exit 1)))))))
 
 ;; Multi-pass driver. Deferred members retry on the next pass (a sibling dep
 ;; published earlier becomes visible). Bounded by max-passes; a pass that
 ;; ships + skips nothing while members remain deferred is a genuine
 ;; circular-dep / stuck-index stall. Returns (shipped skipped).
-(define
-  (drive-publish ops pending shipped skipped pass-n)
+(define (drive-publish ops pending shipped skipped pass-n)
   (cond
     ((null? pending) (list shipped skipped))
     ((>= pass-n max-passes)
@@ -138,7 +154,10 @@
           (newly-skipped (car (cdr out)))
           (deferred (car (cdr (cdr out)))))
         (cond
-          ((and (null? newly-shipped) (null? newly-skipped) (not (null? deferred)))
+          ((and
+             (null? newly-shipped)
+             (null? newly-skipped)
+             (not (null? deferred)))
             (log-error "no progress this pass — circular dep or stuck index")
             (exit 1))
           (else
@@ -152,77 +171,80 @@
 ;; ════════════════════════════════════════════════════════════════
 ;; Member enumeration (cargo metadata, source order)
 ;; ════════════════════════════════════════════════════════════════
-(define
-  (workspace-members-with-paths)
+(define (workspace-members-with-paths)
   (let*
     ((r
-       (exec-capture
-         "sh"
+       (exec-capture "sh"
          "-c"
          "cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | \"\\(.name)\\t\\(.manifest_path)\"'"))
       (out (stdout-of r)))
     (cond
       ((not (= (status-of r) 0)) '())
-      (else (filter (lambda (line) (not (equal? line ""))) (string-split (string-trim out) "\n"))))))
+      (else
+        (filter (lambda (line) (not (equal? line ""))) (string-split (string-trim out) "\n"))))))
 
 (define (member-name line) (car (string-split line "\t")))
 
 (define (member-manifest-path line) (car (cdr (string-split line "\t"))))
 
-(define
-  (member-dir line)
-  (let
-    ((parts (string-split (member-manifest-path line) "/")))
+(define (member-dir line)
+  (let ((parts (string-split (member-manifest-path line) "/")))
     (string-join "/" (reverse (cdr (reverse parts))))))
 
-(define
-  (read-member-version dir)
-  (toml-read-field (string-append dir "/Cargo.toml") "[package]" "version"))
+(define (read-member-version dir)
+  (toml-read-field
+    (string-append dir "/Cargo.toml")
+    "[package]"
+    "version"))
 
 ;; Source-change detection — bump only members changed since their own tag.
-(define
-  (last-member-tag name)
+(define (last-member-tag name)
   (let
     ((r
-       (exec-capture
-         "sh"
-         "-c"
-         (string-append "git tag --list --sort=-version:refname '" name "-v*' | head -n1"))))
-    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+       (exec-capture "sh"
+         "-c" (string-append
+           "git tag --list --sort=-version:refname '"
+           name
+           "-v*' | head -n1"))))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
 
-(define
-  (member-has-source-changes? dir last-tag)
+(define (member-has-source-changes? dir last-tag)
   (cond
     ((equal? last-tag "") #t)
     (else
-      (let
-        ((r (exec-capture "git" "diff" "--quiet" last-tag "HEAD" "--" dir)))
+      (let ((r (exec-capture "git" "diff" "--quiet" last-tag "HEAD" "--" dir)))
         (not (= (status-of r) 0))))))
 
-(define
-  (member-already-tagged? name version)
+(define (member-already-tagged? name version)
   (let
     ((r
-       (exec-capture
-         "git"
+       (exec-capture "git"
          "rev-parse"
          "-q"
-         "--verify"
-         (string-append "refs/tags/" name "-v" version))))
+         "--verify" (string-append
+           "refs/tags/"
+           name
+           "-v"
+           version))))
     (= (status-of r) 0)))
 
 ;; ════════════════════════════════════════════════════════════════
 ;; Real side effects (the production `ops`)
 ;; ════════════════════════════════════════════════════════════════
-(define
-  (real-bump dir)
+(define (real-bump dir)
   (let
     ((r
-       (exec-capture "sh" "-c" (string-append "cd " dir " && cargo set-version --bump " bump-type))))
+       (exec-capture "sh"
+         "-c" (string-append
+           "cd "
+           dir
+           " && cargo set-version --bump "
+           bump-type))))
     (= (status-of r) 0)))
 
-(define
-  (real-publish dir)
+(define (real-publish dir)
   (let*
     ((args
        (string-append
@@ -243,8 +265,12 @@
          ;; `caixa-ratatui` in 165 ms on the first member of a 41-member
          ;; workspace. That is far too fast for an upload; it is a local refusal.
          " --allow-dirty"
-         (if (equal? dry-run "true") " --dry-run" "")
-         (if (equal? no-verify "true") " --no-verify" "")
+         (if (equal? dry-run "true")
+           " --dry-run"
+           "")
+         (if (equal? no-verify "true")
+           " --no-verify"
+           "")
          " 2>&1"))
       (r (exec-capture "sh" "-c" args))
       (out (string-append (stdout-of r) "\n" (stderr-of r)))
@@ -263,15 +289,13 @@
       #t)
     verdict))
 
-(define
-  (real-sleep)
+(define (real-sleep)
   ;; A 429 is time-based; sleep then let resolve-member re-attempt, bounded by
   ;; max-retries. (rust-workspace-publish parses the precise refill time; a
   ;; fixed window is sufficient here and never under-waits a 429.)
   (exec-capture "sh" "-c" "sleep 600"))
 
-(define
-  (real-commit-tag name ver dir)
+(define (real-commit-tag name ver dir)
   ;; Commit ONLY this member's bump + tag <name>-v<ver>. exec-or-die: a failed
   ;; commit/tag must abort, not silently leave git out of sync with crates.io.
   ;; The workflow pushes branch + tags after the run.
@@ -279,23 +303,23 @@
     (lambda (p) (exec-check "git" "add" p))
     (list (string-append dir "/Cargo.toml") "Cargo.lock"))
   (exec-or-die (list "git" "commit" "-m" (string-append name " v" ver)))
-  (let
-    ((tag (string-append name "-v" ver)))
+  (let ((tag (string-append name "-v" ver)))
     (cond
       ((member-already-tagged? name ver)
         (log-info (string-append "tag " tag " already exists — not re-creating")))
       (else (exec-or-die (list "git" "tag" "-a" tag "-m" (string-append name " v" ver)))))))
 
-(define
-  real-ops
-  (list (cons "publish" real-publish) (cons "sleep" real-sleep) (cons "commit-tag" real-commit-tag)))
+(define real-ops
+  (list
+    (cons "publish" real-publish)
+    (cons "sleep" real-sleep)
+    (cons "commit-tag" real-commit-tag)))
 
 ;; ════════════════════════════════════════════════════════════════
 ;; Bump phase: bump each CHANGED member once → list of (name dir new-ver).
 ;; (Bump happens once; deferred members re-publish without re-bumping.)
 ;; ════════════════════════════════════════════════════════════════
-(define
-  (bump-changed lines to-pub skip-n)
+(define (bump-changed lines to-pub skip-n)
   (cond
     ((null? lines) (list to-pub skip-n))
     (else
@@ -307,26 +331,33 @@
         (cond
           ((equal? cur-ver "")
             (log-error (string-append "member " name " has no [package].version — skipping"))
-            (bump-changed (cdr lines) to-pub (+ skip-n 1)))
+            (bump-changed
+              (cdr lines)
+              to-pub
+              (+ skip-n 1)))
           ((and
              (equal? skip-flag "true")
              (not (member-has-source-changes? dir (last-member-tag name))))
             (log-info (string-append "member " name " unchanged — skipping"))
-            (bump-changed (cdr lines) to-pub (+ skip-n 1)))
+            (bump-changed
+              (cdr lines)
+              to-pub
+              (+ skip-n 1)))
           ((not (real-bump dir))
             (log-error (string-append "cargo set-version failed for " name))
             (exit 1))
           (else
-            (let
-              ((new-ver (read-member-version dir)))
+            (let ((new-ver (read-member-version dir)))
               (log-info (string-append "bumped " name " " cur-ver " -> " new-ver))
-              (bump-changed (cdr lines) (append to-pub (list (list name dir new-ver))) skip-n))))))))
+              (bump-changed
+                (cdr lines)
+                (append to-pub (list (list name dir new-ver)))
+                skip-n))))))))
 
 ;; ════════════════════════════════════════════════════════════════
 ;; Main (gated for the test harness)
 ;; ════════════════════════════════════════════════════════════════
-(define
-  (run-all ops)
+(define (run-all ops)
   (configure-git-bot)
   (let*
     ((members (workspace-members-with-paths))

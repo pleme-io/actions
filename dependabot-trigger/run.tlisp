@@ -4,16 +4,15 @@
 
 (define repo (env-required "GITHUB_REPOSITORY"))
 
-(define
-  r
-  (exec-capture
-    "gh"
+(define r
+  (exec-capture "gh"
     "api"
-    "--method"
-    "POST"
-    (string-append "repos/" repo "/dependabot/updates")
-    "-f"
-    (string-append "package-ecosystem=" eco)))
+    "--method" "POST"
+    (string-append
+      "repos/"
+      repo
+      "/dependabot/updates")
+    "-f" (string-append "package-ecosystem=" eco)))
 
 (cond
   ((= (status-of r) 0) (append-output "triggered=true") (exit 0))

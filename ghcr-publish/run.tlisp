@@ -36,8 +36,7 @@
 
 (define (moving-tag arch) (string-append arch "-latest"))
 
-(define
-  (image-base repo registry image)
+(define (image-base repo registry image)
   (cond ((not (equal? repo "")) repo) (else (string-append registry "/" image))))
 
 (define (target-ref base tag) (string-append base ":" tag))
@@ -60,30 +59,31 @@
 ;; `oci:split-image` in the stdlib are the shared splitters (every branch of
 ;; oci:compose-base yields host[:port]/path..., so splitting on the FIRST "/"
 ;; is safe).
-(define
-  (doca-push-archive tarball base tag)
+(define (doca-push-archive tarball base tag)
   (status-of
     (apply
       exec-capture
       (append
         (oci:doca-argv "push")
         (list
-          "--tarball" tarball
-          "--registry" (oci:split-registry base)
-          "--image" (oci:split-image base)
-          "--tag" tag)))))
+          "--tarball"
+          tarball
+          "--registry"
+          (oci:split-registry base)
+          "--image"
+          (oci:split-image base)
+          "--tag"
+          tag)))))
 
 ;; Registry -> registry. doca's `transfer` takes whole refs (no docker:// scheme
 ;; prefix -- that was skopeo's transport syntax, not part of the reference).
-(define
-  (doca-transfer src-ref dst-ref)
+(define (doca-transfer src-ref dst-ref)
   (status-of
     (apply
       exec-capture
       (append (oci:doca-argv "transfer") (list "--src" src-ref "--dest" dst-ref)))))
 
-(define
-  (main)
+(define (main)
   (let*
     ((repo (env-get "REPO" ""))
       (registry (env-get "REGISTRY" "ghcr.io"))
@@ -100,14 +100,12 @@
         (append-output "pushed=false")
         1)
       (else
-        (let*
-          ((tag (autobump-tag arch run sha)) (ref (target-ref base tag)))
+        (let* ((tag (autobump-tag arch run sha)) (ref (target-ref base tag)))
           (log-info (string-append "==> ghcr-publish " tarball " -> " ref))
           ;; Record WHICH doca the job resolved (baked vs job-time), so a run is
           ;; never ambiguous about which binary produced the artifact.
           (log-info (oci:doca-source-note))
-          (let
-            ((s (doca-push-archive tarball base tag)))
+          (let ((s (doca-push-archive tarball base tag)))
             (cond
               ((not (= s 0))
                 (log-error
@@ -124,12 +122,9 @@
                 (append-output (string-append "ref-" arch "=" ref))
                 (append-output (string-append "result=" ref))
                 ;; moving human pointer — NEVER a deploy source
-                (when
-                  (equal? moving "true")
-                  (let
-                    ((ms (doca-transfer ref (target-ref base (moving-tag arch)))))
-                    (when
-                      (not (= ms 0))
+                (when (equal? moving "true")
+                  (let ((ms (doca-transfer ref (target-ref base (moving-tag arch)))))
+                    (when (not (= ms 0))
                       (log-info
                         (string-append
                           "::warning::ghcr-publish: moving "

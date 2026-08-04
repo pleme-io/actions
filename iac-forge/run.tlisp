@@ -19,8 +19,7 @@
 
 (define os-arch (string-append runner-os "-" runner-arch))
 
-(define
-  suffix
+(define suffix
   (cond
     ((equal? os-arch "Linux-X64") "linux-x86_64")
     ((equal? os-arch "Linux-ARM64") "linux-aarch64")
@@ -33,14 +32,10 @@
 
 (define release-api "https://api.github.com/repos/pleme-io/iac-forge-cli/releases/latest")
 
-(define
-  resolved-version
-  (if
-    (equal? version-input "latest")
-    (let*
-      ((body (http-get-json release-api)) (tag (alist-get body "tag_name")))
-      (when
-        (or (null? tag) (equal? tag ""))
+(define resolved-version
+  (if (equal? version-input "latest")
+    (let* ((body (http-get-json release-api)) (tag (alist-get body "tag_name")))
+      (when (or (null? tag) (equal? tag ""))
         (log-error "Could not resolve latest tag from pleme-io/iac-forge-cli releases")
         (exit 1))
       tag)
@@ -52,8 +47,7 @@
 ;; http-get returns a UTF-8 string, which would corrupt a binary; shell
 ;; out to curl for the actual byte stream. The tlisp script still owns
 ;; the URL composition + flow.
-(define
-  dl-url
+(define dl-url
   (string-append
     "https://github.com/pleme-io/iac-forge-cli/releases/download/"
     resolved-version
@@ -66,8 +60,7 @@
 
 (define dl-status (exec-check "curl" "-sSL" "-f" dl-url "-o" binary-path))
 
-(unless
-  (= dl-status 0)
+(unless (= dl-status 0)
   (log-error (string-append "curl download failed with status " (string-format "{}" dl-status)))
   (exit dl-status))
 
@@ -88,13 +81,22 @@
 
 (define output (env-required "INPUT_OUTPUT"))
 
-(define
-  base-args
-  (list "generate" "--backend" backend "--spec" spec "--resources" resources "--provider" provider))
+(define base-args
+  (list
+    "generate"
+    "--backend"
+    backend
+    "--spec"
+    spec
+    "--resources"
+    resources
+    "--provider"
+    provider))
 
-(define
-  with-ds
-  (if (equal? data-sources "") base-args (append base-args (list "--data-sources" data-sources))))
+(define with-ds
+  (if (equal? data-sources "")
+    base-args
+    (append base-args (list "--data-sources" data-sources))))
 
 (define full-args (append with-ds (list "--output" output)))
 

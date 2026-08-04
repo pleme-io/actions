@@ -37,24 +37,28 @@
     "==> cosign attest --type openvex --predicate "
     vex-file
     " "
-    (if keyless "(keyless Fulcio+Rekor) " (string-append "--key " key-ref " "))
+    (if keyless
+      "(keyless Fulcio+Rekor) "
+      (string-append
+        "--key "
+        key-ref
+        " "))
     image-ref))
 
-(define
-  r
-  (if
-    keyless
-    (exec-capture "cosign" "attest" "--yes" "--type" "openvex" "--predicate" vex-file image-ref)
-    (exec-capture
-      "cosign"
+(define r
+  (if keyless
+    (exec-capture "cosign"
       "attest"
       "--yes"
-      "--type"
-      "openvex"
-      "--predicate"
-      vex-file
-      "--key"
-      key-ref
+      "--type" "openvex"
+      "--predicate" vex-file
+      image-ref)
+    (exec-capture "cosign"
+      "attest"
+      "--yes"
+      "--type" "openvex"
+      "--predicate" vex-file
+      "--key" key-ref
       image-ref)))
 
 (cond

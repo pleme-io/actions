@@ -22,24 +22,27 @@
 
 (define ptags? (equal? (env-get "INPUT_PUSH_TAGS" (env-get "PUSH_TAGS" "true")) "true"))
 
-(when (equal? token "") (log-error "git-push-with-token: missing INPUT_TOKEN") (exit 1))
+(when (equal? token "")
+  (log-error "git-push-with-token: missing INPUT_TOKEN")
+  (exit 1))
 
 ;; Docker-action mode: the container's runtime UID rarely matches
 ;; the runner UID owning /github/workspace. Git refuses to operate
 ;; on a repo it considers owned by an untrusted user; mark every
 ;; directory safe before any git command runs.
-(exec-capture "git" "config" "--global" "--add" "safe.directory" "*")
+(exec-capture "git"
+  "config"
+  "--global"
+  "--add" "safe.directory"
+  "*")
 
 ;; ---------- get + clean origin URL ---------- ;;
 
-(define
-  current-url
-  (let
-    ((cap (exec-capture "git" "remote" "get-url" "origin")))
+(define current-url
+  (let ((cap (exec-capture "git" "remote" "get-url" "origin")))
     (string-trim (alist-get cap :stdout))))
 
-(define
-  (strip-userinfo url)
+(define (strip-userinfo url)
   ;; Turns "https://<anything>@github.com/..." into "https://github.com/...".
   ;; Plain "https://github.com/..." passes through unchanged.
   (cond
@@ -47,22 +50,30 @@
       ;; Split on "@" — if there's a userinfo segment, the part before
       ;; the FIRST @ contains "://", so re-stitch using everything
       ;; after the first @.
-      (let
-        ((parts (string-split url "@")))
-        (if (= (length parts) 1) url (string-append "https://" (string-join "@" (cdr parts))))))
+      (let ((parts (string-split url "@")))
+        (if (= (length parts) 1)
+          url
+          (string-append "https://" (string-join "@" (cdr parts))))))
     (else url)))
 
 (define clean-url (strip-userinfo current-url))
 
 ;; ---------- rewrite + push ---------- ;;
 
-(define
-  rearmed-url
-  (string-replace clean-url "https://" (string-append "https://x-access-token:" token "@")))
+(define rearmed-url
+  (string-replace
+    clean-url
+    "https://"
+    (string-append
+      "https://x-access-token:"
+      token
+      "@")))
 
 (define set-url-status (exec-check "git" "remote" "set-url" "origin" rearmed-url))
 
-(when (not (= set-url-status 0)) (log-error "git remote set-url failed") (exit set-url-status))
+(when (not (= set-url-status 0))
+  (log-error "git remote set-url failed")
+  (exit set-url-status))
 
 ;; Push the branch and (optionally) every tag in ONE transaction.
 ;; `--atomic` makes the remote accept all refs or none, so the branch +
@@ -72,18 +83,26 @@
 
 (define (rev-parse ref) (capture-out (exec-capture "git" "rev-parse" ref)))
 
-(define
-  (tags-at commit)
-  (let
-    ((out (capture-out (exec-capture "git" "tag" "--points-at" commit))))
-    (if (equal? out "") (list) (string-split out "\n"))))
+(define (tags-at commit)
+  (let ((out (capture-out (exec-capture "git" "tag" "--points-at" commit))))
+    (if (equal? out "")
+      (list)
+      (string-split out "\n"))))
 
-(define
-  (do-push)
-  (if
-    ptags?
-    (exec-check "git" "push" "--atomic" "origin" branch "--tags")
-    (exec-check "git" "push" "origin" branch)))
+(define (do-push)
+  (if ptags?
+    (exec-check
+      "git"
+      "push"
+      "--atomic"
+      "origin"
+      branch
+      "--tags")
+    (exec-check
+      "git"
+      "push"
+      "origin"
+      branch)))
 
 ;; ---------- derived-file conflict resolution ---------- ;;
 ;;
@@ -115,35 +134,39 @@
 ;; fold newlines and tabs to spaces first — a YAML block scalar delivers this
 ;; input newline-separated, a one-liner delivers it space-separated, and both
 ;; must work. `string-replace` is Rust's `str::replace`, i.e. global.
-(define
-  (split-ws s)
+(define (split-ws s)
   (filter
     (lambda (p) (not (equal? p "")))
     (string-split (string-replace (string-replace s "\n" " ") "\t" " ") " ")))
 
-(define
-  regenerable
+(define regenerable
   (split-ws (string-trim (env-get "INPUT_REGENERABLE_PATHS" (env-get "REGENERABLE_PATHS" "")))))
 
-(define
-  (conflicted-paths)
-  (let
-    ((out (capture-out (exec-capture "git" "diff" "--name-only" "--diff-filter=U"))))
-    (if (equal? out "") (list) (string-split out "\n"))))
+(define (conflicted-paths)
+  (let ((out (capture-out (exec-capture "git" "diff" "--name-only" "--diff-filter=U"))))
+    (if (equal? out "")
+      (list)
+      (string-split out "\n"))))
 
 ;; During a REBASE the sides are inverted relative to a merge: `--theirs` is
 ;; the commit being replayed (our bump) and `--ours` is the upstream we are
 ;; landing on. Naming it here because reaching for `--ours` is the intuitive
 ;; and wrong move, and it would silently drop the version bump.
-(define
-  (take-replayed-side path)
-  (exec-check "git" "checkout" "--theirs" "--" path)
-  (exec-check "git" "add" "--" path))
+(define (take-replayed-side path)
+  (exec-check
+    "git"
+    "checkout"
+    "--theirs"
+    "--"
+    path)
+  (exec-check
+    "git"
+    "add"
+    "--"
+    path))
 
-(define
-  (resolve-derived-conflict)
-  (let
-    ((stuck (conflicted-paths)))
+(define (resolve-derived-conflict)
+  (let ((stuck (conflicted-paths)))
     (cond
       ((null? stuck) #f)
       ((not (every? (lambda (p) (member? p regenerable)) stuck))
@@ -174,8 +197,7 @@
 ;; Re-point each tag to new-head (force). Lightweight is fine: the
 ;; release workflow fires on the tag REF regardless of annotation, and
 ;; `git describe --tags` (the bump's last-tag) honours lightweight tags.
-(define
-  (move-tags tags new-head)
+(define (move-tags tags new-head)
   (for-each (lambda (t) (exec-check "git" "tag" "-f" t new-head)) tags))
 
 ;; Resilient push: a non-fast-forward rejection means ANOTHER writer
@@ -190,17 +212,15 @@
 ;; rebase + surfaces (no worse than the pre-fix single-shot push). The
 ;; `-c user.*` keeps the rebase replay's committer identity self-contained
 ;; (the container may not inherit the job's git config).
-(define
-  (push-with-retry attempts)
-  (let
-    ((s (do-push)))
+(define (push-with-retry attempts)
+  (let ((s (do-push)))
     (cond
       ((= s 0) 0)
       ((<= attempts 0) (log-error "git push still rejected after rebase retries") s)
       (else
         (log-info "push rejected (non-ff?) — fetch + rebase onto latest, then retry")
-        (let
-          ((old-head (rev-parse "HEAD")) (fetch-s (exec-check "git" "fetch" "origin" branch)))
+        (let ((old-head (rev-parse "HEAD"))
+           (fetch-s (exec-check "git" "fetch" "origin" branch)))
           (cond
             ((not (= fetch-s 0)) (log-error "git fetch failed during push retry") fetch-s)
             (else
@@ -219,23 +239,31 @@
                 (cond
                   ((and (not (= rebase-s 0)) (not (resolve-derived-conflict)))
                     ;; lint:allow git-mutation-discard — abort-cleanup; we return rebase-s
-                    (exec-check "git" "rebase" "--abort")
+                    (exec-check
+                      "git"
+                      "rebase"
+                      "--abort")
                     (log-error
                       "rebase onto latest conflicted — manual resolution needed (push not retried)")
                     rebase-s)
-                  (else (move-tags saved-tags (rev-parse "HEAD")) (push-with-retry (- attempts 1))))))))))))
+                  (else
+                    (move-tags saved-tags (rev-parse "HEAD"))
+                    (push-with-retry (- attempts 1))))))))))))
 
 (define push-status (push-with-retry 3))
 
-(when
-  (not (= push-status 0))
+(when (not (= push-status 0))
   (log-error
     (string-append
       "git push"
-      (if ptags? " --atomic" "")
+      (if ptags?
+        " --atomic"
+        "")
       " origin "
       branch
-      (if ptags? " --tags" "")
+      (if ptags?
+        " --tags"
+        "")
       " failed"))
   (exit push-status))
 
