@@ -38,8 +38,16 @@ runs:
         {
           echo 'script<<TLISP_EOF'
           # Both libraries are read in-checkout, at the SAME ref as the tlisp
-          # below -- never fetched. _tlisp-ddl is the in-repo origin of the
-          # caixa-tlisp-ddl package; keep the two in sync when either changes.
+          # below -- never fetched.
+          #
+          # _tlisp-ddl is AUTHORITATIVE for this gate. caixa-tlisp-ddl is its
+          # redistributable package and is byte-identical as of 2026-08-05, but
+          # nothing enforces that and this gate does not depend on it. Stated
+          # plainly because the precedent is the opposite of a mirror: this
+          # repo's own _tlisp-stdlib and caixa-tlisp-stdlib have diverged to
+          # 1690 vs 279 lines with no sync check anywhere, the caixa being an
+          # extracted subset rather than a copy. Edit here for CI behaviour;
+          # port deliberately if the package should follow.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat "${{ github.action_path }}/../_tlisp-ddl/stdlib.tlisp"

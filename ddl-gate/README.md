@@ -80,9 +80,14 @@ a schema cut.
 
 ## Library
 
-The classifier lives in `../_tlisp-ddl/stdlib.tlisp` and is packaged for reuse
-as [`caixa-tlisp-ddl`](https://github.com/pleme-io/caixa-tlisp-ddl). Keep the
-two in sync. Its own suite is 12 tests; run them with
+The classifier lives in `../_tlisp-ddl/stdlib.tlisp`, which is **authoritative
+for this gate**. [`caixa-tlisp-ddl`](https://github.com/pleme-io/caixa-tlisp-ddl)
+is its redistributable package — byte-identical as of 2026-08-05, but nothing
+enforces that and CI does not depend on it. Do not read "packaged for reuse" as
+"kept in sync": the precedent runs the other way, since this repo's own
+`_tlisp-stdlib` and `caixa-tlisp-stdlib` sit at 1690 vs 279 lines with no drift
+check, the caixa being an extracted subset. Edit here for gate behaviour; port
+to the package deliberately. Its own suite is 12 tests; run them with
 `tatara-script --test _tlisp-ddl/stdlib.tlisp`, and set `DDL_CORPUS` to a
 directory of `.sql` to assert that a real corpus classifies with zero unknowns.
 
