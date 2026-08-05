@@ -1,0 +1,57 @@
+name: 'pleme-io · ddl-gate'
+description: 'Additive-only DDL gate for a committed model tree — refuses schema cuts (DROP, RENAME, type change, attribute drop, REVOKE) outright, refuses row removal unless the run declares sunset step 4 (drain), permits lock-taking statements with a warning, and refuses anything it cannot positively classify. Parses committed .sql only; never contacts a database. The fifth baseline-debt sibling of action-shell-lint / runtime-install-lint / no-cve-suppression / breathe-band-lint.'
+branding:
+  icon: 'database'
+  color: 'blue'
+
+inputs:
+  root:
+    description: "Tree to scan for .sql (e.g. clusters/camelot-eks/apps/camelot/schemas). Tracked debt is read from <root>/.ddl-gate-baseline.txt, so each model tree carries its own."
+    required: false
+    default: "."
+  fail-on-violation:
+    description: "Fail the job on a NEW (not-yet-baselined) finding. Existing debt in the baseline is always reported, never silently accepted. Set false to adopt report-only first."
+    required: false
+    default: "true"
+  sunset-step:
+    description: "Declares which step of the sunset lifecycle this run is. Only 'drain' unlocks the data-destructive verdicts (DELETE/UPDATE/MERGE); nothing unlocks a schema cut or an unclassifiable statement. Leave empty for an ordinary forward migration."
+    required: false
+    default: ""
+
+outputs:
+  violations:
+    description: "Count of NEW (non-baselined) findings."
+    value: ${{ steps.scan.outputs.violations }}
+  baselined:
+    description: "Count of findings matched against the tracked-debt baseline (reported, not failed)."
+    value: ${{ steps.scan.outputs.baselined }}
+  files-scanned:
+    description: "Count of .sql files found under root."
+    value: ${{ steps.scan.outputs.files-scanned }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # Both libraries are read in-checkout, at the SAME ref as the tlisp
+          # below -- never fetched. _tlisp-ddl is the in-repo origin of the
+          # caixa-tlisp-ddl package; keep the two in sync when either changes.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat "${{ github.action_path }}/../_tlisp-ddl/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: scan
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ROOT: ${{ inputs.root }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        DDL_SUNSET_STEP: ${{ inputs.sunset-step }}
