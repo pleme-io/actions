@@ -571,6 +571,9 @@ outputs:
   paths:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: paths)"
     value: ${{ steps.exec.outputs.paths }}
+  paths-pushed:
+    description: "Forwarded (key: paths-pushed) — super-cache-save: how many store paths actually reached the sui endpoint. The leverage receipt: a cache push that moved nothing used to be indistinguishable from one that moved a closure."
+    value: ${{ steps.exec.outputs.paths-pushed }}
   pending-crates:
     description: "Forwarded (key: pending-crates) — rust-workspace-publish: crates left for the next capacity window (rate-limited / dep-deferred); empty when the bootstrap is complete"
     value: ${{ steps.exec.outputs.pending-crates }}
@@ -823,6 +826,9 @@ outputs:
   stale:
     description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
     value: ${{ steps.exec.outputs.stale }}
+  stale-baseline:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: stale-baseline)"
+    value: ${{ steps.exec.outputs.stale-baseline }}
   steps-failed:
     description: "Forwarded (key: steps-failed) — action-pipeline: how many declared steps failed"
     value: ${{ steps.exec.outputs.steps-failed }}
@@ -949,6 +955,9 @@ outputs:
   vulns-count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: vulns-count)"
     value: ${{ steps.exec.outputs.vulns-count }}
+  waived:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: waived)"
+    value: ${{ steps.exec.outputs.waived }}
   warm-count:
     description: "Forwarded (key: warm-count) — sui-warm-hydrate count of keys actually warmed"
     value: ${{ steps.exec.outputs.warm-count }}
