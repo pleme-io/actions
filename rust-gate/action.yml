@@ -51,6 +51,8 @@ inputs:
 outputs:
   fmt-passed:
     value: ${{ steps.gate.outputs.fmt-passed }}
+  check-passed:
+    value: ${{ steps.gate.outputs.check-passed }}
   clippy-passed:
     value: ${{ steps.gate.outputs.clippy-passed }}
   test-passed:
