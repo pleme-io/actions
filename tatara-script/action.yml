@@ -211,6 +211,9 @@ outputs:
   changelog:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: changelog)"
     value: ${{ steps.exec.outputs.changelog }}
+  check-passed:
+    description: "Forwarded (key: check-passed) — rust-gate's `cargo check` verdict, alongside fmt/clippy/test-passed"
+    value: ${{ steps.exec.outputs.check-passed }}
   checkout-ref:
     description: "Forwarded (key: checkout-ref) — aldrava-dispatch/aldrava-resolve resolved PR head SHA"
     value: ${{ steps.exec.outputs.checkout-ref }}
@@ -817,6 +820,12 @@ outputs:
   stale:
     description: "Forwarded (key: stale) — gen-build-spec spec-drift flag"
     value: ${{ steps.exec.outputs.stale }}
+  steps-failed:
+    description: "Forwarded (key: steps-failed) — action-pipeline: how many declared steps failed"
+    value: ${{ steps.exec.outputs.steps-failed }}
+  steps-run:
+    description: "Forwarded (key: steps-run) — action-pipeline: how many declared steps ran"
+    value: ${{ steps.exec.outputs.steps-run }}
   store-backend:
     description: "Forwarded (key: store-backend) — sui-service-up durable store tier"
     value: ${{ steps.exec.outputs.store-backend }}
