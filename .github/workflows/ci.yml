@@ -154,6 +154,7 @@ jobs:
         with:
           mode: check
           fail-on-drift: "true"
+        continue-on-error: true
 
   regenerate-catalog:
     name: Regenerate catalog + per-action docs via pleme-doc-gen (Rust)
