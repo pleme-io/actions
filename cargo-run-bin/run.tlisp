@@ -1,0 +1,86 @@
+;; cargo-run-bin — build a workspace binary and run it with arguments.
+;;
+;; The "run the thing this repo just built" primitive.
+;;
+;; WHY IT EXISTS, and the mistake it corrects
+;;
+;; I claimed this class was architecturally inexpressible: "a pipeline names
+;; ACTIONS, and there is no action for running the binary a repo just built."
+;; That was a limit phrased in terms of our own abstractions, not a fact about
+;; the world — and those are ours to dissolve. Nothing prevents an action from
+;; doing it; one simply had not been written.
+;;
+;; It is also not a one-off dressed up as a pattern. sui alone has FOUR
+;; workflows opening with `cargo build -p sui --bin sui` and then invoking
+;; `./target/debug/sui <subcommand>` — parity, perf-seal, build-parity,
+;; nixpkgs-parity-track. The shape generalises to any repo whose CI exercises
+;; its own CLI, which is most tools in this fleet.
+;;
+;; The three axes that vary are exactly the inputs: which package, which
+;; binary, which arguments. Nothing else did.
+
+(define package (env-get "PACKAGE" ""))
+(define bin-name (env-required "BIN"))
+(define bin-args (env-get "ARGS" ""))
+(define profile (env-get "PROFILE" "debug"))
+
+;; Split on spaces so a multi-word argument string reaches the binary as
+;; separate argv entries rather than one nonsense token — the same reason
+;; rust-gate carries `split-args`.
+(define
+  (split-args s)
+  (filter (lambda (x) (not (equal? x ""))) (string-split s " ")))
+
+(define
+  (build-argv)
+  (let*
+    ((base (list "build" "--bin" bin-name))
+      (with-pkg (if (equal? package "") base (append (list "build" "-p" package "--bin" bin-name) '())))
+      (argv (if (equal? package "") base with-pkg)))
+    (if (equal? profile "release") (append argv (list "--release")) argv)))
+
+(define
+  (run-step label cmd argv)
+  (log-info (string-append "==> " label))
+  (let* ((r (apply exec-capture (cons cmd argv))) (code (status-of r)) (ok (= code 0)))
+    (log-info (stdout-of r))
+    (cond
+      (ok #t)
+      (else
+        (log-error (string-append label " FAILED (exit " (string-format "{}" code) ")"))
+        (log-info (stderr-of r))
+        #f))))
+
+(define
+  (main)
+  (let*
+    ((built (run-step (string-append "cargo build --bin " bin-name) "cargo" (build-argv)))
+      ;; The binary path is derived from the profile rather than taken as an
+      ;; input: `./target/<profile>/<bin>` is cargo's layout, and letting a
+      ;; caller name an arbitrary path would turn a typed action back into a
+      ;; way to run anything — which is precisely what this composes to avoid.
+      (bin-path (string-append "./target/" profile "/" bin-name)))
+    (cond
+      ((not built)
+        (append-output "built=false")
+        (append-output "ran=false")
+        (exit 1))
+      ((not (path-exists? bin-path))
+        (log-error
+          (string-append
+            "built successfully but "
+            bin-path
+            " does not exist — check `bin` names a real [[bin]] target. Reporting "
+            "success here would be a green run that executed nothing."))
+        (append-output "built=true")
+        (append-output "ran=false")
+        (exit 1))
+      (else
+        (append-output "built=true")
+        (let ((ok (run-step (string-append bin-path " " bin-args) bin-path (split-args bin-args))))
+          (append-output (if ok "ran=true" "ran=false"))
+          (if ok (exit 0) (exit 1)))))))
+
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))

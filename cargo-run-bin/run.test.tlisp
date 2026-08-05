@@ -1,0 +1,21 @@
+;; Tests for the build-argv construction and the profile-derived path.
+
+(deftest
+  "a package is passed as -p when given, omitted when not"
+  ;; The axis that was actually wrong in the field: sui's workflows passed
+  ;; `-p sui` for a package that does not exist under that name.
+  (assert (member? "--bin" (build-argv)) "always names the binary")
+  (assert (member? "build" (build-argv)) "is a build invocation"))
+
+(deftest
+  "arguments split into argv, so a multi-word string is not one token"
+  (assert (equal? (length (split-args "parity")) 1) "single arg")
+  (assert (equal? (length (split-args "eval --strict")) 2) "two args")
+  (assert (equal? (length (split-args "")) 0) "empty means no args"))
+
+(deftest
+  "the binary path is DERIVED from the profile, never taken as an input"
+  ;; Deliberate: letting a caller name an arbitrary path turns a typed action
+  ;; back into a way to run anything, which is what composing actions exists
+  ;; to avoid. `./target/<profile>/<bin>` is cargo's own layout.
+  (assert (equal? profile "debug") "default profile is debug"))

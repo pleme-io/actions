@@ -1,0 +1,59 @@
+name: 'pleme-io · cargo-run-bin'
+description: 'Build a workspace binary and run it with arguments — the "run the thing this repo just built" primitive, so a repo whose CI exercises its own CLI can express that as a pipeline step instead of hand-authored shell.'
+branding: { icon: 'play', color: 'blue' }
+
+inputs:
+  package:
+    description: >-
+      Cargo package (`-p`). Optional; omit for a single-crate repo.
+
+      Worth getting right: sui's four workflows passed `-p sui`, and there is
+      no package by that name — it was renamed to `pleme-io-sui` when the bare
+      name turned out to be squatted on crates.io. All four had been failing on
+      every run since.
+    required: false
+    default: ""
+  bin:
+    description: "Binary target (`--bin`). Note this is the [[bin]] name, which a rename of the PACKAGE does not change."
+    required: true
+  args:
+    description: "Arguments passed to the built binary. Space-separated; split into argv."
+    required: false
+    default: ""
+  profile:
+    description: "debug | release. Also selects ./target/<profile>/<bin>."
+    required: false
+    default: "debug"
+
+outputs:
+  built:
+    value: ${{ steps.run.outputs.built }}
+  ran:
+    value: ${{ steps.run.outputs.ran }}
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        BIN: ${{ inputs.bin }}
+        ARGS: ${{ inputs.args }}
+        PROFILE: ${{ inputs.profile }}

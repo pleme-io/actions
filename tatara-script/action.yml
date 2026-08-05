@@ -628,6 +628,9 @@ outputs:
   put:
     description: "Forwarded (key: put) — written by 1 action dir(s): cloudflare-kv-put"
     value: ${{ steps.exec.outputs.put }}
+  ran:
+    description: "Forwarded (key: ran) — cargo-run-bin: the built binary executed and exited 0"
+    value: ${{ steps.exec.outputs.ran }}
   reason:
     description: "Forwarded (key: reason) — a shared typed why-string key, consumers disjoint: service/cache/spec verbs' outcome reason, OR aldrava-dispatch/aldrava-resolve's rejection/no-match/not-running reason"
     value: ${{ steps.exec.outputs.reason }}
