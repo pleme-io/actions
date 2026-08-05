@@ -17,6 +17,20 @@ inputs:
     description: "Run cargo test --workspace"
     required: false
     default: "true"
+  fmt-args:
+    description: >-
+      Arguments to `cargo fmt`. Default "--check" reproduces the previous
+      hardcoded behaviour. Use "--all -- --check" to check every workspace
+      member, which is what the fleet's hand-authored Rust CI does.
+    required: false
+    default: "--check"
+  test-args:
+    description: >-
+      Arguments to `cargo test`. Default "--workspace" reproduces the previous
+      hardcoded behaviour. Note "--workspace" (members) and "--all-targets"
+      (target kinds) are DIFFERENT axes — pass both to get both.
+    required: false
+    default: "--workspace"
   rust-toolchain:
     description: "Rust toolchain channel (stable / nightly / 1.89.0)"
     required: false
@@ -59,3 +73,5 @@ runs:
         RUN_FMT: ${{ inputs.run-fmt }}
         RUN_CLIPPY: ${{ inputs.run-clippy }}
         RUN_TEST: ${{ inputs.run-test }}
+        FMT_ARGS: ${{ inputs.fmt-args }}
+        TEST_ARGS: ${{ inputs.test-args }}

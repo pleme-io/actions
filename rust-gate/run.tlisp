@@ -7,6 +7,29 @@
 
 (define run-test (env-get "RUN_TEST" "true"))
 
+;; Extra arguments for the fmt and test steps.
+;;
+;; Defaults reproduce EXACTLY what this action ran before they existed
+;; (`cargo fmt --check`, `cargo test --workspace`), so every current consumer
+;; is unaffected.
+;;
+;; They exist because migrating the fleet's hand-authored Rust CI onto this
+;; action would otherwise have SILENTLY WEAKENED it. Measured 2026-08-04: the
+;; 18 bare-toolchain Rust repos run `cargo fmt --all -- --check` and
+;; `cargo test --all-targets`, and neither is what this action ran.
+;; `--all`/`--workspace` select workspace MEMBERS; `--all-targets` selects
+;; target KINDS (lib, bins, tests, benches, examples). Different axes, neither
+;; subsuming the other — so a port dropping one would have quietly stopped
+;; compiling test and bench targets across 18 repos while reading as pure
+;; progress in review.
+(define fmt-args (env-get "FMT_ARGS" "--check"))
+
+(define test-args (env-get "TEST_ARGS" "--workspace"))
+
+;; Split on spaces so a multi-word input reaches cargo as separate argv
+;; entries rather than one nonsense flag.
+(define (split-args s) (filter (lambda (x) (not (equal? x ""))) (string-split s " ")))
+
 (define (run-step label args)
   (log-info (string-append "==> " label))
   (let* ((r (apply exec-capture (cons "cargo" args))) (code (status-of r)) (passed (= code 0)))
@@ -18,7 +41,7 @@
     passed))
 
 (define fmt-passed
-  (cond ((equal? run-fmt "true") (run-step "cargo fmt --check" (list "fmt" "--check"))) (else #t)))
+  (cond ((equal? run-fmt "true") (run-step "cargo fmt" (cons "fmt" (split-args fmt-args)))) (else #t)))
 
 (define clippy-passed
   (cond
@@ -27,7 +50,7 @@
     (else #t)))
 
 (define test-passed
-  (cond ((equal? run-test "true") (run-step "cargo test" (list "test" "--workspace"))) (else #t)))
+  (cond ((equal? run-test "true") (run-step "cargo test" (cons "test" (split-args test-args)))) (else #t)))
 
 (define (bool->string b) (if b "true" "false"))
 
