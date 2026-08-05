@@ -23,14 +23,23 @@
 ;; would need a heuristic on job/step counts, and a heuristic that is wrong on
 ;; a legitimate file teaches people to waive rather than convert.
 ;;
-;; THE WAIVER is the fleet's standard grammar — a comment line anywhere in the
-;; file:
+;; TWO WAIVER SCOPES, because the two legitimate cases have different shapes.
+;;
+;; PER-FILE — a comment line anywhere in the workflow:
 ;;
 ;;     # skip-workflow-shim: <typed reason>
 ;;
-;; A reason is REQUIRED; a bare marker does not waive. Time pressure is never a
-;; typed reason. Vendored upstream forks are the archetypal legitimate waiver:
-;; restandardizing someone else's CI is not ours to do.
+;; REPO-LEVEL — a `.github/workflow-shim-waiver` file whose contents are the
+;; reason. This exists for VENDORED UPSTREAM FORKS, which are 176 of the
+;; fleet's 257 remaining hand-authored workflows across 63 repos (vector, the
+;; caixa-* crate mirrors). Restandardizing someone else's CI is not ours to
+;; do, and editing 176 upstream files to say so would be worse than the
+;; problem: it guarantees a conflict on every upstream merge, in exactly the
+;; files we least want to touch. One file per repo states the fact once,
+;; outside the vendored tree.
+;;
+;; A REASON IS REQUIRED in both scopes; a bare marker or an empty file does not
+;; waive. Time pressure is never a typed reason.
 ;;
 ;; TIER: CI-caught, and only-mitigated while `fail-on-violation` defaults to
 ;; false during rollout. Say that, do not round it up. It becomes a real gate
@@ -39,7 +48,14 @@
 (define paths-glob (env-get "PATHS" ".github/workflows/*.yml"))
 (define fail-on-violation? (equal? (env-get "FAIL_ON_VIOLATION" "false") "true"))
 
-(define shim-marker "pleme-io/substrate/.github/workflows/")
+;; Both publishers count. substrate is not the only one — pleme-actions
+;; publishes two reusables carrying 23 consumers each, and treating only
+;; substrate as canonical would report 23 correctly-shimmed repos as
+;; violations.
+(define shim-markers
+  (list "pleme-io/substrate/.github/workflows/" "pleme-io/pleme-actions/.github/workflows/"))
+
+(define repo-waiver-path ".github/workflow-shim-waiver")
 (define waiver-marker "skip-workflow-shim:")
 
 ;; -------------------------------------------------------------- ;;
@@ -50,7 +66,13 @@
 ;; the catalog's `workflow_call:` check: `uses:` values are not a key that a
 ;; comment plausibly mentions, and a file that names a substrate reusable
 ;; anywhere is by construction routing through one.
-(define (shim? text) (string-contains? text shim-marker))
+(define (shim? text) (any? (lambda (m) (string-contains? text m)) shim-markers))
+
+;; A repo-level waiver waives every workflow in the repo. Empty file = no
+;; waiver, same rule as a bare per-file marker.
+(define
+  (repo-waived?)
+  (and (path-exists? repo-waiver-path) (not (equal? (string-trim (read-file repo-waiver-path)) ""))))
 
 ;; A waiver needs a REASON after the marker, not just the marker. A bare
 ;; `# skip-workflow-shim:` is the shape a waiver decays into when it is used to
@@ -74,7 +96,11 @@
 (define
   (classify path)
   (let ((text (read-file path)))
-    (cond ((shim? text) 'shim) ((waived? text) 'waived) (else 'hand-authored))))
+    (cond
+      ((shim? text) 'shim)
+      ((waived? text) 'waived)
+      ((repo-waived?) 'waived)
+      (else 'hand-authored))))
 
 (define
   (main)
