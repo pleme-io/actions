@@ -1,0 +1,123 @@
+;; workflow-shim-lint — the CONSUMER side of CATALOG REFLECTION.
+;;
+;; substrate publishes 71 reusable workflows and catalogues them at
+;; substrate/catalog/workflows.lisp, gated so one cannot land uncatalogued.
+;; That closes the PRODUCER side. This closes the consumer side: it reports a
+;; repo's workflow files that are hand-authored instead of thin shims over one
+;; of those reusables.
+;;
+;; WHY IT IS NEEDED, measured 2026-08-04 across locally-cloned pleme-io repos:
+;;
+;;   1667 consumer workflow files
+;;   1347 (80.8%) already shims over a substrate reusable
+;;    320 hand-authored — of which 176 are VENDORED upstream forks (vector,
+;;         the caixa-* crate mirrors) carrying their original CI, out of scope
+;;    144 pleme-io-authored, spread across 99 repos
+;;
+;; 144 across 99 repos is the signature of drift with no gate: no single repo
+;; is a bad actor, and the total grew anyway. A catalog alone would not have
+;; stopped it — nothing was asking the question at merge time.
+;;
+;; WHAT COUNTS AS A SHIM: the file calls `uses: pleme-io/substrate/.github/
+;; workflows/...`. That is deliberately the whole test. Judging "thin enough"
+;; would need a heuristic on job/step counts, and a heuristic that is wrong on
+;; a legitimate file teaches people to waive rather than convert.
+;;
+;; THE WAIVER is the fleet's standard grammar — a comment line anywhere in the
+;; file:
+;;
+;;     # skip-workflow-shim: <typed reason>
+;;
+;; A reason is REQUIRED; a bare marker does not waive. Time pressure is never a
+;; typed reason. Vendored upstream forks are the archetypal legitimate waiver:
+;; restandardizing someone else's CI is not ours to do.
+;;
+;; TIER: CI-caught, and only-mitigated while `fail-on-violation` defaults to
+;; false during rollout. Say that, do not round it up. It becomes a real gate
+;; when the default flips, which is the named end state — not this commit.
+
+(define paths-glob (env-get "PATHS" ".github/workflows/*.yml"))
+(define fail-on-violation? (equal? (env-get "FAIL_ON_VIOLATION" "false") "true"))
+
+(define shim-marker "pleme-io/substrate/.github/workflows/")
+(define waiver-marker "skip-workflow-shim:")
+
+;; -------------------------------------------------------------- ;;
+;; Predicates                                                      ;;
+;; -------------------------------------------------------------- ;;
+
+;; A shim calls a substrate reusable. Substring is the RIGHT test here, unlike
+;; the catalog's `workflow_call:` check: `uses:` values are not a key that a
+;; comment plausibly mentions, and a file that names a substrate reusable
+;; anywhere is by construction routing through one.
+(define (shim? text) (string-contains? text shim-marker))
+
+;; A waiver needs a REASON after the marker, not just the marker. A bare
+;; `# skip-workflow-shim:` is the shape a waiver decays into when it is used to
+;; silence rather than to explain, so it does not count.
+(define
+  (waiver-reason line)
+  (let ((parts (string-split line waiver-marker)))
+    (if (> (length parts) 1) (string-trim (nth 1 parts)) "")))
+
+(define
+  (waived? text)
+  (any?
+    (lambda (line)
+      (and (string-contains? line waiver-marker) (not (equal? (waiver-reason line) ""))))
+    (string-split text "\n")))
+
+;; -------------------------------------------------------------- ;;
+;; Scan                                                            ;;
+;; -------------------------------------------------------------- ;;
+
+(define
+  (classify path)
+  (let ((text (read-file path)))
+    (cond ((shim? text) 'shim) ((waived? text) 'waived) (else 'hand-authored))))
+
+(define
+  (main)
+  (let*
+    ((files (glob paths-glob))
+      (verdicts (map (lambda (f) (list f (classify f))) files))
+      (offenders (map (lambda (v) (nth 0 v)) (filter (lambda (v) (equal? (nth 1 v) 'hand-authored)) verdicts)))
+      (waived-n (length (filter (lambda (v) (equal? (nth 1 v) 'waived)) verdicts))))
+    (append-output (string-append "files-scanned=" (string-format "{}" (length files))))
+    (append-output (string-append "violations=" (string-format "{}" (length offenders))))
+    (append-output (string-append "waived=" (string-format "{}" waived-n)))
+    (cond
+      ((null? offenders)
+        (log-info
+          (string-append
+            "workflow-shim-lint: ok — "
+            (string-format "{}" (length files))
+            " workflow(s), all shims or waived"))
+        (exit 0))
+      (else
+        (log-info
+          (string-append
+            "workflow-shim-lint: "
+            (string-format "{}" (length offenders))
+            " hand-authored workflow(s) not routed through a substrate reusable: "
+            (string-join ", " offenders)
+            ". Either call a catalogued reusable "
+            "(see substrate/catalog/workflows.lisp for the 71 available and "
+            "what each takes), or waive it with a typed reason: "
+            "`# skip-workflow-shim: <reason>`."))
+        (if fail-on-violation? (exit 1) (exit 0))))))
+
+
+;; TLISP_TEST=1 loads the definitions without running the scan, so the
+;; `run.test.tlisp` harness can drive the predicates directly. Same convention
+;; as every other action in this repo.
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
+
+;; TLISP_TEST=1 loads the definitions without running the scan, so the
+;; `run.test.tlisp` harness can drive the predicates directly. Same convention
+;; as every other action in this repo.
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
