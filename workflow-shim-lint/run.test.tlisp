@@ -50,3 +50,20 @@
     "the text after the marker is the reason")
   (assert (equal? (waiver-reason "# skip-workflow-shim:") "") "an empty reason reads as empty")
   (assert (equal? (waiver-reason "name: unrelated") "") "a line with no marker has no reason"))
+
+(deftest
+  "both publishers count as a shim, not just substrate"
+  ;; substrate is not the only publisher: pleme-actions ships two reusables
+  ;; carrying 23 consumers each. Treating only substrate as canonical would
+  ;; report 23 correctly-shimmed repos as violations — the gate accusing repos
+  ;; of the exact thing they had already done.
+  (assert
+    (shim? "jobs:\n  x:\n    uses: pleme-io/substrate/.github/workflows/cargo-ci.yml@main\n")
+    "a substrate reusable is a shim")
+  (assert
+    (shim?
+      "jobs:\n  x:\n    uses: pleme-io/pleme-actions/.github/workflows/release-action.yml@main\n")
+    "a pleme-actions reusable is equally a shim")
+  (assert
+    (not (shim? "jobs:\n  x:\n    runs-on: ubuntu-latest\n"))
+    "a hand-authored job is still not a shim"))
