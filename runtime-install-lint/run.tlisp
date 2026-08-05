@@ -119,7 +119,18 @@
 (define files-r
   (exec-capture "sh"
     "-c"
-    "find . -path './_*' -prune -o -path './runtime-install-lint' -prune -o \\( -name 'action.yml' -o -name 'run.tlisp' \\) -print | wc -l"))
+    ;; BOTH scans, because there are two and this counter reports "how much
+    ;; did I look at". It previously counted only the ACTION files
+    ;; (action.yml / run.tlisp), which is the right find for a sibling lint
+    ;; that scans this repo — and always ZERO in a consuming repo, which is
+    ;; where this action mostly runs. sui showed it plainly: 9 workflow files,
+    ;; 4 correctly reported as baselined debt, `files-scanned=0`.
+    ;;
+    ;; That mattered beyond cosmetics. A zero denominator is exactly what a
+    ;; caller checks to prove a scan HAPPENED (tlisp-test's `min-files` floor
+    ;; is the same idea), so a lint permanently reporting 0 cannot be used as
+    ;; its own evidence — and "0 violations across 0 files" reads as a pass.
+    "{ find . -path './_*' -prune -o -path './runtime-install-lint' -prune -o \\( -name 'action.yml' -o -name 'run.tlisp' \\) -print; find . -path './_*' -prune -o -path '*/.github/workflows/*' \\( -name '*.yml' -o -name '*.yaml' \\) -print; } | wc -l"))
 
 (define files (string-trim (stdout-of files-r)))
 
