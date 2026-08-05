@@ -24,7 +24,41 @@
 
 (define commit-message (string-replace template "{version}" version))
 
-(define add-paths (string-split add-paths-str " "))
+;; ── ★ THE D2 CO-OUTPUTS ARE AN INVARIANT, NOT CALLER POLICY ─────────────
+;; A bump that rewrote Cargo.lock ALSO regenerated Cargo.gen.lock and
+;; Cargo.build-spec.json — `ensure-gen-lock-fresh` runs `gen build .` after
+;; the version write, verifies the tie, and treats a tie it cannot restore
+;; as fatal. Correct, and verified against the code.
+;;
+;; But the regen only exists ON DISK. Staging is whatever the caller named,
+;; so a consumer that overrides ADD_PATHS and omits Cargo.gen.lock commits a
+;; STALE tie with ZERO signal: the version write and Cargo.lock stage fine,
+;; the commit succeeds, the tag lands, the push lands, the run is green —
+;; and every Nix consumer of that workspace then hard-fails EVAL on
+;; `lockfile-delta (D2)`, because the delta is keyed `<name>-<version>` and
+;; a key miss silently falls back to `crateDefaults` (edition 2021, no
+;; binaries). The tie is the only thing turning that misbuild into an error.
+;;
+;; MEASURED on engenho: Cargo.gen.lock is byte-identical across d2058c5 →
+;; 41280e7 ("release: workspace v0.53.7"). It was never staged. Four laps of
+;; break-then-hand-repin followed (v0.53.6, two re-pins, v0.53.7), and the
+;; same shim shape is armed in tatara-rust-ast and wadachi.
+;;
+;; So union them in here rather than at each call site: this is the one
+;; chokepoint every release reusable routes through, and fixing the
+;; consumers is the whack-a-mole that has already been played four times.
+;; Safe for the npm/python/helm/caixa reusables that also come through here
+;; — staging is per-path under `exec-check`, which RETURNS the status rather
+;; than raising, so a pathspec that is ignored (exit 1) or absent (exit 128)
+;; fails alone and the commit proceeds.
+;; Appended unconditionally rather than union'd: a repeated pathspec is a
+;; harmless no-op for `git add`, and de-duplicating would mean reaching for
+;; a list primitive this program does not define — the lint cannot see the
+;; injected stdlib, so "probably bound" is not a basis for a change that
+;; every release in the fleet routes through.
+(define add-paths
+  (append (string-split add-paths-str " ")
+          (list "Cargo.gen.lock" "Cargo.build-spec.json")))
 
 ;; Configure bot identity for this repo (must succeed — a missing
 ;; identity makes the commit below fail in a more confusing way).
