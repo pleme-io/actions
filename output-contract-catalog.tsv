@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                340
-# routing tatara-script  317
-# distinct keys written  291
+# actions                343
+# routing tatara-script  320
+# distinct keys written  298
 # dynamic key expansions 8
-# inner union (generated)299
+# inner union (generated)306
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -21,6 +21,7 @@
 # SECTION keys:    action<TAB>key<TAB>kind<TAB>inner<TAB>outer
 #
 ## summary
+action-pipeline	tatara-script	run.tlisp	2	2
 action-shell-lint	tatara-script	run.tlisp	3	3
 adoption-audit	tatara-script	run.tlisp	5	5
 airflow-trigger	tatara-script	run.tlisp	1	1
@@ -54,7 +55,7 @@ aws-cost-report	tatara-script	run.tlisp	1	1
 aws-s3-upload	tatara-script	run.tlisp	1	1
 azure-deploy	tatara-script	run.tlisp	1	1
 bandit	tatara-script	run.tlisp	1	1
-banned-tool-lint	tatara-script	run.tlisp	3	3
+banned-tool-lint	tatara-script	run.tlisp	4	4
 benchmark-runner	own-runner	-	0	2
 bigorna	tatara-script	run.tlisp	7	7
 branch-protect-sync	tatara-script	run.tlisp	1	1
@@ -75,6 +76,7 @@ caixa-render-pr	tatara-script	run.tlisp	3	3
 cargo-bump	tatara-script	run.tlisp	3	3
 cargo-publish-crate	tatara-script	run.tlisp	4	4
 cargo-publish-each-member	tatara-script	run.tlisp	3	3
+cargo-run-bin	tatara-script	run.tlisp	2	2
 cartorio-attest	tatara-script	run.tlisp	12	12
 cdk-deploy	tatara-script	run.tlisp	1	1
 cdktf-deploy	tatara-script	run.tlisp	1	1
@@ -283,7 +285,7 @@ retool-workflow-run	tatara-script	run.tlisp	1	1
 runner-resolve	tatara-script	run.tlisp	2	2
 runtime-install-lint	tatara-script	run.tlisp	3	3
 rust-cross-build	tatara-script	run.tlisp	0	0
-rust-gate	tatara-script	run.tlisp	3	3
+rust-gate	tatara-script	run.tlisp	4	4
 rust-workspace-bump	tatara-script	run.tlisp	3	3
 rust-workspace-publish	tatara-script	run.tlisp	5	5
 s3-mirror	tatara-script	run.tlisp	1	1
@@ -320,13 +322,13 @@ sui-service-up	tatara-script	run.tlisp	7	7
 sui-warm-hydrate	tatara-script	run.tlisp	5	5
 super-cache-build	tatara-script	run.tlisp	9	9
 super-cache-restore	tatara-script	run.tlisp	4	4
-super-cache-save	tatara-script	run.tlisp	6	6
+super-cache-save	tatara-script	run.tlisp	7	7
 swift-build	tatara-script	run.tlisp	1	1
 syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	299
+tatara-script	own-runner	-	0	306
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -353,6 +355,7 @@ wasmer-publish	tatara-script	run.tlisp	1	1
 weaviate-schema-apply	tatara-script	run.tlisp	1	1
 wireguard-up	tatara-script	run.tlisp	1	1
 woocommerce-product-sync	tatara-script	run.tlisp	1	1
+workflow-shim-lint	tatara-script	run.tlisp	3	3
 xcodebuild	tatara-script	run.tlisp	1	1
 yaml-lint	tatara-script	run.tlisp	1	1
 yank-version	tatara-script	run.tlisp	2	2
@@ -362,6 +365,8 @@ zola-build	tatara-script	run.tlisp	1	1
 zot-pull-scan	tatara-script	pull.tlisp,verdict.tlisp	7	7
 zot-push	tatara-script	run.tlisp	5	9
 ## keys
+action-pipeline	steps-failed	static	declared	forwarded
+action-pipeline	steps-run	static	declared	forwarded
 action-shell-lint	baseline-violations	static	declared	forwarded
 action-shell-lint	files-scanned	static	declared	forwarded
 action-shell-lint	violations	static	declared	forwarded
@@ -429,6 +434,7 @@ bandit	findings-count	static	declared	forwarded
 banned-tool-lint	baselined	static	declared	forwarded
 banned-tool-lint	call-sites	static	declared	forwarded
 banned-tool-lint	new-call-sites	static	declared	forwarded
+banned-tool-lint	stale-baseline	static	declared	forwarded
 bigorna	builder	static	declared	forwarded
 bigorna	cache-from	static	declared	forwarded
 bigorna	cache-to	static	declared	forwarded
@@ -475,6 +481,8 @@ cargo-publish-crate	skipped-no-publish	static	declared	forwarded
 cargo-publish-each-member	failed-count	static	declared	forwarded
 cargo-publish-each-member	published-count	static	declared	forwarded
 cargo-publish-each-member	skipped-count	static	declared	forwarded
+cargo-run-bin	built	static	declared	forwarded
+cargo-run-bin	ran	static	declared	forwarded
 cartorio-attest	attested	static	declared	forwarded
 cartorio-attest	outcome-chain	static	declared	forwarded
 cartorio-attest	reason	static	declared	forwarded
@@ -763,6 +771,7 @@ runner-resolve	runner	static	declared	forwarded
 runtime-install-lint	baselined	static	declared	forwarded
 runtime-install-lint	files-scanned	static	declared	forwarded
 runtime-install-lint	violations	static	declared	forwarded
+rust-gate	check-passed	static	declared	forwarded
 rust-gate	clippy-passed	static	declared	forwarded
 rust-gate	fmt-passed	static	declared	forwarded
 rust-gate	test-passed	static	declared	forwarded
@@ -846,6 +855,7 @@ super-cache-restore	key	static	declared	forwarded
 super-cache-restore	outputs	static	declared	forwarded
 super-cache-save	inputs-pushed	static	declared	forwarded
 super-cache-save	key	static	declared	forwarded
+super-cache-save	paths-pushed	static	declared	forwarded
 super-cache-save	reason	static	declared	forwarded
 super-cache-save	saved	static	declared	forwarded
 super-cache-save	skipped	static	declared	forwarded
@@ -889,6 +899,9 @@ wasmer-publish	published	static	declared	forwarded
 weaviate-schema-apply	applied	static	declared	forwarded
 wireguard-up	interface	static	declared	forwarded
 woocommerce-product-sync	synced	static	declared	forwarded
+workflow-shim-lint	files-scanned	static	declared	forwarded
+workflow-shim-lint	violations	static	declared	forwarded
+workflow-shim-lint	waived	static	declared	forwarded
 xcodebuild	built	static	declared	forwarded
 yaml-lint	errors	static	declared	forwarded
 yank-version	ecosystem	static	declared	forwarded
