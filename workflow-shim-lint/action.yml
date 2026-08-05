@@ -1,0 +1,58 @@
+name: 'pleme-io · workflow-shim-lint'
+description: 'Report consumer workflows that are hand-authored instead of thin shims over a catalogued pleme-io/substrate reusable workflow. The consumer-side half of CATALOG REFLECTION.'
+branding: { icon: 'git-merge', color: 'blue' }
+
+inputs:
+  paths:
+    description: "Glob of consumer workflow files to scan"
+    required: false
+    default: ".github/workflows/*.yml"
+  fail-on-violation:
+    description: >-
+      Fail the job on a hand-authored workflow.
+
+      Defaults to FALSE, deliberately and temporarily. Measured 2026-08-04:
+      144 hand-authored workflows across 99 pleme-io-authored repos (plus 176
+      more in vendored upstream forks, which are out of scope). Defaulting to
+      true would red every one of those 99 repos the moment this lands, which
+      punishes repos for a backlog they did not create and trains people to
+      ignore the gate.
+
+      The destination is `true`, once those 144 are converted or waived. A
+      warn-only gate is only-mitigated and drifts — this default is a rollout
+      step with a named end state, not the end state.
+    required: false
+    default: "false"
+
+outputs:
+  violations:
+    description: "Count of hand-authored workflows found"
+    value: ${{ steps.run.outputs.violations }}
+  files-scanned:
+    value: ${{ steps.run.outputs.files-scanned }}
+  waived:
+    description: "Count carrying an explicit skip-workflow-shim waiver"
+    value: ${{ steps.run.outputs.waived }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PATHS: ${{ inputs.paths }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}

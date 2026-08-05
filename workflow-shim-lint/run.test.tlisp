@@ -1,0 +1,52 @@
+;; Tests for workflow-shim-lint's classification predicates.
+;;
+;; These pin the DISPOSITION — shim vs waived vs hand-authored — because that
+;; is the layer a mistake actually hurts at. A wrong `shim?` silently excuses a
+;; hand-authored workflow; a wrong `waived?` either excuses a bare marker or
+;; refuses a legitimate waiver, and the first of those is how a waiver grammar
+;; decays into a mute button.
+
+(define shim-text
+  "name: a\njobs:\n  x:\n    uses: pleme-io/substrate/.github/workflows/cargo-ci.yml@main\n")
+
+(define bespoke-text
+  "name: b\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps: [{ run: \"true\" }]\n")
+
+(define waived-text
+  "# skip-workflow-shim: vendored upstream CI, not ours to restandardize\nname: c\n")
+
+(define bare-marker-text "# skip-workflow-shim:\nname: d\n")
+
+(deftest
+  "a workflow calling a substrate reusable is a shim"
+  (assert (shim? shim-text) "a `uses: pleme-io/substrate/...` line makes it a shim")
+  (assert (not (shim? bespoke-text)) "a hand-authored job is not a shim"))
+
+(deftest
+  "a waiver REQUIRES a typed reason — a bare marker does not waive"
+  ;; The load-bearing one. A bare `# skip-workflow-shim:` is exactly the shape
+  ;; a waiver takes when it is being used to silence rather than to explain,
+  ;; so it must NOT count. Verified end-to-end too: in a 4-file probe repo the
+  ;; bare-marker file is reported alongside the genuinely bespoke one.
+  (assert (waived? waived-text) "a marker WITH a reason waives")
+  (assert (not (waived? bare-marker-text)) "a marker with NO reason does not waive")
+  (assert (not (waived? bespoke-text)) "no marker at all does not waive"))
+
+(deftest
+  "a shim is never treated as a waiver, and vice versa"
+  ;; Guarding the class: the two escape hatches must stay distinct, or a repo
+  ;; could appear compliant for the wrong reason and nobody would look again.
+  (assert (not (waived? shim-text)) "a shim needs no waiver and does not carry one")
+  (assert (not (shim? waived-text)) "a waived file is still not routed through substrate"))
+
+(deftest
+  "the reason is extracted, not merely detected"
+  ;; If the reason were parsed wrongly a legitimate waiver could read as empty
+  ;; and be refused — which trains people to delete the gate rather than use it.
+  (assert
+    (equal?
+      (waiver-reason "# skip-workflow-shim: vendored upstream CI, not ours to restandardize")
+      "vendored upstream CI, not ours to restandardize")
+    "the text after the marker is the reason")
+  (assert (equal? (waiver-reason "# skip-workflow-shim:") "") "an empty reason reads as empty")
+  (assert (equal? (waiver-reason "name: unrelated") "") "a line with no marker has no reason"))
