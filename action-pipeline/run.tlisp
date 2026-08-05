@@ -1,0 +1,179 @@
+;; action-pipeline — run a DECLARED SEQUENCE of pleme-io actions.
+;;
+;; The workflow layer becomes DATA. A repo's CI stops being a hand-authored
+;; list of `uses:` steps and becomes a spec naming which pleme-io actions run,
+;; in what order, with which inputs:
+;;
+;;     (defpipeline ci
+;;       (step rust-gate :fmt-args "--all -- --check" :test-args "--all-targets")
+;;       (step tlisp-lint)
+;;       (step security-audit))
+;;
+;; WHY THIS IS POSSIBLE AT ALL, and why it is not "shell as an input"
+;;
+;; GitHub forbids a dynamic `uses:` — the value takes no expression, so a
+;; workflow can never dispatch to an action chosen at runtime. That looks like
+;; it forecloses this, and it does not, because of a property the fleet already
+;; has: 322 of 341 pleme-io actions (94.4%) are the SAME SHAPE — a `run.tlisp`
+;; assembled as `stdlib + <name>/run.tlisp` and executed by tatara-script, with
+;; inputs arriving as environment variables.
+;;
+;; So dispatch does not need a dynamic `uses:`. It needs to read a file whose
+;; path is composed from a NAME, and that name is checked against the actions
+;; directory before anything runs. The set is closed and enumerable; an unknown
+;; name is a hard error naming what was available. Nothing arbitrary is
+;; accepted and no caller-supplied shell is ever executed — the spec is typed
+;; data, and every executable line comes from a reviewed action in this repo.
+;;
+;; That distinction is the whole design. "Capture any behaviour" would mean
+;; taking a shell payload, which is what ★★ NO SHELL forbids and what makes a
+;; config surface unreviewable. "Compose the actions we already ship" is the
+;; opposite: it makes the surface SMALLER, because every step a pipeline can
+;; express is a primitive that already has an owner, a contract and tests.
+
+(define actions-root (env-get "ACTIONS_ROOT" "."))
+(define spec-text (env-required "PIPELINE_SPEC"))
+(define stdlib-path (string-append actions-root "/_tlisp-stdlib/stdlib.tlisp"))
+
+;; -------------------------------------------------------------- ;;
+;; Parsing the spec                                                ;;
+;; -------------------------------------------------------------- ;;
+;;
+;; Deliberately line-oriented rather than a full s-expression reader: the
+;; interpreter running this IS tatara-script, but the spec arrives as an action
+;; input and must be validated BEFORE anything is evaluated. Parsing it as data
+;; keeps a malformed spec a parse error instead of arbitrary evaluation — the
+;; difference between reading a config and running it.
+
+(define
+  (step-line? line)
+  (string-starts-with? (string-trim line) "(step "))
+
+;; `(step rust-gate :fmt-args "--all -- --check")` -> "rust-gate"
+;; The trailing `)` of a single-step form must come off, or `(step tlisp-lint)`
+;; yields the name "tlisp-lint)" — which the closed-set check then correctly
+;; refuses. Caught end-to-end on the first real dispatch: the GATE was right and
+;; the PARSER was wrong, which is the failure order to want.
+(define
+  (strip-parens s)
+  (string-replace (string-replace s ")" "") "(" ""))
+
+(define
+  (step-action line)
+  (let ((parts (string-split (string-trim line) " ")))
+    (if (> (length parts) 1) (strip-parens (string-trim (nth 1 parts))) "")))
+
+;; Pull `:key "value"` pairs into KEY=value env assignments. An input named
+;; `fmt-args` becomes `FMT_ARGS`, which is the convention every action.yml in
+;; this repo already uses to hand its inputs to run.tlisp.
+
+;; Two small helpers the stdlib does not carry. Defined here rather than
+;; assumed — `tatara-script lint --unbound` reported both, which is exactly
+;; what that mode is for: an invented primitive parses fine and only explodes
+;; when evaluation reaches it.
+(define
+  (string-drop-prefix s prefix)
+  (if (string-starts-with? s prefix)
+    (string-join "" (cdr (string-split s prefix)))
+    s))
+
+(define
+  (string-trim-quotes s)
+  (let ((t (string-trim s)))
+    (string-replace (string-replace t "\"" "") "'" "")))
+
+(define
+  (env-name key)
+  (string-uppercase (string-replace key "-" "_")))
+
+(define
+  (pairs-of line acc rest)
+  (cond
+    ((null? rest) acc)
+    ((string-starts-with? (car rest) ":")
+      (let*
+        ((k (string-drop-prefix (car rest) ":"))
+          (tail (cdr rest))
+          (v (if (null? tail) "" (strip-parens (string-trim-quotes (car tail))))))
+        (pairs-of line (append acc (list (list (env-name k) v))) (if (null? tail) '() (cdr tail)))))
+    (else (pairs-of line acc (cdr rest)))))
+
+(define
+  (step-inputs line)
+  (pairs-of line '() (string-split (string-trim line) " ")))
+
+;; -------------------------------------------------------------- ;;
+;; The closed set                                                  ;;
+;; -------------------------------------------------------------- ;;
+
+(define
+  (action-script-path name)
+  (string-append actions-root "/" name "/run.tlisp"))
+
+(define (known-action? name) (path-exists? (action-script-path name)))
+
+;; -------------------------------------------------------------- ;;
+;; Execution                                                       ;;
+;; -------------------------------------------------------------- ;;
+
+(define
+  (run-step name inputs)
+  (log-info (string-append "==> " name))
+  (let*
+    ((composed (string-append (read-file stdlib-path) "\n" (read-file (action-script-path name))))
+      (tmp (string-append "/tmp/pleme-pipeline-" name ".tlisp"))
+      (_ (write-file tmp composed))
+      (r (apply exec-capture (append (list "env") (map (lambda (p) (string-append (nth 0 p) "=" (nth 1 p))) inputs) (list "tatara-script" tmp))))
+      (code (status-of r)))
+    (log-info (stdout-of r))
+    (cond
+      ((= code 0) (log-info (string-append "    " name " ok")) #t)
+      (else
+        (log-error (string-append name " FAILED (exit " (string-format "{}" code) ")"))
+        (log-info (stderr-of r))
+        #f))))
+
+(define
+  (walk lines failed)
+  (cond
+    ((null? lines) failed)
+    ((not (step-line? (car lines))) (walk (cdr lines) failed))
+    (else
+      (let ((name (step-action (car lines))))
+        (cond
+          ((not (known-action? name))
+            (log-error
+              (string-append
+                "unknown action '"
+                name
+                "' — a pipeline may only name actions that exist in this repo. "
+                "The set is closed on purpose: nothing arbitrary runs, and every "
+                "step is a primitive with an owner and tests."))
+            (exit 1))
+          ((run-step name (step-inputs (car lines))) (walk (cdr lines) failed))
+          (else (walk (cdr lines) (append failed (list name)))))))))
+
+(define
+  (main)
+  (let*
+    ((lines (string-split spec-text "\n"))
+      (steps (filter step-line? lines)))
+    (cond
+      ((null? steps)
+        (log-error
+          "pipeline spec declares no (step …) forms — an empty pipeline would report success having run nothing")
+        (exit 1))
+      (else
+        (log-info (string-append "pipeline: " (string-format "{}" (length steps)) " step(s)"))
+        (let ((failed (walk lines '())))
+          (append-output (string-append "steps-run=" (string-format "{}" (length steps))))
+          (append-output (string-append "steps-failed=" (string-format "{}" (length failed))))
+          (cond
+            ((null? failed) (log-info "pipeline: all steps ok") (exit 0))
+            (else
+              (log-error (string-append "pipeline: failed steps: " (string-join ", " failed)))
+              (exit 1))))))))
+
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — loaded; main skipped (the test harness drives it)"))

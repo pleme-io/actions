@@ -1,0 +1,51 @@
+;; Tests for the pipeline spec parser and its closed-set discipline.
+;;
+;; The parser is the load-bearing part: it decides what NAME gets dispatched,
+;; and a name that parses wrongly is either a false rejection (annoying) or —
+;; far worse — a path composed from something the author did not intend.
+
+(deftest
+  "a step's action name is extracted without its parens"
+  ;; The first real dispatch failed on exactly this: `(step tlisp-lint)` gave
+  ;; the name "tlisp-lint)" and the closed-set check refused it. The gate was
+  ;; right and the parser was wrong, which is the correct order for those two
+  ;; to fail in — but the parser still has to be fixed.
+  (assert (equal? (step-action "  (step tlisp-lint)") "tlisp-lint") "single-step form")
+  (assert
+    (equal? (step-action "  (step rust-gate :fmt-args \"--all\")") "rust-gate")
+    "step with inputs")
+  (assert (equal? (step-action "(step a)") "a") "no leading whitespace"))
+
+(deftest
+  "only (step …) lines are steps"
+  ;; A spec carries a `(defpipeline …)` header and closing parens; treating
+  ;; either as a step would dispatch a name that does not exist and red the run
+  ;; for a reason the author cannot act on.
+  (assert (step-line? "  (step tlisp-lint)") "a step is a step")
+  (assert (not (step-line? "(defpipeline ci")) "the header is not a step")
+  (assert (not (step-line? ")")) "a closing paren is not a step")
+  (assert (not (step-line? "  ;; a comment")) "a comment is not a step"))
+
+(deftest
+  "inputs become UPPER_SNAKE env names"
+  ;; That mapping is the contract every action.yml in this repo already uses to
+  ;; hand inputs to run.tlisp, so the pipeline must reproduce it exactly or a
+  ;; step silently runs with defaults.
+  (assert (equal? (env-name "fmt-args") "FMT_ARGS") "hyphen becomes underscore")
+  (assert (equal? (env-name "paths") "PATHS") "single word uppercases")
+  (assert (equal? (env-name "fail-on-violation") "FAIL_ON_VIOLATION") "multiple hyphens"))
+
+(deftest
+  "quoted values survive, parens do not"
+  (let ((ps (step-inputs "(step rust-gate :fmt-args \"--all -- --check\")")))
+    (assert (not (null? ps)) "at least one pair parsed")
+    (assert (equal? (nth 0 (nth 0 ps)) "FMT_ARGS") "key mapped to env name")))
+
+(deftest
+  "the action set is CLOSED — an unknown name cannot dispatch"
+  ;; The property that makes this safe to expose as an input at all. A pipeline
+  ;; may only name actions that exist; there is no path by which a caller
+  ;; reaches something unreviewed.
+  (assert (known-action? "tlisp-lint") "a real action is known")
+  (assert (not (known-action? "no-such-action-here")) "an invented one is not")
+  (assert (not (known-action? "../../etc/passwd")) "a traversal is not an action"))

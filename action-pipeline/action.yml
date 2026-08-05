@@ -1,0 +1,55 @@
+name: 'pleme-io · action-pipeline'
+description: 'Run a DECLARED SEQUENCE of pleme-io actions from a typed spec. The workflow layer becomes data: a repo names which actions run, in what order, with which inputs — no hand-authored step list, and no shell from the caller.'
+branding: { icon: 'layers', color: 'blue' }
+
+inputs:
+  pipeline:
+    description: >-
+      The pipeline spec:
+
+          (defpipeline ci
+            (step rust-gate :fmt-args "--all -- --check" :test-args "--all-targets")
+            (step tlisp-lint)
+            (step security-audit))
+
+      Every `(step …)` names an action that must EXIST in pleme-io/actions —
+      the set is closed and checked before anything runs. `:key "value"` pairs
+      become the action's inputs, mapped to the UPPER_SNAKE env vars each
+      action.yml already uses.
+
+      This is data, not shell. Nothing arbitrary executes; every line that runs
+      comes from a reviewed action in this repo.
+    required: true
+  actions-root:
+    description: "Checkout path of pleme-io/actions."
+    required: false
+    default: "."
+
+outputs:
+  steps-run:
+    value: ${{ steps.run.outputs.steps-run }}
+  steps-failed:
+    value: ${{ steps.run.outputs.steps-failed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PIPELINE_SPEC: ${{ inputs.pipeline }}
+        ACTIONS_ROOT: ${{ inputs.actions-root }}
