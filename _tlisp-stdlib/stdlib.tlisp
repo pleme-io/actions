@@ -933,9 +933,17 @@
 ;; raises on 404; we want a (200|404) → bool answer instead).
 ;; ────────────────────────────────────────────────────────────────
 
+;; BOUNDED, deliberately. An unbounded curl in CI hangs the job for the
+;; runner's full TCP timeout against a black-holed host, and as of the
+;; build-closure push this helper runs ONCE PER CLOSURE PATH (hundreds of
+;; calls) rather than once per publish probe. 2s connect / 10s total is
+;; generous for every existing caller (crates.io / npm / PyPI / helm) and
+;; turns a hang into a miss.
 (define (http-200? url)
   (let*
-    ((r (exec-capture "curl" "-s" "-o" "/dev/null" "-w" "%{http_code}" url)) (code (stdout-of r)))
+    ((r (exec-capture "curl" "-s" "--connect-timeout" "2" "--max-time" "10"
+                      "-o" "/dev/null" "-w" "%{http_code}" url))
+      (code (stdout-of r)))
     (equal? code "200")))
 
 ;; Crates.io specific.
@@ -1120,7 +1128,7 @@
 ;;   check-license-headers = true
 ;;
 ;;   [delivery]
-;;   slack-webhook-secret = "SLACK_WEBHOOK_URL"
+;;   slack-webhook-secret = <env var NAME, e.g. SLACK_WEBHOOK_URL — never the URL>
 ;; ────────────────────────────────────────────────────────────────
 
 ;; Read a field from .pleme-io-release.toml, fall back to default.
@@ -1183,6 +1191,86 @@
 ;; (`DaemonClient`), not a binary — so it is a LiveTODO and returns #f.
 (define (supercache:endpoint-alive? endpoint)
   (cond ((supercache:endpoint-is-uds? endpoint) (path-exists? endpoint)) (else #f)))
+
+;; ── sui-cache: the BINARY CACHE, a DIFFERENT SERVICE from the graph daemon ──
+;;
+;; Everything above this line resolves `sui-daemon-graph`, which speaks a UDS
+;; RPC and whose default endpoint is $XDG_RUNTIME_DIR/sui-graph.sock. The thing
+;; serving `http://sui.camelot-build.svc` is `sui-cache` (`sui cache serve
+;; --listen=0.0.0.0:5000`) — a different binary speaking the Nix binary-cache
+;; HTTP protocol. The predicates above keep their honest `(else #f)` LiveTODO
+;; and stay pointed at the graph daemon.
+;;
+;; CONFLATING THE TWO IS A REAL, MEASURED HAZARD, not a tidiness point.
+;; `sui-service-up`'s `endpoint` output defaults to the graph UDS PATH; threaded
+;; into `nix copy --to`, nix reads a bare path as a LOCAL CHROOT STORE, so the
+;; "push to sui" silently writes into a directory on the runner and reports
+;; success. That is why this is a separate resolver rather than a new arm on
+;; `supercache:endpoint-resolve`.
+(define (supercache:cache-endpoint-resolve)
+  (config-resolve "SUI_CACHE_ENDPOINT" "super-cache-ci" "cache-endpoint" ""))
+
+;; The trusted public key sui-cache signs ingested narinfo with.
+;;
+;; MEASURED 2026-08-05 from the live pod log: sui-cache runs with a
+;; --signing-key and announces `signing ENABLED key_name="camelot-sui-1"`.
+;; So the correct client-side statement is `extra-trusted-public-keys` — NOT
+;; `require-sigs = false`, which disables signature checking GLOBALLY (including
+;; for cache.nixos.org) and is strictly weaker than what the server already
+;; supports.
+(define (supercache:cache-public-key)
+  (config-resolve "SUI_CACHE_PUBLIC_KEY" "super-cache-ci" "cache-public-key" ""))
+
+;; The nix.conf fragment for a resolved cache endpoint, or "" when none.
+(define (supercache:nix-conf-for endpoint pubkey)
+  (cond
+    ((equal? endpoint "") "")
+    (else
+      (string-append
+        "extra-substituters = " endpoint "\n"
+        (cond ((equal? pubkey "") "")
+              (else (string-append "extra-trusted-public-keys = " pubkey "\n")))
+        ;; LOAD-BEARING PAIR — these move WITH the substituter value and are not
+        ;; two more independent knobs. nix's `fallback` defaults false, so a
+        ;; substituter that cannot serve a path FAILS THE BUILD instead of
+        ;; falling through to cache.nixos.org; and without a connect-timeout a
+        ;; dead endpoint costs the default per-path timeout on every path.
+        "fallback = true\n"
+        "connect-timeout = 5\n"))))
+
+;; presence — the ONE typed participation field: required | best-effort | off.
+;; An unrecognised value resolves to "invalid" so a caller can reject it BEFORE
+;; a build rather than silently defaulting; a typo must never quietly mean
+;; best-effort.
+;;
+;; TIER-HONEST: this is a runtime `cond`, i.e. only-mitigated. It is NOT
+;; parse-time-rejected and not unrepresentable — that would need a typed sum in
+;; Rust whose render() is the sole exit, which is DESIGN and deliberately not
+;; claimed here.
+(define (supercache:presence-of raw)
+  (cond
+    ((equal? raw "required")    "required")
+    ((equal? raw "best-effort") "best-effort")
+    ((equal? raw "off")         "off")
+    ((equal? raw "")            "best-effort")
+    (else                       "invalid")))
+
+;; The store hash of a store path: the basename's first "-"-separated segment.
+(define (supercache:store-hash path)
+  (let ((parts (string-split path "/")))
+    (cond
+      ((null? parts) "")
+      (else
+        (let ((base (car (reverse parts))))
+          (let ((seg (string-split base "-")))
+            (cond ((null? seg) "") (else (car seg)))))))))
+
+;; Does cache.nixos.org already serve this path? Used to subtract the public
+;; cache from a build closure before pushing: duplicating it buys nothing —
+;; MEASURED, 688 of 688 fetched paths in a publish job came from cache.nixos.org
+;; — and pushing the unfiltered closure would be tens of GB.
+(define (supercache:on-public-cache? path)
+  (http-200? (string-append "https://cache.nixos.org/" (supercache:store-hash path) ".narinfo")))
 
 ;; The honest structural never-touch-DURABLE-disk predicate
 ;; (SUPER-CACHE-CI.md §III): true ONLY when the store is Postgres AND the

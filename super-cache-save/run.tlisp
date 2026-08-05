@@ -84,6 +84,104 @@
 ;; and/or ' '-joined (the local-tier entry format). Returns the count pushed.
 (define (push-outputs endpoint outputs) (push-segments endpoint (string-split outputs ";")))
 
+;; Push an explicit LIST of store paths (as opposed to a token string).
+(define (push-paths endpoint paths)
+  (cond
+    ((null? paths) 0)
+    (else (+ (push-one endpoint (car paths)) (push-paths endpoint (cdr paths))))))
+
+;; ── build-closure resolution — THE leverage change ───────────────
+;;
+;; `nix copy --to <ep> <out>` copies the RUNTIME closure of <out>. For a
+;; dockerTools image tarball the Nix-registered references are near-empty, so
+;; that command pushes essentially one object: the tarball itself.
+;;
+;; MEASURED 2026-08-05, reading the live sui Postgres tier directly: 10 rows,
+;; 736 MB, and every StorePath a per-commit `hardened-*.tar.gz` plus one manual
+;; probe. Zero build-graph derivations. Every one of those store hashes changes
+;; on the next commit to its flake, so they are the ONE class of artifact no
+;; future run can ever request. Two independent runs measured 0 paths
+;; substituted from sui against 688 from cache.nixos.org and 514 built locally,
+;; while the push step reported success on every one.
+;;
+;; That is a STRUCTURAL zero, not an outage: the cache was never cold, it was
+;; full of the wrong objects. The set the next run actually needs is the
+;; DERIVER's requisites with outputs.
+(define (deriver-of out)
+  (let ((r (exec-capture "nix-store" "--query" "--deriver" out)))
+    (cond ((= (status-of r) 0) (string-trim (stdout-of r))) (else ""))))
+
+(define (build-closure-of out)
+  (let ((drv (deriver-of out)))
+    (cond
+      ((equal? drv "") (list))
+      (else
+        (let ((r (exec-capture "nix-store" "--query" "--requisites" "--include-outputs" drv)))
+          (cond
+            ((= (status-of r) 0)
+              (filter
+                (lambda (p) (and (not (equal? p "")) (path-exists? p)))
+                (string-split (stdout-of r) "\n")))
+            (else (list))))))))
+
+;; Subtract everything cache.nixos.org already serves.
+;;
+;; Without this the push is the WHOLE build closure — tens of GB — and
+;; duplicating the public cache buys nothing, since 688 of 688 fetched paths in
+;; a publish job came from it. What survives the filter is precisely the set
+;; only a private cache can hold: the overlay-perturbed packages (the flake
+;; rewrites zlib/gawk/ncurses at package-set level, so cache.nixos.org
+;; structurally cannot have them) plus the lock-pinned Rust graph.
+;;
+;; This is a PRECONDITION on the default, not a later optimisation: it is what
+;; keeps the push affordable at the measured ~25 MB/s to the durable tier.
+(define (minus-upstream paths)
+  (filter (lambda (p) (not (supercache:on-public-cache? p))) paths))
+
+;; STRICTLY-NEVER-WORSE, and this fallback is load-bearing rather than defensive
+;; padding. The closure scopes are the DEFAULT, so every existing consumer moves
+;; onto them the moment this lands — and `build-closure-of` legitimately returns
+;; the empty list whenever `nix-store --query --deriver` cannot resolve (an
+;; output not in the local store, a path with no deriver, a store the runner
+;; cannot query). Without this, those callers would push ZERO paths where they
+;; push one today: a silent regression, dressed as an improvement, in exactly
+;; the surface whose whole defect was a green step that moved nothing.
+;;
+;; So an unresolvable closure degrades to the legacy single-path push instead of
+;; to nothing. A caller can never do worse than before by upgrading.
+(define (with-output-fallback paths out)
+  (cond ((null? paths) (list out)) (else paths)))
+
+(define (paths-for-scope scope out)
+  (cond
+    ((equal? scope "build-closure")
+      (with-output-fallback (build-closure-of out) out))
+    ((equal? scope "build-closure-minus-upstream")
+      ;; NOTE the fallback is on the UNFILTERED closure: an empty result after
+      ;; `minus-upstream` is a real and correct answer (cache.nixos.org already
+      ;; serves everything), and must NOT be second-guessed into re-pushing the
+      ;; output. Only an unresolvable closure falls back.
+      (let ((closure (build-closure-of out)))
+        (cond
+          ((null? closure) (list out))
+          (else (minus-upstream closure)))))
+    (else (list out))))
+
+;; Resolve a `result` symlink to the store path it points at.
+;;
+;; Absorbs a hand-rolled readlink step that consumers were each re-writing, and
+;; closes the same live bug in a sibling workflow that passes
+;; `${{ github.workspace }}/result` with no readlink anywhere in the file:
+;; token->store-path returns "" and the step reports nothing-pushed, exit 0,
+;; green, forever.
+(define (resolve-result-link link)
+  (cond
+    ((equal? link "") "")
+    (else
+      (let ((r (exec-capture "readlink" "-f" link)))
+        (let ((p (string-trim (stdout-of r))))
+          (cond ((equal? (token->store-path p) p) p) (else "")))))))
+
 (define (push-segments endpoint segs)
   (cond
     ((null? segs) 0)
@@ -156,25 +254,29 @@
   (let*
     ((key-in (env-get "KEY" ""))
       (spec-path (env-get "SPEC_PATH" ""))
-      (outputs (env-get "OUTPUTS" ""))
+      (result-link (env-get "RESULT_LINK" ""))
+      (scope (env-get "SCOPE" "build-closure-minus-upstream"))
+      (on-empty (env-get "ON_EMPTY" "warn"))
+      (resolved (resolve-result-link result-link))
+      (outputs
+        (cond ((not (equal? resolved "")) resolved) (else (env-get "OUTPUTS" ""))))
       (endpoint (env-get "ENDPOINT" ""))
       (flake-lock (env-get "FLAKE_LOCK" ""))
       (flake-inputs (env-get "FLAKE_INPUTS" ""))
       (key (save-key key-in spec-path))
       (cache-dir (supercache:cache-dir)))
     (cond
-      ;; No key ⇒ nothing to address; honest no-op (not a faked save).
-      ((equal? key "")
-        (log-info
-          "super-cache-save: no key resolvable (KEY empty and SPEC_PATH absent/empty) — nothing persisted")
-        (emit
-          key
-          "false"
-          "false"
-          "none"
-          "no-key")
-        (append-output "inputs-pushed=0")
-        0)
+      ;; ── ENDPOINT PUSH FIRST, and the order is the fix ──────────────
+      ;; This clause used to sit BELOW the `key == ""` no-op, so a caller with no
+      ;; cache key never reached the push at all — even with a perfectly good
+      ;; endpoint and outputs. `key` is an output LABEL on this branch; the
+      ;; ADDRESS is Nix's own content-addressing, so guarding a content-addressed
+      ;; push on a label was never right. The evidence it was wrong is that TWO
+      ;; separate consumers independently wrote the same "pass a dummy key to get
+      ;; the push" workaround comment; two consumers writing the same workaround
+      ;; is the primitive announcing a defect. The no-key no-op still guards the
+      ;; LOCAL tier below, where the key genuinely IS the address.
+      ;;
       ;; No local durable tier, but a sui ENDPOINT is present ⇒ the durable
       ;; write is a real `nix copy --to <endpoint>` of the built store paths (the
       ;; sui TieredBackend persists them to Redis L1 + Postgres L2). This is the
@@ -186,12 +288,16 @@
          (not (equal? endpoint ""))
          (not (equal? outputs "")))
         (let
-          ((pushed (push-outputs endpoint outputs))
+          ((pushed (push-paths endpoint (paths-for-scope scope (token->store-path outputs))))
             (inputs-pushed
               (cond
                 ((or (equal? flake-lock "") (equal? flake-inputs "")) 0)
                 (else (push-flake-inputs endpoint flake-lock (flake-inputs->list flake-inputs))))))
           (append-output (string-append "inputs-pushed=" (string-format "{}" inputs-pushed)))
+          ;; The leverage receipt (D5). The founding 0-substituted / 688-upstream
+          ;; measurement had to be taken by hand from a raw job log; emitting the
+          ;; count makes "did the cache do anything" a number in the run.
+          (append-output (string-append "paths-pushed=" (string-format "{}" pushed)))
           (cond
             ((= pushed 0)
               (log-error
@@ -205,7 +311,13 @@
                 "false"
                 "none"
                 "nothing-pushed")
-              0)
+              ;; on-empty=fail is what presence=required actually buys. `nix
+              ;; copy` is best-effort PER PATH and push-one returns 0 rather
+              ;; than raising, so without this a 100%-failing push exits 0 and
+              ;; the job is green — which is precisely the founding failure of
+              ;; this whole effort, pointed the other way. Default stays "warn"
+              ;; so every existing consumer is byte-unchanged.
+              (cond ((equal? on-empty "fail") 1) (else 0)))
             (else
               (log-info
                 (string-append
@@ -220,6 +332,20 @@
                 "sui"
                 "pushed")
               0))))
+      ;; No key ⇒ nothing to ADDRESS in the local object tier; honest no-op (not
+      ;; a faked save). Deliberately below the endpoint clause — see the note
+      ;; there for why guarding a content-addressed push on a label was the bug.
+      ((equal? key "")
+        (log-info
+          "super-cache-save: no key resolvable (KEY empty and SPEC_PATH absent/empty) — nothing persisted")
+        (emit
+          key
+          "false"
+          "false"
+          "none"
+          "no-key")
+        (append-output "inputs-pushed=0")
+        0)
       ;; No local durable tier AND no endpoint ⇒ nothing to persist to; honest no-op.
       ((equal? cache-dir "")
         (log-info "super-cache-save: no cache-dir + no sui endpoint — nothing persisted")

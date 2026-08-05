@@ -6,7 +6,7 @@ branding:
 
 inputs:
   endpoint:
-    description: "The sui service endpoint (from sui-service-up). Used for the durable Pg/object tier write (LiveTODO). Optional."
+    description: "The sui-cache binary-cache endpoint (e.g. http://sui.camelot-build.svc). CORRECTED 2026-08-05: this is NOT `sui-service-up`'s output — that action resolves sui-daemon-graph, whose default endpoint is a UDS path, and `nix copy --to <path>` writes into a LOCAL CHROOT STORE rather than the cache. It is also no longer a LiveTODO: a real `nix copy --to` lands in the durable Postgres tier (measured 2026-08-05, ~25 MB/s). Optional."
     required: false
     default: ""
   key:
@@ -33,6 +33,18 @@ inputs:
     description: "Space/comma list of flake-input NODE names whose SOURCE FODs to also push to the endpoint (e.g. 'akeyless-main-repo'), so a warm build preseeds them instead of re-git-cloning. Empty => outputs-only push."
     required: false
     default: ""
+  result-link:
+    description: "Path to a `result` symlink to resolve to its store path. Preferred over `outputs`: consumers were each hand-rolling the same readlink step, and one sibling workflow still passes a workspace path with no readlink at all, so its push has been an exit-0 no-op forever. Empty => fall back to `outputs`."
+    required: false
+    default: ""
+  scope:
+    description: "What to push. `build-closure-minus-upstream` (default) pushes the DERIVER's requisites minus everything cache.nixos.org already serves — the set a future build can actually reuse. `build-closure` skips the subtraction (tens of GB; diagnostics only). Anything else pushes just the output path, which is the pre-2026-08-05 behaviour and is why the cache held 10 objects, all per-commit tarballs, after weeks of green pushes."
+    required: false
+    default: "build-closure-minus-upstream"
+  on-empty:
+    description: "`warn` (default, byte-unchanged for every existing consumer) or `fail`. `nix copy` is best-effort PER PATH, so a 100%-failing push otherwise exits 0 and the job is green. `fail` is what a presence=required consumer sets."
+    required: false
+    default: "warn"
 
 outputs:
   saved:
@@ -45,7 +57,7 @@ outputs:
     description: "The content-addressed key that was persisted (or skipped)."
     value: ${{ steps.run.outputs.key }}
   tier:
-    description: "object | none — which durable tier accepted the write."
+    description: "sui | object | none — which durable tier accepted the write."
     value: ${{ steps.run.outputs.tier }}
   reason:
     description: "written | already-present | no-key | no-durable-tier | write-failed."
@@ -53,6 +65,9 @@ outputs:
   inputs-pushed:
     description: "Number of flake-input SOURCE FODs pushed to the endpoint (the WARM lever push half; 0 unless flake-lock + flake-inputs are set)."
     value: ${{ steps.run.outputs.inputs-pushed }}
+  paths-pushed:
+    description: "Number of store paths pushed to the endpoint. The leverage receipt: the founding 0-substituted/688-upstream measurement had to be taken by hand, and this makes 'did the cache do anything' a number in the run instead."
+    value: ${{ steps.run.outputs.paths-pushed }}
 
 runs:
   using: composite
@@ -93,3 +108,6 @@ runs:
         SUI_CACHE_DIR: ${{ inputs.cache-dir }}
         FLAKE_LOCK: ${{ inputs.flake-lock }}
         FLAKE_INPUTS: ${{ inputs.flake-inputs }}
+        RESULT_LINK: ${{ inputs.result-link }}
+        SCOPE: ${{ inputs.scope }}
+        ON_EMPTY: ${{ inputs.on-empty }}

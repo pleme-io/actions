@@ -60,3 +60,54 @@
     "comma+space")
   (assert (null? (flake-inputs->list "  ")) "whitespace-only => empty")
   (assert (null? (flake-inputs->list "")) "empty => empty"))
+
+;; ── the build-closure push (the leverage change) ─────────────────
+
+(deftest "supercache:store-hash pulls the hash out of a store path"
+  (assert
+    (equal? (supercache:store-hash "/nix/store/08p3rzfazaxq3wif2iym1x5imxv4byfg-hardened-rabbitmq.tar.gz")
+            "08p3rzfazaxq3wif2iym1x5imxv4byfg")
+    "hash is the basename's first '-' segment")
+  (assert (equal? (supercache:store-hash "") "") "empty path => empty hash"))
+
+(deftest "supercache:presence-of rejects an unknown value instead of defaulting it"
+  (assert (equal? (supercache:presence-of "required") "required") "required")
+  (assert (equal? (supercache:presence-of "best-effort") "best-effort") "best-effort")
+  (assert (equal? (supercache:presence-of "off") "off") "off")
+  (assert (equal? (supercache:presence-of "") "best-effort") "unset => best-effort")
+  ;; The point of the whole field: a TYPO must never quietly mean best-effort,
+  ;; because "sui is required here" silently becoming "use it if you feel like
+  ;; it" is exactly the failure this is meant to make impossible.
+  (assert (equal? (supercache:presence-of "requried") "invalid") "typo => invalid, NOT a default"))
+
+(deftest "supercache:nix-conf-for emits trusted-keys, never a global require-sigs=false"
+  (define conf (supercache:nix-conf-for "http://sui.camelot-build.svc" "camelot-sui-1:AAAA"))
+  (assert (string-contains? conf "extra-substituters = http://sui.camelot-build.svc") "substituter line")
+  (assert (string-contains? conf "extra-trusted-public-keys = camelot-sui-1:AAAA") "trusted key line")
+  ;; require-sigs=false disables signature checking GLOBALLY, including for
+  ;; cache.nixos.org. sui-cache signs at ingest, so the narrow statement is
+  ;; strictly stronger and this must never regress to the blunt one.
+  (assert (not (string-contains? conf "require-sigs")) "never disables signature checking globally")
+  (assert (string-contains? conf "fallback = true") "fallback travels WITH the substituter")
+  (assert (equal? (supercache:nix-conf-for "" "camelot-sui-1:AAAA") "") "no endpoint => no config at all")
+  (define nokey (supercache:nix-conf-for "http://sui" ""))
+  (assert (not (string-contains? nokey "extra-trusted-public-keys")) "no key => no empty key line"))
+
+(deftest "paths-for-scope falls back to the single output path for an unknown scope"
+  (assert
+    (equal? (paths-for-scope "output-only" "/nix/store/aaa-x") (list "/nix/store/aaa-x"))
+    "unknown scope degrades to the legacy single-path behaviour, never to empty"))
+
+(deftest "resolve-result-link returns empty for an empty link rather than guessing"
+  (assert (equal? (resolve-result-link "") "") "empty in => empty out"))
+
+(deftest "an unresolvable build closure degrades to the output path, never to nothing"
+  ;; The upgrade must be strictly-never-worse: a caller that pushes one path
+  ;; today must not silently push zero after this lands.
+  (assert
+    (equal? (with-output-fallback (list) "/nix/store/aaa-x") (list "/nix/store/aaa-x"))
+    "empty closure => the single output path")
+  (assert
+    (equal? (with-output-fallback (list "/nix/store/bbb-y") "/nix/store/aaa-x")
+            (list "/nix/store/bbb-y"))
+    "a resolved closure is never overridden by the fallback"))
