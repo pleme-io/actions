@@ -26,6 +26,18 @@
 
 (define test-args (env-get "TEST_ARGS" "--workspace"))
 
+;; `cargo check`, off by default so no existing consumer changes.
+;;
+;; Added because it is NOT redundant with `cargo test`, and assuming it was
+;; would have silently cost coverage: escriba tests with
+;; `--exclude escriba-render --exclude escriba-tui` (those pull the wgpu/winit
+;; stack a bare ubuntu runner cannot build) but type-checks the WHOLE workspace
+;; separately. Fold the check step away and those two crates stop being
+;; compiled by CI at all, while the run stays green.
+(define run-check (env-get "RUN_CHECK" "false"))
+
+(define check-args (env-get "CHECK_ARGS" "--workspace"))
+
 ;; Split on spaces so a multi-word input reaches cargo as separate argv
 ;; entries rather than one nonsense flag.
 (define (split-args s) (filter (lambda (x) (not (equal? x ""))) (string-split s " ")))
@@ -49,17 +61,25 @@
       (run-step "cargo clippy" (list "clippy" "--all-targets" "--" "-D" "warnings")))
     (else #t)))
 
+(define check-passed
+  (cond ((equal? run-check "true") (run-step "cargo check" (cons "check" (split-args check-args)))) (else #t)))
+
 (define test-passed
   (cond ((equal? run-test "true") (run-step "cargo test" (cons "test" (split-args test-args)))) (else #t)))
 
 (define (bool->string b) (if b "true" "false"))
 
 (append-output (string-append "fmt-passed=" (bool->string fmt-passed)))
+(append-output (string-append "check-passed=" (bool->string check-passed)))
 
 (append-output (string-append "clippy-passed=" (bool->string clippy-passed)))
 
 (append-output (string-append "test-passed=" (bool->string test-passed)))
 
 (cond
-  ((and fmt-passed clippy-passed test-passed) (log-info "all gates passed") (exit 0))
+  ;; check-passed MUST be in this conjunction. Without it a failing
+  ;; `cargo check` logs its failure and the action still exits 0 — a gate
+  ;; that reports and does not gate, which is the exact green-over-failure
+  ;; shape fixed elsewhere in this repo today.
+  ((and fmt-passed check-passed clippy-passed test-passed) (log-info "all gates passed") (exit 0))
   (else (log-error "one or more gates failed") (exit 1)))

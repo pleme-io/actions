@@ -17,6 +17,18 @@ inputs:
     description: "Run cargo test --workspace"
     required: false
     default: "true"
+  run-check:
+    description: >-
+      Run `cargo check`. OFF by default so no existing consumer changes.
+      Not redundant with `cargo test`: a repo that excludes crates from its
+      test run (heavy GPU deps, platform headers) still wants the whole
+      workspace type-checked.
+    required: false
+    default: "false"
+  check-args:
+    description: "Arguments to cargo check."
+    required: false
+    default: "--workspace"
   fmt-args:
     description: >-
       Arguments to `cargo fmt`. Default "--check" reproduces the previous
@@ -73,5 +85,7 @@ runs:
         RUN_FMT: ${{ inputs.run-fmt }}
         RUN_CLIPPY: ${{ inputs.run-clippy }}
         RUN_TEST: ${{ inputs.run-test }}
+        RUN_CHECK: ${{ inputs.run-check }}
+        CHECK_ARGS: ${{ inputs.check-args }}
         FMT_ARGS: ${{ inputs.fmt-args }}
         TEST_ARGS: ${{ inputs.test-args }}
