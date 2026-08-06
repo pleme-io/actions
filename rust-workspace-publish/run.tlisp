@@ -59,10 +59,37 @@
   ;; `cargo metadata --no-deps --format-version 1` returns JSON with
   ;; workspace_members listed. We use jq via exec-capture for a
   ;; line-per-name shape that's easy to parse in tlisp.
+  ;;
+  ;; `select(.publish != [])` EXCLUDES members marked `publish = false`.
+  ;; cargo metadata encodes the field three ways and only one of them means
+  ;; "never publish":
+  ;;   publish absent / true  -> "publish": null   (any registry — SHIP)
+  ;;   publish = ["some-reg"] -> ["some-reg"]      (restricted — SHIP)
+  ;;   publish = false        -> []                (NEVER — skip)
+  ;; so the empty-array test is exact, and `!= []` keeps null (the common
+  ;; case) rather than accidentally filtering it.
+  ;;
+  ;; Without this the publisher ATTEMPTS an unpublishable member, cargo
+  ;; refuses with "`package.publish` must be set to `true` or a non-empty
+  ;; list in Cargo.toml to publish", that text matches no known signature,
+  ;; and the run is classified a PERMANENT FAILURE — exit 1 on a workspace
+  ;; where every publishable crate shipped fine. Measured on
+  ;; pleme-hotswap-derive run 31076862995 (2026-08-06): pleme-hotswap and
+  ;; pleme-hotswap-derive both "already published — treating as success",
+  ;; then `pleme-hotswap-gen` (a generator, deliberately publish = false)
+  ;; turned the whole release red. That repo has never had a green release
+  ;; run, for this reason alone.
+  ;;
+  ;; This is a SKIP, not a new success signature: an unpublishable member is
+  ;; not a publish that succeeded, it is a publish that was never owed. It
+  ;; must not be reachable by the retry/already-published paths at all.
   (let*
     ((r
        (exec-capture "sh"
-         "-c" "cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'"))
+         "-c"
+         (string-append
+           "cargo metadata --no-deps --format-version 1 | jq -r "
+           "'.packages[] | select(.publish != []) | .name'")))
       (out (stdout-of r)))
     (string-split (string-trim out) "\n")))
 
