@@ -43,6 +43,13 @@
 
 (define stdlib:gh-output (env-get "GITHUB_OUTPUT" ""))
 
+;; RAW appender. Writes `line` verbatim, checks nothing.
+;;
+;; Kept because the heredoc form and a few genuinely line-oriented callers
+;; need it, but it is NOT the thing to reach for: `emit-output` below is.
+;; `append-output` cannot see the defect described there, because by the time
+;; a caller has run `string-append` the key and the value are one string and
+;; the boundary between them is gone.
 (define (append-output line)
   (cond
     ((equal? stdlib:gh-output "") #t)
@@ -50,6 +57,96 @@
     (else
       (let ((prior (if (path-exists? stdlib:gh-output) (read-file stdlib:gh-output) "")))
         (write-file stdlib:gh-output (string-append prior line "\n"))))))
+
+;; ────────────────────────────────────────────────────────────────
+;; Typed output emission — key and value stay SEPARATE until the
+;; renderer joins them
+;; ────────────────────────────────────────────────────────────────
+;;
+;; WHY. `$GITHUB_OUTPUT` is a wire format: `key=value`, newline-separated,
+;; parsed by the runner. Every one of the ~1000 `append-output` call sites in
+;; this repo assembles that format by hand —
+;;
+;;     (append-output (string-append "hit-tier=" tier))
+;;
+;; — and none of them can check the thing that actually bites, because a
+;; newline in a VALUE does not produce a malformed line. It produces EXTRA
+;; OUTPUTS. `x=a\nevil=1` writes two keys, and the second is chosen by
+;; whoever controls that value: a git tag, a commit subject, a crate
+;; description, an upstream API's JSON. That is an injection, not a
+;; formatting slip, and it is why GitHub's own guidance is a random heredoc
+;; delimiter rather than a fixed one.
+;;
+;; `emit-output` keeps key and value apart until the renderer joins them, so
+;; there is somewhere to put the check. Sites migrate one at a time; nothing
+;; breaks while they do.
+(define (gh-output:key-ok? k)
+  (re-match? "^[a-z][a-z0-9-]*$" k))
+
+;; Emit one `key=value` pair. Refuses a malformed key, and refuses a value
+;; carrying a newline rather than silently writing a second output.
+;;
+;; The refusal is loud on purpose. A step that quietly drops or corrupts an
+;; output is the failure mode this repo's own output-contract machinery
+;; exists to catch AFTER the fact — this catches it at the write.
+(define (emit-output key value)
+  (cond
+    ((not (gh-output:key-ok? key))
+      (log-error
+        (string-append
+          "emit-output: '" key "' is not a valid output key. Keys must match "
+          "[a-z][a-z0-9-]* — lowercase, starting with a letter. This is "
+          "narrower than the runner tolerates, deliberately: every key this "
+          "repo emits already fits, and the restriction removes the quoting "
+          "question entirely."))
+      (exit 1))
+    ((string-contains? value "\n")
+      (log-error
+        (string-append
+          "emit-output: the value for '" key "' contains a newline. This is "
+          "not a formatting problem — it is an INJECTION. $GITHUB_OUTPUT is "
+          "newline-separated, so a value carrying a newline writes ADDITIONAL "
+          "keys chosen by whoever controls that value. Use "
+          "emit-output-multiline, which picks a delimiter that cannot collide "
+          "with the content."))
+      (exit 1))
+    (else (append-output (string-append key "=" value)))))
+
+;; Emit a genuinely multi-line value through the heredoc form, with a
+;; delimiter proven not to appear in the content.
+;;
+;; THE BUG THIS REPLACES, and it is live: changelog-generate/run.tlisp emits
+;; its rendered changelog under the FIXED marker `TLISP_OUTPUT_EOF`. That
+;; changelog is built from commit subjects — contributor-controlled text — so
+;; a commit whose message contains that marker on its own line terminates the
+;; heredoc early, and everything after it is parsed by the runner as new
+;; key=value outputs. A fixed delimiter in attacker-influenced content is
+;; exactly the case GitHub's docs say to use a random one for.
+;;
+;; So: derive a candidate from `random-hex`, then VERIFY it is absent from the
+;; content and re-roll if not. Verifying is the load-bearing half — randomness
+;; alone is a probability argument, and a probability argument is not a check.
+(define (gh-output:free-delimiter content attempt)
+  (let ((candidate (string-append "TLISP_EOF_" (random-hex 16))))
+    (cond
+      ((not (string-contains? content candidate)) candidate)
+      ((> attempt 8)
+        (log-error
+          "emit-output-multiline: could not derive a delimiter absent from the content after 8 attempts")
+        (exit 1))
+      (else (gh-output:free-delimiter content (+ attempt 1))))))
+
+(define (emit-output-multiline key value)
+  (cond
+    ((not (gh-output:key-ok? key))
+      (log-error
+        (string-append "emit-output-multiline: '" key "' is not a valid output key"))
+      (exit 1))
+    (else
+      (let ((delim (gh-output:free-delimiter value 1)))
+        (append-output (string-append key "<<" delim))
+        (append-output value)
+        (append-output delim)))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; exec-capture result accessors
