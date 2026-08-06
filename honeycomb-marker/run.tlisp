@@ -14,7 +14,20 @@
 
 (define ts (string-trim (stdout-of ts-r)))
 
-(define url-frag (if (equal? url-in "") "" (string-append ", url: " " url-in " "")))
+;; `url-in` was INSIDE the string literal: `(string-append ", url: " " url-in " "")`
+;; spliced the literal text ` url-in `, never the value. So any non-empty
+;; URL_ARG emitted a bare `url-in` token into the jq filter and the payload
+;; failed unconditionally — the feature has never worked, and the only symptom
+;; was the generic "payload assembly failed".
+;;
+;; The quotes here are jq's, not tlisp's: the filter needs a JSON string.
+;;
+;; RESIDUAL, deliberately not fixed in this edit: url-in is env-supplied and
+;; still spliced into the filter rather than passed as `--arg url`, so a value
+;; containing a quote still breaks it. That is the same argv fix the rest of
+;; this file needs and belongs with it, not bolted on here.
+(define url-frag
+  (if (equal? url-in "") "" (string-append ", url: \"" url-in "\"")))
 
 (define payload-jq
   (string-append
