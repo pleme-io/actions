@@ -705,3 +705,64 @@
 (deftest "an empty argv is refused rather than silently spawning nothing"
   (assert (equal? (erro:kind (erro:value (proc:run (list)))) "proc/empty")
     "empty argv is its own typed error"))
+
+;; ── the primitive inventory is REAL, not remembered ─────────────
+;;
+;; A survey classified 23 shell sites as "no primitive exists, needs a
+;; decision". Most of those calls were wrong: the prober checked SCHEME
+;; spellings (substring, string-ref, string->list), found them absent, and
+;; generalised to "there is no slicing / chdir / clock primitive". A naming
+;; miss, not an absence — and it aimed real work at building things that were
+;; already there.
+;;
+;; PRIMITIVES-v0.2.5.txt is the authoritative list, extracted from tatara-lisp's
+;; register_fn sites at the tag this repo pins. These tests keep the two ends
+;; honest: the names it claims exist must actually bind, and the names it
+;; claims are absent must actually be absent. If the pin moves, this is what
+;; tells you what changed.
+
+(define (sym-bound? expr-text)
+  ;; Run a one-liner in a child and ask whether the interpreter said "unbound".
+  (let ((f (string-append "/tmp/prim-probe-" (random-hex 8) ".tlisp")))
+    (write-file f expr-text)
+    (let* ((r (exec-capture "tatara-script" f))
+           (out (string-append (stdout-of r) (stderr-of r))))
+      (not (string-contains? out "unbound symbol")))))
+
+(deftest "the primitives the survey wrongly called missing are all BOUND"
+  ;; Each of these was reported absent and used to justify a JUDGMENT call.
+  (assert (sym-bound? "(chdir)")        "chdir exists — 2 sites were called undecidable for want of it")
+  (assert (sym-bound? "(cwd)")          "cwd exists")
+  (assert (sym-bound? "(now-ms)")       "now-ms exists — date +%s%3N was shelled out instead, GNU-only")
+  (assert (sym-bound? "(yaml-parse)")   "yaml-parse exists — yq was shelled out instead")
+  (assert (sym-bound? "(file-size)")    "file-size exists — wc -c was shelled out instead")
+  (assert (sym-bound? "(json-stringify)") "json-stringify exists — jq was shelled out instead")
+  (assert (sym-bound? "(path-join)")    "path-join exists")
+  (assert (sym-bound? "(walk-dir)")     "walk-dir exists — find was shelled out instead"))
+
+(deftest "the genuinely absent names are still absent"
+  ;; The other half of an honest inventory. Every one of these was invented by
+  ;; some author and shipped broken; if one ever binds, the list is stale.
+  (assert (not (sym-bound? "(substring)"))      "substring is a Scheme spelling and does not exist")
+  (assert (not (sym-bound? "(string-prefix?)")) "string-prefix? does not exist")
+  (assert (not (sym-bound? "(shell-quote)"))    "shell-quote does not exist — it was invented 3 times")
+  (assert (not (sym-bound? "(cadr)"))           "cadr does not exist"))
+
+(deftest "exec-with-stdin is NOT in the pinned inventory"
+  ;; Load-bearing: anything needing to pipe stdin to a tool must use that
+  ;; tool's own file-operand form until the pin moves.
+  ;;
+  ;; Asserted against the INVENTORY FILE, not the running interpreter. A
+  ;; bound-check here is environment-dependent — it holds on CI's v0.2.5 and
+  ;; fails on a developer's newer local build, which is the same
+  ;; passes-here-fails-there defect that took this repo's CI down earlier
+  ;; today. The claim is about the PIN, so it must be read from the thing that
+  ;; records the pin.
+  (let ((inv (read-file "_tlisp-stdlib/PRIMITIVES-v0.2.5.txt")))
+    (assert (not (string-contains? inv "\nexec-with-stdin\n"))
+      "exec-with-stdin is post-v0.2.5 — do not write code that assumes it")
+    (assert (not (string-contains? inv "\nexec-with-env\n"))
+      "exec-with-env likewise")
+    ;; and prove the file is the real inventory, not an empty stub
+    (assert (string-contains? inv "\nchdir\n") "chdir IS in the pinned set")
+    (assert (string-contains? inv "\nyaml-parse\n") "yaml-parse IS in the pinned set")))
