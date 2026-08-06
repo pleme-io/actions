@@ -24,8 +24,23 @@
     tags
     "' --argjson time "
     ts
-    " '{ text: $text, tags: ($tags | split("
-    ,")), time: $time"
+    ;; This was FOUR fragments and the action could not run:
+    ;;
+    ;;     " '{ text: $text, tags: ($tags | split("
+    ;;     ,")), time: $time"
+    ;;     scope
+    ;;
+    ;; jq's inner `","` ended the tlisp string early, so the next line's
+    ;; leading comma was read as UNQUOTE and `")), time: $time"` became its
+    ;; operand. It parses cleanly — paren balance and a parser dry-run both
+    ;; pass it — and dies only when evaluation reaches it.
+    ;;
+    ;; This is the IDENTICAL defect that datadog-event/run.tlisp documents as
+    ;; found and fixed (its `github` token became a bare unbound symbol the
+    ;; same way). Same bug, same repo, one directory over, still live — which
+    ;; is why the fix belongs in a shared escape helper rather than in each
+    ;; author's memory. The inner quotes just need escaping.
+    " '{ text: $text, tags: ($tags | split(\",\")), time: $time"
     scope
     " }'"))
 
