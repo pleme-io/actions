@@ -1171,15 +1171,72 @@
     (http-200? url)))
 
 ;; ────────────────────────────────────────────────────────────────
-;; JSON manifest field reader (uses jq via shell)
+;; JSON manifest field reader — IN-PROCESS. `jq` is not invoked.
 ;; ────────────────────────────────────────────────────────────────
+;;
+;; This used to be `exec-capture "sh" "-c" "jq -r '<field>' <path> 2>/dev/null"`
+;; with `(if (= (status-of r) 0) … "")` — the exact defect the YAML reader
+;; below was already fixed for, still sitting here unconverted. ANY non-zero
+;; exit became the empty string, so three completely different facts arrived
+;; as one answer:
+;;
+;;     the field is absent   ·   jq is not installed   ·   the file is missing
+;;
+;; The YAML sibling's receipt is what that costs: `yq` is absent from the
+;; `camelot-builder-pleme-eks` ARC runner, so it returned "" for every field
+;; of every file, release-promote's idempotency check never matched, and no 2F
+;; promotion has ever completed. Nothing about that failure was jq- or
+;; yq-specific; this reader had the same hole and the same blast radius.
+;;
+;; `json-parse` is a PRIMITIVE — there was never a need for the subprocess.
+;; Removing it makes the confusable state unconstructible rather than guarded:
+;; there is no longer any code path in which a missing binary can present as a
+;; missing field, because there is no binary.
+;;
+;; SCOPE: dotted paths of object keys — ".name", ".dependencies.foo". A path
+;; with array indexing or a jq filter now FAILS LOUDLY rather than returning
+;; "", because silently answering "" to a question this cannot answer is the
+;; defect above re-introduced one level down.
 
+;; ".a.b" -> ("a" "b"); "a" -> ("a"); a filter/index -> '().
+(define (json-path-parts field)
+  (cond
+    ((or (string-contains? field "[") (string-contains? field "]")
+         (string-contains? field "|") (string-contains? field "(")) '())
+    (else
+      (let ((parts (string-split field ".")))
+        (filter (lambda (p) (not (equal? p ""))) parts)))))
+
+(define (json-walk v parts)
+  (cond
+    ((null? parts) v)
+    ((not (pair? v)) '())
+    (else (json-walk (alist-get v (car parts) '()) (cdr parts)))))
+
+;; Read a scalar; "" ONLY when the key is genuinely absent or explicitly null.
 (define (json-read-field path field)
-  ;; field is a jq path expression: "name" or ".dependencies.foo"
-  (let ((r (exec-capture "sh" "-c" (string-append "jq -r '" field "' " path " 2>/dev/null"))))
-    (if (= (status-of r) 0)
-      (let ((v (string-trim (stdout-of r)))) (if (equal? v "null") "" v))
-      "")))
+  (let ((parts (json-path-parts field)))
+    (cond
+      ((null? parts)
+        (eprint-line
+          (string-append
+            "json-read-field: '" field "' is not a plain dotted key path (e.g. "
+            "'.name', '.dependencies.foo'). Array indexing and jq filters are "
+            "unsupported; refusing to answer \"\", which would be "
+            "indistinguishable from an absent field."))
+        (exit 1))
+      ((not (path-exists? path))
+        (eprint-line
+          (string-append
+            "json-read-field: '" path "' does not exist. Refusing to answer "
+            "\"\", which would be indistinguishable from an absent field."))
+        (exit 1))
+      (else
+        (let ((v (json-walk (json-parse (read-file path)) parts)))
+          (cond
+            ((null? v) "")
+            ((equal? v "null") "")
+            (else (string-format "{}" v))))))))
 
 ;; npm-specific shorthands.
 (define (npm-package-name) (json-read-field "package.json" ".name"))
@@ -1760,9 +1817,22 @@
 ;; The fallback is kept because not every runner bakes doca yet, and it is
 ;; LOGGED (see oci:doca-source-note) so a job never silently takes the weaker
 ;; path.
+;; The baked doca binary's name, or "" when neither is on PATH.
+;;
+;; Was `exec-capture "sh" "-c" "command -v oci-push || command -v doca || true"`.
+;; Three things wrong with that beyond the shell itself: the `|| true` made a
+;; genuine failure indistinguishable from "neither is installed"; it returned
+;; a PATH rather than a name, so callers got a different string depending on
+;; how the runner happened to install it; and `command -v` answers about the
+;; shell's own lookup, not about what `exec-capture` will actually be able to
+;; spawn — which is the question the callers really have.
+;;
+;; hash:cmd-present? asks exactly that question, without a shell.
 (define (oci:doca-baked)
-  (string-trim
-    (stdout-of (exec-capture "sh" "-c" "command -v oci-push || command -v doca || true"))))
+  (cond
+    ((hash:cmd-present? "oci-push") "oci-push")
+    ((hash:cmd-present? "doca") "doca")
+    (else "")))
 
 (define (oci:doca-argv subcommand)
   (let ((baked (oci:doca-baked)))
@@ -1883,8 +1953,22 @@
 ;; discipline as the oci: block above).
 ;; ────────────────────────────────────────────────────────────────
 
+;; Is `name` runnable?
+;;
+;; Was `exec-capture "sh" "-c" "command -v <name> >/dev/null 2>&1"` — a shell,
+;; spawned to answer a question the interpreter can answer itself, with the
+;; name interpolated unquoted into a shell command.
+;;
+;; `exec-capture` RAISES when the binary is absent (`No such file or
+;; directory`, os error 2) and RETURNS a result when it is present, whatever
+;; the exit status. So presence and absence are already two different control
+;; paths — the shell was only converting that distinction into an exit code
+;; and back.
+;;
+;; `--version` is the probe because a present-but-unhappy binary still returns
+;; (non-zero status is fine, we only asked whether it exists).
 (define (hash:cmd-present? name)
-  (= 0 (status-of (exec-capture "sh" "-c" (string-append "command -v " name " >/dev/null 2>&1")))))
+  (try (begin (exec-capture name "--version") #t) (catch (e) #f)))
 
 ;; First whitespace-delimited field of a b3sum result ("<hex>  <path>"),
 ;; or "" when the command failed.
