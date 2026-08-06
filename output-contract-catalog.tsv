@@ -330,7 +330,7 @@ sui-warm-hydrate	tatara-script	run.tlisp	5	5
 super-cache-build	tatara-script	run.tlisp	9	9
 super-cache-restore	tatara-script	run.tlisp	4	4
 super-cache-save	tatara-script	run.tlisp	7	7
-suspend-blocker-lint	tatara-script	run.tlisp	2	2
+suspend-blocker-lint	tatara-script	run.tlisp	3	3
 swift-build	tatara-script	run.tlisp	1	1
 syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
@@ -886,6 +886,7 @@ super-cache-save	saved	static	declared	forwarded
 super-cache-save	skipped	static	declared	forwarded
 super-cache-save	tier	static	declared	forwarded
 suspend-blocker-lint	baselined	static	declared	forwarded
+suspend-blocker-lint	files-scanned	static	declared	forwarded
 suspend-blocker-lint	violations	static	declared	forwarded
 swift-build	built	static	declared	forwarded
 syft-attest	attestation-path	static	declared	forwarded

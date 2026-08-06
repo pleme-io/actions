@@ -91,12 +91,10 @@
     ;; Added after the sibling suspend-blocker-lint shipped with exactly this hole:
     ;; a reversed string-suffix? argument matched no files, so it scanned 0 and
     ;; exited 0. Same defense here, same reason.
-    (if (eq? 0 (length files))
-      (begin
-        (print-line (string-append "ddl-gate: FAILED — scanned 0 .sql files under " root))
-        (print-line "  a zero-file scan means a wrong ROOT or a broken walk, never a pass")
-        (exit 2))
-      #t)
+    (require-scanned!
+      "files"
+      (length files)
+      1)
     (let
       ((all-findings (reduce (fn (acc p) (append acc (gate:findings-for p))) (list) files))
         (baseline-lines (gate:read-baseline)))
@@ -113,7 +111,6 @@
             (length baselined)))
         (append-output (string-append "violations=" (string-format "{}" (length violations))))
         (append-output (string-append "baselined=" (string-format "{}" (length baselined))))
-        (append-output (string-append "files-scanned=" (string-format "{}" (length files))))
         (if (and fail-on-violation (> (length violations) 0))
           (exit 1)
           (exit 0))))))

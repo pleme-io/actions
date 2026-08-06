@@ -208,18 +208,41 @@
 ;; thing, where the checker knows only the first. The scanner has to learn
 ;; every emission surface the stdlib offers, or its denominator silently
 ;; shrinks by exactly the call sites that adopted the newer, better one.
-(define TYPED-RE
-  "emit-output(?:-multiline)?[ \t\n]*\"([a-zA-Z0-9_-]+)\"")
+(define TYPED-RE "emit-output(?:-multiline)?[ \t\n]*\"([a-zA-Z0-9_-]+)\"")
 
 (define (scan-typed src)
   (let ((s (strip-comments src)))
     (map (fn (m) (nth 1 (re-captures TYPED-RE m))) (re-find-all TYPED-RE s))))
 
+;; ── the DENOMINATOR emitter — a third emission surface ────────────────────
+;;
+;; `require-scanned!` writes `<label>-scanned=<n>` from inside the stdlib, so
+;; the key never appears as a literal at the call site: the unit says
+;; `(require-scanned! "files" ...)` and the output key is `files-scanned`.
+;; Neither STATIC-RE nor TYPED-RE can see that — one anchors on a literal
+;; `key=`, the other on a literal key argument.
+;;
+;; This tripped the moment the helper landed and ddl-gate's own
+;; `append-output "files-scanned="` was removed in favour of it: a declared
+;; output with zero discoverable writers. Third instance of one shape in a
+;; day — a second way to do a thing, and the checker knowing only the first.
+;; Worth stating as the rule rather than the incident: every emission surface
+;; the stdlib grows has to be taught here in the same commit that grows it,
+;; because the failure is silent on the emitting side and only shows up as a
+;; key that looks abandoned.
+(define SCANNED-RE "require-scanned![ \t\n]*\"([a-zA-Z0-9_-]+)\"")
+
+(define (scan-scanned src)
+  (let ((s (strip-comments src)))
+    (map
+      (fn (m) (string-append (nth 1 (re-captures SCANNED-RE m)) "-scanned"))
+      (re-find-all SCANNED-RE s))))
+
 (define (scan-static src)
   (let ((s (strip-comments src)))
     (append
       (map (fn (m) (nth 2 (re-captures STATIC-RE m))) (re-find-all STATIC-RE s))
-      (scan-typed src))))
+      (append (scan-typed src) (scan-scanned src)))))
 
 (define (scan-dynamic src)
   (let ((s (strip-comments src)))

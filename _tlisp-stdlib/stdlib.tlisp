@@ -80,8 +80,7 @@
 ;; `emit-output` keeps key and value apart until the renderer joins them, so
 ;; there is somewhere to put the check. Sites migrate one at a time; nothing
 ;; breaks while they do.
-(define (gh-output:key-ok? k)
-  (re-match? "^[a-z][a-z0-9-]*$" k))
+(define (gh-output:key-ok? k) (re-match? "^[a-z][a-z0-9-]*$" k))
 
 ;; Emit one `key=value` pair. Refuses a malformed key, and refuses a value
 ;; carrying a newline rather than silently writing a second output.
@@ -94,7 +93,9 @@
     ((not (gh-output:key-ok? key))
       (log-error
         (string-append
-          "emit-output: '" key "' is not a valid output key. Keys must match "
+          "emit-output: '"
+          key
+          "' is not a valid output key. Keys must match "
           "[a-z][a-z0-9-]* — lowercase, starting with a letter. This is "
           "narrower than the runner tolerates, deliberately: every key this "
           "repo emits already fits, and the restriction removes the quoting "
@@ -103,7 +104,9 @@
     ((string-contains? value "\n")
       (log-error
         (string-append
-          "emit-output: the value for '" key "' contains a newline. This is "
+          "emit-output: the value for '"
+          key
+          "' contains a newline. This is "
           "not a formatting problem — it is an INJECTION. $GITHUB_OUTPUT is "
           "newline-separated, so a value carrying a newline writes ADDITIONAL "
           "keys chosen by whoever controls that value. Use "
@@ -139,8 +142,7 @@
 (define (emit-output-multiline key value)
   (cond
     ((not (gh-output:key-ok? key))
-      (log-error
-        (string-append "emit-output-multiline: '" key "' is not a valid output key"))
+      (log-error (string-append "emit-output-multiline: '" key "' is not a valid output key"))
       (exit 1))
     (else
       (let ((delim (gh-output:free-delimiter value 1)))
@@ -175,6 +177,74 @@
   (if (equal? (env-get "TLISP_TEST" "") "")
     (env-required key)
     (env-get key "")))
+
+;; ────────────────────────────────────────────────────────────────
+;; Scan denominators — refuse a vacuous run
+;; ────────────────────────────────────────────────────────────────
+
+;; ── ★ WHY THIS EXISTS ─────────────────────────────────────────────
+;; A gate that reports "0 violations" when the truth is "I examined 0 things"
+;; is indistinguishable from a clean pass by its exit code alone. Measured
+;; 2026-08-06 across this repo: 332 gates have a run.tlisp, 167 are
+;; implemented, 47 derive their subject set from the environment (a walk, a
+;; glob, a shelled find, a tool's JSON array) and can therefore scan nothing
+;; without noticing. Only 11 guard it.
+;;
+;; suspend-blocker-lint shipped with exactly this hole -- a reversed
+;; string-suffix? argument matched no files, so it scanned 0 and exited 0, a
+;; clean run by every surface a human or a workflow reads.
+;;
+;; The concept had already been re-invented five times under five names with
+;; five different semantics (`min-files`, `require-nonempty`, `require`,
+;; `require-gen`, and two inline literals). This is the one spelling.
+
+;; ── ★ EXIT CODES ARE A VOCABULARY, AND 2 WAS ALREADY TAKEN ────────
+;;   0  clean
+;;   1  violations found
+;;   2  clean but EMPTY, deliberately (build-matrix:45 "0 rows is a clean
+;;      typed exit 2 (caller decides in YAML)", ferrite-check:492 "require=false
+;;      -- clean typed no"). An intentional opt-out from failing.
+;;   3  the SCAN ITSELF is broken -- this helper.
+;;
+;; 2 and 3 are opposite verdicts, which is why they cannot share a code. Two
+;; gates (ddl-gate, suspend-blocker-lint) previously used 2 for the meaning 3
+;; now carries, so a caller reading `2` could not tell "deliberately empty"
+;; from "never ran". 3 was unclaimed fleet-wide, so standardising here costs
+;; only those two gates and leaves build-matrix/ferrite-check untouched.
+;;
+;; Note the ceiling honestly: GitHub Actions fails a composite step on ANY
+;; non-zero, so at the workflow layer 1/2/3 are equivalent. The distinction
+;; buys a human reading a log, and a tlisp caller branching on the code.
+(define (require-scanned! label n floor)
+  (append-output (string-append label "-scanned=" (string-format "{}" n)))
+  (cond
+    ((>= n floor) #t)
+    (else
+      (print-line (string-format "FAILED - examined {} {}, floor is {}" n label floor))
+      (print-line "  a scan below its floor is a broken run, never a pass - check the")
+      (print-line "  walk, the ROOT, and any predicate whose arguments may be reversed")
+      (exit 3))))
+
+;; A non-negative integer from a command's stdout, or the symbol 'unknown --
+;; NEVER 0. This is the type that makes `|| echo 0` unwritable.
+;;
+;; That construct appears at the count site in 10 files here, and
+;; secrets-scan/run.tlisp:19-35 already documents it as the highest-blast-radius
+;; defect found in this repo and removed it from ITSELF -- while nothing
+;; enforced the lesson on its nine siblings. It converts every failure of the
+;; underlying tool (a bad flag, an unfetchable rule set, a jq parse error, a
+;; missing binary) into the number that means "clean".
+(define (count-or-unknown result)
+  (cond
+    ((not (eq? (status-of result) 0)) (quote unknown))
+    (else
+      (let ((s (string-trim (stdout-of result))))
+        (cond
+          ((equal? s "") (quote unknown))
+          ((re-match? "^[0-9]+$" s) (json-parse s))
+          (else (quote unknown)))))))
+
+(define (count-known? v) (not (eq? v (quote unknown))))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; exec-capture result accessors
@@ -1066,8 +1136,14 @@
 ;; turns a hang into a miss.
 (define (http-200? url)
   (let*
-    ((r (exec-capture "curl" "-s" "--connect-timeout" "2" "--max-time" "10"
-                      "-o" "/dev/null" "-w" "%{http_code}" url))
+    ((r
+       (exec-capture "curl"
+         "-s"
+         "--connect-timeout" "2"
+         "--max-time" "10"
+         "-o" "/dev/null"
+         "-w" "%{http_code}"
+         url))
       (code (stdout-of r)))
     (equal? code "200")))
 
@@ -1333,7 +1409,11 @@
 ;; success. That is why this is a separate resolver rather than a new arm on
 ;; `supercache:endpoint-resolve`.
 (define (supercache:cache-endpoint-resolve)
-  (config-resolve "SUI_CACHE_ENDPOINT" "super-cache-ci" "cache-endpoint" ""))
+  (config-resolve
+    "SUI_CACHE_ENDPOINT"
+    "super-cache-ci"
+    "cache-endpoint"
+    ""))
 
 ;; The trusted public key sui-cache signs ingested narinfo with.
 ;;
@@ -1344,7 +1424,11 @@
 ;; for cache.nixos.org) and is strictly weaker than what the server already
 ;; supports.
 (define (supercache:cache-public-key)
-  (config-resolve "SUI_CACHE_PUBLIC_KEY" "super-cache-ci" "cache-public-key" ""))
+  (config-resolve
+    "SUI_CACHE_PUBLIC_KEY"
+    "super-cache-ci"
+    "cache-public-key"
+    ""))
 
 ;; The nix.conf fragment for a resolved cache endpoint, or "" when none.
 (define (supercache:nix-conf-for endpoint pubkey)
@@ -1352,9 +1436,12 @@
     ((equal? endpoint "") "")
     (else
       (string-append
-        "extra-substituters = " endpoint "\n"
-        (cond ((equal? pubkey "") "")
-              (else (string-append "extra-trusted-public-keys = " pubkey "\n")))
+        "extra-substituters = "
+        endpoint
+        "\n"
+        (cond
+          ((equal? pubkey "") "")
+          (else (string-append "extra-trusted-public-keys = " pubkey "\n")))
         ;; LOAD-BEARING PAIR — these move WITH the substituter value and are not
         ;; two more independent knobs. nix's `fallback` defaults false, so a
         ;; substituter that cannot serve a path FAILS THE BUILD instead of
@@ -1374,11 +1461,11 @@
 ;; claimed here.
 (define (supercache:presence-of raw)
   (cond
-    ((equal? raw "required")    "required")
+    ((equal? raw "required") "required")
     ((equal? raw "best-effort") "best-effort")
-    ((equal? raw "off")         "off")
-    ((equal? raw "")            "best-effort")
-    (else                       "invalid")))
+    ((equal? raw "off") "off")
+    ((equal? raw "") "best-effort")
+    (else "invalid")))
 
 ;; The store hash of a store path: the basename's first "-"-separated segment.
 (define (supercache:store-hash path)
@@ -1387,8 +1474,7 @@
       ((null? parts) "")
       (else
         (let ((base (car (reverse parts))))
-          (let ((seg (string-split base "-")))
-            (cond ((null? seg) "") (else (car seg)))))))))
+          (let ((seg (string-split base "-"))) (cond ((null? seg) "") (else (car seg)))))))))
 
 ;; Does cache.nixos.org already serve this path? Used to subtract the public
 ;; cache from a build closure before pushing: duplicating it buys nothing —
