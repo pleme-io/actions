@@ -7,11 +7,52 @@
 
 (define source-paths (env-get "SOURCE_PATHS" "templates values.yaml Chart.yaml"))
 
+;; Read Chart.yaml's .version, or "" — where "" means ONLY "absent".
+;;
+;; ── THIS SHIPPED A VERSION LITERALLY NAMED `null..1` ─────────────────────
+;;
+;; yq prints the string `null` at EXIT 0 for a missing key. The old form
+;; returned that verbatim, and the caller's `(equal? old-version "")` guard
+;; passed it straight through. `bump-semver` then split `"null"` on "." —
+;; giving one field, so awk's $2 and $3 are empty — and emitted:
+;;
+;;     $ printf 'apiVersion: v2\nname: demo\n' > Chart.yaml
+;;     $ yq '.version' Chart.yaml   ->  null   (exit 0)
+;;     $ echo null | awk -F. '{print $1"."$2"."$3+1}'   ->  null..1
+;;
+;; That value was then written to BOTH .version and .appVersion by real yq,
+;; `bumped=true` was emitted, and the action exited 0. helm-publish packages
+;; and pushes whatever Chart.yaml says.
+;;
+;; Measured 2026-08-06, no stub and no fault injection required: a Chart.yaml
+;; that simply omits `version:` reproduces it with the real yq.
+;;
+;; So the fix is at the READ, not at the arithmetic: a value that is not a
+;; semver is not a version, and `""` must mean absent and nothing else. The
+;; `2>/dev/null` goes too — it was hiding the one signal that distinguishes a
+;; missing key from a broken yq.
+(define (chart-version-ok? v)
+  (re-match? "^[0-9]+\\.[0-9]+\\.[0-9]+" v))
+
 (define (read-chart-version)
-  (let ((r (exec-capture "sh" "-c" "yq '.version' Chart.yaml 2>/dev/null")))
-    (if (= (status-of r) 0)
-      (string-trim (stdout-of r))
-      "")))
+  (let ((r (exec-capture "yq" ".version" "Chart.yaml")))
+    (cond
+      ((not (= (status-of r) 0))
+        (log-error
+          (string-append "yq failed reading Chart.yaml .version: "
+                         (string-trim (stderr-of r))))
+        "")
+      (else
+        (let ((v (string-trim (stdout-of r))))
+          (cond
+            ((equal? v "null") "")
+            ((equal? v "") "")
+            ((not (chart-version-ok? v))
+              (log-error
+                (string-append "Chart.yaml .version is '" v
+                               "', which is not a semver. Refusing to bump it."))
+              "")
+            (else v)))))))
 
 ;; Compute next semver per bump-type. Helm has no built-in
 ;; equivalent of `cargo set-version --bump` so we do it ourselves.
@@ -68,9 +109,17 @@
   (append-output "bumped=false")
   (append-output "new-version="))
 
-(define old-version (read-chart-version))
+;; TLISP_TEST gate — under the harness the definitions load but no bump runs,
+;; so run.test.tlisp can exercise the pure helpers. 46 of this repo's actions
+;; already do this; helm-bump did not, which is why it had no test file at all
+;; and why the null..1 defect went unwitnessed for as long as it did.
+(define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
+
+(define old-version (if tlisp-test-mode "" (read-chart-version)))
 
 (cond
+  (tlisp-test-mode
+    (log-info "TLISP_TEST=1 — helm-bump loaded; main skipped (the harness drives it)"))
   ((not (path-exists? "Chart.yaml"))
     (emit-failure "helm-bump: no Chart.yaml at repo root" "")
     (exit 1))
