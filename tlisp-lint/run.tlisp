@@ -135,6 +135,36 @@
 ;; via --help so it no-ops cleanly on a tatara-script that predates
 ;; the `lint` subcommand (no shell — exec-capture is the typed
 ;; subprocess surface).
+;; ── The capability probe tests BEHAVIOUR, not the subcommand ────────────
+;;
+;; This used to check `--help` for "lint [path" and, finding it, run the lint
+;; and report whatever came back. That certified a FALSE CLEAN for a month.
+;;
+;; The `lint` subcommand and the unbound-symbol RULE shipped ~3 weeks apart:
+;; the subcommand is old, the rule landed 2026-08-02 (tatara-lisp f32e99e,
+;; first tagged v0.3.23). `pleme-io/actions` pins tatara-script v0.2.5
+;; (2026-07-09), which HAS `lint` and does NOT have the rule. So the probe
+;; passed, the lint ran, found nothing it knew how to look for, and this layer
+;; logged "semantic rule lint: clean" — a guarantee it was not providing.
+;; Measured 2026-08-06 on the actions repo itself: v0.2.5 reports 0, a binary
+;; with the rule reports 2903.
+;;
+;; A version-string probe cannot fix this either. `--no-unbound`/`--shapes`
+;; landed 2026-08-06 and are still untagged, so probing for them would report
+;; "skipped" on v0.3.23-v0.3.36 — binaries that DO have the rule. The only
+;; honest question is behavioural: given a file with a deliberately unbound
+;; symbol, does this binary flag it? That is a positive control, and it is
+;; the same technique the gates this layer protects are held to.
+;;
+;; A binary without the rule now SKIPS loudly instead of certifying clean.
+;; The exit code is unchanged (0 either way) — this converts a false claim
+;; into an honest one, it does not newly fail anyone.
+(define (unbound-rule-present?)
+  (let ((probe "/tmp/tlisp-lint-unbound-probe.tlisp"))
+    (write-file probe "(this-symbol-is-deliberately-not-bound 1)\n")
+    (let ((r (exec-capture "tatara-script" "lint" probe)))
+      (string-contains? (string-append (stdout-of r) (stderr-of r)) "unbound-symbol"))))
+
 (define (semantic-rule-errors)
   (let*
     ((help (exec-capture "tatara-script" "--help"))
@@ -142,6 +172,13 @@
     (cond
       ((not (string-contains? help-text "lint [path"))
         (log-info "  semantic rule lint skipped (tatara-script has no lint subcommand yet)")
+        0)
+      ((not (unbound-rule-present?))
+        (log-info
+          (string-append
+            "  semantic rule lint: PARTIAL — this tatara-script has `lint` but not the "
+            "unbound-symbol rule (landed v0.3.23; this action pins v0.2.5). "
+            "Unbound symbols are NOT checked here. Reported clean is not evidence."))
         0)
       (else
         (let ((r (exec-capture "tatara-script" "lint" ".")))
