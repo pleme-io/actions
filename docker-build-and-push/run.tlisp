@@ -17,7 +17,14 @@
 (define tag
   (cond
     ((not (equal? tag-in "")) tag-in)
-    ((not (equal? sha "")) (substring sha 0 7))
+    ;; `substring` does not exist in this interpreter — this line crashed with
+    ;; `unbound symbol substring` on every run that did not pass `tag`
+    ;; explicitly, which is the default path. It parsed fine, so paren-balance
+    ;; and the parser dry-run both certified it clean.
+    ;;
+    ;; SHA_SHORT is a misnomer: action.yml sets it to `${{ github.sha }}`, the
+    ;; full 40 characters. The slice is genuinely needed.
+    ((not (equal? sha "")) (string-take sha 7))
     (else "latest")))
 
 (define full-ref (string-append image ":" tag))

@@ -478,3 +478,67 @@
   (assert
     (equal? (env-required-unless-test "PLEME_TEST_PRESENT_XYZ") "value-here")
     "a present key is still returned verbatim"))
+
+;; ── string-take ─────────────────────────────────────────────────
+;;
+;; Regression for docker-build-and-push, which shipped `(substring sha 0 7)`
+;; against an interpreter with no `substring`. The boundary cases are the
+;; point: a 40-char sha is the real input, and the short/empty cases are what
+;; make this safe to reach for instead of re-inventing a slicer.
+
+(deftest "string-take shortens a full 40-char sha to 7"
+  (assert (equal? (string-take "0123456789abcdef0123456789abcdef01234567" 7) "0123456")
+    "a full github.sha must shorten to 7 characters"))
+
+(deftest "string-take on a string shorter than n returns the whole string"
+  (assert (equal? (string-take "abc" 7) "abc")
+    "shorter input must not error or pad"))
+
+(deftest "string-take of an empty string is empty"
+  (assert (equal? (string-take "" 7) "")
+    "empty input is empty output, not a crash"))
+
+(deftest "string-take of exactly n returns all of it"
+  (assert (equal? (string-take "abcdefg" 7) "abcdefg")
+    "the exact-length boundary must not drop a character"))
+
+(deftest "string-take 0 is empty"
+  (assert (equal? (string-take "abcdef" 0) "")
+    "taking nothing yields nothing"))
+
+;; ── require-capability ──────────────────────────────────────────
+;;
+;; The fleet primitive against vacuous gates. Its whole value is the FAILING
+;; direction — an unproven capability must abort the run — so that is the
+;; direction the tests must exercise.
+;;
+;; A first cut tested only the passing direction and was itself VACUOUS:
+;; replacing the body with a permissive `(#t #t)` still gave 42/42. That is
+;; precisely the defect this primitive exists to prevent, reproduced inside
+;; its own suite. The failing path calls `(exit 1)`, which cannot be observed
+;; in-process — so it is observed as a CHILD PROCESS, where an exit code is
+;; exactly what a test can read.
+
+(define (rc:run-child body)
+  ;; Compose stdlib + `body` and run it, returning the child's exit status.
+  (let ((f (string-append "/tmp/rc-probe-" (random-hex 8) ".tlisp")))
+    (write-file f (string-append (read-file "_tlisp-stdlib/stdlib.tlisp") "\n" body))
+    (status-of (exec-capture "tatara-script" f))))
+
+(deftest "require-capability ABORTS when the probe cannot prove the capability"
+  (assert
+    (not (= (rc:run-child "(require-capability \"unproven\" (lambda () #f))\n(exit 0)\n") 0))
+    "a false probe must abort the run — a soft skip is the bug this prevents"))
+
+(deftest "require-capability lets the run continue when the probe proves it"
+  (assert
+    (= (rc:run-child "(require-capability \"proven\" (lambda () #t))\n(exit 0)\n") 0)
+    "a true probe must not block"))
+
+(deftest "require-capability names the gate in its diagnostic"
+  (let* ((f (string-append "/tmp/rc-msg-" (random-hex 8) ".tlisp")))
+    (write-file f (string-append (read-file "_tlisp-stdlib/stdlib.tlisp")
+      "\n(require-capability \"my-named-gate\" (lambda () #f))\n"))
+    (let ((r (exec-capture "tatara-script" f)))
+      (assert (string-contains? (string-append (stdout-of r) (stderr-of r)) "my-named-gate")
+        "the operator must be told WHICH gate is blind"))))

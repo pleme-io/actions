@@ -165,6 +165,80 @@
     (let ((r (exec-capture "tatara-script" "lint" probe)))
       (string-contains? (string-append (stdout-of r) (stderr-of r)) "unbound-symbol"))))
 
+;; ── Lint the COMPOSED unit, not the file ────────────────────────────────
+;;
+;; `tatara-script lint` scopes each file independently, but an action is
+;; never run as one file: action.yml `cat`s the shared stdlib (and sometimes
+;; a second domain stdlib) in FRONT of run.tlisp. So linting files in
+;; isolation reports every stdlib call as unbound. Measured 2026-08-06 on this
+;; repo: 2903 violations per-file, of which 2893 vanish once the files are
+;; composed the way the runtime composes them. Topped by `append-output`
+;; (888), `status-of` (246), `stdout-of` (211) — all stdlib, all resolving
+;; fine at run time.
+;;
+;; The composition list is READ FROM action.yml's `cat` lines rather than
+;; assumed. Assuming "stdlib + run.tlisp" is itself a source of false
+;; positives: ddl-gate composes THREE files (_tlisp-stdlib, _tlisp-ddl,
+;; run.tlisp) and a two-file assumption reports its seven `ddl:*` helpers as
+;; unbound. The declaration is the truth; guessing it re-creates the bug.
+
+;; Ordered .tlisp paths an action.yml cats, derived from its `cat "…"` lines.
+(define (composed-parts-of action-yml action-dir)
+  (let ((lines (string-split (read-file action-yml) "\n")))
+    (define (walk ls acc)
+      (cond
+        ((null? ls) acc)
+        (else
+          (let ((l (string-trim (car ls))))
+            (walk (cdr ls)
+              (cond
+                ((and (string-starts-with? l "cat ") (string-contains? l ".tlisp"))
+                  (let ((p (path-of-cat-line l action-dir)))
+                    (if (and (not (equal? p "")) (path-exists? p))
+                      (append acc (list p))
+                      acc)))
+                (else acc)))))))
+    (walk lines (list))))
+
+;; Resolve one `cat "${{ github.action_path }}/../x/y.tlisp"` to a real path.
+;; action_path is the action's own directory, so `/../` climbs to the repo.
+(define (path-of-cat-line line action-dir)
+  (let* ((after (car (cdr (string-split line "}}"))))
+         (raw (if (equal? after "") "" (string-trim after)))
+         (cleaned (string-replace (string-replace raw "\"" "") "'" "")))
+    (cond
+      ((equal? cleaned "") "")
+      (else (string-append action-dir cleaned)))))
+
+;; Lint one action as the runtime composes it. Returns violation count.
+(define (composed-unbound-errors action-dir)
+  (let ((yml (string-append action-dir "/action.yml")))
+    (cond
+      ((not (path-exists? yml)) 0)
+      (else
+        (let ((parts (composed-parts-of yml action-dir)))
+          (cond
+            ((null? parts) 0)
+            (else
+              (let* ((tmp (string-append "/tmp/tlisp-lint-composed-"
+                                         (random-hex 8) ".tlisp"))
+                     (body (concat-files parts "")))
+                (write-file tmp body)
+                (let ((r (exec-capture "tatara-script" "lint" tmp)))
+                  (cond
+                    ((= (status-of r) 0) 0)
+                    (else
+                      (log-error
+                        (string-append action-dir ": composed lint found real unbound symbols\n"
+                                       (string-trim (stdout-of r))))
+                      1)))))))))))
+
+(define (concat-files paths acc)
+  (cond
+    ((null? paths) acc)
+    (else (concat-files (cdr paths)
+            (string-append acc (read-file (car paths)) "\n")))))
+
 (define (semantic-rule-errors)
   (let*
     ((help (exec-capture "tatara-script" "--help"))
@@ -173,18 +247,71 @@
       ((not (string-contains? help-text "lint [path"))
         (log-info "  semantic rule lint skipped (tatara-script has no lint subcommand yet)")
         0)
-      ((not (unbound-rule-present?))
-        (log-info
-          (string-append
-            "  semantic rule lint: PARTIAL — this tatara-script has `lint` but not the "
-            "unbound-symbol rule (landed v0.3.23; this action pins v0.2.5). "
-            "Unbound symbols are NOT checked here. Reported clean is not evidence."))
-        0)
       (else
-        (let ((r (exec-capture "tatara-script" "lint" ".")))
-          (cond
-            ((= (status-of r) 0) (log-info "  semantic rule lint: clean") 0)
-            (else (log-error (string-trim (stdout-of r))) 1)))))))
+        ;; ── WHY THIS IS NOT YET `require-capability` (fail-closed) ─────────
+        ;;
+        ;; The destination is fail-closed: a binary that cannot detect a
+        ;; deliberately unbound symbol should BLOCK, because a clean verdict
+        ;; from it is vacuous. `require-capability` (in _tlisp-stdlib) is
+        ;; written, tested in both directions, and ready to be called here —
+        ;; one line.
+        ;;
+        ;; It is not called yet because arming it today breaks the fleet
+        ;; either way, and that is a measurement, not a caution:
+        ;;
+        ;;   * pinned v0.2.5 cannot detect the fixture -> every consumer
+        ;;     blocks immediately;
+        ;;   * bumping to v0.3.37 (the only recent release with linux assets —
+        ;;     v0.3.36 shipped macOS-only) requires GLIBC_2.39, measured off
+        ;;     the published binary. ubuntu-22.04 ships 2.35, and repos pin
+        ;;     22.04 for real reasons, so every one of those blocks instead.
+        ;;
+        ;; There is no musl asset, and musl is the actual fix: a static binary
+        ;; has NO glibc floor and runs on any runner, which makes the pin bump
+        ;; safe and this layer armable. Sequence is: ship a musl
+        ;; tatara-script -> bump this repo's pin -> replace the block below
+        ;; with `require-capability`.
+        ;;
+        ;; Until then this reports PARTIAL — loudly, and never as "clean".
+        ;; That is the whole defect being corrected: the layer said "clean"
+        ;; for a month while structurally unable to check. A blind gate that
+        ;; announces its blindness is honest; one that reports green is not.
+        (cond
+          ((not (unbound-rule-present?))
+            (log-info
+              (string-append
+                "  semantic rule lint: PARTIAL — this tatara-script has `lint` but not "
+                "the unbound-symbol rule (landed v0.3.23; pinned here at v0.2.5). "
+                "Unbound symbols are NOT checked. A clean result is not evidence. "
+                "Arming the hard block needs a musl tatara-script release first — "
+                "v0.3.37 requires GLIBC_2.39 and would break every ubuntu-22.04 runner."))
+            #f)
+          (else #t))
+        ;; Two passes, because the rules have two different scopes.
+        ;;
+        ;; The file-local semantic rules (git-mutation-discard et al.) are
+        ;; correct per file and run repo-wide with the unbound rule OFF.
+        ;; The unbound rule alone needs the runtime's composition, so it runs
+        ;; per action against the concatenation action.yml declares.
+        (+
+          (let ((r (exec-capture "tatara-script" "lint" "--no-unbound" ".")))
+            (cond
+              ((= (status-of r) 0) (log-info "  semantic rule lint: clean") 0)
+              (else (log-error (string-trim (stdout-of r))) 1)))
+          (composed-unbound-total (action-dirs) 0))))))
+
+;; Every action directory in the repo (those carrying an action.yml).
+(define (action-dirs)
+  (let ((r (exec-capture "sh" "-c" "ls -d */ 2>/dev/null | sed 's#/##'")))
+    (cond
+      ((not (= (status-of r) 0)) (list))
+      (else (string-split (string-trim (stdout-of r)) "\n")))))
+
+(define (composed-unbound-total dirs acc)
+  (cond
+    ((null? dirs) acc)
+    (else (composed-unbound-total (cdr dirs)
+            (+ acc (composed-unbound-errors (car dirs)))))))
 
 ;; ── Layer 4: stdlib shadowing ──────────────────────────────────
 ;; action.yml concatenates `_tlisp-stdlib/stdlib.tlisp` FIRST and the action's
