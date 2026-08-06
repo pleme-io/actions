@@ -1,4 +1,22 @@
-;; honeycomb-marker/run.tlisp — tlisp+stdlib body
+;; honeycomb-marker/run.tlisp — create a Honeycomb marker.
+;;
+;; Was jq-through-sh then curl-through-sh, with three defects beyond the
+;; shared ones:
+;;
+;;   * `date +%s` was shelled out. `now` is a primitive, and the shelled
+;;     status was never read — a failure yielded ts="" and emitted
+;;     `--argjson ts ` with no operand, surfacing only as the generic
+;;     "payload assembly failed".
+;;   * `url-frag` spliced the LITERAL TEXT ` url-in ` because the variable sat
+;;     inside a string literal, so any non-empty URL_ARG broke the payload
+;;     unconditionally. Repaired in place earlier today; now the value is
+;;     simply a field, so the category is gone.
+;;   * the API_KEY sat in argv inside `-H 'X-Honeycomb-Team: <key>'`.
+;;
+;; DATASET is interpolated into the URL PATH, which is correct — it addresses
+;; the resource — but it is a path segment, so a value containing `/` would
+;; retarget the request. Honeycomb dataset names do not contain slashes; if
+;; that ever changes this needs encoding.
 
 (define key (env-required "API_KEY"))
 
@@ -10,75 +28,30 @@
 
 (define url-in (env-get "URL_ARG" ""))
 
-(define ts-r (exec-capture "sh" "-c" "date +%s"))
+(define url (string-append "https://api.honeycomb.io/1/markers/" ds))
 
-(define ts (string-trim (stdout-of ts-r)))
+;; Seconds since the epoch, in-process. `now` is a primitive.
+(define ts (now))
 
-;; `url-in` was INSIDE the string literal: `(string-append ", url: " " url-in " "")`
-;; spliced the literal text ` url-in `, never the value. So any non-empty
-;; URL_ARG emitted a bare `url-in` token into the jq filter and the payload
-;; failed unconditionally — the feature has never worked, and the only symptom
-;; was the generic "payload assembly failed".
-;;
-;; The quotes here are jq's, not tlisp's: the filter needs a JSON string.
-;;
-;; RESIDUAL, deliberately not fixed in this edit: url-in is env-supplied and
-;; still spliced into the filter rather than passed as `--arg url`, so a value
-;; containing a quote still breaks it. That is the same argv fix the rest of
-;; this file needs and belongs with it, not bolted on here.
-(define url-frag
-  (if (equal? url-in "") "" (string-append ", url: \"" url-in "\"")))
+(define base
+  (list
+    (list "message" msg)
+    (list "type" ty)
+    (list "start_time" ts)))
 
-(define payload-jq
-  (string-append
-    "jq -n --arg msg '"
-    msg
-    "' --arg ty '"
-    ty
-    "' --argjson ts "
-    ts
-    " '{ message: $msg, type: $ty, start_time: $ts"
-    url-frag
-    " }'"))
-
+;; The optional url is a FIELD now, not a spliced fragment of a jq filter.
 (define payload
-  (let ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond
-      ((= (status-of r) 0) (stdout-of r))
-      (else (log-error "payload assembly failed") (exit 1)))))
+  (if (equal? url-in "") base (append base (list (list "url" url-in)))))
 
-(define endpoint (string-append "https://api.honeycomb.io/1/markers/" ds))
-
-(define r
-  (exec-capture "sh"
-    "-c"
-    (string-append
-      "curl -sS -X POST -H 'X-Honeycomb-Team: "
-      key
-      "' -H 'Content-Type: application/json' "
-      "-d '"
-      (string-replace
-        payload
-        "'"
-        "'\"'\"'")
-      "' '"
-      endpoint
-      "'")))
+(define r (webhook:post url (list (list "X-Honeycomb-Team" key)) payload))
 
 (cond
-  ((= (status-of r) 0)
-    (let*
-      ((jq-r
-         (exec-capture "sh"
-           "-c"
-           (string-append
-             "echo '"
-             (string-replace
-               (stdout-of r)
-               "'"
-               "'\"'\"'")
-             "' | jq -r '.id'")))
-        (id (string-trim (stdout-of jq-r))))
-      (append-output (string-append "marker-id=" id))
-      (exit 0)))
-  (else (append-output "marker-id=") (exit 1)))
+  ((erro:err? r)
+    (log-error
+      (string-append "honeycomb-marker: create failed — " (erro:message (erro:value r))))
+    (append-output "created=false")
+    (exit 1))
+  (else
+    (log-info "honeycomb-marker: created")
+    (append-output "created=true")
+    (exit 0)))

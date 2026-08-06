@@ -1,4 +1,15 @@
-;; datadog-event/run.tlisp — tlisp+stdlib migration
+;; datadog-event/run.tlisp — post an event to the Datadog Events API.
+;;
+;; Was jq-through-sh then curl-through-sh. The API_KEY sat in argv inside
+;; `-H 'DD-API-KEY: <key>'`, readable from `ps` or /proc/<pid>/cmdline; curl
+;; had no `--fail`, so the verdict came from a scraped `%{http_code}`; and
+;; TITLE/TEXT/TAGS/ALERT_TYPE were interpolated into single quotes, so any
+;; value containing `'` closed the quote and injected.
+;;
+;; The jq filter here also carried the four-fragment string bug (jq's inner
+;; `","` ending the tlisp string early, making the next line's comma an
+;; UNQUOTE). That was repaired in place earlier today; converting to a lisp
+;; payload removes the whole category rather than that one instance.
 
 (define key (env-required "API_KEY"))
 
@@ -12,63 +23,32 @@
 
 (define site (env-get "SITE" "datadoghq.com"))
 
-(define payload-jq
-  (string-append
-    "jq -n --arg title '"
-    title
-    "' --arg text '"
-    text
-    "' --arg alert '"
-    alert
-    "' --arg tags '"
-    tags
-    ;; The next line used to be FOUR broken fragments:
-    ;;
-    ;;     "    tags: ($tags | split("
-    ;;     ,")), source_type_name: "
-    ;;     github
-    ;;     " }'"
-    ;;
-    ;; The inner `","` of jq's split ended the tlisp string early, so the
-    ;; leading `,` of the following line was read as UNQUOTE and `github`
-    ;; became a bare, unbound symbol. It parsed cleanly — paren balance and
-    ;; the parser dry-run both passed it — and died only when evaluation
-    ;; reached it, taking the whole action with it. The inner quotes need
-    ;; escaping, and then it is one string.
-    "' '{ title: $title, text: $text, alert_type: $alert,"
-    "    tags: ($tags | split(\",\")), source_type_name: \"github\" }'"))
-
-(define payload
-  (let ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond
-      ((= (status-of r) 0) (stdout-of r))
-      (else (log-error "payload assembly failed") (exit 1)))))
-
 (define url (string-append "https://api." site "/api/v1/events"))
 
-(define curl-cmd
-  (string-append
-    "curl -sS -o /dev/null -w '%{http_code}' "
-    "-X POST -H 'Content-Type: application/json' "
-    "-H 'DD-API-KEY: "
-    key
-    "' "
-    "-d '"
-    (string-replace
-      payload
-      "'"
-      "'\"'\"'")
-    "' '"
-    url
-    "'"))
+;; `tags` is a comma-separated list by contract — this is jq's
+;; `($tags | split(","))`, done in-process.
+(define tag-list
+  (filter (lambda (t) (not (equal? (string-trim t) "")))
+          (string-split tags ",")))
 
-(define r (exec-capture "sh" "-c" curl-cmd))
+(define payload
+  (list
+    (list "title" title)
+    (list "text" text)
+    (list "alert_type" alert)
+    (list "tags" tag-list)
+    (list "source_type_name" "github")))
 
-(define code (string-trim (stdout-of r)))
+;; The key is a HEADER VALUE, never argv.
+(define r (webhook:post url (list (list "DD-API-KEY" key)) payload))
 
 (cond
-  ((or (equal? code "200") (equal? code "202")) (append-output "posted=true") (exit 0))
-  (else
-    (log-error (string-append "Datadog API returned " code))
+  ((erro:err? r)
+    (log-error
+      (string-append "datadog-event: post failed — " (erro:message (erro:value r))))
     (append-output "posted=false")
-    (exit 1)))
+    (exit 1))
+  (else
+    (log-info "datadog-event: posted")
+    (append-output "posted=true")
+    (exit 0)))

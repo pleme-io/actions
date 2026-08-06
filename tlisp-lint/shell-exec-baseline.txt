@@ -18,7 +18,6 @@ container-boot-check/run.tlisp
 cosign-verify/run.tlisp
 coverage-upload/run.tlisp
 cyclonedx-merge/run.tlisp
-datadog-event/run.tlisp
 db-backup/run.tlisp
 db-migrate/run.tlisp
 detect-repo-type/run.tlisp
@@ -31,7 +30,6 @@ helm-bump/run.tlisp
 helm-ct-list-changed/run.tlisp
 helm-deploy/run.tlisp
 helm-publish/run.tlisp
-honeycomb-marker/run.tlisp
 image-scan/run.tlisp
 kafka-publish/run.tlisp
 ko-build/run.tlisp
