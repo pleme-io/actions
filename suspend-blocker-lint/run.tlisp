@@ -15,102 +15,254 @@
 ;; So: every `suspend: true` declares three annotations.
 ;;
 ;;   pleme.io/blocked-by        stable slug naming the blocker
-;;   pleme.io/blocked-clearing  what clears it -- human-sso-apply |
-;;                              upstream-pangea-operator | operator-reconcile
+;;   pleme.io/blocked-clearing  one of `clearing-vocabulary` below
 ;;   pleme.io/blocked-since     ISO date, so age is visible
 ;;
 ;; Same baseline-debt discipline as ddl-gate / breathe-band-lint: existing
 ;; unannotated suspensions are tracked in a baseline and reported every run,
 ;; never silently accepted; a NEW one fails the build. The goal is an empty
 ;; baseline.
+;;
+;; -- three defects fixed 2026-08-06, all found by auditing the first real
+;; -- corpus this gate produced rather than by it going red --
+;;
+;; 1. DOCUMENT-SCOPED, NOT FILE-SCOPED. The first version read whole files, so
+;;    an annotation anywhere in a file satisfied a suspension anywhere else in
+;;    it -- in a multi-doc file (declare-job.yaml ships a ServiceAccount and a
+;;    Job) the three keys could sit on the wrong object and still pass. It also
+;;    manufactured a finding no one could honestly annotate: a kustomize
+;;    Component's `suspend: true` is PATCH PAYLOAD, and a Component's own
+;;    metadata.annotations are inert -- they never reach a rendered object, so
+;;    the demanded annotation would be unreadable by anything. Now each `---`
+;;    document is judged alone and `kustomize.config.k8s.io/*` documents are
+;;    skipped. Skipping is keyed on apiVersion, NOT on `kind: Kustomization`,
+;;    because Flux's kustomize.toolkit.fluxcd.io Kustomization shares that kind
+;;    and its `suspend: true` is a real suspension this gate must still catch.
+;;
+;; 2. THE COMMENT GUARDS WERE INERT. `string-prefix?` is (s prefix) -- subject
+;;    first -- and both call sites passed `(string-prefix? "#" line)`, which
+;;    asks whether "#" starts with the line and is therefore false for every
+;;    non-empty line. Consequence on `declares-annotation?`: a COMMENTED-OUT
+;;    annotation counted as declared, so the gate could be satisfied by prose.
+;;    Latent rather than exploited (no committed file had one), which is the
+;;    only reason it never mattered. This is the same reversed-argument class
+;;    the `yaml-files` comment below already warns about for string-suffix?:
+;;    the warning was written and then the identical mistake shipped two
+;;    functions later, so the guard here is a test, not a comment.
+;;
+;; 3. THE CLEARING VOCABULARY WAS DOCUMENTED BUT NEVER CHECKED. Three values
+;;    were named in a header; nothing compared against them, so any string --
+;;    or a typo -- passed. It is enforced now, which is also what makes adding
+;;    a fourth value meaningful: two real camelot blockers (hardened-natscli
+;;    and escuta, both absent from zot) are cleared by publishing an image,
+;;    which none of the original three describes. Forcing either into
+;;    `policy-decision` would have recorded a false clearing path -- and for
+;;    escuta an actively wrong one, since that file explicitly refuses the
+;;    substitute-registry route.
 
 (define root (env-get "ROOT" "."))
+
 (define fail-on-violation (not (equal? (env-get "FAIL_ON_VIOLATION" "true") "false")))
+
 (define baseline-path (string-append root "/.suspend-blocker-baseline.txt"))
 
 (define required-annotations
-  (list "pleme.io/blocked-by" "pleme.io/blocked-clearing" "pleme.io/blocked-since"))
+  (list
+    "pleme.io/blocked-by"
+    "pleme.io/blocked-clearing"
+    "pleme.io/blocked-since"))
+
+;; What can actually clear a parked declaration. Closed set: a value outside it
+;; is a finding, because an unrecognised clearing path is indistinguishable
+;; from a typo and neither can be acted on.
+;;
+;;   human-sso-apply           a human runs pangea apply under their own SSO
+;;   upstream-pangea-operator  a fix must land in pangea-operator first
+;;   operator-reconcile        the operator can do it once it reconciles
+;;   hardened-image-publish    an image must be built and pushed to zot
+;;
+;; Kept as a bare list: the canonical formatter moves a trailing comment onto
+;; its own line, which would leave each note sitting between the value it
+;; describes and the next one.
+(define clearing-vocabulary
+  (list
+    "human-sso-apply"
+    "upstream-pangea-operator"
+    "operator-reconcile"
+    "hardened-image-publish"))
 
 ;; `(string-suffix? s suffix)` -- SUBJECT first. Reversing these two silently
 ;; matches nothing, and a linter that scans zero files exits 0 and reads exactly
 ;; like a clean run. Caught here by asserting the file count is non-zero below.
-(define (yaml-files dir)
-  (filter (lambda (p) (string-suffix? p ".yaml")) (walk-dir dir)))
+(define (yaml-files dir) (filter (lambda (p) (string-suffix? p ".yaml")) (walk-dir dir)))
 
-;; A real suspension is `suspend: true` as YAML, not the phrase inside a
-;; comment. Every one of these files discusses suspension in prose, so a
-;; substring match would flag all of them.
-(define (really-suspended? body)
-  (any-line-matches? (string-split body "\n")
-    (lambda (l)
-      (and (string-contains? l "suspend:")
-           (string-contains? l "true")
-           (not (string-prefix? "#" (string-trim l)))
-           (not (string-contains? l "# "))))))
+;; -- document splitting ----------------------------------------------------
 
-(define (declares-annotation? body key)
-  (any-line-matches? (string-split body "\n")
-    (lambda (l)
-      (and (string-contains? l key)
-           (not (string-prefix? "#" (string-trim l)))))))
+(define (doc-split-walk lines cur acc)
+  (cond
+    ((null? lines) (reverse (cons (string-join "\n" (reverse cur)) acc)))
+    ((equal? (string-trim (car lines)) "---")
+      (doc-split-walk
+        (cdr lines)
+        '()
+        (cons (string-join "\n" (reverse cur)) acc)))
+    (else (doc-split-walk (cdr lines) (cons (car lines) cur) acc))))
 
-(define (missing-for body)
-  (filter (lambda (k) (not (declares-annotation? body k))) required-annotations))
+(define (yaml-documents body) (doc-split-walk (string-split body "\n") '() '()))
+
+;; A document's own top-level field, matched at column 0 so a `kind:` nested
+;; inside a patch body cannot be mistaken for the document's kind.
+(define (doc-field doc key)
+  (let
+    ((hits
+       (filter (lambda (l) (string-prefix? l (string-append key ":"))) (string-split doc "\n"))))
+    (cond
+      ((null? hits) "")
+      ;; re-join on ":" so a value containing one (a URL) survives intact
+      (else (string-trim (string-join ":" (cdr (string-split (car hits) ":"))))))))
+
+(define (kustomize-config-doc? doc)
+  (string-prefix? (doc-field doc "apiVersion") "kustomize.config.k8s.io/"))
+
+;; -- predicates ------------------------------------------------------------
+
+;; Everything left of the first `#`. A commented line yields "", so the checks
+;; below reject it without needing a separate comment guard -- which is what
+;; the inert one was trying to be.
+(define (code-of line) (string-trim (car (string-split line "#"))))
+
+;; A real suspension is the KEY `suspend:` set true, not the word in prose.
+;; Every one of these files discusses suspension in its header.
+(define (line-suspends? l)
+  (let ((code (code-of l))) (and (string-prefix? code "suspend:") (string-contains? code "true"))))
+
+(define (doc-suspended? doc) (any-line-matches? (string-split doc "\n") line-suspends?))
+
+(define (annotation-line doc key)
+  (let
+    ((hits
+       (filter
+         (lambda (l) (and (string-contains? (code-of l) key) (not (equal? (code-of l) ""))))
+         (string-split doc "\n"))))
+    (if (null? hits)
+      ""
+      (car hits))))
+
+(define (declares-annotation? doc key) (not (equal? (annotation-line doc key) "")))
+
+(define (unquote-str s) (string-trim (string-join "" (string-split (string-trim s) "\""))))
+
+(define (annotation-value doc key)
+  (let ((l (annotation-line doc key)))
+    (cond
+      ((equal? l "") "")
+      (else (unquote-str (string-join ":" (cdr (string-split (code-of l) ":"))))))))
+
+(define (missing-for doc)
+  (filter (lambda (k) (not (declares-annotation? doc k))) required-annotations))
+
+;; "" when the clearing value is absent (that is `missing-for`'s finding, not
+;; this one) or recognised; otherwise the offending value.
+(define (bad-clearing doc)
+  (let ((v (annotation-value doc "pleme.io/blocked-clearing")))
+    (cond
+      ((equal? v "") "")
+      ((> (length (filter (lambda (x) (equal? x v)) clearing-vocabulary)) 0) "")
+      (else v))))
 
 (define (relpath p)
   (let ((parts (string-split p (string-append root "/"))))
-    (if (> (length parts) 1) (car (cdr parts)) p)))
+    (if (> (length parts) 1)
+      (car (cdr parts))
+      p)))
+
+;; -- findings --------------------------------------------------------------
+
+(define (doc-finding path doc)
+  (cond
+    ((kustomize-config-doc? doc) '())
+    ((not (doc-suspended? doc)) '())
+    (else
+      (let ((missing (missing-for doc)) (bad (bad-clearing doc)))
+        (cond
+          ((not (null? missing))
+            (list
+              (list
+                (string-append "SUSPEND-UNEXPLAINED " (relpath path))
+                (string-append "missing: " (string-join ", " missing)))))
+          ((not (equal? bad ""))
+            (list
+              (list
+                (string-append "SUSPEND-BAD-CLEARING " (relpath path))
+                (string-append
+                  "blocked-clearing="
+                  bad
+                  " is not one of: "
+                  (string-join ", " clearing-vocabulary)))))
+          (else '()))))))
 
 (define (finding-for path)
   (let ((body (read-file path)))
-    (cond
-      ((not (really-suspended? body)) '())
-      (else
-        (let ((missing (missing-for body)))
-          (cond
-            ((null? missing) '())
-            (else (list (list (string-append "SUSPEND-UNEXPLAINED " (relpath path))
-                              (string-join ", " missing))))))))))
+    (reduce
+      (lambda (acc d) (append acc (doc-finding path d)))
+      '()
+      (yaml-documents body))))
 
-(define all-findings
-  (reduce (lambda (acc p) (append acc (finding-for p))) '() (yaml-files root)))
-
-(define baseline-lines
+(define (read-baseline)
   (if (path-exists? baseline-path)
-      (filter (lambda (l) (and (not (equal? (string-trim l) ""))
-                               (not (string-prefix? "#" (string-trim l)))))
-              (string-split (read-file baseline-path) "\n"))
-      '()))
-
-(define (baselined? f)
-  (> (length (filter (lambda (l) (equal? (string-trim l) (car f))) baseline-lines)) 0))
-
-(define debt (filter baselined? all-findings))
-(define violations (filter (lambda (f) (not (baselined? f))) all-findings))
+    (filter
+      (lambda (l)
+        (and (not (equal? (string-trim l) "")) (not (string-prefix? (string-trim l) "#"))))
+      (string-split (read-file baseline-path) "\n"))
+    '()))
 
 (define (say-finding tag f)
-  (print-line (string-append tag (string-append " " (string-append (car f)
-    (string-append "  missing: " (car (cdr f))))))))
+  (print-line
+    (string-append
+      tag
+      (string-append " " (string-append (car f) (string-append "  " (car (cdr f))))))))
 
-;; A linter that scanned nothing is not a clean run, it is a broken one, and
-;; the two are indistinguishable from the exit code alone. Fail loudly instead.
-(if (eq? 0 (length (yaml-files root)))
-    (begin
-      (print-line (string-append "suspend-blocker-lint: FAILED — scanned 0 yaml files under " root))
-      (print-line "  a zero-file scan is a bug in the linter or a wrong ROOT, never a pass")
-      (exit 2))
-    #t)
+(define (main)
+  (let ((files (yaml-files root)))
+    ;; A linter that scanned nothing is not a clean run, it is a broken one, and
+    ;; the two are indistinguishable from the exit code alone. Fail loudly.
+    (if (eq? 0 (length files))
+      (begin
+        (print-line
+          (string-append "suspend-blocker-lint: FAILED — scanned 0 yaml files under " root))
+        (print-line "  a zero-file scan is a bug in the linter or a wrong ROOT, never a pass")
+        (exit 2))
+      #t)
+    (let
+      ((all-findings (reduce (lambda (acc p) (append acc (finding-for p))) '() files))
+        (baseline-lines (read-baseline)))
+      (let
+        ((baselined?
+           (lambda (f)
+             (>
+               (length (filter (lambda (l) (equal? (string-trim l) (car f))) baseline-lines))
+               0))))
+        (let
+          ((debt (filter baselined? all-findings))
+            (violations (filter (lambda (f) (not (baselined? f))) all-findings)))
+          (print-line
+            (string-format
+              "suspend-blocker-lint: {} yaml files under {}"
+              (length files)
+              root))
+          (map (lambda (f) (say-finding "  debt   " f)) debt)
+          (map (lambda (f) (say-finding "  UNNAMED" f)) violations)
+          (print-line
+            (string-format
+              "suspend-blocker-lint: {} new, {} tracked debt"
+              (length violations)
+              (length debt)))
+          (append-output (string-append "violations=" (string-format "{}" (length violations))))
+          (append-output (string-append "baselined=" (string-format "{}" (length debt))))
+          (if (and fail-on-violation (> (length violations) 0))
+            (exit 1)
+            (exit 0)))))))
 
-(print-line (string-format "suspend-blocker-lint: {} yaml files under {}"
-                           (length (yaml-files root)) root))
-(map (lambda (f) (say-finding "  debt  " f)) debt)
-(map (lambda (f) (say-finding "  UNNAMED" f)) violations)
-(print-line (string-format "suspend-blocker-lint: {} new, {} tracked debt"
-                           (length violations) (length debt)))
-
-(append-output (string-append "violations=" (string-format "{}" (length violations))))
-(append-output (string-append "baselined=" (string-format "{}" (length debt))))
-
-(if (and fail-on-violation (> (length violations) 0))
-    (exit 1)
-    (exit 0))
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — loaded; main skipped (the test harness drives it)"))
