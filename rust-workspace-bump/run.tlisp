@@ -121,19 +121,42 @@
 ;; whole release fails. `[[:space:]]*` on both sides of `=` matches any
 ;; alignment; the replacement normalizes to a single space (TOML-valid,
 ;; self-consistent on the next bump).
+;; DESHELLIFIED 2026-08-06. This was `exec-capture "sh" "-c"` around
+;; `sed -i.bak … && rm -f Cargo.toml.bak`, and it carried three defects that
+;; the native form removes rather than works around:
+;;
+;;   1. `sed -i` EXITS 0 WHEN ITS PATTERN MATCHES NOTHING. The old code
+;;      returned `(= (status-of r) 0)`, so "I rewrote nothing" and "I rewrote
+;;      the version" were the same answer. The comment above documents the
+;;      team already being bitten by exactly this on aligned workspaces, and
+;;      the fix at the time was a looser regex plus a readback further down.
+;;      Here the no-op is DETECTABLE at the point it happens: a pattern that
+;;      matches nothing leaves the content byte-identical, so we compare and
+;;      return #f. The readback stays as defence in depth, not as the only net.
+;;   2. `-i.bak` writes Cargo.toml.bak, and the `&& rm -f` only runs when sed
+;;      SUCCEEDS. Any failure left the copy on disk. Nothing is written here
+;;      unless the substitution actually changed something.
+;;   3. The old-version string was interpolated raw into a regex, so its dots
+;;      matched any character. re-quote escapes it.
+(define (re-quote s)
+  (re-replace "([.+*?^$()\\[\\]{}|\\\\])" s "\\$1"))
+
+;; Pure so it is testable: the IO wrapper below is the only part that touches
+;; disk, and every predicate worth asserting lives here. Returns the rewritten
+;; text, or the INPUT UNCHANGED when the pattern matched nothing -- that
+;; identity is the no-op signal the caller keys on.
+(define (bump-version-text src old-v new-v)
+  (re-replace
+    (string-append "(?m)^version[ \t]*=[ \t]*\"" (re-quote old-v) "\"")
+    src
+    (string-append "version = \"" new-v "\"")))
+
 (define (write-workspace-version old-v new-v)
-  (let
-    ((r
-       (exec-capture "sh"
-         "-c"
-         (string-append
-           "sed -i.bak 's/^version[[:space:]]*=[[:space:]]*\""
-           old-v
-           "\"/version = \""
-           new-v
-           "\"/' Cargo.toml"
-           " && rm -f Cargo.toml.bak"))))
-    (= (status-of r) 0)))
+  (let ((src (read-file "Cargo.toml")))
+    (let ((out (bump-version-text src old-v new-v)))
+      (cond
+        ((equal? out src) #f)
+        (else (begin (write-file "Cargo.toml" out) #t))))))
 
 ;; ── Intra-workspace caret pins ─────────────────────────────────────── ;;
 ;;

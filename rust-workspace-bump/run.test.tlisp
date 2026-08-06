@@ -285,3 +285,40 @@
     (assert
       (string-contains? out "{ path = \"engenho-types\", version = \"0.3.0\" }")
       "a caret pin alongside it is still rewritten as a caret — no '=' invented")))
+
+;; ── bump-version-text — the deshellified Cargo.toml rewrite ───────────── ;;
+;;
+;; These exist because the sed form they replaced could not be tested at all,
+;; and its worst failure mode was invisible: `sed -i` exits 0 when it matches
+;; nothing, so "no version bumped" and "version bumped" returned the same
+;; status. The no-match assertion below is the one that would have caught it.
+
+(deftest "bump-version-text: aligned assignment is rewritten and normalized"
+  (let*
+    ((toml "[workspace.package]\nversion   =    \"0.1.4\"\nedition = \"2021\"\n")
+      (out (bump-version-text toml "0.1.4" "0.2.0")))
+    (assert
+      (string-contains? out "version = \"0.2.0\"")
+      "the aligned value is matched and rewritten to a single-space form")
+    (assert
+      (not (string-contains? out "0.1.4"))
+      "the old version is gone")
+    (assert
+      (string-contains? out "edition = \"2021\"")
+      "neighbouring keys are untouched")))
+
+(deftest "bump-version-text: a non-matching version leaves the text IDENTICAL"
+  (let*
+    ((toml "[workspace.package]\nversion = \"0.1.4\"\n")
+      (out (bump-version-text toml "9.9.9" "0.2.0")))
+    (assert
+      (equal? out toml)
+      "no match means byte-identical output — that identity is how the caller detects the no-op that sed reported as success")))
+
+(deftest "bump-version-text: dots in the old version are not wildcards"
+  (let*
+    ((toml "[workspace.package]\nversion = \"0X1X4\"\n")
+      (out (bump-version-text toml "0.1.4" "0.2.0")))
+    (assert
+      (equal? out toml)
+      "0.1.4 must not match 0X1X4 — re-quote escapes the dots the old code interpolated raw")))

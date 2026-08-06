@@ -159,21 +159,37 @@
           ": expected exactly one \"  :files\" block, found "
           (string-format "{}" (length hits)))))))
 
-(let
-  ((r
-     (exec-capture "sh"
-       "-c"
-       (string-append
-         "sed -i.bak 's/:version \""
-         old-version
-         "\"/:version \""
-         new-version
-         "\"/' "
-         caixa-path
-         " && rm -f "
-         caixa-path
-         ".bak"))))
-  (when (not (= (status-of r) 0)) (fail "the :version rewrite failed")))
+;; DESHELLIFIED 2026-08-06. This was `exec-capture "sh" "-c"` around
+;; `sed -i.bak … && rm -f <path>.bak`, gated on `(= (status-of r) 0)`.
+;;
+;; That gate could not fail for the case that actually matters: `sed -i` EXITS
+;; 0 WHEN ITS PATTERN MATCHES NOTHING. So a caixa.edn whose `:version` did not
+;; match old-version -- a hand-edit, a format change, a stale input -- left the
+;; file untouched, returned 0, and the bump proceeded to tag and publish a
+;; version that was never written. Success and silent no-op were the same
+;; status.
+;;
+;; The native form makes the no-op the loud case: a pattern that matches
+;; nothing leaves the text byte-identical, which is checked directly. It also
+;; drops the `.bak` copy, which the old `&& rm -f` only removed when sed
+;; SUCCEEDED -- any failure left it on disk.
+(define (re-quote s)
+  (re-replace "([.+*?^$()\\[\\]{}|\\\\])" s "\\$1"))
+
+(define (bump-caixa-version src old-v new-v)
+  (re-replace
+    (string-append ":version[ \t]+\"" (re-quote old-v) "\"")
+    src
+    (string-append ":version \"" new-v "\"")))
+
+(let ((src (read-file caixa-path)))
+  (let ((out (bump-caixa-version src old-version new-version)))
+    (when (equal? out src)
+      (fail
+        (string-append
+          caixa-path ": no `:version \"" old-version "\"` to rewrite — "
+          "nothing was changed, so the bump would publish an unwritten version")))
+    (write-file caixa-path out)))
 
 ;; Re-read so the files block is regenerated from the version-bumped text.
 (define bumped-text (read-file caixa-path))
