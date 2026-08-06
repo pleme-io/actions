@@ -1,0 +1,39 @@
+
+;; ── the null..1 regression ──────────────────────────────────────
+;;
+;; yq prints the string `null` at EXIT 0 for a missing key, and the old reader
+;; returned it verbatim. bump-semver then split "null" on "." — one field, so
+;; awk's $2/$3 are empty — and produced `null..1`, which real yq wrote to BOTH
+;; .version and .appVersion before the action exited 0 with bumped=true.
+;;
+;; Measured with no stub: a Chart.yaml that omits `version:` reproduces it.
+
+(deftest "chart-version-ok? accepts a semver and rejects yq's null"
+  (assert (chart-version-ok? "1.2.3") "a plain semver is a version")
+  (assert (chart-version-ok? "0.1.0") "zeros are fine")
+  (assert (chart-version-ok? "1.2.3-rc1") "a pre-release suffix is still a version")
+  (assert (not (chart-version-ok? "null"))
+    "yq's missing-key output is NOT a version — this is the whole bug")
+  (assert (not (chart-version-ok? "")) "empty is not a version")
+  (assert (not (chart-version-ok? "null..1"))
+    "and neither is what the old code DERIVED from it"))
+
+(deftest "read-chart-version answers empty for a Chart.yaml with no version key"
+  ;; The fixture that reproduced it in production shape.
+  (let ((d (string-append "/tmp/hb-noversion-" (random-hex 8))))
+    (exec-capture "mkdir" "-p" d)
+    (write-file (string-append d "/Chart.yaml")
+      "apiVersion: v2\nname: demo\ndescription: no version key\n")
+    (let ((r (exec-capture "yq" ".version" (string-append d "/Chart.yaml"))))
+      (assert (= (status-of r) 0) "yq itself succeeds — that is why this was invisible")
+      (assert (equal? (string-trim (stdout-of r)) "null")
+        "and prints the literal string null, which must never reach bump-semver"))))
+
+(deftest "a semver Chart.yaml still reads back unchanged"
+  ;; The other direction: the guard must not reject legitimate versions.
+  (let ((d (string-append "/tmp/hb-ok-" (random-hex 8))))
+    (exec-capture "mkdir" "-p" d)
+    (write-file (string-append d "/Chart.yaml") "apiVersion: v2\nname: demo\nversion: 1.2.3\n")
+    (let ((r (exec-capture "yq" ".version" (string-append d "/Chart.yaml"))))
+      (assert (chart-version-ok? (string-trim (stdout-of r)))
+        "a real version passes the guard"))))
