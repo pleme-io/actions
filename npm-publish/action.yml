@@ -16,8 +16,22 @@ inputs:
 
 outputs:
   shipped:
-    description: "'true' on success (including skip-when-already), 'false' on failure"
+    # CONTRACT CHANGED 2026-08-06: 'true' means the artifact is ON THE REGISTRY.
+    #
+    # It previously meant "npm exited 0", which `npm publish --dry-run` also
+    # does without uploading anything — so a dry run emitted shipped=true and
+    # a caller gating release tagging on it could mint a tag for a version that
+    # provably does not exist. A dry run now reports shipped=false.
+    #
+    # Skip-when-already still counts as shipped: the artifact IS on the
+    # registry, which is the whole reading that makes this safe to tag from.
+    description: "'true' when the artifact is on the registry (including skip-when-already); 'false' on failure OR on a dry run"
     value: ${{ steps.ship.outputs.shipped }}
+  dry-run:
+    # Lets a caller tell "did not ship because it was a dry run" apart from
+    # "did not ship because it failed" — both are shipped=false.
+    description: "'true' when this run was a dry run and therefore uploaded nothing"
+    value: ${{ steps.ship.outputs.dry-run }}
 
 runs:
   using: composite
