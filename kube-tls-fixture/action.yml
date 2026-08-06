@@ -1,0 +1,65 @@
+name: 'pleme-io · kube-tls-fixture'
+description: 'Mint self-signed TLS secrets into a namespace from a fixture conf. Replaces the openssl + kubectl loop chart-test workflows hand-roll; idempotent via apply semantics, no pipeline.'
+branding: { icon: 'shield', color: 'green' }
+
+inputs:
+  conf:
+    description: "Path to the fixture conf — one `<secret-name> <dns-name>` pair per line, whitespace-separated; blank lines and `#` comments skipped"
+    required: true
+  namespace:
+    description: "Namespace the secrets are applied into"
+    required: false
+    default: "chart-testing"
+  days:
+    description: "Certificate validity in days (openssl -days)"
+    required: false
+    default: "3650"
+  key-bits:
+    description: "RSA key size (openssl -newkey rsa:<bits>)"
+    required: false
+    default: "2048"
+  ca-injection:
+    description: "Annotate each secret with cert-manager.io/allow-direct-injection=true, which ca-injector requires before it will source a CA bundle from a plain Secret"
+    required: false
+    default: "true"
+  skip-if-absent:
+    description: "Treat a missing conf as a no-op instead of an error. Default false, because a named path that does not exist is usually a typo. Set true when the caller sweeps charts and only some carry a fixture"
+    required: false
+    default: "false"
+
+outputs:
+  secrets-created:
+    description: "Count of secrets minted and applied — equals the number of non-comment conf lines"
+    value: ${{ steps.fixture.outputs.secrets-created }}
+  secret-names:
+    description: "Newline-separated secret names in conf order, for a downstream step that must reference or clean them up"
+    value: ${{ steps.fixture.outputs.secret-names }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-kubectl@v4
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: fixture
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CONF: ${{ inputs.conf }}
+        NAMESPACE: ${{ inputs.namespace }}
+        DAYS: ${{ inputs.days }}
+        KEY_BITS: ${{ inputs.key-bits }}
+        CA_INJECTION: ${{ inputs.ca-injection }}
+        SKIP_IF_ABSENT: ${{ inputs.skip-if-absent }}

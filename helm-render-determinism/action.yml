@@ -1,0 +1,59 @@
+name: 'pleme-io · helm-render-determinism'
+description: 'Render each declared ci/ values file twice with helm template and require the two renders to be byte-identical. A chart calling genCA / genSignedCert / randAlphaNum / uuidv4 / now renders differently every time, so a GitOps controller re-renders on every sync, sees drift, and rewrites the resource forever. Opt-in per chart via a fixtures conf file; no opted-in chart is a pass, not an error.'
+branding:
+  icon: 'repeat'
+  color: 'blue'
+
+inputs:
+  charts-root:
+    description: "Directory holding the chart directories. A conf named <chart><conf-suffix> resolves to <charts-root>/<chart>."
+    required: false
+    default: "charts"
+  fixtures-dir:
+    description: "Directory scanned for opt-in conf files. Every <fixtures-dir>/<chart><conf-suffix> names a chart that has opted in, one ci/ values-file name per line; blank lines and # comments are skipped."
+    required: false
+    default: ".github/chart-fixtures"
+  conf-suffix:
+    description: "Suffix that marks an opt-in conf file and is stripped from its basename to get the chart name. Must not be empty."
+    required: false
+    default: "-deterministic.conf"
+  namespace:
+    description: "Namespace passed to helm template --namespace. Both renders of a path use the same one, so a namespace-derived value is stable by construction."
+    required: false
+    default: "chart-testing"
+
+outputs:
+  checked:
+    description: "How many declared values files existed and were handed to helm — the denominator the verdict was reached over. Excludes the two hard failures where helm never ran (a listed file that is missing, a conf naming an absent chart). 0 means no chart has opted in — a pass with an explicit zero denominator, never a silent green."
+    value: ${{ steps.determinism.outputs.checked }}
+  stable:
+    description: "'true' when every listed path rendered byte-identically twice, 'false' when any path differed, failed to render, was listed but missing, or named a chart directory that does not exist."
+    value: ${{ steps.determinism.outputs.stable }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-helm@v4
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: determinism
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CHARTS_ROOT: ${{ inputs.charts-root }}
+        FIXTURES_DIR: ${{ inputs.fixtures-dir }}
+        CONF_SUFFIX: ${{ inputs.conf-suffix }}
+        NAMESPACE: ${{ inputs.namespace }}

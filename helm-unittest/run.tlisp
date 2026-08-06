@@ -1,0 +1,256 @@
+;; helm-unittest/run.tlisp — install the helm-unittest plugin at a pinned
+;; version, then run `helm unittest` once per chart in the input list.
+;;
+;; Replaces the two shell steps a chart-test workflow hand-rolls:
+;;
+;;   helm plugin install https://github.com/helm-unittest/helm-unittest \
+;;     --version v1.1.1 --verify=false
+;;   while IFS= read -r chart; do helm unittest "$chart"; done <<< "$CHANGED_CHARTS"
+;;
+;; TWO FACTS FROM THAT PAIR SURVIVE, and both are load-bearing:
+;;
+;;   --verify=false is REQUIRED on the helm that has it. Helm 4 verifies
+;;   plugin signatures BY DEFAULT (`BoolVar(&o.verify, "verify", true, …)`,
+;;   pkg/cmd/plugin_install.go) and helm-unittest's distribution ships no
+;;   .prov file, so the install dies with "plugin source does not support
+;;   verification. Use --verify=false to skip verification". Passing the flag
+;;   hardens nothing — omitting it is what fails.
+;;
+;;   `helm unittest` exits 0 with "0 passed, 0 total" on a chart carrying no
+;;   tests/*_test.yaml (measured, akeyless-csi-provider). So every chart in
+;;   the list is run UNCONDITIONALLY; there is no "which charts have suites"
+;;   detection to get wrong, and a chart that quietly loses its suites shows
+;;   up as a totals drop rather than as a skipped step.
+;;
+;; The one thing that is NOT copied verbatim is passing --verify=false
+;; unconditionally. It is a helm 4 flag; helm 3 has no plugin-signature
+;; concept at all and rejects the whole command with "unknown flag: --verify"
+;; (measured, helm v3.19.1), which would make this action depend on the
+;; caller's helm major without saying so. The flag is therefore added exactly
+;; where it exists — see hu:supports-verify-flag? below.
+
+;; ────────────────────────────────────────────────────────────────
+;; 1. resolve
+;; ────────────────────────────────────────────────────────────────
+
+(define charts-raw (env-required "CHARTS"))
+
+(define plugin-version (env-get "PLUGIN_VERSION" "v1.1.1"))
+
+(define plugin-url "https://github.com/helm-unittest/helm-unittest")
+
+;; Every trimmed, non-empty line of TEXT. The charts input arrives as a
+;; GitHub multiline output, so it carries a trailing newline and may carry
+;; CR; string-trim removes both (measured).
+(define (hu:nonempty-lines text)
+  (filter (lambda (l) (not (equal? l ""))) (map string-trim (string-split text "\n"))))
+
+(define charts (hu:nonempty-lines charts-raw))
+
+;; ────────────────────────────────────────────────────────────────
+;; 2. validate
+;; ────────────────────────────────────────────────────────────────
+
+(when (null? charts)
+  (log-error "charts: no chart directories supplied — nothing to test")
+  (exit 1))
+
+(define missing (filter (lambda (c) (not (is-dir? c))) charts))
+
+(when (not (null? missing))
+  (log-error (string-append "charts: not a directory — " (string-join ", " missing)))
+  (exit 1))
+
+;; `helm` itself is the caller's to provide (a setup-helm step, a nix shell,
+;; a baked runner image). exec-capture RAISES on an unspawnable binary, so
+;; without this the failure reads as an interpreter error rather than a
+;; missing tool.
+(when (not (hash:cmd-present? "helm"))
+  (log-error "helm is not on PATH — add a helm setup step before this action")
+  (exit 1))
+
+;; ────────────────────────────────────────────────────────────────
+;; 3. detect — is the plugin already here, and at which version?
+;; ────────────────────────────────────────────────────────────────
+
+;; `helm plugin list` prints a header row plus tab-separated
+;; `<name>\t<version>\t<description>` rows. The version there is
+;; UNPREFIXED (1.1.1) while --version takes the tag (v1.1.1), so both
+;; sides are normalised before they are compared.
+(define (hu:normalize-version v) (string-strip-prefix (string-trim v) "v"))
+
+(define (hu:find-plugin-row lines)
+  (cond
+    ((null? lines) "")
+    ((string-starts-with? (car lines) "unittest\t") (car lines))
+    (else (hu:find-plugin-row (cdr lines)))))
+
+(define (hu:installed-version)
+  (let*
+    ((r (exec-capture "helm" "plugin" "list"))
+      (row
+        (if (= (status-of r) 0)
+          (hu:find-plugin-row (hu:nonempty-lines (stdout-of r)))
+          ""))
+      (fields (string-split row "\t")))
+    (if (>= (length fields) 2)
+      (string-trim (nth 1 fields))
+      "")))
+
+(define installed (hu:installed-version))
+
+;; ────────────────────────────────────────────────────────────────
+;; 4. execute — install (or re-pin) the plugin, then run every chart
+;; ────────────────────────────────────────────────────────────────
+
+;; #t iff this helm's `plugin install` carries the signature-verification
+;; flag — i.e. it is helm 4+. Read off the command's own --help rather than
+;; off a parsed `helm version`, so a future helm that keeps the flag under a
+;; different major still gets it.
+(define (hu:supports-verify-flag?)
+  (let ((r (exec-capture "helm" "plugin" "install" "--help")))
+    (string-contains? (string-append (stdout-of r) (stderr-of r)) "--verify")))
+
+(define (hu:plugin-install)
+  (let
+    ((verify-flag (if (hu:supports-verify-flag?) (list "--verify=false") (list))))
+    (exec-or-die
+      (append
+        (list
+          "helm"
+          "plugin"
+          "install"
+          plugin-url
+          "--version"
+          plugin-version)
+        verify-flag))))
+
+(cond
+  ((equal? installed "")
+    (log-info (string-append "==> installing helm-unittest " plugin-version))
+    (hu:plugin-install))
+  ((equal? (hu:normalize-version installed) (hu:normalize-version plugin-version))
+    (log-info (string-append "helm-unittest " installed " already present — install skipped")))
+  ;; Present at the WRONG version. Silently keeping it would make
+  ;; plugin-version a decoration rather than a pin, so re-pin instead.
+  (else
+    (log-info
+      (string-append
+        "==> helm-unittest "
+        installed
+        " present, pin is "
+        plugin-version
+        " — reinstalling"))
+    (exec-or-die (list "helm" "plugin" "uninstall" "unittest"))
+    (hu:plugin-install)))
+
+;; ── totals parsing ──────────────────────────────────────────────
+;;
+;; helm-unittest's report goes to STDOUT (stderr carries only helm's own
+;; `Error: plugin "unittest" exited with error` on a failing run — measured).
+;; The summary block is, verbatim:
+;;
+;;   Charts:      1 passed, 1 total
+;;   Test Suites: 3 passed, 3 total
+;;   Tests:       29 passed, 29 total
+;;
+;; and on a failing run:
+;;
+;;   Test Suites: 1 failed, 3 passed, 4 total
+;;   Tests:       1 failed, 29 passed, 30 total
+;;
+;; So a word that did not occur is ABSENT from the line rather than zero,
+;; and the count is read by word, never by position.
+
+(define (hu:int-or-zero s)
+  (cond ((equal? s "") 0) (else (let ((v (read-string s))) (if (integer? v) v 0)))))
+
+(define (hu:segment-count segments word)
+  (cond
+    ((null? segments) 0)
+    (else
+      (let ((parts (string-split (string-trim (car segments)) " ")))
+        (cond
+          ((and (>= (length parts) 2) (equal? (nth 1 parts) word)) (hu:int-or-zero (car parts)))
+          (else (hu:segment-count (cdr segments) word)))))))
+
+(define (hu:find-labelled-line lines label)
+  (cond
+    ((null? lines) "")
+    ((string-starts-with? (car lines) label) (car lines))
+    (else (hu:find-labelled-line (cdr lines) label))))
+
+;; The count attached to WORD on the LABEL summary line of REPORT; 0 when
+;; either the line or the word is absent. A crashed run has no summary line
+;; at all and scores 0 here — the non-zero exit is what fails it, never a
+;; parsed number, so an unparseable report can never read as green.
+(define (hu:count report label word)
+  (let ((line (hu:find-labelled-line (hu:nonempty-lines report) label)))
+    (cond
+      ((equal? line "") 0)
+      (else
+        (hu:segment-count
+          (string-split (string-join ":" (cdr (string-split line ":"))) ",")
+          word)))))
+
+;; ────────────────────────────────────────────────────────────────
+;; 5. branch — emit the totals, red iff any chart's suite failed
+;; ────────────────────────────────────────────────────────────────
+
+(define (hu:finish tested passed failed suites failing)
+  (append-output (string-append "charts-tested=" (string-format "{}" tested)))
+  (append-output (string-append "tests-passed=" (string-format "{}" passed)))
+  (append-output (string-append "tests-failed=" (string-format "{}" failed)))
+  (append-output (string-append "suites-passed=" (string-format "{}" suites)))
+  (cond
+    ((null? failing)
+      (log-info
+        (string-append
+          "helm-unittest: "
+          (string-format "{}" tested)
+          " chart(s), "
+          (string-format "{}" suites)
+          " suite(s) passed, "
+          (string-format "{}" passed)
+          " test(s) passed"))
+      (exit 0))
+    (else
+      (log-error (string-append "helm unittest failed for: " (string-join ", " (reverse failing))))
+      (exit 1))))
+
+;; One chart per recursion step. The report is captured (the totals have to
+;; be parsed out of it) and then echoed immediately, so the log still grows
+;; chart-by-chart in the order the charts ran.
+(define (hu:run-charts remaining tested passed failed suites failing)
+  (cond
+    ((null? remaining)
+      (hu:finish
+        tested
+        passed
+        failed
+        suites
+        failing))
+    (else
+      (log-info (string-append "==> helm unittest " (car remaining)))
+      (let*
+        ((chart (car remaining))
+          (r (exec-capture "helm" "unittest" chart))
+          (report (stdout-of r))
+          (errs (string-trim (stderr-of r))))
+        (print-line report)
+        (when (not (equal? errs "")) (eprint-line errs))
+        (hu:run-charts
+          (cdr remaining)
+          (+ tested 1)
+          (+ passed (hu:count report "Tests:" "passed"))
+          (+ failed (hu:count report "Tests:" "failed"))
+          (+ suites (hu:count report "Test Suites:" "passed"))
+          (if (= (status-of r) 0) failing (cons chart failing)))))))
+
+(hu:run-charts
+  charts
+  0
+  0
+  0
+  0
+  (list))

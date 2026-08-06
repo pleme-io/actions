@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                343
-# routing tatara-script  320
-# distinct keys written  298
+# actions                351
+# routing tatara-script  328
+# distinct keys written  311
 # dynamic key expansions 8
-# inner union (generated)306
+# inner union (generated)319
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -117,6 +117,7 @@ datadog-event	tatara-script	run.tlisp	1	1
 db-backup	tatara-script	run.tlisp	1	1
 db-migrate	tatara-script	run.tlisp	1	1
 dbt-build	tatara-script	run.tlisp	1	1
+ddl-gate	tatara-script	run.tlisp	3	3
 defaction-render	own-runner	-	0	2
 deno-deploy	tatara-script	run.tlisp	1	1
 dependabot-trigger	tatara-script	run.tlisp	1	1
@@ -172,10 +173,14 @@ gradle-build	tatara-script	run.tlisp	1	1
 grafana-annotation	tatara-script	run.tlisp	1	1
 hardhat-deploy	tatara-script	run.tlisp	1	1
 helm-bump	tatara-script	run.tlisp	3	3
+helm-ct-list-changed	tatara-script	run.tlisp	2	2
 helm-deploy	tatara-script	run.tlisp	2	2
 helm-mirror	own-runner	-	0	0
 helm-oci-publish	own-runner	-	0	0
 helm-publish	tatara-script	run.tlisp	1	1
+helm-release-cleanup	tatara-script	run.tlisp	2	2
+helm-render-determinism	tatara-script	run.tlisp	2	2
+helm-unittest	tatara-script	run.tlisp	4	4
 helmfile-apply	tatara-script	run.tlisp	1	1
 heroku-deploy	tatara-script	run.tlisp	1	1
 hex-publish	tatara-script	run.tlisp	1	1
@@ -198,6 +203,8 @@ kafka-publish	tatara-script	run.tlisp	1	1
 keycloak-realm-import	tatara-script	run.tlisp	1	1
 kics-scan	tatara-script	run.tlisp	1	1
 ko-build	tatara-script	run.tlisp	1	1
+kube-namespace-diagnostics	tatara-script	run.tlisp	2	2
+kube-tls-fixture	tatara-script	run.tlisp	2	2
 kubectl-apply	tatara-script	run.tlisp	1	1
 kustomize-render	tatara-script	run.tlisp	1	1
 license-finder	tatara-script	run.tlisp	1	1
@@ -323,12 +330,13 @@ sui-warm-hydrate	tatara-script	run.tlisp	5	5
 super-cache-build	tatara-script	run.tlisp	9	9
 super-cache-restore	tatara-script	run.tlisp	4	4
 super-cache-save	tatara-script	run.tlisp	7	7
+suspend-blocker-lint	tatara-script	run.tlisp	2	2
 swift-build	tatara-script	run.tlisp	1	1
 syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	306
+tatara-script	own-runner	-	0	319
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -531,6 +539,9 @@ datadog-event	posted	static	declared	forwarded
 db-backup	backup-path	static	declared	forwarded
 db-migrate	applied-count	static	declared	forwarded
 dbt-build	passed	static	declared	forwarded
+ddl-gate	baselined	static	declared	forwarded
+ddl-gate	files-scanned	static	declared	forwarded
+ddl-gate	violations	static	declared	forwarded
 deno-deploy	deployment-url	static	declared	forwarded
 dependabot-trigger	triggered	static	declared	forwarded
 dependency-update	changed	static	declared	forwarded
@@ -612,9 +623,19 @@ hardhat-deploy	deployed-address	static	declared	forwarded
 helm-bump	bumped	static	declared	forwarded
 helm-bump	new-version	static	declared	forwarded
 helm-bump	old-version	static	declared	forwarded
+helm-ct-list-changed	changed	static	declared	forwarded
+helm-ct-list-changed	changed-charts	static	declared	forwarded
 helm-deploy	deployed	static	declared	forwarded
 helm-deploy	revision	static	declared	forwarded
 helm-publish	shipped	static	declared	forwarded
+helm-release-cleanup	failures	static	declared	forwarded
+helm-release-cleanup	releases-uninstalled	static	declared	forwarded
+helm-render-determinism	checked	static	declared	forwarded
+helm-render-determinism	stable	static	declared	forwarded
+helm-unittest	charts-tested	static	declared	forwarded
+helm-unittest	suites-passed	static	declared	forwarded
+helm-unittest	tests-failed	static	declared	forwarded
+helm-unittest	tests-passed	static	declared	forwarded
 helmfile-apply	applied	static	declared	forwarded
 heroku-deploy	deployed	static	declared	forwarded
 hex-publish	published	static	declared	forwarded
@@ -640,6 +661,10 @@ kafka-publish	published	static	declared	forwarded
 keycloak-realm-import	imported	static	declared	forwarded
 kics-scan	findings-count	static	declared	forwarded
 ko-build	image	static	declared	forwarded
+kube-namespace-diagnostics	containers-inspected	static	declared	forwarded
+kube-namespace-diagnostics	pods-inspected	static	declared	forwarded
+kube-tls-fixture	secret-names	static	declared	forwarded
+kube-tls-fixture	secrets-created	static	declared	forwarded
 kubectl-apply	applied-count	static	declared	forwarded
 kustomize-render	output-path	static	declared	forwarded
 license-finder	violations	static	declared	forwarded
@@ -860,6 +885,8 @@ super-cache-save	reason	static	declared	forwarded
 super-cache-save	saved	static	declared	forwarded
 super-cache-save	skipped	static	declared	forwarded
 super-cache-save	tier	static	declared	forwarded
+suspend-blocker-lint	baselined	static	declared	forwarded
+suspend-blocker-lint	violations	static	declared	forwarded
 swift-build	built	static	declared	forwarded
 syft-attest	attestation-path	static	declared	forwarded
 tailscale-auth	hostname	static	declared	forwarded

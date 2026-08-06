@@ -1,0 +1,237 @@
+;; helm-render-determinism/run.tlisp — render each declared ci/ values file
+;; twice and require the two renders to be byte-identical.
+;;
+;; WHY. A chart that calls genCA / genSignedCert / randAlphaNum / uuidv4 / now
+;; renders differently every time it is templated. A GitOps controller
+;; re-renders on every sync, diffs the fresh render against the live object,
+;; sees drift that was never authored, and rewrites the resource forever. The
+;; only cheap proof that a chart is free of that is to render it twice and
+;; compare the bytes.
+;;
+;; OPT-IN, per chart. Every <fixtures-dir>/<chart><conf-suffix> file names a
+;; chart that has opted in, one ci/ values-file name per line; blank lines and
+;; `#` comments are skipped. A chart opts in by adding the file; a chart
+;; without one is never looked at. A repo where no chart has opted in is a
+;; PASS with checked=0 — an explicit zero denominator, not an error and not a
+;; silent green.
+;;
+;; EVERY opted-in chart is checked on every run, not only the changed ones.
+;; Two renders are cheap and the invariant is not per-change: a chart that has
+;; declared itself GitOps-stable must stay that way whatever moved.
+;;
+;; Generalized from the repo-local tools/render-determinism.tlisp in
+;; akeylesslabs/helm-charts, whose charts root, fixtures dir, conf suffix and
+;; namespace were hardcoded strings and are inputs here.
+;;
+;; Exit 0 when every listed path rendered identically, 1 otherwise.
+
+;; ── 1. resolve ──────────────────────────────────────────────────
+
+(define charts-root (env-get "CHARTS_ROOT" "charts"))
+
+(define fixtures-dir (env-get "FIXTURES_DIR" ".github/chart-fixtures"))
+
+(define conf-suffix (env-get "CONF_SUFFIX" "-deterministic.conf"))
+
+(define namespace (env-get "NAMESPACE" "chart-testing"))
+
+;; ── 2. validate ─────────────────────────────────────────────────
+;;
+;; An empty conf-suffix is refused rather than defaulted. The suffix is both
+;; the glob's discriminator and the string stripped from a basename to get the
+;; chart name, so "" would match every file in the fixtures dir and then strip
+;; nothing — resolving each conf to a chart directory named after the conf
+;; file itself. Failing here beats reporting "chart does not exist" for a
+;; whole directory of files that were never opt-ins.
+
+(when (equal? (string-trim conf-suffix) "")
+  (log-error "conf-suffix must not be empty — it is what marks a file as an opt-in and what is stripped to get the chart name")
+  (append-output "checked=0")
+  (append-output "stable=false")
+  (exit 1))
+
+;; An empty fixtures-dir is refused for a subtler reason: (path-join "" "*.conf")
+;; yields the ABSOLUTE path "/*.conf", so the glob would scan the filesystem
+;; root, match nothing, and report checked=0 stable=true exit 0. A
+;; misconfiguration that renders as a clean pass is worse than one that fails.
+(when (equal? (string-trim fixtures-dir) "")
+  (log-error "fixtures-dir must not be empty — an empty value globs the filesystem root and would report a pass over zero files")
+  (append-output "checked=0")
+  (append-output "stable=false")
+  (exit 1))
+
+;; ── local helpers (see the return note: stdlib candidates) ──────
+;;
+;; Namespaced `determinism:` so nothing here can shadow a stdlib name.
+
+(define (determinism:blank-or-comment? line)
+  (let ((t (string-trim line)))
+    (or (= (string-length t) 0) (string-starts-with? t "#"))))
+
+;; The values-file names a conf declares: trimmed, blank + comment lines gone.
+(define (determinism:conf-entries path)
+  (filter
+    (lambda (l) (not (determinism:blank-or-comment? l)))
+    (map string-trim (string-split (read-file path) "\n"))))
+
+;; <fixtures-dir>/<chart><conf-suffix> -> <charts-root>/<chart>.
+;; The suffix is stripped from the END only. string-replace replaces every
+;; occurrence, which mangles a chart whose own name contains the suffix — not
+;; reachable while the suffix was a fixed 19-char literal, but it is an input
+;; here and a short value like ".conf" makes it reachable.
+(define (determinism:strip-suffix base)
+  (if (string-ends-with? base conf-suffix)
+      (let ((keep (- (string-length base) (string-length conf-suffix))))
+        (string-join "" (take keep (string-chars base))))
+      base))
+
+(define (determinism:chart-of-conf conf-path)
+  (path-join charts-root (determinism:strip-suffix (path-basename conf-path))))
+
+;; The release name is fixed rather than an input on purpose: both renders of
+;; a path use the same one, so a `.Release.Name`-derived value is stable by
+;; construction and a varying release name would test nothing extra.
+(define (determinism:render chart values-path)
+  (exec-capture "helm"
+    "template"
+    "determinism"
+    chart
+    "--namespace"
+    namespace
+    "--values"
+    values-path))
+
+;; The first (line-from-a, line-from-b) pair that differs, or '() when the
+;; two renders agree line for line. Reporting the first differing line is what
+;; makes the failure actionable — a whole-render diff of a large chart buries
+;; the one `randAlphaNum` that caused it.
+(define (determinism:first-difference a b)
+  (foldl
+    (lambda (acc pair)
+      (if (not (null? acc))
+        acc
+        (if (equal? (car pair) (car (cdr pair)))
+          acc
+          pair)))
+    (list)
+    (zip (string-split a "\n") (string-split b "\n"))))
+
+(define (determinism:report-difference values-path a b)
+  (let ((d (determinism:first-difference a b)))
+    (eprint-line
+      (string-append
+        "::error file="
+        values-path
+        "::two renders of this path differ, so a GitOps controller will see drift on every sync"))
+    (unless (null? d)
+      (eprint-line (string-append "  first render: " (car d)))
+      (eprint-line (string-append "  second render: " (car (cdr d)))))))
+
+;; helm's own stderr is surfaced verbatim: a template error names the file and
+;; line, and paraphrasing it would cost the operator that.
+(define (determinism:report-render-failure values-path which capture)
+  (eprint-line
+    (string-append "::error file=" values-path "::helm template failed on the " which " render"))
+  (eprint-line (stderr-of capture))
+  #f)
+
+(define (determinism:check-render chart values-path)
+  (let ((a (determinism:render chart values-path)))
+    (if (not (= (status-of a) 0))
+      (determinism:report-render-failure values-path "first" a)
+      (let ((b (determinism:render chart values-path)))
+        (if (not (= (status-of b) 0))
+          (determinism:report-render-failure values-path "second" b)
+          (if (equal? (stdout-of a) (stdout-of b))
+            (begin (print-line (string-append values-path ": two renders identical")) #t)
+            (begin
+              (determinism:report-difference values-path (stdout-of a) (stdout-of b))
+              #f)))))))
+
+;; ── the fold accumulator: (stable? rendered-count) ──────────────
+;;
+;; Two facts travel together because the verdict alone is not evidence: a
+;; green with no denominator is indistinguishable from a check that matched
+;; nothing. `counted?` is #f for the two failures where helm never ran (a
+;; listed values file that is missing, a conf naming an absent chart), so
+;; `checked` counts exactly the declared paths that were handed to helm.
+
+(define (determinism:acc-stable acc) (car acc))
+
+(define (determinism:acc-checked acc) (car (cdr acc)))
+
+(define (determinism:acc-step acc ok? counted?)
+  (list
+    (and ok? (determinism:acc-stable acc))
+    (if counted?
+      (+ (determinism:acc-checked acc) 1)
+      (determinism:acc-checked acc))))
+
+(define (determinism:check-entry acc chart conf-path values-file)
+  (let ((values-path (path-join chart "ci" values-file)))
+    (if (path-exists? values-path)
+      (determinism:acc-step acc (determinism:check-render chart values-path) #t)
+      (begin
+        (eprint-line
+          (string-append "::error file=" conf-path "::" values-path " listed but not found"))
+        (determinism:acc-step acc #f #f)))))
+
+(define (determinism:check-conf acc conf-path)
+  (let ((chart (determinism:chart-of-conf conf-path)))
+    (if (not (is-dir? chart))
+      (begin
+        (eprint-line
+          (string-append
+            "::error file="
+            conf-path
+            "::"
+            chart
+            " named by this file does not exist"))
+        (determinism:acc-step acc #f #f))
+      (foldl
+        (lambda (a values-file) (determinism:check-entry a chart conf-path values-file))
+        acc
+        (determinism:conf-entries conf-path)))))
+
+;; ── 3. detect ───────────────────────────────────────────────────
+
+(define confs (glob (path-join fixtures-dir (string-append "*" conf-suffix))))
+
+(when (null? confs)
+  (log-info
+    (string-append
+      "no chart has opted in to the render-determinism check (no "
+      fixtures-dir
+      "/*"
+      conf-suffix
+      ")")))
+
+;; ── 4. execute ──────────────────────────────────────────────────
+
+(define result (foldl determinism:check-conf (list #t 0) confs))
+
+(define checked (determinism:acc-checked result))
+
+(define stable (determinism:acc-stable result))
+
+;; ── 5. branch ───────────────────────────────────────────────────
+
+(append-output (string-append "checked=" (string-format "{}" checked)))
+
+(append-output (string-append "stable=" (if stable "true" "false")))
+
+(cond
+  (stable
+    (log-info
+      (string-append
+        "render determinism holds: "
+        (string-format "{}" checked)
+        " values file(s) rendered identically twice"))
+    (exit 0))
+  (else
+    (log-error
+      (string-append
+        "render determinism failed over "
+        (string-format "{}" checked)
+        " values file(s) handed to helm — see the ::error annotations above"))
+    (exit 1)))

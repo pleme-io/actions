@@ -1,0 +1,122 @@
+;; helm-release-cleanup/run.tlisp — tear a namespace back down to empty.
+;;
+;; Replaces the `|| true` teardown loop that chart-test workflows carry inline.
+;; Cleanup must never fail the job, so this always exits 0 — but a release that
+;; refuses to uninstall is worth SEEING, so every failure is logged with its
+;; stderr and counted into the `failures` output rather than discarded.
+
+(define ns (env-required "NAMESPACE"))
+
+(define timeout (env-get "TIMEOUT" "120s"))
+
+(define delete-leftovers (env-get "DELETE_LEFTOVERS" "true"))
+
+;; Local helper — the stdlib has no line splitter yet. Trim each line and drop
+;; the blanks, so `helm list --short`'s trailing newline is not read as a
+;; release named "". Candidate for _tlisp-stdlib/stdlib.tlisp.
+(define (nonempty-lines text)
+  (filter (lambda (l) (not (equal? l ""))) (map string-trim (string-split text "\n"))))
+
+(define (count->string n) (string-format "{}" n))
+
+;; ── list ────────────────────────────────────────────────────────────────────
+
+(log-info (string-append "==> helm list --namespace " ns " --all --short"))
+
+(define listed (exec-capture "helm" "list" "--namespace" ns "--all" "--short"))
+
+(define list-failed? (not (= (status-of listed) 0)))
+
+(cond
+  (list-failed?
+    (log-error (string-append "helm list failed in namespace " ns " — nothing to uninstall"))
+    (log-info (stderr-of listed))))
+
+(define releases (cond (list-failed? (list)) (else (nonempty-lines (stdout-of listed)))))
+
+(log-info (string-append "found " (count->string (length releases)) " release(s) in " ns))
+
+;; ── uninstall ───────────────────────────────────────────────────────────────
+
+;; Top-level recursion: tatara-script has no named `let`, and `ns` / `timeout`
+;; are top-level bindings so nothing needs to be threaded through.
+;; Returns (uninstalled failed).
+(define (uninstall-each names ok bad)
+  (cond
+    ((null? names) (list ok bad))
+    (else
+      (let
+        ((r
+           (exec-capture
+             "helm"
+             "uninstall"
+             (car names)
+             "--namespace"
+             ns
+             "--wait"
+             "--timeout"
+             timeout)))
+        (cond
+          ((= (status-of r) 0)
+            (log-info (string-append "  uninstalled " (car names)))
+            (uninstall-each (cdr names) (+ ok 1) bad))
+          (else
+            (log-error (string-append "  uninstall failed: " (car names)))
+            (log-info (stderr-of r))
+            (uninstall-each (cdr names) ok (+ bad 1))))))))
+
+(define tally (uninstall-each releases 0 0))
+
+(define uninstalled (car tally))
+
+(define uninstall-failures (car (cdr tally)))
+
+;; ── leftovers ───────────────────────────────────────────────────────────────
+
+;; helm uninstall only removes what the release owns. Anything a test left
+;; behind (bare pods, a stray service) survives it, so sweep the namespace.
+(define leftover-failures
+  (cond
+    ((not (equal? delete-leftovers "true"))
+      (log-info "delete-leftovers != true — leaving namespace contents in place")
+      0)
+    (else
+      (let
+        ((r
+           (exec-capture
+             "kubectl"
+             "delete"
+             "all"
+             "--all"
+             "--namespace"
+             ns
+             "--ignore-not-found=true")))
+        (cond
+          ((= (status-of r) 0) (log-info (string-trim (stdout-of r))) 0)
+          (else
+            (log-error (string-append "kubectl delete all failed in namespace " ns))
+            (log-info (stderr-of r))
+            1))))))
+
+;; ── report ──────────────────────────────────────────────────────────────────
+
+(define failures
+  (+ (+ uninstall-failures leftover-failures) (cond (list-failed? 1) (else 0))))
+
+(append-output (string-append "releases-uninstalled=" (count->string uninstalled)))
+
+(append-output (string-append "failures=" (count->string failures)))
+
+(cond
+  ((= failures 0) (log-info (string-append "namespace " ns " clean")))
+  (else
+    (log-error
+      (string-append
+        "cleanup finished with "
+        (count->string failures)
+        " failure(s) in namespace "
+        ns
+        " — not failing the job"))))
+
+;; Cleanup is always a success from the job's point of view.
+(exit 0)

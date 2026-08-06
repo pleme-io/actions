@@ -1,0 +1,207 @@
+;; kube-tls-fixture/run.tlisp — mint self-signed TLS secrets from a fixture conf.
+;;
+;; Ports the openssl+kubectl loop that chart-test workflows hand-roll inside a
+;; "Prepare test environment" step. Three facts the shell version encodes and
+;; this one preserves:
+;;
+;;   - the cert is SELF-SIGNED, so it is its own CA — ca.crt is the SAME file
+;;     as tls.crt, not a second artifact;
+;;   - cert-manager's ca-injector will not source a CA bundle from a plain
+;;     Secret without the allow-direct-injection annotation;
+;;   - the step must be re-runnable, and a bare `kubectl create secret` fails
+;;     the second time.
+;;
+;; The shell got its idempotence from `create --dry-run=client -o yaml |
+;; kubectl apply -f -`. There is no pipe here: the rendered manifest goes to a
+;; file under tmp-dir and `kubectl apply -f <file>` supplies the same
+;; create-or-update semantics. Every subprocess is direct argv — the DNS names
+;; in these confs are wildcards (`*.chart-testing.svc`), and argv passes them
+;; literally with no glob expansion.
+
+(define conf-path (env-required "CONF"))
+
+(define ns (env-get "NAMESPACE" "chart-testing"))
+
+(define days (env-get "DAYS" "3650"))
+
+(define key-bits (env-get "KEY_BITS" "2048"))
+
+(define ca-inject? (equal? (string-trim (env-get "CA_INJECTION" "true")) "true"))
+
+;; ── conf parsing ────────────────────────────────────────────────
+
+;; Whitespace-separated fields, empties dropped. `string-split` on " " keeps a
+;; "" for every run of consecutive separators and does not know about tabs, so
+;; tabs are folded to spaces first and CR is stripped for CRLF-authored confs.
+(define (tls:fields line)
+  (filter
+    (lambda (f) (not (equal? f "")))
+    (string-split (string-replace (string-replace line "\t" " ") "\r" "") " ")))
+
+;; A blank line or a `#` comment carries no fixture.
+(define (tls:skip-line? line)
+  (let ((t (string-trim line))) (or (equal? t "") (string-prefix? t "#"))))
+
+;; Conf text -> list of (secret-name dns-name). A line that survives the skip
+;; filter but carries fewer than two fields is a malformed fixture, not an
+;; empty one — fail loudly rather than mint a cert with an empty CN.
+(define (tls:parse-entries lines acc)
+  (cond
+    ((null? lines) (reverse acc))
+    ((tls:skip-line? (car lines)) (tls:parse-entries (cdr lines) acc))
+    (else
+      (let ((f (tls:fields (car lines))))
+        (cond
+          ((< (length f) 2)
+            (log-error
+              (string-append
+                "malformed fixture line in "
+                conf-path
+                " — expected `<secret-name> <dns-name>`, got: "
+                (string-trim (car lines))))
+            (exit 1))
+          (else
+            (tls:parse-entries
+              (cdr lines)
+              (cons (list (car f) (car (cdr f))) acc))))))))
+
+;; ── minting ─────────────────────────────────────────────────────
+
+(define workdir (tmp-dir))
+
+;; Self-signed leaf for DNS. Returns (crt-path key-path); aborts on failure so
+;; no caller can proceed to apply a secret whose key material was never
+;; written. -addext carries the SAN because a CN alone is ignored by every
+;; modern verifier.
+(define (tls:mint name dns)
+  (let*
+    ((crt (path-join workdir (string-append name ".crt")))
+      (key (path-join workdir (string-append name ".key")))
+      (r
+        (exec-capture "openssl"
+          "req"
+          "-x509"
+          "-newkey" (string-append "rsa:" key-bits)
+          "-nodes"
+          "-days" days
+          "-subj" (string-append "/CN=" dns)
+          "-addext" (string-append "subjectAltName=DNS:" dns)
+          "-keyout" key
+          "-out" crt)))
+    (cond
+      ((= (status-of r) 0) (list crt key))
+      (else
+        (log-error (string-append "openssl req failed for " name " (CN=" dns ")"))
+        (log-info (stderr-of r))
+        (exit 1)))))
+
+;; The Secret manifest, rendered client-side. ca.crt intentionally repeats the
+;; leaf: a self-signed cert is its own issuer.
+(define (tls:render name crt key)
+  (let
+    ((r
+       (exec-capture "kubectl"
+         "create"
+         "secret"
+         "generic"
+         name
+         "--type=kubernetes.io/tls"
+         (string-append "--from-file=tls.crt=" crt)
+         (string-append "--from-file=tls.key=" key)
+         (string-append "--from-file=ca.crt=" crt)
+         "-n" ns
+         "--dry-run=client"
+         "-o" "yaml")))
+    (cond
+      ((= (status-of r) 0) (stdout-of r))
+      (else
+        (log-error (string-append "kubectl create secret --dry-run failed for " name))
+        (log-info (stderr-of r))
+        (exit 1)))))
+
+(define (tls:apply-manifest name manifest)
+  (let ((f (path-join workdir (string-append name ".secret.yaml"))))
+    (write-file f manifest)
+    (let ((r (exec-capture "kubectl" "apply" "-n" ns "-f" f)))
+      (cond
+        ((= (status-of r) 0) #t)
+        (else
+          (log-error (string-append "kubectl apply failed for secret/" name))
+          (log-info (stderr-of r))
+          (exit 1))))))
+
+(define (tls:annotate name)
+  (let
+    ((r
+       (exec-capture "kubectl"
+         "annotate"
+         "secret"
+         name
+         "-n" ns
+         "cert-manager.io/allow-direct-injection=true"
+         "--overwrite")))
+    (cond
+      ((= (status-of r) 0) #t)
+      (else
+        (log-error (string-append "kubectl annotate failed for secret/" name))
+        (log-info (stderr-of r))
+        (exit 1)))))
+
+;; Top-level recursion, not a named let — this dialect has no `(let loop …)`.
+(define (tls:process entries done)
+  (cond
+    ((null? entries) (reverse done))
+    (else
+      (let*
+        ((e (car entries))
+          (name (car e))
+          (dns (car (cdr e)))
+          (pair (tls:mint name dns))
+          (crt (car pair))
+          (key (car (cdr pair))))
+        (tls:apply-manifest name (tls:render name crt key))
+        (cond (ca-inject? (tls:annotate name)))
+        (log-info (string-append "  secret/" name " CN=" dns))
+        (tls:process (cdr entries) (cons name done))))))
+
+;; ── run ─────────────────────────────────────────────────────────
+
+;; A missing conf is an error by default: the caller named this path, so its
+;; absence is almost always a typo. The shell this replaces skipped silently
+;; instead, because it looped over changed charts and most have no fixture — so
+;; that behaviour stays available, opted into per call rather than assumed.
+(define skip-if-absent (equal? (string-lowercase (env-get "SKIP_IF_ABSENT" "false")) "true"))
+
+(cond
+  ((and (not (path-exists? conf-path)) skip-if-absent)
+    (log-info (string-append "no fixture conf at " conf-path " — nothing to mint"))
+    (append-output "secrets-created=0")
+    (append-output "secret-names=")
+    (exit 0))
+  ((not (path-exists? conf-path))
+    (log-error (string-append "fixture conf not found: " conf-path " (set skip-if-absent: true if an absent conf should be a no-op)"))
+    (append-output "secrets-created=0")
+    (append-output "secret-names=")
+    (exit 1)))
+
+(define entries (tls:parse-entries (string-split (read-file conf-path) "\n") '()))
+
+(log-info
+  (string-append
+    "==> "
+    (string-format "{}" (length entries))
+    " TLS fixture(s) from "
+    conf-path
+    " into namespace "
+    ns))
+
+(define names (tls:process entries '()))
+
+(append-output (string-append "secrets-created=" (string-format "{}" (length names))))
+
+(let ((eof-marker "TLISP_OUTPUT_EOF"))
+  (append-output (string-append "secret-names<<" eof-marker))
+  (append-output (string-join "\n" names))
+  (append-output eof-marker))
+
+(exit 0)
