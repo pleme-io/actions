@@ -1,9 +1,56 @@
 ;; security-audit/run.tlisp — polymorphic vuln scan.
-;; Detects ecosystem from manifest presence + runs the matching tool.
+;;
+;; ── REWRITTEN WHOLE 2026-08-06, deliberately not patched ─────────────────
+;;
+;; The previous version inferred severity by SUBSTRING-SNIFFING the raw JSON:
+;;
+;;     ((log-contains? out "critical") "critical")
+;;     ((log-contains? out "high")     "high")
+;;     …
+;;     ((= (status-of r) 0) "none")
+;;     (else "high"))
+;;
+;; `npm audit --json` on a PERFECTLY CLEAN repo contains the literal keys
+;; "critical" and "high" — they are the zero-valued buckets of
+;; `.metadata.vulnerabilities`. So the first arm matched every time and the
+;; gate reported `critical` unconditionally. In the other direction, a tool
+;; that exited 0 having printed nothing (an absent binary reached through a
+;; shell, an install that silently failed) matched no arm, fell through to
+;; `(= status 0) -> "none"`, and passed green. The classifier was decoupled
+;; from reality in BOTH directions at once.
+;;
+;; `vuln-count` was not a count either — it was `(if (log-contains? out
+;; "vulnerability") 1 0)`, a 0/1 proxy emitted as though it were a number.
+;;
+;; A status check bolted onto that would have produced a gate that is
+;; RELIABLY WRONG rather than unreliably silent — worse, because it would then
+;; look trustworthy. Hence a whole rewrite.
+;;
+;; ── THE OUTCOME VOCABULARY IS CLOSED ─────────────────────────────────────
+;;
+;; Ported from secrets-scan, the one gate in this family that was already
+;; honest. Every run lands in exactly one of these, and only the last is a
+;; verdict about the CODE:
+;;
+;;   'no-manifest   no recognized ecosystem -> exit 3. Operator decision
+;;                  2026-08-06: a gate enabled on a repo it cannot scan is
+;;                  BROKEN, not passing. It would otherwise scan nothing
+;;                  forever, indistinguishable from a clean audit.
+;;   'tool-absent   the auditor is not runnable -> exit 3
+;;   'tool-error    the auditor produced no report -> exit 3, regardless of
+;;                  fail-on-severity, because we learned nothing
+;;   'unparseable   output is not the JSON shape we expect -> exit 3
+;;   'scanned       a real report, a real count, a real severity
+;;
+;; exit 3 rather than 1 throughout: "this gate did not run" is a different
+;; fact from "this gate found something", and a caller that cannot tell them
+;; apart is back where this started.
+;;
+;; IGNORE_LIST is gone. It was read into a variable and never used again — a
+;; documented input that reads as a working suppression surface and silences
+;; nothing. A dead knob on a security gate is worse than a missing one.
 
 (define fail-on (env-get "FAIL_ON_SEVERITY" "medium"))
-
-(define ignore-list (env-get "IGNORE_LIST" ""))
 
 (define (severity-rank s)
   (cond
@@ -15,87 +62,131 @@
 
 (define fail-rank (severity-rank fail-on))
 
-;; ── Per-ecosystem runners. Each emits (ecosystem, severity, count). ──
+;; ── helpers ──────────────────────────────────────────────────────
 
-(define (run-cargo-audit)
-  (log-info "==> cargo audit")
-  (let*
-    ((r (exec-capture "cargo" "audit" "--json"))
-      (out (stdout-of r))
-      (n
+(define (die-broken outcome detail)
+  (append-output (string-append "outcome=" outcome))
+  (append-output "severity=unknown")
+  (append-output "vuln-count=unknown")
+  (log-error (string-append "security-audit: " outcome " — " detail))
+  (log-error "refusing to report a verdict about code that was not scanned")
+  (exit 3))
+
+;; Run an auditor and hand back its parsed JSON, or die with a typed outcome.
+;;
+;; The failure modes are separated rather than collapsed into one string: not
+;; runnable, ran-with-no-report, and ran-but-emitted-non-JSON are three
+;; different facts with three different fixes.
+(define (audit-json tool argv)
+  (cond
+    ((not (hash:cmd-present? tool))
+      (die-broken "tool-absent"
+        (string-append tool " is not runnable. It is provided by nix — add it to "
+                       "the job's devShell or install it in a setup step.")))
+    (else
+      (let ((r (proc:run argv)))
         (cond
-          ((log-contains? out "vulnerability") 1)
-          ;; simple count proxy
-          (else 0))))
-    (let
-      ((sev
-         (cond
-           ((log-contains? out "critical") "critical")
-           ((log-contains? out "high") "high")
-           ((log-contains? out "medium") "medium")
-           ((log-contains? out "low") "low")
-           ((= (status-of r) 0) "none")
-           (else "high"))))
-      ;; non-zero exit with no parseable sev → conservative
-      (list
-        "cargo-audit"
-        sev
-        n))))
+          ((erro:err? r) (die-broken "tool-error" (erro:message (erro:value r))))
+          (else
+            (let* ((res (erro:value r))
+                   (body (string-trim (stdout-of res))))
+              ;; A non-zero exit is NOT itself an error: npm audit and cargo
+              ;; audit both exit non-zero precisely BECAUSE they found
+              ;; vulnerabilities, which is a successful scan. The report
+              ;; decides, so the only fatal case is having no report at all.
+              (cond
+                ((equal? body "")
+                  (die-broken "tool-error"
+                    (string-append tool " produced no output (exit "
+                                   (string-format "{}" (status-of res)) "). "
+                                   (string-trim (stderr-of res)))))
+                (else
+                  (let ((parsed (erro:attempt (lambda () (json-parse body)))))
+                    (cond
+                      ((erro:err? parsed)
+                        (die-broken "unparseable"
+                          (string-append tool " output is not JSON")))
+                      (else (erro:value parsed)))))))))))))
+
+;; Highest severity bucket with a non-zero count. "none" when all are zero.
+(define (worst-bucket counts)
+  (cond
+    ((> (alist-get counts "critical" 0) 0) "critical")
+    ((> (alist-get counts "high" 0) 0) "high")
+    ((> (alist-get counts "moderate" 0) 0) "medium")
+    ((> (alist-get counts "medium" 0) 0) "medium")
+    ((> (alist-get counts "low" 0) 0) "low")
+    (else "none")))
+
+(define (count-vulns deps acc)
+  (cond
+    ((null? deps) acc)
+    (else
+      (let ((vs (alist-get (car deps) "vulns" '())))
+        (count-vulns (cdr deps) (+ acc (if (pair? vs) (length vs) 0)))))))
+
+;; ── per-ecosystem runners ────────────────────────────────────────
+;;
+;; Each reads NAMED FIELDS and returns (ecosystem severity count). A shape we
+;; do not recognise is 'unparseable, never a guess — inferring a verdict from
+;; an unexpected shape is the substring-sniffing this replaces.
 
 (define (run-npm-audit)
   (log-info "==> npm audit")
-  (let*
-    ((r (exec-capture "npm" "audit" "--json"))
-      (out (stdout-of r))
-      (n (cond ((log-contains? out "vulnerabilities") 1) (else 0))))
-    (let
-      ((sev
-         (cond
-           ((log-contains? out "critical") "critical")
-           ((log-contains? out "high") "high")
-           ((log-contains? out "moderate") "medium")
-           ((log-contains? out "low") "low")
-           ((= (status-of r) 0) "none")
-           (else "high"))))
-      (list
-        "npm-audit"
-        sev
-        n))))
+  (let* ((doc (audit-json "npm" (list "npm" "audit" "--json")))
+         (meta (alist-get doc "metadata" '()))
+         (vulns (if (pair? meta) (alist-get meta "vulnerabilities" '()) '())))
+    (cond
+      ((not (pair? vulns))
+        (die-broken "unparseable"
+          "npm audit --json has no .metadata.vulnerabilities object"))
+      (else
+        (list "npm-audit" (worst-bucket vulns) (alist-get vulns "total" 0))))))
+
+(define (run-cargo-audit)
+  (log-info "==> cargo audit")
+  (let* ((doc (audit-json "cargo-audit" (list "cargo" "audit" "--json")))
+         (v (alist-get doc "vulnerabilities" '())))
+    (cond
+      ((not (pair? v))
+        (die-broken "unparseable" "cargo audit --json has no .vulnerabilities object"))
+      (else
+        (let ((n (alist-get v "count" 0)))
+          ;; cargo-audit does not bucket by severity in its summary, so a
+          ;; non-zero count is reported AT the fail threshold rather than
+          ;; guessed. Under-reporting a real finding is the one direction that
+          ;; must not happen on a security gate.
+          (list "cargo-audit" (if (> n 0) fail-on "none") n))))))
 
 (define (run-pip-audit)
   (log-info "==> pip-audit")
-  (let*
-    ((r (exec-capture "sh" "-c" "uv tool run pip-audit 2>&1"))
-      (out (stdout-of r))
-      (n (cond ((log-contains? out "vulnerability") 1) (else 0))))
-    (let
-      ((sev
-         (cond
-           ((log-contains? out "CRITICAL") "critical")
-           ((log-contains? out "HIGH") "high")
-           ((log-contains? out "MEDIUM") "medium")
-           ((log-contains? out "LOW") "low")
-           ((= (status-of r) 0) "none")
-           (else "high"))))
-      (list
-        "pip-audit"
-        sev
-        n))))
+  (let* ((doc (audit-json "uv" (list "uv" "tool" "run" "pip-audit" "-f" "json")))
+         (deps (alist-get doc "dependencies" '())))
+    (cond
+      ((not (pair? deps))
+        (die-broken "unparseable" "pip-audit -f json has no .dependencies array"))
+      (else
+        (let ((n (count-vulns deps 0)))
+          (list "pip-audit" (if (> n 0) fail-on "none") n))))))
 
-;; ── Dispatch by manifest presence ────────────────────────────────
+;; ── dispatch ─────────────────────────────────────────────────────
 
 (define result
   (cond
     ((path-exists? "Cargo.toml") (run-cargo-audit))
     ((path-exists? "package.json") (run-npm-audit))
     ((path-exists? "pyproject.toml") (run-pip-audit))
-    (else (log-info "no recognized manifest — security-audit skipped") (list "none" "none" 0))))
+    (else
+      (die-broken "no-manifest"
+        "no Cargo.toml, package.json or pyproject.toml at the repo root"))))
 
 (define ecosystem (car result))
 
 (define severity (car (cdr result)))
 
 (define vuln-count (car (cdr (cdr result))))
+
+(append-output "outcome=scanned")
 
 (append-output (string-append "ecosystem=" ecosystem))
 
@@ -104,13 +195,8 @@
 (append-output (string-append "vuln-count=" (string-format "{}" vuln-count)))
 
 (log-info
-  (string-append
-    "result: "
-    ecosystem
-    " sev="
-    severity
-    " count="
-    (string-format "{}" vuln-count)))
+  (string-append "result: " ecosystem " sev=" severity
+                 " count=" (string-format "{}" vuln-count)))
 
 (cond
   ((equal? fail-on "none") (log-info "fail-on=none — passing regardless of findings") (exit 0))

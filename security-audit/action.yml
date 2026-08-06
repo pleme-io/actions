@@ -9,17 +9,21 @@ inputs:
     description: "Lowest severity that fails the build: low | medium | high | critical | none"
     required: false
     default: "medium"
-  ignore-list:
-    description: "Space-separated list of advisory IDs to ignore (e.g. RUSTSEC-2024-0001)"
-    required: false
-    default: ""
 
 outputs:
+  outcome:
+    # The closed vocabulary. Only `scanned` is a verdict about the code —
+    # every other value means the gate did not run and exits 3, so a caller
+    # can tell "found nothing" apart from "looked at nothing".
+    description: "scanned | no-manifest | tool-absent | tool-error | unparseable"
+    value: ${{ steps.audit.outputs.outcome }}
   severity:
-    description: "Highest severity found (none / low / medium / high / critical)"
+    description: "Highest severity found (none / low / medium / high / critical), or 'unknown' when outcome != scanned"
     value: ${{ steps.audit.outputs.severity }}
   vuln-count:
-    description: "Total number of vulnerabilities found"
+    # A REAL count now. It used to be `(if (contains "vulnerability") 1 0)` —
+    # a 0/1 proxy emitted as though it were a number.
+    description: "Total number of vulnerabilities found, or 'unknown' when outcome != scanned"
     value: ${{ steps.audit.outputs.vuln-count }}
   ecosystem:
     description: "Which auditor ran (cargo-audit / npm-audit / pip-audit / none)"
@@ -85,4 +89,3 @@ runs:
         script: ${{ steps.src.outputs.script }}
       env:
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
-        IGNORE_LIST: ${{ inputs.ignore-list }}
