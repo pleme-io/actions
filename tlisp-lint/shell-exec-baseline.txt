@@ -22,7 +22,6 @@ datadog-event/run.tlisp
 db-backup/run.tlisp
 db-migrate/run.tlisp
 detect-repo-type/run.tlisp
-discord-notify/run.tlisp
 docker-build-and-push/run.tlisp
 docs-publish/run.tlisp
 fastlane-deploy/run.tlisp
@@ -56,7 +55,6 @@ rust-workspace-publish/run.tlisp
 sbom-generate/run.tlisp
 secrets-scan/run.tlisp
 semgrep-scan/run.tlisp
-slack-notify/run.tlisp
 snyk-test/run.tlisp
 stale-issue-bot/run.tlisp
 tailscale-auth/run.tlisp
