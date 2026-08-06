@@ -72,6 +72,19 @@
     (string-append " " (string-append (gate:key-of f)
       (string-append " :: " (alist-get f "reason" "")))))))
 
+;; A gate that scanned NOTHING is a broken run, not a clean one, and from the
+;; exit code alone the two are identical. This one exits 2 rather than joining
+;; the long list of checks in this fleet whose failure mode looks like success.
+;; Added after the sibling suspend-blocker-lint shipped with exactly this hole:
+;; a reversed string-suffix? argument matched no files, so it scanned 0 and
+;; exited 0. Same defense here, same reason.
+(if (eq? 0 (length (gate:sql-files root)))
+    (begin
+      (print-line (string-append "ddl-gate: FAILED — scanned 0 .sql files under " root))
+      (print-line "  a zero-file scan means a wrong ROOT or a broken walk, never a pass")
+      (exit 2))
+    #t)
+
 (print-line (string-format "ddl-gate: {} .sql files under {}"
                            (length (gate:sql-files root)) root))
 (map (fn (f) (gate:say-finding "  debt   " f)) baselined)
