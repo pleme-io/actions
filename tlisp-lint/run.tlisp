@@ -919,15 +919,45 @@
 ;;
 ;; Deliberately keyed by FILE, not by count. A count-based ratchet lets a file
 ;; swap one shell site for another and stay green.
-(define shell-baseline-path
-  (string-append (env-get "ACTION_PATH" ".") "/shell-exec-baseline.txt"))
+;; Resolve the baseline from several candidates, and SAY SO when it is missing.
+;;
+;; This was a single `ACTION_PATH`-derived path, and the lint job sets that env
+;; var while the test harness does not — so the suite went red in CI while
+;; passing locally, and the two ratchet tests were asserting against an empty
+;; baseline they had no idea was empty.
+;;
+;; The test failure was the cheap symptom. The real defect is that an absent
+;; baseline SILENTLY CHANGES WHAT THIS GATE MEANS: with no entries every one of
+;; the 71 known-offender files becomes "new debt" and fails. Fail-closed is the
+;; right direction, but arriving there by accident — with no line in the log
+;; saying the ratchet lost its baseline — is the same failure-looks-like-a-
+;; decision shape this layer exists to remove. So it is announced.
+(define shell-baseline-candidates
+  (list
+    (string-append (env-get "ACTION_PATH" ".") "/shell-exec-baseline.txt")
+    "tlisp-lint/shell-exec-baseline.txt"
+    "./shell-exec-baseline.txt"))
+
+(define (first-existing paths)
+  (cond
+    ((null? paths) "")
+    ((path-exists? (car paths)) (car paths))
+    (else (first-existing (cdr paths)))))
+
+(define shell-baseline-path (first-existing shell-baseline-candidates))
 
 (define shell-baseline
   (cond
-    ((path-exists? shell-baseline-path)
+    ((equal? shell-baseline-path "")
+      (log-info
+        (string-append
+          "  shell-exec: NO BASELINE FOUND — every file spawning a shell will be "
+          "treated as new debt. If that is not intended, the baseline is missing "
+          "from " (string-join ", " shell-baseline-candidates)))
+      (list))
+    (else
       (filter (lambda (l) (not (equal? (string-trim l) "")))
-        (string-split (read-file shell-baseline-path) "\n")))
-    (else (list))))
+        (string-split (read-file shell-baseline-path) "\n")))))
 
 (define (shell-baselined? path)
   (any-line-matches? shell-baseline
