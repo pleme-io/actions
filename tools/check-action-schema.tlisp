@@ -1,0 +1,79 @@
+;; check-action-schema — every */action.yml parses and declares the keys
+;; GitHub requires.
+;;
+;; DESHELLIFIED 2026-08-06. This was a `python3 - <<'PY'` heredoc inside
+;; .github/workflows/ci.yml: ~20 lines of real logic with no tests, no lint,
+;; and no way to run it without reconstructing the job. substrate's
+;; action-release.yml carries a near-identical copy, which is the second
+;; hand-wiring of the same class.
+;;
+;; THE PORT FIXES A BUG THE HEREDOC HAD. Its loop ran over
+;; `pathlib.Path('.').glob('*/action.yml')` and then `sys.exit(rc)` with rc
+;; still 0 if the glob matched nothing. A repo with zero action.yml files --
+;; a bad checkout, a renamed layout, a cwd that is not the repo root -- passed
+;; the gate having validated nothing, and a green check said the schema was
+;; fine. A scan reports what it examined, and a zero denominator is a failure,
+;; not a pass.
+;;
+;; Exit codes: 0 clean · 1 a manifest is malformed or missing keys ·
+;; 3 the scan found nothing to examine (the gate is broken, not the input).
+
+;; The repo carries 351 action manifests as of 2026-08-06. The floor is set
+;; well below that and well above zero on purpose: it is not a count assertion
+;; (which would fail every time an action is added or removed), it is a guard
+;; against a COLLAPSED scan -- a bad checkout, a wrong cwd, a glob that stopped
+;; matching. Finding 12 manifests is as wrong as finding 0, and only a floor
+;; above 0 says so.
+(define MIN-ACTIONS 50)
+
+(define (fail-line p msg)
+  (print-line (string-append "FAIL " p ": " msg)))
+
+;; The three keys GitHub itself requires of any action manifest.
+(define (missing-keys doc)
+  (filter
+    (fn (k) (equal? (alist-get doc k "") ""))
+    (list "name" "description" "runs")))
+
+(define (check-one p)
+  (let ((raw (read-file p)))
+    (try
+      (let ((doc (yaml-parse raw)))
+        (let ((missing (missing-keys doc)))
+          (cond
+            ((> (length missing) 0)
+              (fail-line p (string-append "missing keys " (string-join ", " missing)))
+              1)
+            (else
+              (let ((using (alist-get (alist-get doc "runs" (list)) "using" "")))
+                (when (not (equal? using "composite"))
+                  (print-line (string-append "WARN " p ": not composite (using=" using ")")))
+                (print-line (string-append "OK   " p))
+                0)))))
+      (catch (e)
+        (fail-line p (string-format "{}" e))
+        1))))
+
+;; glob order, not sorted: `sort` lives in the inlined stdlib and this tool
+;; runs standalone. The python original sorted only for readable output, and
+;; nothing here depends on order.
+(define manifests (glob "*/action.yml"))
+
+(print-line (string-append "action manifests examined: " (string-format "{}" (length manifests))))
+
+(when (< (length manifests) MIN-ACTIONS)
+  (print-line
+    (string-append
+      "FATAL: found " (string-format "{}" (length manifests))
+      " action.yml files, expected at least " (string-format "{}" MIN-ACTIONS)
+      " -- the scan examined nothing, which is not the same as finding nothing wrong"))
+  (exit 3))
+
+(define failures (reduce (fn (acc p) (+ acc (check-one p))) 0 manifests))
+
+(print-line
+  (string-append
+    "result: " (string-format "{}" (- (length manifests) failures))
+    "/" (string-format "{}" (length manifests)) " manifests valid"))
+
+(exit (if (> failures 0) 1 0))

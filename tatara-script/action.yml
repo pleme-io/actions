@@ -22,7 +22,14 @@ inputs:
     default: ""
   script:
     description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file)"
-    required: true
+    # NOT required: `script-file` above is a documented alternative and takes
+    # precedence. Declaring this required made actionlint reject every
+    # script-file-only caller ("missing input script"), which is a false
+    # failure -- and it never actually prevented the empty case anyway, since
+    # GitHub does not enforce `required` on composite-action inputs. The real
+    # guard is in the Run step, which is the only place that can see whether
+    # EITHER was supplied.
+    required: false
   version:
     description: "tatara-lisp release tag (e.g. v0.1.0) or 'latest'"
     required: false
@@ -1252,6 +1259,16 @@ runs:
           fi
           TMP="$TATARA_SCRIPT_FILE"
         else
+          # Neither input given. Without this the action wrote an EMPTY file,
+          # ran it, and exited 0 -- a step that validated nothing and reported
+          # success. `script` was declared required to prevent that, but
+          # `script-file` is a documented alternative, so actionlint flagged
+          # every script-file-only caller instead. The guard belongs here, at
+          # the point that can actually see both.
+          if [ -z "${TATARA_SCRIPT_SRC:-}" ]; then
+            echo "::error::neither 'script' nor 'script-file' was provided - nothing to run" >&2
+            exit 1
+          fi
           TMP=$(mktemp -t tatara-action-XXXXXX.tlisp)
           printf '%s\n' "$TATARA_SCRIPT_SRC" > "$TMP"
         fi
