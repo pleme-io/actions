@@ -1,4 +1,21 @@
 ;; pagerduty-notify/run.tlisp — Events API v2 trigger/resolve.
+;;
+;; Four defects, beyond the shared jq-through-sh shape:
+;;
+;;   1. THE VERDICT WAS A SUBSTRING SEARCH. `(log-contains? out "202")` looked
+;;      for "202" anywhere in the response text, so a body that happened to
+;;      contain those three digits — a timestamp, an id, an error message —
+;;      reported a successful enqueue. The status now decides.
+;;   2. INTEGRATION_KEY, a secret, was interpolated into the jq command string
+;;      inside `sh -c`, putting it in argv where `ps` can read it. It is a
+;;      body field now — PagerDuty's Events API carries the routing key in the
+;;      payload, not a header, so it never needs to be an argument.
+;;   3. `dedup` EMBEDS `summary` and was single-quoted with no escaping, so an
+;;      apostrophe in SUMMARY closed the quote and injected. The author had
+;;      already noticed this for the summary field itself — it uses "$SUMMARY"
+;;      — but the copy inside dedup kept the hole.
+;;   4. `--arg summary "$SUMMARY"` read the ENVIRONMENT rather than the bound
+;;      value, so any tlisp-side handling of that input was bypassed.
 
 (define key (env-required "INTEGRATION_KEY"))
 
@@ -17,51 +34,30 @@
     ((not (equal? dedup-in "")) dedup-in)
     (else (string-append "gh-actions:" repo ":" summary))))
 
-(define payload-jq
-  (string-append
-    "jq -n "
-    "--arg routing '"
-    key
-    "' "
-    "--arg action '"
-    action
-    "' "
-    "--arg dedup '"
-    dedup
-    "' "
-    "--arg summary \"$SUMMARY\" "
-    "--arg severity '"
-    severity
-    "' "
-    "--arg source '"
-    repo
-    "' "
-    "'{ routing_key: $routing, event_action: $action, dedup_key: $dedup, "
-    "   payload: { summary: $summary, severity: $severity, source: $source } }'"))
-
 (define payload
-  (let ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond
-      ((= (status-of r) 0) (stdout-of r))
-      (else (log-error "payload assembly failed") (exit 1)))))
+  (list
+    (list "routing_key" key)
+    (list "event_action" action)
+    (list "dedup_key" dedup)
+    (list "payload"
+      (list
+        (list "summary" summary)
+        (list "severity" severity)
+        (list "source" repo)))))
 
 (define r
-  (exec-capture "curl"
-    "-sS"
-    "-w" "\n%{http_code}"
-    "-X" "POST"
-    "-H" "Content-Type: application/json"
-    "-d" payload
-    "https://events.pagerduty.com/v2/enqueue"))
+  (webhook:post "https://events.pagerduty.com/v2/enqueue" (list) payload))
 
-(let ((out (stdout-of r)))
-  (cond
-    ((log-contains? out "202")
-      (log-info (string-append action " dispatched (dedup=" dedup ")"))
-      (append-output (string-append "dedup-key=" dedup))
-      (exit 0))
-    (else
-      (log-error "PagerDuty enqueue failed")
-      (log-info out)
-      (append-output (string-append "dedup-key=" dedup))
-      (exit 1))))
+;; dedup-key is emitted on BOTH paths, as before: a caller needs it to resolve
+;; the incident later even when this dispatch failed.
+(append-output (string-append "dedup-key=" dedup))
+
+(cond
+  ((erro:err? r)
+    (log-error
+      (string-append "pagerduty-notify: enqueue failed — "
+                     (erro:message (erro:value r))))
+    (exit 1))
+  (else
+    (log-info (string-append action " dispatched (dedup=" dedup ")"))
+    (exit 0)))

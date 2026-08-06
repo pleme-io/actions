@@ -1,4 +1,24 @@
-;; grafana-annotation/run.tlisp — tlisp+stdlib migration
+;; grafana-annotation/run.tlisp — create a Grafana annotation.
+;;
+;; Was jq-through-sh then curl-through-sh. Beyond the shared shape:
+;;
+;;   * `date +%s%3N` was shelled out, and `%3N` is GNU-only — on BSD/macOS
+;;     `date` emits a literal "3N", so ts became e.g. "17543N" and the jq
+;;     `--argjson time` operand was invalid. The status was never read either,
+;;     so a failure produced `--argjson time ` with no operand at all.
+;;     `now-ms` is a primitive and returns real milliseconds.
+;;   * The jq filter carried the four-fragment string bug — jq's inner `","`
+;;     ended the tlisp string early, making the next line's comma an UNQUOTE.
+;;     Repaired in place earlier today; building the payload as data removes
+;;     the category rather than that one instance.
+;;   * API_TOKEN sat in argv inside `-H 'Authorization: Bearer <token>'`.
+;;   * `dashboardId` was spliced into the filter as raw text, so a non-numeric
+;;     DASHBOARD_ID produced invalid JSON. It is a parsed int now, and a
+;;     malformed one fails loudly instead of at the far end.
+;;   * The response id was read by `echo '<body>' | jq -r '.id'` through
+;;     another shell, and on an error body jq printed "null" or "" — so the
+;;     action emitted `annotation-id=null` and exited 0. A failed POST cannot
+;;     reach that path now.
 
 (define url (env-required "URL"))
 
@@ -10,78 +30,45 @@
 
 (define dash (env-get "DASHBOARD_ID" ""))
 
-(define ts-r (exec-capture "sh" "-c" "date +%s%3N"))
+(define tag-list
+  (filter (lambda (t) (not (equal? (string-trim t) ""))) (string-split tags ",")))
 
-(define ts (string-trim (stdout-of ts-r)))
-
-(define scope (if (equal? dash "") "" (string-append ", dashboardId: " dash)))
-
-(define payload-jq
-  (string-append
-    "jq -n --arg text '"
-    text
-    "' --arg tags '"
-    tags
-    "' --argjson time "
-    ts
-    ;; This was FOUR fragments and the action could not run:
-    ;;
-    ;;     " '{ text: $text, tags: ($tags | split("
-    ;;     ,")), time: $time"
-    ;;     scope
-    ;;
-    ;; jq's inner `","` ended the tlisp string early, so the next line's
-    ;; leading comma was read as UNQUOTE and `")), time: $time"` became its
-    ;; operand. It parses cleanly — paren balance and a parser dry-run both
-    ;; pass it — and dies only when evaluation reaches it.
-    ;;
-    ;; This is the IDENTICAL defect that datadog-event/run.tlisp documents as
-    ;; found and fixed (its `github` token became a bare unbound symbol the
-    ;; same way). Same bug, same repo, one directory over, still live — which
-    ;; is why the fix belongs in a shared escape helper rather than in each
-    ;; author's memory. The inner quotes just need escaping.
-    " '{ text: $text, tags: ($tags | split(\",\")), time: $time"
-    scope
-    " }'"))
+(define base
+  (list
+    (list "text" text)
+    (list "tags" tag-list)
+    (list "time" (now-ms))))
 
 (define payload
-  (let ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond
-      ((= (status-of r) 0) (stdout-of r))
-      (else (log-error "payload assembly failed") (exit 1)))))
+  (cond
+    ((equal? dash "") base)
+    (else
+      (let ((n (num:parse-int dash)))
+        (cond
+          ((erro:err? n)
+            (log-error
+              (string-append "grafana-annotation: DASHBOARD_ID '" dash
+                             "' is not an integer"))
+            (append-output "annotation-id=")
+            (exit 1))
+          (else (append base (list (list "dashboardId" (erro:value n))))))))))
 
-(define curl-cmd
-  (string-append
-    "curl -sS -X POST "
-    "-H 'Authorization: Bearer "
-    token
-    "' "
-    "-H 'Content-Type: application/json' "
-    "-d '"
-    (string-replace
-      payload
-      "'"
-      "'\"'\"'")
-    "' '"
-    url
-    "/api/annotations'"))
-
-(define r (exec-capture "sh" "-c" curl-cmd))
+(define r
+  (webhook:post (string-append url "/api/annotations")
+                (webhook:bearer token)
+                payload))
 
 (cond
-  ((= (status-of r) 0)
-    (let*
-      ((jq-r
-         (exec-capture "sh"
-           "-c"
-           (string-append
-             "echo '"
-             (string-replace
-               (stdout-of r)
-               "'"
-               "'\"'\"'")
-             "' | jq -r '.id'")))
-        (id (string-trim (stdout-of jq-r))))
-      (append-output (string-append "annotation-id=" id))
-      (exit 0)))
-  (else (append-output "annotation-id=") (exit 1)))
+  ((erro:err? r)
+    (log-error
+      (string-append "grafana-annotation: create failed — "
+                     (erro:message (erro:value r))))
+    (append-output "annotation-id=")
+    (exit 1))
+  (else
+    ;; Grafana replies with JSON carrying the new id. webhook:post returns the
+    ;; parsed body, so there is no second shell and no `jq -r '.id'`.
+    (let ((id (alist-get (erro:value r) "id" "")))
+      (log-info (string-append "grafana-annotation: created " (string-format "{}" id)))
+      (append-output (string-append "annotation-id=" (string-format "{}" id)))
+      (exit 0))))
