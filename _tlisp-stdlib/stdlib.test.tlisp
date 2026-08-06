@@ -766,3 +766,47 @@
     ;; and prove the file is the real inventory, not an empty stub
     (assert (string-contains? inv "\nchdir\n") "chdir IS in the pinned set")
     (assert (string-contains? inv "\nyaml-parse\n") "yaml-parse IS in the pinned set")))
+
+;; ── webhook:post ────────────────────────────────────────────────
+;;
+;; Nine actions POST JSON to a webhook, each hand-rolling jq + curl through
+;; `sh -c`, each with the secret in argv, no --fail, and the payload built as
+;; shell text. This helper replaces all nine.
+
+(deftest "webhook:host-of logs the HOST, never the url"
+  ;; A Slack or Teams webhook url IS the credential. Logging it whole would
+  ;; leak the secret into the one place log-masking might not reach either.
+  (assert (equal? (webhook:host-of "https://hooks.slack.com/services/T00/B00/XXXSECRET")
+                  "hooks.slack.com")
+    "only the host survives")
+  (assert (not (string-contains? (webhook:host-of "https://h.example/s/SECRET") "SECRET"))
+    "the secret path is never returned"))
+
+(deftest "webhook:bearer puts the token in a HEADER, not a url or argv"
+  (let ((h (webhook:bearer "s3cret")))
+    (assert (equal? (car (car h)) "Authorization") "it is an Authorization header")
+    (assert (equal? (car (cdr (car h))) "Bearer s3cret") "carrying the bearer token")))
+
+(deftest "webhook:post refuses an empty endpoint instead of reporting delivery"
+  (let ((r (webhook:post "" (list) (list (list "a" "b")))))
+    (assert (erro:err? r) "no url is an error")
+    (assert (equal? (erro:kind (erro:value r)) "webhook/no-url")
+      "typed, so it is not mistaken for a transport failure")))
+
+(deftest "a NON-JSON response is a successful delivery, not a failure"
+  ;; The trap that would have inverted all nine actions. http-post-json
+  ;; insists the RESPONSE parse as JSON, and there is no raw-text POST
+  ;; primitive at v0.2.5. Slack answers `ok`, Teams `1`, Discord 204-empty —
+  ;; so treating that raise as failure reports every successful notification
+  ;; as undelivered.
+  ;;
+  ;; Safe because of ORDERING: the primitive checks the status first, so a
+  ;; non-2xx says "http status: NNN" and never reaches the parse. Asserted on
+  ;; the discriminator itself so a change in the primitive's wording breaks
+  ;; this test rather than silently re-inverting the verdict.
+  (assert (string-contains? "in native `http-post-json`: response not JSON: expected value"
+                            "response not JSON")
+    "the success-after-2xx discriminator is the phrase 'response not JSON'")
+  (assert (not (string-contains? "in native `http-post-json`: http status: 401"
+                                 "response not JSON"))
+    "and a real HTTP failure does NOT contain it, so the two never collide"))
