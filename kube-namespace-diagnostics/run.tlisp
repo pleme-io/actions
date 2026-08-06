@@ -1,0 +1,305 @@
+;; kube-namespace-diagnostics — dump everything a dead namespace still knows.
+;;
+;; Inlined ahead of this file: _tlisp-stdlib/stdlib.tlisp.
+;;
+;; WHY. This replaces the "Dump chart-testing diagnostics" step in
+;; akeylesslabs/helm-charts .github/workflows/chart_test.yaml — a `run: |`
+;; block that fires on `ct install` failure and suffixes every command with
+;; `|| true`. When ct install fails in CI the run is over and the kind cluster
+;; is destroyed, so anything not dumped in that one window is gone forever.
+;; Completeness beats tidiness; that is why nothing here aborts the dump.
+;;
+;; THE CONTRACT: this action ALWAYS exits 0. A diagnostics dump that fails the
+;; job replaces the real failure with its own, which is strictly worse than not
+;; running. Every command's failure is REPORTED (`[exit N] <argv>`) rather than
+;; swallowed the way `|| true` swallows it, and then the dump continues.
+;;
+;; THREE THINGS THE SHELL VERSION DOES NOT DO.
+;;
+;;   1. ::group:: / ::endgroup:: around every section. A ct-install failure in
+;;      a 12-pod namespace emits thousands of log lines; flat text means
+;;      scrolling, grouped text means clicking. GitHub does not nest groups, so
+;;      every section here is a flat sibling — never an outer wrapper.
+;;
+;;   2. initContainers. The shell iterates `.spec.containers[*]` only, so an
+;;      init container that crash-looped — the single most common way a chart
+;;      install dies — contributes nothing to the dump. Measured on a live
+;;      DaemonSet pod: `.spec.containers` yields (agent process-agent) while
+;;      initContainers+containers yields (init-volume init-config agent
+;;      process-agent). Two of four containers were invisible.
+;;
+;;   3. The kinds `kubectl get all` omits. `all` is a fixed short list —
+;;      no ConfigMap, Secret, PVC, Ingress, ServiceAccount, Job or CronJob.
+;;      The ConfigMap a chart failed to mount was never in the dump. Table
+;;      output for Secret is NAME/TYPE/DATA/AGE — counts, never values.
+;;
+;; A missing binary is handled BEFORE it is invoked, not after: `exec-capture`
+;; RAISES on a spawn failure (verified: "in native `exec-capture`: No such file
+;; or directory") rather than returning a non-zero status, so an unguarded
+;; `kubectl` call on a runner without kubectl would abort the dump and exit
+;; non-zero — precisely the contract violation above.
+
+(define ns (string-trim (env-get "NAMESPACE" "")))
+
+(define tail-lines (string-trim (env-get "TAIL_LINES" "200")))
+
+(define include-nodes? (equal? (string-trim (env-get "INCLUDE_NODES" "true")) "true"))
+
+(define tail-flag (string-append "--tail=" tail-lines))
+
+;; Probed ONCE. `hash:cmd-present?` costs a subprocess, and the log leg calls
+;; two commands per container — re-probing there would double every pod's cost.
+(define kubectl? (hash:cmd-present? "kubectl"))
+
+(define helm? (hash:cmd-present? "helm"))
+
+;; ── section framing ─────────────────────────────────────────────
+;; `print-line` writes to STDOUT unadorned; `log-info` writes to STDERR with a
+;; `[HH:MM:SS] INFO ` prefix (verified). A workflow command must be the whole
+;; line on stdout, so these are print-line and cannot become log-info.
+
+(define (group-open title) (print-line (string-append "::group::" title)))
+
+(define (group-close) (print-line "::endgroup::"))
+
+(define (emit text)
+  (let ((t (string-trim text))) (cond ((equal? t "") #t) (else (print-line t)))))
+
+;; Run ARGV inside its own group. Never raises, never exits. PRESENT? is the
+;; caller's already-probed answer for argv's binary.
+(define (dump-guarded present? title argv)
+  (group-open title)
+  (cond
+    ((not present?) (print-line (string-append "skipped: " (car argv) " is not on PATH")))
+    (else
+      (let ((r (apply exec-capture argv)))
+        (emit (stdout-of r))
+        (emit (stderr-of r))
+        (cond
+          ((= (status-of r) 0) #t)
+          (else
+            (print-line
+              (string-append
+                "[exit "
+                (string-format "{}" (status-of r))
+                "] "
+                (string-join " " argv))))))))
+  (group-close)
+  #t)
+
+(define (kdump title argv) (dump-guarded kubectl? title argv))
+
+(define (hdump title argv) (dump-guarded helm? title argv))
+
+;; ── quiet enumeration ───────────────────────────────────────────
+;; Structured queries, not free text: `-o jsonpath` gives one name per line,
+;; so nothing here parses a table whose column layout is kubectl's to change.
+
+(define (nonempty-lines text)
+  (filter (lambda (l) (not (equal? l ""))) (map string-trim (string-split text "\n"))))
+
+(define (kquery argv)
+  (cond
+    ((not kubectl?) '())
+    (else
+      (let ((r (apply exec-capture argv)))
+        (cond ((= (status-of r) 0) (nonempty-lines (stdout-of r))) (else '()))))))
+
+(define pod-jsonpath "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+
+;; initContainers FIRST so the dump reads in start order, and both ranges in
+;; ONE jsonpath so a pod with no initContainers costs no extra call. Verified
+;; against a live pod: an absent `.spec.initContainers` yields nothing and
+;; exits 0 — it is not an error.
+(define container-jsonpath
+  (string-append
+    "jsonpath={range .spec.initContainers[*]}{.name}{\"\\n\"}{end}"
+    "{range .spec.containers[*]}{.name}{\"\\n\"}{end}"))
+
+(define (pods-in-namespace)
+  (kquery
+    (list
+      "kubectl"
+      "get"
+      "pods"
+      "-n"
+      ns
+      "-o"
+      pod-jsonpath)))
+
+(define (containers-of pod)
+  (kquery
+    (list
+      "kubectl"
+      "get"
+      "pod"
+      pod
+      "-n"
+      ns
+      "-o"
+      container-jsonpath)))
+
+;; ── per-container logs ──────────────────────────────────────────
+;; `--previous` fails with "previous terminated container not found" whenever
+;; the container has not restarted, which is most of them. That is expected
+;; noise, it stays inside its own collapsed group, and it is the one dump you
+;; cannot reconstruct after a CrashLoopBackOff.
+
+(define (dump-container pod ctr)
+  (kdump
+    (string-append "logs " pod " / " ctr " (current)")
+    (list
+      "kubectl"
+      "logs"
+      pod
+      "-c"
+      ctr
+      "-n"
+      ns
+      tail-flag))
+  (kdump
+    (string-append "logs " pod " / " ctr " (previous)")
+    (list
+      "kubectl"
+      "logs"
+      pod
+      "-c"
+      ctr
+      "-n"
+      ns
+      "--previous"
+      tail-flag)))
+
+;; tatara-script has no named `let` (see kubectl-apply/run.tlisp), so both
+;; walks are top-level recursions carrying their accumulator.
+(define (dump-containers pod ctrs)
+  (cond ((null? ctrs) #t) (else (dump-container pod (car ctrs)) (dump-containers pod (cdr ctrs)))))
+
+(define (dump-pods ps seen)
+  (cond
+    ((null? ps) seen)
+    (else
+      (let ((ctrs (containers-of (car ps))))
+        (cond
+          ((null? ctrs)
+            (group-open (string-append "logs " (car ps)))
+            (print-line "no containers reported by jsonpath — pod may have been deleted mid-dump")
+            (group-close))
+          (else (dump-containers (car ps) ctrs)))
+        (dump-pods (cdr ps) (+ seen (length ctrs)))))))
+
+;; ── the dump ────────────────────────────────────────────────────
+
+(define (emit-counts pod-count container-count)
+  (append-output (string-append "pods-inspected=" (string-format "{}" pod-count)))
+  (append-output (string-append "containers-inspected=" (string-format "{}" container-count))))
+
+(cond
+  ((equal? ns "")
+    (log-error "namespace is empty — nothing to diagnose")
+    (group-open "kube-namespace-diagnostics")
+    (print-line "namespace input resolved to the empty string; no commands were run")
+    (group-close)
+    (emit-counts 0 0)
+    (exit 0)))
+
+(cond
+  ((not kubectl?)
+    (log-error "kubectl is not on PATH — the dump is empty")
+    (group-open "kube-namespace-diagnostics")
+    (print-line "kubectl is not on PATH; add azure/setup-kubectl before this step")
+    (group-close)
+    (emit-counts 0 0)
+    (exit 0)))
+
+(log-info (string-append "==> diagnostics for namespace " ns " (tail=" tail-lines ")"))
+
+(cond
+  (include-nodes?
+    (kdump
+      "nodes (wide)"
+      (list
+        "kubectl"
+        "get"
+        "nodes"
+        "-o"
+        "wide"))
+    (kdump "nodes (describe)" (list "kubectl" "describe" "nodes"))))
+
+(kdump
+  (string-append "namespace resources: " ns)
+  (list
+    "kubectl"
+    "get"
+    "all"
+    "-n"
+    ns
+    "-o"
+    "wide"))
+
+;; The kinds `get all` leaves out. One call, comma-joined, so a cluster
+;; missing any single kind costs one line of stderr rather than a lost section.
+(kdump
+  (string-append "namespace config + storage: " ns)
+  (list
+    "kubectl"
+    "get"
+    "-n"
+    ns
+    "configmap,secret,pvc,ingress,serviceaccount,job,cronjob"
+    "-o"
+    "wide"))
+
+(hdump
+  (string-append "helm releases: " ns)
+  (list
+    "helm"
+    "list"
+    "-n"
+    ns
+    "--all"))
+
+(kdump
+  (string-append "events: " ns)
+  (list
+    "kubectl"
+    "get"
+    "events"
+    "-n"
+    ns
+    "--sort-by=.lastTimestamp"
+    "-o"
+    "wide"))
+
+(kdump
+  (string-append "pod descriptions: " ns)
+  (list
+    "kubectl"
+    "describe"
+    "pods"
+    "-n"
+    ns))
+
+(define pods (pods-in-namespace))
+
+(cond
+  ((null? pods)
+    (group-open (string-append "container logs: " ns))
+    (print-line "no pods in namespace — nothing to tail")
+    (group-close)
+    (emit-counts 0 0)
+    (log-info "0 pods, 0 containers")
+    (exit 0)))
+
+(define containers-seen (dump-pods pods 0))
+
+(emit-counts (length pods) containers-seen)
+
+(log-info
+  (string-append
+    (string-format "{}" (length pods))
+    " pod(s), "
+    (string-format "{}" containers-seen)
+    " container(s) dumped"))
+
+(exit 0)

@@ -1,0 +1,52 @@
+name: 'pleme-io · helm-unittest'
+description: 'Install the helm-unittest plugin at a pinned version and run its suites over a list of chart directories, emitting the parsed totals. Replaces the "Set up helm-unittest" + per-chart `while read` shell pair in a chart-test workflow.'
+branding:
+  icon: 'check-square'
+  color: 'blue'
+
+inputs:
+  charts:
+    description: "Newline-separated chart directories to test — e.g. chart-testing's `ct list-changed` output. Every listed chart is run; a chart with no tests/*_test.yaml is a clean 0-of-0 pass, not a skip."
+    required: true
+  plugin-version:
+    description: "helm-unittest plugin version to pin. Installed with --verify=false, which is required: the plugin distribution ships no provenance file and helm refuses an unverifiable source without it. A plugin already present at a different version is uninstalled and re-pinned to this one."
+    required: false
+    default: "v1.1.1"
+
+outputs:
+  charts-tested:
+    description: "Number of chart directories `helm unittest` was run against."
+    value: ${{ steps.unittest.outputs.charts-tested }}
+  tests-passed:
+    description: "Total individual tests passed, summed across every chart (helm-unittest's `Tests:` line)."
+    value: ${{ steps.unittest.outputs.tests-passed }}
+  tests-failed:
+    description: "Total individual tests failed, summed across every chart. Zero on a green run; the step is red whenever any chart's suite failed, regardless of this number."
+    value: ${{ steps.unittest.outputs.tests-failed }}
+  suites-passed:
+    description: "Total test suites (tests/*_test.yaml files) passed, summed across every chart — the number to assert on when guarding against a chart silently losing its coverage."
+    value: ${{ steps.unittest.outputs.suites-passed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: unittest
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CHARTS: ${{ inputs.charts }}
+        PLUGIN_VERSION: ${{ inputs.plugin-version }}

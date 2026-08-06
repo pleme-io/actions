@@ -1,0 +1,50 @@
+name: 'pleme-io · helm-release-cleanup'
+description: 'Best-effort teardown of a namespace: uninstall every Helm release in it with a timeout, then delete leftover resources. Never fails the job — reports what failed instead of swallowing it.'
+branding: { icon: 'trash', color: 'red' }
+
+inputs:
+  namespace:
+    description: "Namespace to clean — every Helm release in it is uninstalled"
+    required: true
+  timeout:
+    description: "--timeout handed to each `helm uninstall --wait`"
+    required: false
+    default: "120s"
+  delete-leftovers:
+    description: "Run `kubectl delete all --all` in the namespace after the uninstalls ('true' / 'false')"
+    required: false
+    default: "true"
+
+outputs:
+  releases-uninstalled:
+    description: "Count of releases that uninstalled cleanly"
+    value: ${{ steps.cleanup.outputs.releases-uninstalled }}
+  failures:
+    description: "Count of cleanup operations that failed — the `helm list`, each `helm uninstall`, and the leftover delete each count 1. Non-zero does NOT fail the step; read it to gate a follow-up or surface a stuck release."
+    value: ${{ steps.cleanup.outputs.failures }}
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-helm@v4
+    - uses: azure/setup-kubectl@v4
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: cleanup
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        NAMESPACE: ${{ inputs.namespace }}
+        TIMEOUT: ${{ inputs.timeout }}
+        DELETE_LEFTOVERS: ${{ inputs.delete-leftovers }}

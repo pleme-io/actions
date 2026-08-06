@@ -1,0 +1,51 @@
+name: 'pleme-io · kube-namespace-diagnostics'
+description: 'Dump everything a doomed namespace still knows — nodes, resources, helm releases, events, pod descriptions, and current + previous logs for every container including initContainers — grouped with ::group:: and ALWAYS exiting 0. Replaces the on-failure `|| true` shell dump that CI loses forever when the cluster is torn down.'
+branding:
+  icon: 'life-buoy'
+  color: 'red'
+
+inputs:
+  namespace:
+    description: "Namespace to dump (e.g. chart-testing). Everything except the node sections is scoped to it."
+    required: true
+  tail-lines:
+    description: "Lines of log tail per container, passed as kubectl --tail. Applies to both the current and the --previous read."
+    required: false
+    default: "200"
+  include-nodes:
+    description: "Dump `get nodes -o wide` + `describe nodes`. Set false on a shared cluster where node output is large and not the suspect."
+    required: false
+    default: "true"
+
+outputs:
+  pods-inspected:
+    description: "Pods found in the namespace and walked. 0 means the namespace was empty, kubectl was absent, or the jsonpath query failed — the log says which."
+    value: ${{ steps.dump.outputs.pods-inspected }}
+  containers-inspected:
+    description: "Containers whose logs were attempted, summed across pods and counting initContainers. Two kubectl logs calls (current + previous) per container."
+    value: ${{ steps.dump.outputs.containers-inspected }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: dump
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        NAMESPACE: ${{ inputs.namespace }}
+        TAIL_LINES: ${{ inputs.tail-lines }}
+        INCLUDE_NODES: ${{ inputs.include-nodes }}

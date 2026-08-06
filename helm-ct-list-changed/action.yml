@@ -1,0 +1,47 @@
+name: 'pleme-io · helm-ct-list-changed'
+description: 'Run chart-testing `ct list-changed` and emit the changed chart directories, with ct debug-trace (">>> ") lines filtered out. A real ct failure aborts; an empty result does not.'
+branding:
+  icon: 'git-branch'
+  color: 'blue'
+
+inputs:
+  config:
+    description: "Path to the chart-testing config file, passed as --config. Empty means let ct resolve its own default config."
+    required: false
+    default: ".github/ct.yaml"
+  target-branch:
+    description: "Branch to diff against, passed as --target-branch when non-empty. Empty means ct's own resolution (the config's target-branch, else ct's built-in default)."
+    required: false
+    default: ""
+
+outputs:
+  changed:
+    description: "'true' when at least one chart directory changed, 'false' otherwise. Always set, so a consuming `if:` never compares against an unset output."
+    value: ${{ steps.list-changed.outputs.changed }}
+  changed-charts:
+    description: "Newline-separated changed chart directories, with ct's own '>>> ' debug trace removed. Empty string when changed is 'false'."
+    value: ${{ steps.list-changed.outputs.changed-charts }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: list-changed
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        TARGET_BRANCH: ${{ inputs.target-branch }}

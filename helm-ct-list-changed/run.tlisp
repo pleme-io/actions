@@ -1,0 +1,124 @@
+;; helm-ct-list-changed/run.tlisp — `ct list-changed`, with ct's own debug
+;; trace filtered off stdout.
+;;
+;; WHY THE FILTER IS THE WHOLE ACTION. A ct.yaml carrying `debug: true` makes
+;; chart-testing print every subprocess it runs to STDOUT, prefixed `>>> `,
+;; interleaved with the answer. MEASURED against akeylesslabs/helm-charts
+;; @ 94f8a56 with ct 3.14.0 and that repo's .github/ct.yaml (debug: true):
+;;
+;;   >>> helm version --template {{ .Version }}
+;;   >>> git rev-parse --is-inside-work-tree
+;;   >>> git rev-parse --verify origin/main
+;;   >>> git merge-base origin/main HEAD
+;;   >>> git diff --find-renames --name-only 01a9ce78 -- charts
+;;   charts/akeyless-k8s-secrets-injection
+;;
+;; Five of those six lines are trace, and they are on stdout, not stderr — so
+;; exec-capture's stream split does NOT separate them. A consumer that skips
+;; the filter reads `>>> helm version --template {{ .Version }}` as a chart
+;; directory and hands it to `helm lint`.
+;;
+;; THE STATUS CHECK, and why it is not the trick it replaces. The bash original
+;; ran the filter as a SECOND command substitution (`grep -v '^>>> ' <<< "$raw"
+;; || true`) purely so that grep matching nothing — exit 1 — did not abort the
+;; step under `set -e`, while a real ct failure in the FIRST substitution still
+;; did. That is an exit code being laundered to smuggle a value. Here ct's
+;; status is inspected explicitly below and is the only thing that can abort;
+;; "no changed charts" is a plain success carrying an empty list, and there is
+;; no second process whose status has to be suppressed.
+
+;; ── 1. resolve ──────────────────────────────────────────────────────────
+
+(define ct:config (string-trim (env-get "CONFIG" ".github/ct.yaml")))
+
+(define ct:target-branch (string-trim (env-get "TARGET_BRANCH" "")))
+
+;; ── 2. validate ─────────────────────────────────────────────────────────
+;; A missing --config file makes ct fail with its own message several layers
+;; down; say it here instead, where the path the caller actually passed is in
+;; hand. An EMPTY config is legal and means "let ct resolve its own default",
+;; so it is not a miss.
+
+(cond
+  ((and (not (equal? ct:config "")) (not (path-exists? ct:config)))
+    (log-error (string-append "ct config not found: " ct:config))
+    (exit 1)))
+
+;; ── 3. detect — argv, built as discrete arguments ───────────────────────
+;; Direct argv, no `sh -c`: a chart path or a branch name containing a space
+;; or a glob character is passed literally rather than re-split by a shell.
+
+(define ct:config-args (if (equal? ct:config "") (list) (list "--config" ct:config)))
+
+(define ct:target-args
+  (if (equal? ct:target-branch "") (list) (list "--target-branch" ct:target-branch)))
+
+(define ct:argv (append (list "ct" "list-changed") ct:config-args ct:target-args))
+
+;; ── 4. execute ──────────────────────────────────────────────────────────
+
+(log-info (string-append "running: " (string-join " " ct:argv)))
+
+;; exec-capture RAISES when the binary is absent rather than returning a
+;; non-zero status, so a missing ct would surface as a native error naming a
+;; line number instead of the actual problem. This action deliberately does not
+;; install ct — the caller owns that, usually via helm/chart-testing-action —
+;; so the least it owes is a typed message saying which.
+(when (not (= (status-of (exec-capture "sh" "-c" "command -v ct")) 0))
+  (log-error "ct is not on PATH. This action does not install it; add helm/chart-testing-action (or an equivalent) to the job before this step.")
+  (append-output "changed=false")
+  (append-output "changed-charts=")
+  (exit 1))
+
+(define ct:result (apply exec-capture ct:argv))
+
+(cond
+  ((not (= (status-of ct:result) 0))
+    (log-error
+      (string-append
+        "`"
+        (string-join " " ct:argv)
+        "` failed (exit "
+        (string-format "{}" (status-of ct:result))
+        ")"))
+    (log-error (stderr-of ct:result))
+    (exit 1)))
+
+;; ── 5. branch — strip the trace, emit the list ──────────────────────────
+
+;; Tested on the TRIMMED line, which is a superset of the original's anchored
+;; `^>>> `: an indented trace line is still trace, and no chart directory
+;; begins with the marker.
+(define (ct:trace-line? line) (string-starts-with? line ">>> "))
+
+;; Blank lines are dropped too. `$(…)` in the original ate only the TRAILING
+;; newline, so a blank line anywhere else survived `grep -v` and became an
+;; empty entry in changed-charts. An empty string is not a chart directory.
+(define (ct:chart-line? line) (and (not (equal? line "")) (not (ct:trace-line? line))))
+
+(define ct:charts
+  (filter ct:chart-line? (map string-trim (string-split (stdout-of ct:result) "\n"))))
+
+(define ct:count (length ct:charts))
+
+(cond
+  ((= ct:count 0)
+    (log-info "no changed charts")
+    ;; Both outputs are written on this path. The original set NEITHER when the
+    ;; list was empty, so every downstream `if:` was comparing against an unset
+    ;; output that happens to render as ''. Saying "false" out loud costs
+    ;; nothing and makes the negative case readable in the job log.
+    (append-output "changed=false")
+    (append-output "changed-charts=")
+    (exit 0))
+  (else
+    (log-info (string-append (string-format "{}" ct:count) " changed chart(s):"))
+    (for-each (lambda (c) (log-info (string-append "  " c))) ct:charts)
+    (append-output "changed=true")
+    ;; Multi-line value: the heredoc form GITHUB_OUTPUT accepts. The marker is
+    ;; the same one changelog-generate uses and cannot occur in a chart path.
+    (let ((eof-marker "TLISP_OUTPUT_EOF"))
+      (append-output (string-append "changed-charts<<" eof-marker))
+      (append-output (string-join "\n" ct:charts))
+      (append-output eof-marker))
+    (exit 0)))
