@@ -1,4 +1,31 @@
 ;; restic-backup/run.tlisp
+;;
+;; ── THIS ACTION HAS NEVER SUCCEEDED ──────────────────────────────────────
+;;
+;; It wrote its two required settings to `$GITHUB_ENV`:
+;;
+;;     echo 'RESTIC_REPOSITORY=<repo>' >> $GITHUB_ENV
+;;     echo 'RESTIC_PASSWORD=<passwd>' >> $GITHUB_ENV
+;;
+;; `$GITHUB_ENV` takes effect for SUBSEQUENT STEPS. `restic backup` runs in
+;; THIS one, a few lines later, so it has always run with no repository and no
+;; password configured. There is no subsequent step. The exports went nowhere.
+;;
+;; `env-set` sets the variable in this process, which `exec-capture` children
+;; inherit — which is what was wanted all along.
+;;
+;; ── AND THE PASSWORD WAS ON A COMMAND LINE ───────────────────────────────
+;;
+;; `sh -c "echo 'RESTIC_PASSWORD=<secret>' >> …"` puts the secret in argv,
+;; where any process on the runner can read it from `ps` or
+;; /proc/<pid>/cmdline. GitHub's log masking does not cover that — it redacts
+;; logs, not the process table. A `'` in the password also broke the quoting
+;; and injected. Neither is reachable through `env-set`.
+;;
+;; The install is nix now, per the operator decision of 2026-08-06:
+;; `sudo apt-get install restic` is an unpinned job-time third-party fetch,
+;; which ★★ HERMETIC SUPPLY CHAIN forbids — and its `exec-check` return value
+;; was discarded, so the install failing changed nothing.
 
 (define repo (env-required "REPOSITORY"))
 
@@ -6,43 +33,78 @@
 
 (define paths (env-required "PATHS_ARG"))
 
-(exec-check
-  "sudo"
-  "apt-get"
-  "install"
-  "-y"
-  "-qq"
-  "restic")
+(cond
+  ((not (hash:cmd-present? "restic"))
+    (log-error
+      (string-append
+        "restic-backup: restic is not runnable. It is provided by nix — add it "
+        "to the job's devShell or `nix profile install nixpkgs#restic` in a "
+        "setup step. Refusing to report a backup that cannot have happened."))
+    (exit 3)))
 
-(let ((env-file (env-get "GITHUB_ENV" "")))
-  (cond
-    ((not (equal? env-file ""))
-      (exec-check
-        "sh"
-        "-c"
-        (string-append
-          "echo 'RESTIC_REPOSITORY="
-          repo
-          "' >> "
-          env-file))
-      (exec-check
-        "sh"
-        "-c"
-        (string-append
-          "echo 'RESTIC_PASSWORD="
-          passwd
-          "' >> "
-          env-file)))))
+;; In THIS process, so the child inherits them. Never in argv.
+(env-set "RESTIC_REPOSITORY" repo)
 
-(define args (append (list "backup") (string-split paths " ")))
+(env-set "RESTIC_PASSWORD" passwd)
 
-(define r (apply exec-capture (cons "restic" args)))
+(define backup-r
+  (proc:must (append (list "restic" "backup") (string-split paths " "))))
 
 (cond
-  ((= (status-of r) 0)
-    (let*
-      ((id-r (exec-capture "sh" "-c" "restic snapshots --json | jq -r '.[-1].short_id'"))
-        (sid (string-trim (stdout-of id-r))))
-      (append-output (string-append "snapshot-id=" sid))
-      (exit 0)))
-  (else (append-output "snapshot-id=") (exit 1)))
+  ((erro:err? backup-r)
+    (log-error
+      (string-append "restic-backup: backup failed — "
+                     (erro:message (erro:value backup-r))))
+    (append-output "snapshot-id=")
+    (exit 1)))
+
+;; ── the snapshot id, read as JSON ────────────────────────────────────────
+;;
+;; Was `restic snapshots --json | jq -r '.[-1].short_id'` through a shell, so
+;; the pipeline's status belonged to jq and restic's own failure was invisible.
+;; An empty repo or a failed listing both printed "null" or "", and the action
+;; emitted `snapshot-id=null` — or an empty one — while exiting 0 on the
+;; success branch. A backup whose snapshot cannot be identified is not a
+;; verified backup, and that identifier is this action's entire output.
+
+(define snaps-r (proc:must (list "restic" "snapshots" "--json")))
+
+(cond
+  ((erro:err? snaps-r)
+    (log-error
+      (string-append "restic-backup: the backup ran but its snapshot could not "
+                     "be listed — " (erro:message (erro:value snaps-r))))
+    (append-output "snapshot-id=")
+    (exit 1)))
+
+(define snapshots
+  (let ((parsed (erro:attempt (lambda () (json-parse (string-trim (erro:value snaps-r)))))))
+    (cond
+      ((erro:err? parsed)
+        (log-error "restic-backup: `restic snapshots --json` did not return JSON")
+        (append-output "snapshot-id=")
+        (exit 1))
+      (else (erro:value parsed)))))
+
+(define (last-of lst)
+  (cond ((null? (cdr lst)) (car lst)) (else (last-of (cdr lst)))))
+
+(cond
+  ((null? snapshots)
+    ;; The backup reported success and the repository holds nothing. That is a
+    ;; contradiction, not an empty result — so it fails rather than emitting an
+    ;; empty snapshot-id beside exit 0.
+    (log-error "restic-backup: backup succeeded but the repository lists no snapshots")
+    (append-output "snapshot-id=")
+    (exit 1))
+  (else
+    (let ((sid (alist-get (last-of snapshots) "short_id" "")))
+      (cond
+        ((equal? sid "")
+          (log-error "restic-backup: the newest snapshot has no short_id")
+          (append-output "snapshot-id=")
+          (exit 1))
+        (else
+          (log-info (string-append "restic-backup: snapshot " sid))
+          (append-output (string-append "snapshot-id=" sid))
+          (exit 0))))))
