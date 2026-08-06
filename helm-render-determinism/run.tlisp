@@ -167,8 +167,25 @@
       (+ (determinism:acc-checked acc) 1)
       (determinism:acc-checked acc))))
 
+;; A bare name resolves under the chart's own ci/ directory, which is the
+;; common case. An entry CONTAINING a slash is taken as a repo-root-relative
+;; path and used as-is.
+;;
+;; That second form is not a convenience. chart-testing installs every
+;; ci/*-values.yaml, so a chart that wants a second render fixture pays for it
+;; with a second `ct install` of itself — and any chart whose cluster-scoped
+;; resources carry fixed names then fails on Helm ownership, which is a real
+;; shape (akeylesslabs/helm-charts' injector: `ClusterRole
+;; "akyeless-injector-role" ... cannot be imported into the current release`).
+;; Keeping a render-only fixture outside ci/ lets a chart prove determinism
+;; without being installed twice to do it.
+(define (determinism:resolve-values chart values-file)
+  (if (string-contains? values-file "/")
+    values-file
+    (path-join chart "ci" values-file)))
+
 (define (determinism:check-entry acc chart conf-path values-file)
-  (let ((values-path (path-join chart "ci" values-file)))
+  (let ((values-path (determinism:resolve-values chart values-file)))
     (if (path-exists? values-path)
       (determinism:acc-step acc (determinism:check-render chart values-path) #t)
       (begin
