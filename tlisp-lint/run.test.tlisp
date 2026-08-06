@@ -440,3 +440,27 @@
         (assert (string-contains? (lint-text seen) "unbound-symbol")
           "the same name without the def prefix IS reported — the prefix is the cause")))
     (else (assert #t "rule absent; the blind spot is not observable here"))))
+
+(deftest "path-of-cat-line takes the first token, so a REDIRECT does not corrupt the path"
+  ;; Regression. Six actions were converted from the heredoc loader to the
+  ;; file-based one, whose cat lines carry a redirect:
+  ;;
+  ;;   cat "${{ github.action_path }}/run.tlisp" >> "$DEST"
+  ;;
+  ;; Taking everything after `}}` yielded `/run.tlisp >> $DEST`, which is not
+  ;; a path — and composed-parts-of guards with path-exists?, so the entry was
+  ;; silently DROPPED and the action was simply not composed. The unbound
+  ;; check then passed because it examined less. Failure looking like success,
+  ;; inside the very gate built to find that shape.
+  (assert (equal? (path-of-cat-line
+                    "cat \"${{ github.action_path }}/run.tlisp\" >> \"$DEST\"" "d")
+                  "d/run.tlisp")
+    "a redirect after the path must not become part of the path")
+  (assert (equal? (path-of-cat-line
+                    "cat \"${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp\" > \"$DEST\"" "d")
+                  "d/../_tlisp-stdlib/stdlib.tlisp")
+    "same for the first cat, which uses a single > redirect")
+  (assert (equal? (path-of-cat-line
+                    "cat ${{ github.action_path }}/run.tlisp" "d")
+                  "d/run.tlisp")
+    "the original heredoc shape, with no redirect, still resolves"))
