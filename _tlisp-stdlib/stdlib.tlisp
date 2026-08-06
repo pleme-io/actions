@@ -2123,6 +2123,15 @@
 (define (erro:or-else r fallback)
   (cond ((erro:ok? r) (erro:value r)) (else fallback)))
 
+;; Run `thunk`, converting any RAISE into (err e).
+;;
+;; The bridge from the interpreter's raising primitives into Result
+;; discipline: `json-parse` on malformed input, `read-file` on a missing path
+;; and a wrong-arity call all raise, and a caller that wants to answer "did
+;; this work?" rather than die needs them as values.
+(define (erro:attempt thunk)
+  (try (erro:ok (thunk)) (catch (e) (erro:err e))))
+
 ;; ── the boundary ────────────────────────────────────────────────
 
 (define proc:shells (list "sh" "bash" "zsh" "dash" "ksh" "fish" "csh" "tcsh"))
