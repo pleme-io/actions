@@ -647,3 +647,61 @@
       (assert (not (= (status-of r) 0)) "an unsupported path shape must fail")
       (assert (string-contains? out "not a plain dotted key path")
         "and must say WHY, so the caller knows to rewrite the path rather than the file"))))
+
+;; ── proc:run — the typed subprocess boundary ────────────────────
+;;
+;; These pin the two properties the whole class fix rests on: a command cannot
+;; be built as a string, and the status cannot be skipped.
+
+(deftest "proc:must returns stdout on a successful argv call"
+  (let ((r (proc:must (list "git" "--version"))))
+    (assert (erro:ok? r) "a working command succeeds")
+    (assert (string-contains? (erro:value r) "git version") "and yields its stdout")))
+
+(deftest "proc:run REFUSES a shell as argv[0] — the root hole, closed"
+  ;; Every injection finding in the 108-site survey traces to a command built
+  ;; as a string. This is the one hole large enough to drive the whole class
+  ;; back through, so it is refused at the primitive rather than by review.
+  (let ((r (proc:run (list "sh" "-c" "echo hi"))))
+    (assert (erro:err? r) "sh as argv[0] is refused")
+    (assert (equal? (erro:kind (erro:value r)) "proc/shell-banned")
+      "and typed, so a caller cannot mistake it for a missing binary"))
+  (assert (erro:err? (proc:run (list "bash" "-c" "echo hi"))) "bash too")
+  (assert (erro:err? (proc:run (list "zsh" "-c" "echo hi"))) "zsh too"))
+
+(deftest "a metacharacter payload is DATA, not syntax — the injection is unwritable"
+  ;; The exact shape that made terraform-apply, pulumi-up and fastlane-deploy
+  ;; injectable: an env-supplied value reaching a command. Through argv it is
+  ;; one argument, whatever it contains.
+  (let ((r (proc:must (list "echo" "; rm -rf /; $(whoami) `id` 'quoted'"))))
+    (assert (erro:ok? r) "the call succeeds")
+    (assert (string-contains? (erro:value r) "; rm -rf /")
+      "the payload comes back verbatim as DATA — it was never parsed as syntax")))
+
+(deftest "a missing binary is a typed err, not a raise that kills the run"
+  (let ((r (proc:must (list "definitely-not-a-real-binary-xyz"))))
+    (assert (erro:err? r) "an absent binary is an error")
+    (assert (equal? (erro:kind (erro:value r)) "proc/not-found")
+      "typed as not-found, distinct from a non-zero exit")))
+
+(deftest "proc:must FAILS on a non-zero exit — the vacuous class made unwritable"
+  ;; This is the property that kills ~40 findings at once: there is no way to
+  ;; reach the output without the status having been checked, because a
+  ;; non-zero status never produces an ok.
+  (let ((r (proc:must (list "git" "rev-parse" "--verify" "refs/heads/no-such-branch"))))
+    (assert (erro:err? r) "a non-zero exit is an error, not an empty string")
+    (assert (equal? (erro:kind (erro:value r)) "proc/failed") "typed as failed")
+    (assert (not (equal? (erro:ctx-status (erro:value r)) 0))
+      "and it carries the real status rather than discarding it")))
+
+(deftest "proc:run KEEPS a non-zero exit as ok — because it is sometimes the answer"
+  ;; grep returns 1 for no-match; terraform plan -detailed-exitcode returns 2
+  ;; for changes-present. Collapsing those into err recreates the confusion in
+  ;; the other direction, so run and must are two functions on purpose.
+  (let ((r (proc:run (list "git" "rev-parse" "--verify" "refs/heads/no-such-branch"))))
+    (assert (erro:ok? r) "it RAN, so it is ok")
+    (assert (= (status-of (erro:value r)) 128) "and the status is readable")))
+
+(deftest "an empty argv is refused rather than silently spawning nothing"
+  (assert (equal? (erro:kind (erro:value (proc:run (list)))) "proc/empty")
+    "empty argv is its own typed error"))

@@ -2057,3 +2057,141 @@
           "gate's capability (usually a version pin) before trusting any green "
           "it reports."))
       (exit 1))))
+
+;; ────────────────────────────────────────────────────────────────
+;; proc — the typed subprocess boundary
+;; ────────────────────────────────────────────────────────────────
+;;
+;; A fan-out survey of all 108 shell sites in this repo found 102 carrying a
+;; latent bug. They are not 102 bugs. They are two roots, and both of them are
+;; properties of `exec-capture "sh" "-c" <string>`:
+;;
+;;   1. A COMMAND CAN BE BUILT AS A STRING. Every injection, every broken
+;;      quote, every word-split traces here. `terraform-apply` interpolated an
+;;      env var unquoted into `terraform apply -auto-approve`; `fastlane-deploy`
+;;      did it with a value named LANE on a step holding signing credentials;
+;;      `teams-notify` splices a notification title, so the routine apostrophe
+;;      in "build didn't pass" breaks out of the quoting.
+;;
+;;   2. READING THE STATUS IS OPTIONAL. `(stdout-of r)` compiles without ever
+;;      mentioning `(status-of r)`, so ~40 sites treat a broken tool as an
+;;      empty result. `no-cve-suppression` prints "0 offenders across 0 scanned
+;;      files" and exits 0 when its own `find` dies. `terraform-plan` reads a
+;;      missing binary as "no changes". A gate whose failure mode is identical
+;;      to its success mode cannot verify anything.
+;;
+;; `proc:run` removes both by construction rather than by discipline:
+;;
+;;   * argv is a LIST. There is no parameter that takes a command string, so
+;;     there is nothing to quote and nothing to inject into.
+;;   * it returns a RESULT, so reaching stdout requires answering "did this
+;;     work?" — either by unwrapping (which raises) or by `erro:or-else`,
+;;     which is explicit, greppable, and visible in review.
+;;
+;; A shell as argv[0] is refused outright. That is the one hole big enough to
+;; drive the whole class back through, so it is closed at the primitive.
+;;
+;; ── VENDORED RESULT ──────────────────────────────────────────────────────
+;; The `erro:` functions below are the core of `pleme-io/caixa-tlisp-erro`,
+;; vendored because that repo is declared but not yet reconciled onto GitHub
+;; and this stdlib must stay self-contained. Same names, same semantics; when
+;; the dependency is consumable this block is deleted in favour of it. Naming
+;; them identically is deliberate — a renamed copy is exactly how three
+;; separate copies of `hash:cmd-present?` survived in this repo.
+
+(define (erro:ok v) (list "ok" v))
+
+(define (erro:err e) (list "err" e))
+
+(define (erro:ok? r) (and (pair? r) (equal? (car r) "ok")))
+
+(define (erro:err? r) (and (pair? r) (equal? (car r) "err")))
+
+(define (erro:value r) (car (cdr r)))
+
+(define (erro:kind e) (string-format "{}" (error-tag e)))
+
+(define (erro:message e) (error-message e))
+
+;; The value, or raise the carried error.
+(define (erro:unwrap r)
+  (cond
+    ((erro:ok? r) (erro:value r))
+    (else (throw (erro:value r)))))
+
+;; The value, or `fallback` — the DELIBERATE collapse, named at the call site.
+(define (erro:or-else r fallback)
+  (cond ((erro:ok? r) (erro:value r)) (else fallback)))
+
+;; ── the boundary ────────────────────────────────────────────────
+
+(define proc:shells (list "sh" "bash" "zsh" "dash" "ksh" "fish" "csh" "tcsh"))
+
+(define (proc:shell? name)
+  (any-line-matches? proc:shells (lambda (s) (equal? s name))))
+
+;; Run `argv` (a list). Returns (ok <result-alist>) if the process RAN — at
+;; any exit status — or (err <error>) if it could not be started.
+;;
+;; Ran-but-failed is deliberately `ok`: a non-zero status is sometimes the
+;; ANSWER, not an error. `terraform plan -detailed-exitcode` returns 2 to mean
+;; "changes present", and `grep` returns 1 to mean "no match". Collapsing
+;; those into `err` would recreate the confusion in the other direction. Use
+;; `proc:must` when exit 0 is genuinely required.
+(define (proc:run argv)
+  (cond
+    ((null? argv)
+      (erro:err (erro:new "proc/empty" "proc:run called with an empty argv" (list))))
+    ((proc:shell? (car argv))
+      (erro:err
+        (erro:new "proc/shell-banned"
+          (string-append
+            "proc:run refuses '" (car argv) "' as argv[0]. Building a command "
+            "as a string is the root of every injection and quoting defect in "
+            "this repo — pass the program and its arguments as separate list "
+            "elements instead. If a shell is genuinely required (a container's "
+            "own `command:`, say), call exec-capture directly and say why.")
+          (list "argv0" (car argv)))))
+    (else
+      (try (erro:ok (apply exec-capture argv))
+        (catch (e)
+          (erro:err
+            (erro:new "proc/not-found"
+              (string-append "could not start '" (car argv) "': " (error-message e))
+              (list "argv0" (car argv)))))))))
+
+;; Run `argv` and REQUIRE exit 0. Returns (ok <stdout>) or (err <error>).
+;;
+;; This is the one most call sites want, and the one that makes the vacuous
+;; class unwritable: there is no way to reach the output without the status
+;; having been checked, because a non-zero status never produces an `ok`.
+(define (proc:must argv)
+  (let ((r (proc:run argv)))
+    (cond
+      ((erro:err? r) r)
+      (else
+        (let ((res (erro:value r)))
+          (cond
+            ((= (status-of res) 0) (erro:ok (stdout-of res)))
+            (else
+              (erro:err
+                (erro:new "proc/failed"
+                  (string-append "'" (car argv) "' exited "
+                                 (string-format "{}" (status-of res)))
+                  (list "argv0" (car argv)
+                        "status" (status-of res)
+                        "stderr" (string-trim (stderr-of res))))))))))))
+
+;; `erro:new` is proc's only construction site; kept last so the vendored
+;; block above reads as one unit.
+(define (erro:new kind message ctx) (error kind message ctx))
+
+;; The status carried in a proc/failed error's context.
+(define (erro:ctx-status e)
+  (let ((d (error-data e)))
+    (define (walk kvs)
+      (cond ((null? kvs) -1)
+            ((null? (cdr kvs)) -1)
+            ((equal? (car kvs) "status") (car (cdr kvs)))
+            (else (walk (cdr (cdr kvs))))))
+    (walk d)))
