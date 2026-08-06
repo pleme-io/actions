@@ -51,6 +51,19 @@
 (define (run-case c)
   (env-set "GITHUB_ACTION_PATH" (car c))
   (env-set "GITHUB_OUTPUT" (car (cdr c)))
+  ;; The CHILD must run the real check, so it must NOT inherit TLISP_TEST.
+  ;;
+  ;; output-contract.tlisp now skips its check under TLISP_TEST=1, because the
+  ;; harness shares one $GITHUB_OUTPUT across every action's tests and the
+  ;; check would otherwise audit foreign keys against the wrong action.yml.
+  ;; That gate is right for the file-under-test loaded INTO this suite — and
+  ;; wrong for the child processes these cases spawn, which exist precisely to
+  ;; exercise the real gate against a purpose-built fixture.
+  ;;
+  ;; Without this line three cases silently pass a child that skipped: "expected
+  ;; rc 1, got 0". They are the only cases here that assert a FAILURE, so the
+  ;; suite would have kept its shape while testing nothing.
+  (env-set "TLISP_TEST" "")
   (exit-code (exec-capture "tatara-script" gate)))
 
 (define declares-all

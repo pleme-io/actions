@@ -28,11 +28,36 @@
   (log-info (string-append "output-contract: skipped — " why))
   (exit 0))
 
-(when (equal? out-file "") (skip "GITHUB_OUTPUT is unset"))
+;; TLISP_TEST gate — 46 of this repo's actions carry it; this file did not,
+;; and that is why CI was red.
+;;
+;; The check compares the keys written to $GITHUB_OUTPUT against the keys
+;; declared in the ENCLOSING action's action.yml. That is exactly right inside
+;; a real action step, where the output file belongs to that one step.
+;;
+;; Under `tlisp-test`, it is wrong by construction: every discovered
+;; *.test.tlisp runs in the SAME job, sharing ONE $GITHUB_OUTPUT, so this file
+;; loaded and immediately audited a file full of keys written by other
+;; actions' tests — and reported them as undeclared against tatara-script's
+;; action.yml, which of course does not declare them. Reproduced locally by
+;; seeding $GITHUB_OUTPUT with two foreign keys: it names both and fails.
+;;
+;; The check was not wrong about the keys. It was pointed at the wrong action.
+;; Gating the main also lets this file's own deftests run at all — with the
+;; main executing on load they never did.
+(define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
 
-(when (not (path-exists? out-file)) (skip "the script wrote no outputs"))
+(when tlisp-test-mode
+  (log-info
+    (string-append "output-contract: check skipped — TLISP_TEST=1 (the harness shares "
+                   "one $GITHUB_OUTPUT across every action's tests). Definitions still "
+                   "load so this file's own deftests can run.")))
 
-(when (equal? action-path "") (skip "GITHUB_ACTION_PATH is unset"))
+(when (and (not tlisp-test-mode) (equal? out-file "")) (skip "GITHUB_OUTPUT is unset"))
+
+(when (and (not tlisp-test-mode) (not (path-exists? out-file))) (skip "the script wrote no outputs"))
+
+(when (and (not tlisp-test-mode) (equal? action-path "")) (skip "GITHUB_ACTION_PATH is unset"))
 
 (define manifest (string-append action-path "/action.yml"))
 
@@ -84,7 +109,8 @@
               (cons (car eq) acc)))
           (else (scan-written rest "" acc)))))))
 
-(define written (scan-written (string-split (read-file out-file) "\n") "" (list)))
+(define written
+  (if tlisp-test-mode (list) (scan-written (string-split (read-file out-file) "\n") "" (list))))
 
 ;; ── keys the action declares ─────────────────────────────────────────────
 ;;
@@ -126,7 +152,8 @@
                   (cons e acc)))))
           (else (scan-declared rest inside acc)))))))
 
-(define declared (scan-declared (string-split (read-file manifest) "\n") #f (list)))
+(define declared
+  (if tlisp-test-mode (list) (scan-declared (string-split (read-file manifest) "\n") #f (list))))
 
 ;; ── the gate ─────────────────────────────────────────────────────────────
 
@@ -136,6 +163,11 @@
 (define dropped (filter (fn (k) (not (declared? k))) written))
 
 (cond
+  ;; Under the harness the verdict is not ours to give — `written` and
+  ;; `declared` are both empty by construction above, so any verdict here
+  ;; would be about nothing. Falling through without exiting is what lets
+  ;; this file's deftests run.
+  (tlisp-test-mode #t)
   ((null? dropped)
     (log-info
       (string-append
