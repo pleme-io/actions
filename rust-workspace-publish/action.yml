@@ -53,20 +53,29 @@ runs:
       id: src
       shell: bash
       run: |
-        {
-          echo 'script<<TLISP_EOF'
-          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
-          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
-          echo
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        # Composed to a FILE, not an output.
+        #
+        # `script:` rides to the runner as an ENV VAR, and Linux caps a single
+        # env var / argument at MAX_ARG_STRLEN = 128 KB. stdlib (92 KB) plus
+        # this run.tlisp is 138 KB, so the step died with "Argument list too
+        # long" and took tatara-lisp's release with it. That ceiling was never
+        # declared anywhere; it was discovered by crossing it.
+        #
+        # A path costs none of it, and also drops the FIXED `TLISP_EOF`
+        # heredoc marker (an injection whenever content is influenced from
+        # outside) and stops the whole script being echoed into the step log.
+        DEST="${RUNNER_TEMP}/rust-workspace-publish-composed.tlisp"
+        # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+        cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp" > "$DEST"
+        echo >> "$DEST"
+        cat "${{ github.action_path }}/run.tlisp" >> "$DEST"
+        echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
     - name: Ship workspace
       id: ship
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.path }}
       env:
         DRY_RUN: ${{ inputs.dry-run }}
         NO_VERIFY: ${{ inputs.no-verify }}
