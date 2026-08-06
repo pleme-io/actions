@@ -2289,3 +2289,63 @@
 ;; A bearer-auth header alist, ready for webhook:post.
 (define (webhook:bearer token)
   (list (list "Authorization" (string-append "Bearer " token))))
+
+;; ────────────────────────────────────────────────────────────────
+;; num — integer parsing, decimal and hex
+;; ────────────────────────────────────────────────────────────────
+;;
+;; There is no `string->number` in this interpreter (it is one of the Scheme
+;; spellings that genuinely is absent) and no `parse-int`. `json-parse` does
+;; the decimal case correctly — it returns a real Int, so arithmetic works —
+;; and raises on anything else, including hex.
+;;
+;; Hex matters because discord-notify's action.yml documents its `color` input
+;; as "decimal int or hex like 0x00ff00", and that form has NEVER worked: the
+;; old code passed it to jq's `tonumber`, which rejects it outright, so every
+;; run using the documented hex form died at payload assembly.
+
+(define (num:hex-digit c)
+  (cond
+    ((equal? c "0") 0) ((equal? c "1") 1) ((equal? c "2") 2) ((equal? c "3") 3)
+    ((equal? c "4") 4) ((equal? c "5") 5) ((equal? c "6") 6) ((equal? c "7") 7)
+    ((equal? c "8") 8) ((equal? c "9") 9)
+    ((or (equal? c "a") (equal? c "A")) 10)
+    ((or (equal? c "b") (equal? c "B")) 11)
+    ((or (equal? c "c") (equal? c "C")) 12)
+    ((or (equal? c "d") (equal? c "D")) 13)
+    ((or (equal? c "e") (equal? c "E")) 14)
+    ((or (equal? c "f") (equal? c "F")) 15)
+    (else -1)))
+
+(define (num:hex-walk chars acc)
+  (cond
+    ((null? chars) acc)
+    (else
+      (let ((d (num:hex-digit (car chars))))
+        (cond
+          ((< d 0) -1)
+          (else (num:hex-walk (cdr chars) (+ (* acc 16) d))))))))
+
+;; Parse `s` as an integer — decimal, or hex with a 0x/0X prefix.
+;; Returns (ok <int>) or (err e). Never guesses a fallback: a colour or a
+;; floor silently defaulting to 0 is how a wrong value reaches production
+;; looking deliberate.
+(define (num:parse-int s)
+  (let ((t (string-trim s)))
+    (cond
+      ((equal? t "")
+        (erro:err (erro:new "num/empty" "empty string is not an integer" (list))))
+      ((or (string-starts-with? t "0x") (string-starts-with? t "0X"))
+        (let ((n (num:hex-walk (cdr (cdr (string-chars t))) 0)))
+          (cond
+            ((< n 0)
+              (erro:err (erro:new "num/bad-hex"
+                (string-append "'" s "' is not a hex integer") (list "input" s))))
+            (else (erro:ok n)))))
+      (else
+        (let ((r (erro:attempt (lambda () (json-parse t)))))
+          (cond
+            ((erro:err? r)
+              (erro:err (erro:new "num/bad-int"
+                (string-append "'" s "' is not an integer") (list "input" s))))
+            (else r)))))))
