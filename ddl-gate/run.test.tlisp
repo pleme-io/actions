@@ -1,0 +1,87 @@
+;; Tests for ddl-gate's keying and baseline matching.
+;;
+;; The classifier itself (ddl:classify-document and friends) is tested in
+;; caixa-tlisp-ddl. What is tested HERE is the gate wrapped around it: how a
+;; finding becomes a baseline key, and whether that key survives the edits a
+;; real repository makes to a .sql file. Those are the parts that decide
+;; whether tracked debt stays tracked, and they are the parts a classifier
+;; test cannot see.
+
+(deftest "a finding key fingerprints the statement, not its position"
+  ;; The whole point of content-keying. If the key moved when a statement did,
+  ;; every reformat would silently un-baseline real debt and the gate would go
+  ;; red for a change that altered no SQL.
+  (let ((stmt "DROP TABLE users"))
+    (assert
+      (equal? (gate:key "destructive" "a.sql" stmt) (gate:key "destructive" "a.sql" stmt))
+      "same rule + path + statement gives the same key")
+    (assert
+      (not (equal? (gate:key "destructive" "a.sql" stmt) (gate:key "destructive" "b.sql" stmt)))
+      "a different file is a different finding")
+    (assert
+      (not
+        (equal?
+          (gate:key
+            "destructive"
+            "a.sql"
+            stmt)
+          (gate:key
+            "destructive"
+            "a.sql"
+            "DROP TABLE orders")))
+      "a different statement is a different finding")))
+
+(deftest "the short hash is 8 hex characters"
+  ;; There is no substring builtin, so this comes out of a regex match against
+  ;; the full digest. A miss returns the literal "00000000", which would
+  ;; collapse every finding in a file onto one key -- silently.
+  (let ((h (gate:sha8 "DROP TABLE users")))
+    (assert (equal? (string-length h) 8) "eight characters")
+    (assert (re-match? "^[0-9a-f]{8}$" h) "all lowercase hex")
+    (assert (not (equal? h "00000000")) "not the no-match fallback")
+    (assert (not (equal? h (gate:sha8 "DROP TABLE orders"))) "distinct inputs, distinct hash")))
+
+(deftest "the rule is upcased into the key and the path is kept verbatim"
+  (let ((k (gate:key "data-destructive" "schemas/x.sql" "DELETE FROM t")))
+    (assert (string-starts-with? k "DATA-DESTRUCTIVE ") "rule upcased, then a space")
+    (assert (string-contains? k "schemas/x.sql#") "path, then the hash separator")))
+
+(deftest "baseline matching tolerates surrounding whitespace"
+  ;; Baseline files are hand-edited, so a trailing space on a line is normal.
+  ;; Without the trim a tracked entry silently stops matching and the gate
+  ;; fails on debt it was told about.
+  (let ((f (list (list "key" "DESTRUCTIVE a.sql#deadbeef"))))
+    (assert (gate:baselined? (list "DESTRUCTIVE a.sql#deadbeef") f) "exact match")
+    (assert (gate:baselined? (list "  DESTRUCTIVE a.sql#deadbeef  ") f) "padded match")
+    (assert (not (gate:baselined? (list "DESTRUCTIVE a.sql#cafe1234") f)) "different hash")
+    (assert (not (gate:baselined? (list) f)) "empty baseline matches nothing")))
+
+(deftest "a destructive statement in a real file becomes exactly one finding"
+  ;; End-to-end through the classifier, the file reader and the keyer, because
+  ;; each of those three has its own way of producing zero findings and the
+  ;; gate reports zero findings as a pass.
+  (let ((d (tmp-dir)))
+    (let ((p (path-join d "drop.sql")))
+      (write-file p "DROP TABLE users;\n")
+      (let ((fs (gate:findings-for p)))
+        (assert (equal? (length fs) 1) "one finding")
+        (assert (string-contains? (gate:key-of (car fs)) "#") "carries a hashed key")
+        (assert (not (equal? (alist-get (car fs) "reason" "") "")) "carries a reason")))))
+
+(deftest "an additive statement produces no finding"
+  ;; The other direction. A gate that flagged everything would be just as
+  ;; useless as one that flagged nothing, and only this test tells them apart.
+  (let ((d (tmp-dir)))
+    (let ((p (path-join d "add.sql")))
+      (write-file p "CREATE TABLE users (id INT);\n")
+      (assert (null? (gate:findings-for p)) "additive DDL is permitted"))))
+
+(deftest "the file walk only picks up .sql"
+  ;; string-ends-with? with its arguments reversed matches nothing, scans zero
+  ;; files and exits 0 -- which is why the zero-file guard exists in main. This
+  ;; asserts the positive side so the guard is never the only thing standing.
+  (let ((d (tmp-dir)))
+    (write-file (path-join d "a.sql") "SELECT 1;\n")
+    (write-file (path-join d "b.txt") "not sql\n")
+    (write-file (path-join d "c.sql") "SELECT 2;\n")
+    (assert (equal? (length (gate:sql-files d)) 2) "two .sql files, the .txt ignored")))

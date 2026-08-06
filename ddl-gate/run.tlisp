@@ -57,25 +57,20 @@
 
 (define (gate:key-of f) (alist-get f "key" ""))
 
-(define all-findings
-  (reduce
-    (fn (acc p) (append acc (gate:findings-for p)))
-    (list)
-    (gate:sql-files root)))
-
-(define baseline-lines
+(define (gate:read-baseline)
   (if (path-exists? baseline-path)
     (filter
       (fn (l) (and (not (eq? (string-trim l) "")) (not (string-starts-with? (string-trim l) "#"))))
       (string-split (read-file baseline-path) "\n"))
     (list)))
 
-(define (gate:baselined? f)
+;; Takes the baseline explicitly rather than closing over a top-level define.
+;; Everything below `main` used to run at LOAD time, which walked the tree
+;; before the caller had a chance to do anything and made the unit impossible
+;; to drive from a test -- the same reason none of the four baseline-debt gates
+;; had tests until suspend-blocker-lint grew the TLISP_TEST guard.
+(define (gate:baselined? baseline-lines f)
   (> (length (filter (fn (l) (eq? (string-trim l) (gate:key-of f))) baseline-lines)) 0))
-
-(define baselined (filter gate:baselined? all-findings))
-
-(define violations (filter (fn (f) (not (gate:baselined? f))) all-findings))
 
 (define (gate:say-finding tag f)
   (print-line
@@ -85,37 +80,44 @@
         " "
         (string-append (gate:key-of f) (string-append " :: " (alist-get f "reason" "")))))))
 
-;; A gate that scanned NOTHING is a broken run, not a clean one, and from the
-;; exit code alone the two are identical. This one exits 2 rather than joining
-;; the long list of checks in this fleet whose failure mode looks like success.
-;; Added after the sibling suspend-blocker-lint shipped with exactly this hole:
-;; a reversed string-suffix? argument matched no files, so it scanned 0 and
-;; exited 0. Same defense here, same reason.
-(if (eq? 0 (length (gate:sql-files root)))
-  (begin
-    (print-line (string-append "ddl-gate: FAILED — scanned 0 .sql files under " root))
-    (print-line "  a zero-file scan means a wrong ROOT or a broken walk, never a pass")
-    (exit 2))
-  #t)
+(define (main)
+  ;; Walked ONCE. The previous shape called (gate:sql-files root) four separate
+  ;; times -- four full tree walks per run, and four chances for the count in
+  ;; the log to disagree with the count that was actually scanned.
+  (let ((files (gate:sql-files root)))
+    ;; A gate that scanned NOTHING is a broken run, not a clean one, and from the
+    ;; exit code alone the two are identical. This one exits 2 rather than joining
+    ;; the long list of checks in this fleet whose failure mode looks like success.
+    ;; Added after the sibling suspend-blocker-lint shipped with exactly this hole:
+    ;; a reversed string-suffix? argument matched no files, so it scanned 0 and
+    ;; exited 0. Same defense here, same reason.
+    (if (eq? 0 (length files))
+      (begin
+        (print-line (string-append "ddl-gate: FAILED — scanned 0 .sql files under " root))
+        (print-line "  a zero-file scan means a wrong ROOT or a broken walk, never a pass")
+        (exit 2))
+      #t)
+    (let
+      ((all-findings (reduce (fn (acc p) (append acc (gate:findings-for p))) (list) files))
+        (baseline-lines (gate:read-baseline)))
+      (let
+        ((baselined (filter (fn (f) (gate:baselined? baseline-lines f)) all-findings))
+          (violations (filter (fn (f) (not (gate:baselined? baseline-lines f))) all-findings)))
+        (print-line (string-format "ddl-gate: {} .sql files under {}" (length files) root))
+        (map (fn (f) (gate:say-finding "  debt   " f)) baselined)
+        (map (fn (f) (gate:say-finding "  REFUSE " f)) violations)
+        (print-line
+          (string-format
+            "ddl-gate: {} new, {} tracked debt"
+            (length violations)
+            (length baselined)))
+        (append-output (string-append "violations=" (string-format "{}" (length violations))))
+        (append-output (string-append "baselined=" (string-format "{}" (length baselined))))
+        (append-output (string-append "files-scanned=" (string-format "{}" (length files))))
+        (if (and fail-on-violation (> (length violations) 0))
+          (exit 1)
+          (exit 0))))))
 
-(print-line (string-format "ddl-gate: {} .sql files under {}" (length (gate:sql-files root)) root))
-
-(map (fn (f) (gate:say-finding "  debt   " f)) baselined)
-
-(map (fn (f) (gate:say-finding "  REFUSE " f)) violations)
-
-(print-line
-  (string-format
-    "ddl-gate: {} new, {} tracked debt"
-    (length violations)
-    (length baselined)))
-
-(append-output (string-append "violations=" (string-format "{}" (length violations))))
-
-(append-output (string-append "baselined=" (string-format "{}" (length baselined))))
-
-(append-output (string-append "files-scanned=" (string-format "{}" (length (gate:sql-files root)))))
-
-(if (and fail-on-violation (> (length violations) 0))
-  (exit 1)
-  (exit 0))
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — loaded; main skipped (the test harness drives it)"))
