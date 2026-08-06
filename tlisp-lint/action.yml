@@ -29,24 +29,38 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Load run.tlisp
+    # Composed to a FILE, not to an output.
+    #
+    # This used to cat stdlib + run.tlisp into `$GITHUB_OUTPUT` under a fixed
+    # `TLISP_EOF` heredoc marker and pass the result as `script:`. Three
+    # problems, one of which took the job down:
+    #
+    #   * the composed source is ~132 KB and rides to the runner as an env
+    #     var, so the step died with "Argument list too long" the moment
+    #     run.tlisp grew. A size ceiling nobody declared;
+    #   * a FIXED heredoc delimiter is an injection whenever the content is
+    #     influenced from outside — the same defect fixed in
+    #     changelog-generate;
+    #   * the whole script gets ECHOED into the step log, so grepping the log
+    #     for a message matches the line that WOULD print it.
+    #
+    # A path costs none of that.
+    - name: Compose stdlib + run.tlisp
       id: src
       shell: bash
       run: |
-        {
-          echo 'script<<TLISP_EOF'
-          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
-          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
-          echo
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        DEST="${RUNNER_TEMP}/tlisp-lint-composed.tlisp"
+        # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+        cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp" > "$DEST"
+        echo >> "$DEST"
+        cat "${{ github.action_path }}/run.tlisp" >> "$DEST"
+        echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
     - name: Run tlisp-lint
       id: lint
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.path }}
       env:
         PATHS: ${{ inputs.paths }}
         FAIL_ON_UNBALANCED: ${{ inputs.fail-on-unbalanced }}
