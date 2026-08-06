@@ -202,13 +202,27 @@
 
 ;; Resolve one `cat "${{ github.action_path }}/../x/y.tlisp"` to a real path.
 ;; action_path is the action's own directory, so `/../` climbs to the repo.
+;; Resolve one `cat "${{ github.action_path }}/../x/y.tlisp"` to a real path.
+;; action_path is the action's own directory, so `/../` climbs to the repo.
+;;
+;; The FIRST WHITESPACE-DELIMITED TOKEN, not everything after `}}`. A loader
+;; line may carry a redirect — `cat "${{ … }}/run.tlisp" >> "$DEST"` is the
+;; file-based shape that replaces the heredoc — and taking the remainder
+;; wholesale yields `/run.tlisp >> $DEST`, which is not a path.
+;;
+;; That failure would have been SILENT: `composed-parts-of` guards each entry
+;; with `path-exists?`, so a mis-parsed path is dropped and the action is
+;; simply not composed — the unbound check then passes because it examined
+;; less, which is the failure-looks-like-success shape this whole pass exists
+;; to remove. Caught while converting six actions to the file-based loader.
 (define (path-of-cat-line line action-dir)
-  (let* ((after (car (cdr (string-split line "}}"))))
-         (raw (if (equal? after "") "" (string-trim after)))
-         (cleaned (string-replace (string-replace raw "\"" "") "'" "")))
+  (let* ((parts (string-split line "}}"))
+         (after (if (>= (length parts) 2) (string-trim (car (cdr parts))) ""))
+         (cleaned (string-replace (string-replace after "\"" "") "'" ""))
+         (tokens (filter (lambda (t) (not (equal? t ""))) (string-split cleaned " "))))
     (cond
-      ((equal? cleaned "") "")
-      (else (string-append action-dir cleaned)))))
+      ((null? tokens) "")
+      (else (string-append action-dir (car tokens))))))
 
 ;; Lint one action as the runtime composes it. Returns violation count.
 (define (composed-unbound-errors action-dir)
