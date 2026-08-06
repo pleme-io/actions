@@ -461,3 +461,20 @@
   (assert
     (string-contains? (replace-outcome-reason 'needle-ambiguous "/p" "N") "MORE THAN ONCE")
     "'needle-ambiguous names its own diagnosis"))
+
+(deftest "env-required-unless-test: a missing key is empty under test, not an abort"
+  ;; The whole point. A top-level (define x (env-required "K")) runs at LOAD
+  ;; time, strictly before the TLISP_TEST guard that protects main — so the
+  ;; unit aborted while loading, ZERO deftests ran, and the harness reported
+  ;; one failure with no roster. "Nothing ran" and "everything failed" looked
+  ;; identical. action-pipeline and cargo-run-bin were both red on main this
+  ;; way, invisibly, because the tlisp-tests job was continue-on-error.
+  ;;
+  ;; This test runs UNDER TLISP_TEST=1, so it exercises exactly that branch.
+  (assert
+    (equal? (env-required-unless-test "PLEME_DEFINITELY_UNSET_XYZ") "")
+    "an absent key yields empty rather than aborting the load")
+  (env-set "PLEME_TEST_PRESENT_XYZ" "value-here")
+  (assert
+    (equal? (env-required-unless-test "PLEME_TEST_PRESENT_XYZ") "value-here")
+    "a present key is still returned verbatim"))

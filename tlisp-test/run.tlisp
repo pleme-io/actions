@@ -45,6 +45,52 @@
           "-sL"
           "https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp")))))
 
+;; ── ★ COMPOSE WHAT THE UNIT ACTUALLY SHIPS AS ─────────────────────────────
+;; This harness used to prepend `_tlisp-stdlib/stdlib.tlisp` and nothing else.
+;; But an action's own action.yml decides its composition, and several `cat` a
+;; SECOND inlinable stdlib ahead of run.tlisp — ddl-gate cats `_tlisp-ddl`
+;; (the DDL classifier) at action.yml:53. Those units were therefore tested as
+;; a DIFFERENT PROGRAM than they ship as, and ddl-gate's suite sat 5/7 red on
+;; main with `unbound symbol ddl:classify-document`.
+;;
+;; Nobody saw it because the tlisp-tests job is continue-on-error, so a red
+;; suite and a green suite produce the same workflow conclusion. A composition
+;; the harness invents rather than reads is the same class as testing a mock:
+;; the result is true about something, just not about the artifact.
+;;
+;; Derived from the action.yml rather than declared separately, so the two
+;; cannot drift — the loader step IS the specification.
+(define (dirname-of p)
+  (let ((segs (string-split p "/")))
+    (if (< (length segs) 2) "." (string-join "/" (reverse (cdr (reverse segs)))))))
+
+;; `cat "${{ github.action_path }}/../_tlisp-ddl/stdlib.tlisp"` -> the repo-
+;; relative path. Matched by shape so a reworded loader step still resolves.
+;; re-find returns NIL on no match, not "" — so it is tested with re-match?
+;; first rather than compared against the empty string. A `(eq? m "")` guard
+;; against a nil return is exactly the shape that hands nil to the next
+;; primitive and dies there instead of at the miss.
+(define (inlined-stdlib-of line)
+  (let ((pat "_tlisp-[a-z0-9-]+/stdlib\\.tlisp"))
+    (if (re-match? pat line) (re-find pat line) "")))
+
+(define (extra-stdlibs-of unit)
+  (let ((yml (path-join (dirname-of unit) "action.yml")))
+    (if (path-exists? yml)
+      (filter
+        (fn (p)
+          (and (not (equal? p ""))
+               (not (equal? p stdlib-path))
+               (path-exists? p)))
+        (map inlined-stdlib-of (string-split (read-file yml) "\n")))
+      (list))))
+
+(define (composed-prelude unit)
+  (reduce
+    (fn (acc p) (string-append acc "\n" (read-file p)))
+    stdlib-src
+    (extra-stdlibs-of unit)))
+
 ;; Run one test file. Returns 0 if every (deftest …) passed, non-zero otherwise.
 (define (run-one test-file)
   (let ((unit (unit-of test-file)))
@@ -62,7 +108,7 @@
         (write-file
           child-tmp
           (string-append
-            stdlib-src
+            (composed-prelude unit)
             "\n"
             (read-file unit)
             "\n"

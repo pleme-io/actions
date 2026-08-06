@@ -76,22 +76,39 @@ jobs:
   tlisp-tests:
     name: Run every *.test.tlisp via tatara-script --test
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       # Discovers each <action>/run.test.tlisp, runs its (deftest ...) forms
       # against the real run.tlisp (TLISP_TEST=1 gates the unit's main), and
       # fails the gate on any failing assertion.
       #
+      # ── ★ ARMED 2026-08-06. IT WAS continue-on-error UNTIL NOW ──────────
+      # This job carried `continue-on-error: true`, and nothing `needs:` it,
+      # so a failing tlisp test failed NOTHING. Measured on main the day it
+      # was armed: THREE files were red and had been for some time.
+      #
+      #   ddl-gate         5/7  — the harness prepended only _tlisp-stdlib,
+      #                           but ddl-gate's action.yml also cats
+      #                           _tlisp-ddl, so the unit was tested as a
+      #                           DIFFERENT PROGRAM than it ships as
+      #   action-pipeline  0/N  — top-level (env-required "PIPELINE_SPEC")
+      #                           aborts at LOAD, before the TLISP_TEST guard
+      #                           that protects main. Zero deftests ran.
+      #   cargo-run-bin    0/N  — same shape, BIN
+      #
+      # Note what the last two mean: "nothing ran" and "everything failed"
+      # produced the same red, and the red produced the same green workflow.
+      # A suite nothing gates on is a suite nothing protects. All 44 pass now.
+      #
       # min-files is a FLOOR against the zero-denominator failure: discovery
       # matching nothing would otherwise log "all 0 file(s) passed" and exit 0.
-      # 37 test files exist at the time of writing (2026-08-01); the floor sits
-      # below that so deleting a couple of actions does not wedge CI, while a
-      # collapse (a bad cwd, a missing checkout, a rename that breaks the glob)
-      # still goes red. Raise it as the suite grows.
+      # 44 test files exist (2026-08-06). Raised 30 -> 42: the old floor sat 14
+      # below reality, so a 32% collapse in discovery still passed the check
+      # that exists to catch exactly that. Two files of slack, not fourteen.
+      # Raise it as the suite grows.
       - uses: ./tlisp-test
         with:
-          min-files: "30"
+          min-files: "42"
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files

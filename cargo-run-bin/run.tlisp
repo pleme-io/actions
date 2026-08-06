@@ -20,7 +20,7 @@
 ;; binary, which arguments. Nothing else did.
 
 (define package (env-get "PACKAGE" ""))
-(define bin-name (env-required "BIN"))
+(define bin-name (env-required-unless-test "BIN"))
 (define bin-args (env-get "ARGS" ""))
 (define profile (env-get "PROFILE" "debug"))
 
