@@ -1,0 +1,96 @@
+;; Tests for suspend-blocker-lint's document-scoped predicates.
+;;
+;; Every case here is a defect this gate actually shipped with, not a
+;; hypothetical. The gate produced a 5-entry baseline on camelot-eks; auditing
+;; those five by hand found that one was a phantom the gate could never have
+;; been satisfied on, and that two of the checks were structurally unable to
+;; fail. These lock all three shut.
+
+(deftest "a kustomize Component's suspend is patch payload, not a declaration"
+  ;; park/l3-platform/kustomization.yaml sets spec.suspend on a Job via a
+  ;; Component patch. The gate flagged the FILE and demanded annotations on it
+  ;; -- but a Component's metadata.annotations never reach a rendered object,
+  ;; so the only honest fix was to stop flagging it.
+  (let
+    ((doc
+       "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\npatches:\n  - patch: |\n      - op: replace\n        path: /spec/suspend\n      suspend: true\n"))
+    (assert (kustomize-config-doc? doc) "recognised as a kustomize config doc")
+    (assert (null? (doc-finding "k.yaml" doc)) "and therefore produces no finding")))
+
+(deftest "a Flux Kustomization shares the kind but IS a real suspension"
+  ;; The reason the skip is keyed on apiVersion and not on `kind:`. Keying it
+  ;; on the kind would have silently switched off this gate for every Flux
+  ;; Kustomization in the fleet -- the single largest class of things that
+  ;; legitimately carry suspend: true.
+  (let
+    ((doc
+       "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nspec:\n  suspend: true\n"))
+    (assert (not (kustomize-config-doc? doc)) "not a kustomize.config.k8s.io doc")
+    (assert (doc-suspended? doc) "its suspension is real")
+    (assert (not (null? (doc-finding "f.yaml" doc))) "so an unannotated one is a finding")))
+
+(deftest "annotations on one document do not satisfy a suspension in another"
+  ;; declare-job.yaml ships a ServiceAccount and a Job. File-scoped checking
+  ;; let the three keys sit on the ServiceAccount while the Job was the thing
+  ;; actually suspended.
+  (let
+    ((body
+       "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: sa\n  annotations:\n    pleme.io/blocked-by: \"x\"\n    pleme.io/blocked-clearing: \"operator-reconcile\"\n    pleme.io/blocked-since: \"2026-08-01\"\n---\napiVersion: batch/v1\nkind: Job\nspec:\n  suspend: true\n"))
+    (assert (equal? (length (yaml-documents body)) 2) "splits on the --- separator")
+    (let
+      ((findings
+         (reduce
+           (lambda (acc d) (append acc (doc-finding "d.yaml" d)))
+           '()
+           (yaml-documents body))))
+      (assert (equal? (length findings) 1) "the Job is still unexplained"))))
+
+(deftest "a commented-out annotation does not count as declared"
+  ;; The guard meant to enforce this was `(string-prefix? "#" line)` -- args
+  ;; reversed, so it asked whether "#" starts with the line and was false for
+  ;; every non-empty line. Prose could satisfy the gate.
+  (let
+    ((doc
+       "apiVersion: batch/v1\nkind: Job\nmetadata:\n  annotations:\n    # pleme.io/blocked-by: \"someday\"\nspec:\n  suspend: true\n"))
+    (assert (not (declares-annotation? doc "pleme.io/blocked-by")) "comment is not a declaration")
+    (assert (not (null? (doc-finding "c.yaml" doc))) "so it is still a finding")))
+
+(deftest "suspend in prose is not a suspension, but a trailing comment does not hide one"
+  (assert (not (line-suspends? "# suspend: true is how we park things")) "comment line")
+  (assert (not (line-suspends? "#suspend: true")) "comment with no space")
+  (assert (not (line-suspends? "  description: suspend: true means parked")) "prose value")
+  ;; The old detector excluded any line containing "# ", so a real suspension
+  ;; carrying an inline comment escaped it entirely.
+  (assert (line-suspends? "  suspend: true  # blocked on zot") "real suspension, inline comment")
+  (assert (line-suspends? "  suspend: true") "the plain form"))
+
+(deftest "the clearing vocabulary is enforced, not merely documented"
+  ;; Nothing compared against the three documented values, so any string passed.
+  (let
+    ((ok
+       "apiVersion: batch/v1\nkind: Job\nmetadata:\n  annotations:\n    pleme.io/blocked-by: \"x\"\n    pleme.io/blocked-clearing: \"human-sso-apply\"\n    pleme.io/blocked-since: \"2026-08-01\"\nspec:\n  suspend: true\n")
+      (typo
+        "apiVersion: batch/v1\nkind: Job\nmetadata:\n  annotations:\n    pleme.io/blocked-by: \"x\"\n    pleme.io/blocked-clearing: \"human-sso-aply\"\n    pleme.io/blocked-since: \"2026-08-01\"\nspec:\n  suspend: true\n"))
+    (assert
+      (equal? (annotation-value ok "pleme.io/blocked-clearing") "human-sso-apply")
+      "value parsed without its quotes")
+    (assert (equal? (bad-clearing ok) "") "a recognised value is accepted")
+    (assert (null? (doc-finding "ok.yaml" ok)) "a fully annotated doc is clean")
+    (assert (equal? (bad-clearing typo) "human-sso-aply") "a typo is surfaced verbatim")
+    (assert (not (null? (doc-finding "typo.yaml" typo))) "and is a finding")))
+
+(deftest "hardened-image-publish is a clearing path"
+  ;; Added because hardened-natscli and escuta are both blocked on an image
+  ;; that does not exist in zot, which none of the original three values
+  ;; describes. escuta's own file refuses the substitute-registry route, so
+  ;; recording it as a policy decision would have been actively wrong.
+  (let
+    ((doc
+       "apiVersion: batch/v1\nkind: Job\nmetadata:\n  annotations:\n    pleme.io/blocked-by: \"hardened-natscli-absent-from-zot\"\n    pleme.io/blocked-clearing: \"hardened-image-publish\"\n    pleme.io/blocked-since: \"2026-08-01\"\nspec:\n  suspend: true\n"))
+    (assert (equal? (bad-clearing doc) "") "accepted as a clearing path")
+    (assert (null? (doc-finding "n.yaml" doc)) "and the doc is clean")))
+
+(deftest "an unsuspended document is never a finding"
+  (let ((doc "apiVersion: batch/v1\nkind: Job\nspec:\n  suspend: false\n"))
+    (assert (not (doc-suspended? doc)) "suspend: false is not suspended")
+    (assert (null? (doc-finding "u.yaml" doc)) "and produces nothing")))

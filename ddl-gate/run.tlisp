@@ -15,62 +15,75 @@
 ;; it, and rewording this script's messages cannot either.
 
 (define root (env-get "ROOT" "."))
+
 (define fail-on-violation (not (eq? (env-get "FAIL_ON_VIOLATION" "true") "false")))
+
 (define sunset-step (env-get "DDL_SUNSET_STEP" ""))
+
 (define baseline-path (string-append root "/.ddl-gate-baseline.txt"))
 
-(define (gate:sql-files dir)
-  (filter (fn (p) (string-ends-with? p ".sql")) (walk-dir dir)))
+(define (gate:sql-files dir) (filter (fn (p) (string-ends-with? p ".sql")) (walk-dir dir)))
 
 (define (gate:strip-root p)
   (let ((parts (string-split p (string-append root "/"))))
-    (if (> (length parts) 1) (car (cdr parts)) p)))
+    (if (> (length parts) 1)
+      (car (cdr parts))
+      p)))
 
 ;; sha256 returns the full hex digest. There is no `substring` builtin, so the
 ;; short prefix comes from a regex match rather than a slice.
 (define (gate:sha8 stmt)
-  (let ((m (re-find "^[0-9a-f]{8}" (sha256 stmt))))
-    (if (eq? m "") "00000000" m)))
+  (let ((m (re-find "^[0-9a-f]{8}" (sha256 stmt)))) (if (eq? m "") "00000000" m)))
 
 (define (gate:key verdict-rule relpath stmt)
-  (string-append (string-uppercase verdict-rule)
-                 (string-append " " (string-append relpath
-                   (string-append "#" (gate:sha8 stmt))))))
+  (string-append
+    (string-uppercase verdict-rule)
+    (string-append " " (string-append relpath (string-append "#" (gate:sha8 stmt))))))
 
 (define (gate:findings-for path)
   (let ((relpath (gate:strip-root path)))
-    (filter (fn (f) (not (eq? f "")))
-      (map (fn (v)
-             (if (ddl:permitted? (ddl:verdict-of v) sunset-step)
-                 ""
-                 (list (list "key" (gate:key (ddl:rule-of v) relpath (ddl:statement-of v)))
-                       (list "verdict" (ddl:verdict-label (ddl:verdict-of v)))
-                       (list "reason" (ddl:reason-of v))
-                       (list "path" relpath))))
-           (ddl:classify-document (read-file path))))))
+    (filter
+      (fn (f) (not (eq? f "")))
+      (map
+        (fn (v)
+          (if (ddl:permitted? (ddl:verdict-of v) sunset-step)
+            ""
+            (list
+              (list "key" (gate:key (ddl:rule-of v) relpath (ddl:statement-of v)))
+              (list "verdict" (ddl:verdict-label (ddl:verdict-of v)))
+              (list "reason" (ddl:reason-of v))
+              (list "path" relpath))))
+        (ddl:classify-document (read-file path))))))
 
 (define (gate:key-of f) (alist-get f "key" ""))
 
 (define all-findings
-  (reduce (fn (acc p) (append acc (gate:findings-for p))) (list) (gate:sql-files root)))
+  (reduce
+    (fn (acc p) (append acc (gate:findings-for p)))
+    (list)
+    (gate:sql-files root)))
 
 (define baseline-lines
   (if (path-exists? baseline-path)
-      (filter (fn (l) (and (not (eq? (string-trim l) ""))
-                           (not (string-starts-with? (string-trim l) "#"))))
-              (string-split (read-file baseline-path) "\n"))
-      (list)))
+    (filter
+      (fn (l) (and (not (eq? (string-trim l) "")) (not (string-starts-with? (string-trim l) "#"))))
+      (string-split (read-file baseline-path) "\n"))
+    (list)))
 
 (define (gate:baselined? f)
   (> (length (filter (fn (l) (eq? (string-trim l) (gate:key-of f))) baseline-lines)) 0))
 
 (define baselined (filter gate:baselined? all-findings))
+
 (define violations (filter (fn (f) (not (gate:baselined? f))) all-findings))
 
 (define (gate:say-finding tag f)
-  (print-line (string-append tag
-    (string-append " " (string-append (gate:key-of f)
-      (string-append " :: " (alist-get f "reason" "")))))))
+  (print-line
+    (string-append
+      tag
+      (string-append
+        " "
+        (string-append (gate:key-of f) (string-append " :: " (alist-get f "reason" "")))))))
 
 ;; A gate that scanned NOTHING is a broken run, not a clean one, and from the
 ;; exit code alone the two are identical. This one exits 2 rather than joining
@@ -79,23 +92,30 @@
 ;; a reversed string-suffix? argument matched no files, so it scanned 0 and
 ;; exited 0. Same defense here, same reason.
 (if (eq? 0 (length (gate:sql-files root)))
-    (begin
-      (print-line (string-append "ddl-gate: FAILED — scanned 0 .sql files under " root))
-      (print-line "  a zero-file scan means a wrong ROOT or a broken walk, never a pass")
-      (exit 2))
-    #t)
+  (begin
+    (print-line (string-append "ddl-gate: FAILED — scanned 0 .sql files under " root))
+    (print-line "  a zero-file scan means a wrong ROOT or a broken walk, never a pass")
+    (exit 2))
+  #t)
 
-(print-line (string-format "ddl-gate: {} .sql files under {}"
-                           (length (gate:sql-files root)) root))
+(print-line (string-format "ddl-gate: {} .sql files under {}" (length (gate:sql-files root)) root))
+
 (map (fn (f) (gate:say-finding "  debt   " f)) baselined)
+
 (map (fn (f) (gate:say-finding "  REFUSE " f)) violations)
-(print-line (string-format "ddl-gate: {} new, {} tracked debt"
-                           (length violations) (length baselined)))
+
+(print-line
+  (string-format
+    "ddl-gate: {} new, {} tracked debt"
+    (length violations)
+    (length baselined)))
 
 (append-output (string-append "violations=" (string-format "{}" (length violations))))
+
 (append-output (string-append "baselined=" (string-format "{}" (length baselined))))
+
 (append-output (string-append "files-scanned=" (string-format "{}" (length (gate:sql-files root)))))
 
 (if (and fail-on-violation (> (length violations) 0))
-    (exit 1)
-    (exit 0))
+  (exit 1)
+  (exit 0))
