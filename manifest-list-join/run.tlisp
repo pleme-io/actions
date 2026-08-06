@@ -123,8 +123,19 @@
     (else "")))
 
 ;; ── tool detection ────────────────────────────────────────────────
-(define (mlj:has? name)
-  (= 0 (status-of (exec-capture "sh" "-c" (string-append "command -v " name " >/dev/null 2>&1")))))
+;;
+;; `mlj:has?` was defined here as a line-for-line copy of the shared stdlib's
+;; `hash:cmd-present?` — a third instance of the same function, after
+;; tameshi-attest's `attest:cmd-present?`. All three spawned a shell to run
+;; `command -v <name> >/dev/null 2>&1` with the name interpolated unquoted.
+;;
+;; The rename is what hid it: tlisp-lint's Layer 4 finds stdlib shadowing by
+;; intersecting define NAMES, so an identical name is caught on sight and an
+;; `mlj:`-prefixed one is invisible. Layer 5 exists for exactly this shape.
+;;
+;; The stdlib version spawns no shell: `exec-capture` raises on an absent
+;; binary and returns on a present one, so presence and absence were always
+;; two control paths — the shell only converted that into an exit code.
 
 ;; auto → first present of regctl|buildah|podman|docker; else the
 ;; requested tool verbatim; "" when auto finds nothing. regctl FIRST
@@ -135,10 +146,10 @@
 (define (mlj:select-tool requested)
   (cond
     ((not (equal? requested "auto")) requested)
-    ((mlj:has? "regctl") "regctl")
-    ((mlj:has? "buildah") "buildah")
-    ((mlj:has? "podman") "podman")
-    ((mlj:has? "docker") "docker")
+    ((hash:cmd-present? "regctl") "regctl")
+    ((hash:cmd-present? "buildah") "buildah")
+    ((hash:cmd-present? "podman") "podman")
+    ((hash:cmd-present? "docker") "docker")
     (else "")))
 
 ;; ── per-tool index composition (returns child status; 0 = ok) ─────
