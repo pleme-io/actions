@@ -25,7 +25,6 @@ docker-build-and-push/run.tlisp
 docs-publish/run.tlisp
 fastlane-deploy/run.tlisp
 gh-secrets-sync/run.tlisp
-grafana-annotation/run.tlisp
 helm-bump/run.tlisp
 helm-ct-list-changed/run.tlisp
 helm-deploy/run.tlisp
@@ -42,7 +41,6 @@ mutation-test/run.tlisp
 no-cve-suppression/run.tlisp
 npm-bump/run.tlisp
 npm-publish/run.tlisp
-pagerduty-notify/run.tlisp
 pr-comment/run.tlisp
 prometheus-push/run.tlisp
 pull-request-gate/run.tlisp
