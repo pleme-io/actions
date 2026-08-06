@@ -464,3 +464,64 @@
                     "cat ${{ github.action_path }}/run.tlisp" "d")
                   "d/run.tlisp")
     "the original heredoc shape, with no redirect, still resolves"))
+
+;; ── Layer 7: a command built as a STRING ────────────────────────
+
+(deftest "layer 7 detects a shell as argv[0], in any dialect"
+  (assert (line-spawns-shell? "(exec-capture \"sh\" \"-c\" cmd)") "sh")
+  (assert (line-spawns-shell? "  (define r (exec-capture \"bash\" \"-c\" x))") "bash, indented")
+  (assert (line-spawns-shell? "(exec-capture \"zsh\" \"-c\" x)") "zsh"))
+
+(deftest "layer 7 does NOT flag an argv call — the rule is narrow on purpose"
+  ;; A blanket ban on exec-capture would be wrong: argv calls are exactly the
+  ;; thing this whole change is steering toward.
+  (assert (not (line-spawns-shell? "(exec-capture \"git\" \"--version\")"))
+    "a plain argv call is correct code")
+  ;; container-boot-check legitimately hands "sh" to docker exec — that shell
+  ;; belongs to the target IMAGE, not to us, and must not be flagged.
+  (assert (not (line-spawns-shell? "(exec-capture \"docker\" \"exec\" name \"sh\")"))
+    "a shell appearing as a LATER argument is the container's, not ours"))
+
+(deftest "layer 7 honours a waiver on the preceding line"
+  (let ((f (string-append "/tmp/l7-waived-" (random-hex 8) ".tlisp")))
+    (write-file f ";; lint:allow shell-exec the container's own shell\n(exec-capture \"sh\" \"-c\" \"x\")\n")
+    (assert (= (shell-exec-errors-in-quiet f) 0) "a waived site does not fail"))
+  (let ((g (string-append "/tmp/l7-bare-" (random-hex 8) ".tlisp")))
+    (write-file g "(exec-capture \"sh\" \"-c\" \"x\")\n")
+    (assert (= (shell-exec-errors-in-quiet g) 1)
+      "the same line without a waiver does fail — so the waiver is what did it")))
+
+(deftest "layer 7 does not flag a COMMENT that documents the old form"
+  ;; Several files now carry `;; This was (exec-capture "sh" "-c" ...)` in the
+  ;; comment explaining their own conversion. Flagging those would punish the
+  ;; documentation of the fix.
+  (let ((f (string-append "/tmp/l7-comment-" (random-hex 8) ".tlisp")))
+    (write-file f ";; This was (exec-capture \"sh\" \"-c\" \"ls\") before the conversion\n(proc:must (list \"ls\"))\n")
+    (assert (= (shell-exec-errors-in-quiet f) 0)
+      "a commented-out example is prose, not a spawn")))
+
+(deftest "the ratchet distinguishes baselined debt from NEW debt"
+  ;; The whole point: 71 files carry this today. Failing all of them gets the
+  ;; rule reverted; failing none leaves the class open. Old is tolerated, new
+  ;; is refused, and the baseline only shrinks.
+  (assert (shell-baselined? "akeyless-auth/run.tlisp")
+    "a known offender is baselined")
+  (assert (not (shell-baselined? "some-brand-new-action/run.tlisp"))
+    "a file that does not exist yet is not baselined, so its first shell fails"))
+
+(deftest "shell-fails? is the ratchet DECISION — old tolerated, new refused"
+  ;; This test exists because a positive control proved the decision was
+  ;; untestable while inlined in the walk: disarming it entirely left the
+  ;; suite at 34/34, since the detector and the baseline lookup were each
+  ;; asserted alone and nothing asserted how they COMBINE. Two correct halves
+  ;; and no test of the join.
+  (let ((newf (string-append "/tmp/l7-new-" (random-hex 8) ".tlisp")))
+    (write-file newf "(exec-capture \"sh\" \"-c\" \"x\")\n")
+    (assert (shell-fails? newf)
+      "a file that is NOT baselined and spawns a shell must fail"))
+  (assert (not (shell-fails? "akeyless-auth/run.tlisp"))
+    "a baselined file with the same shell must NOT fail — that is the ratchet")
+  (let ((cleanf (string-append "/tmp/l7-clean-" (random-hex 8) ".tlisp")))
+    (write-file cleanf "(proc:must (list \"git\" \"--version\"))\n")
+    (assert (not (shell-fails? cleanf))
+      "an unbaselined file with no shell must not fail")))

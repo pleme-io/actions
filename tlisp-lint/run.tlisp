@@ -843,6 +843,132 @@
             crash-baseline-path))
         (length new)))))
 
+;; ── Layer 7: a command built as a STRING ───────────────────────────────
+;;
+;; `exec-capture "sh" "-c" <string>` is the single construct behind almost
+;; every defect a 108-site survey of this repo found. 102 of those 108 sites
+;; carried a latent bug, and the two roots are both properties of this form:
+;; a command assembled as text can be injected into, and a pipeline's status
+;; belongs to its LAST stage, so the tool you care about fails silently.
+;;
+;; Receipts, all live in this repo when the layer was written:
+;;   terraform-apply   an unquoted env var inside `terraform apply -auto-approve`
+;;   fastlane-deploy   LANE from env, on a step holding signing credentials
+;;   teams-notify      a notification title, so "build didn't pass" breaks out
+;;   akeyless-auth     curl | jq — jq's exit status hides curl's 401
+;;
+;; `proc:run` / `proc:must` (in _tlisp-stdlib) take argv as a LIST, so there
+;; is nothing to quote and nothing to inject into, and return a Result so the
+;; status cannot be skipped. This layer is what makes reaching past them
+;; visible rather than a matter of who reviewed the diff.
+;;
+;; NOT a blanket ban on exec-capture — argv calls are exactly right. The rule
+;; is narrower and mechanical: a SHELL in argv[0].
+;;
+;; Waiver: `;; lint:allow shell-exec <reason>` on the line before. A container's
+;; own `command:` is the real case — that shell belongs to the image, not to us.
+
+(define shell-argv0-forms
+  (list "\"sh\"" "\"bash\"" "\"zsh\"" "\"dash\"" "\"ksh\"" "\"fish\""))
+
+(define (line-spawns-shell? line)
+  (and
+    (string-contains? line "exec-capture")
+    (any-line-matches? shell-argv0-forms
+      (lambda (s) (string-contains? line (string-append "exec-capture " s))))))
+
+;; Walk with the PREVIOUS line in hand so a waiver comment can suppress.
+(define (shell-hits-in lines prev n acc)
+  (cond
+    ((null? lines) acc)
+    (else
+      (let ((l (car lines)))
+        (shell-hits-in (cdr lines) l (+ n 1)
+          (cond
+            ((not (line-spawns-shell? l)) acc)
+            ((string-contains? prev "lint:allow shell-exec") acc)
+            ;; the comment that DOCUMENTS the old form is not the old form
+            ((string-starts-with? (string-trim l) ";;") acc)
+            (else (append acc (list (string-format "{}" n))))))))))
+
+(define (shell-exec-errors-in path)
+  (let ((hits (shell-hits-in (string-split (read-file path) "\n") "" 1 (list))))
+    (cond
+      ((null? hits) 0)
+      (else
+        (log-error
+          (string-append path ": builds a command as a STRING at line(s) "
+            (string-join ", " hits)
+            " — use (proc:must (list \"tool\" \"arg\")) instead. argv cannot be "
+            "injected into and its Result cannot skip the exit status. Waive "
+            "with `;; lint:allow shell-exec <reason>` on the preceding line."))
+        1))))
+
+;; ── BASELINE RATCHET, not a big-bang ────────────────────────────────────
+;;
+;; 71 files carry this form today. Failing on all of them would red-gate the
+;; repo instantly and the rule would be reverted within the hour — which is
+;; how a correct rule becomes a disabled one. Failing on NONE of them leaves
+;; the class open, which is what produced the 102 findings.
+;;
+;; So: existing offenders are recorded, and a file NOT in the baseline fails.
+;; New shell cannot land; old shell is converted at whatever pace the work
+;; allows, and each conversion is a line deleted from the baseline. The number
+;; only goes down, and the day it reaches zero this becomes an absolute rule
+;; and the baseline file is deleted.
+;;
+;; Deliberately keyed by FILE, not by count. A count-based ratchet lets a file
+;; swap one shell site for another and stay green.
+(define shell-baseline-path
+  (string-append (env-get "ACTION_PATH" ".") "/shell-exec-baseline.txt"))
+
+(define shell-baseline
+  (cond
+    ((path-exists? shell-baseline-path)
+      (filter (lambda (l) (not (equal? (string-trim l) "")))
+        (string-split (read-file shell-baseline-path) "\n")))
+    (else (list))))
+
+(define (shell-baselined? path)
+  (any-line-matches? shell-baseline
+    (lambda (b) (equal? (string-trim b) (string-replace path "./" "")))))
+
+(define (shell-exec-errors)
+  (define (walk fs new-hits stale acc)
+    (cond
+      ((null? fs)
+        (begin
+          (log-info
+            (string-append "  shell-exec: " (string-format "{}" (length shell-baseline))
+                           " file(s) baselined, " (string-format "{}" stale)
+                           " now clean (delete them from the baseline)"))
+          acc))
+      (else
+        (let* ((p (car fs))
+               (hit (> (shell-exec-errors-in-quiet p) 0)))
+          (walk (cdr fs) new-hits
+            (if (and (not hit) (shell-baselined? p)) (+ stale 1) stale)
+            (cond
+              ((shell-fails? p) (+ acc (shell-exec-errors-in p)))
+              (else acc)))))))
+  (walk files 0 0 0))
+
+;; THE RATCHET DECISION, as its own predicate so it can be tested.
+;;
+;; It was inlined in the walk above, and a positive control proved that made
+;; it untestable: disarming the decision entirely still left the suite at
+;; 34/34, because the tests exercised the detector and the baseline lookup
+;; separately and nothing asserted how they COMBINE. Two correct halves and no
+;; test of the join — the same shape as a gate that cannot go red.
+(define (shell-fails? path)
+  (and (> (shell-exec-errors-in-quiet path) 0) (not (shell-baselined? path))))
+
+;; Same detection, no logging — used to classify before deciding to report.
+(define (shell-exec-errors-in-quiet path)
+  (cond
+    ((null? (shell-hits-in (string-split (read-file path) "\n") "" 1 (list))) 0)
+    (else 1)))
+
 (define (crash-certain-errors)
   (cond
     ((not (path-exists? crash-reader-script))
@@ -919,7 +1045,8 @@
          (semantic-rule-errors)
          (stdlib-shadow-errors)
          (stdlib-literal-errors)
-         (crash-certain-errors))))
+         (crash-certain-errors)
+         (shell-exec-errors))))
     (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
     (append-output (string-append "errors-found=" (string-format "{}" total-errors)))
     (cond
