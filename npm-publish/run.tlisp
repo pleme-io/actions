@@ -57,11 +57,31 @@
           (code (status-of r))
           (log (string-append (stdout-of r) "\n" (stderr-of r))))
         (cond
+          ;; ── A DRY RUN DOES NOT SHIP ────────────────────────────────────
+          ;;
+          ;; `npm publish --dry-run` exits 0 without uploading anything, and
+          ;; this branch used to read that 0 and emit `shipped=true`. Callers
+          ;; gate release tagging on `shipped`, so a dry run could mint a tag
+          ;; for a version that provably does not exist on the registry —
+          ;; and the next real publish of that version would then look like a
+          ;; republish.
+          ;;
+          ;; Operator decision 2026-08-06: DRY_RUN does not ship. This is a
+          ;; contract change for every caller, deliberately: `shipped` now
+          ;; means "the artifact is on the registry", which is the only
+          ;; reading that makes it safe to tag from.
+          ((and (= code 0) (equal? dry-run "true"))
+            (log-info "dry run OK — nothing was uploaded, so shipped=false")
+            (append-output "shipped=false")
+            (append-output "dry-run=true")
+            (exit 0))
           ((= code 0)
             (log-info "published successfully")
             (append-output "shipped=true")
             (exit 0))
           ((already-uploaded? log)
+            ;; Still a genuine ship: the artifact IS on the registry, which is
+            ;; what shipped means. Under --dry-run npm cannot reach this arm.
             (log-info "already published — treating as success")
             (append-output "shipped=true")
             (exit 0))
