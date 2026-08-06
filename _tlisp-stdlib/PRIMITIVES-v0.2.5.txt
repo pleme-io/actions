@@ -1,0 +1,138 @@
+# tatara-script primitives — the list CI actually has
+#
+# Extracted from tatara-lisp `register_fn` sites at tag v0.2.5, which is what
+# `tatara-script/action.yml` pins. 115 names, 2026-08-06.
+#
+# WHY THIS FILE EXISTS. A survey of every shell site in this repo classified 23
+# of them as "needs a decision, no primitive exists". Most of those calls were
+# wrong: chdir, cwd, now, now-ms, now-rfc3339, yaml-parse, file-size, walk-dir,
+# path-join, mkdir-p, json-stringify, http-post-json and re-captures ALL exist.
+# The mistake was probing SCHEME spellings — substring, string-ref,
+# string->list — finding them absent, and generalising "there is no slicing /
+# chdir / clock primitive". A naming miss, not an absence. It sent work toward
+# building primitives that were already there.
+#
+# So: check here before concluding anything is missing. The absent names really
+# absent are the Scheme ones (substring, string-slice, string-ref, string->list,
+# string-prefix?, string-suffix?, cadr, string->number) plus shell-quote and
+# which. Each of those was invented by some author and shipped broken.
+#
+# NOT IN v0.2.5 but present at tatara-lisp HEAD: exec-with-env, exec-with-stdin.
+# That is load-bearing — anything needing to pipe stdin to a tool must use the
+# tool own file-operand form until the pin moves.
+#
+alist-get
+argv
+argv-get
+base64-decode
+base64-encode
+base64url-decode
+base64url-encode
+chdir
+concat
+cwd
+distinct
+drop
+elapsed-since
+env-get
+env-required
+env-set
+eprint-line
+exec-capture
+exec-check
+exec-ok?
+exit
+file-size
+flatten
+glob
+hex-decode
+hex-encode
+hmac-sha256
+hostname
+http-get
+http-get-json
+http-post-json
+http-serve-static
+is-dir?
+is-file?
+json-parse
+json-stringify
+kube-api-base
+kube-bearer-token
+kube-ca-cert
+kube-cluster-name
+kube-in-cluster?
+kube-namespace
+kube-pod-name
+last
+ls
+mkdir
+mkdir-p
+now
+now-ms
+now-ns
+now-rfc3339
+nth
+os-arch
+os-platform
+parse-args
+path-absolute
+path-basename
+path-dirname
+path-exists?
+path-extension
+path-join
+print-line
+print-usage
+random-bytes
+random-hex
+random-int
+range
+re-captures
+re-find
+re-find-all
+re-match?
+re-replace
+re-split
+read-file
+require
+rm
+rm-rf
+sh-exec
+sha1
+sha256
+sha512
+sleep
+sleep-ms
+slugify
+sops-extract
+string-bytes
+string-chars
+string-contains?
+string-ends-with?
+string-format
+string-join
+string-lowercase
+string-repeat
+string-replace
+string-reverse
+string-split
+string-starts-with?
+string-trim
+string-uppercase
+take
+tmp-dir
+tmp-file
+toml-parse
+toml-read
+toml-stringify
+url-decode
+url-encode
+user-home
+username
+uuid-v4
+walk-dir
+write-file
+yaml-parse
+yaml-read
+zip
