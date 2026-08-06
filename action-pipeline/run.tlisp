@@ -32,7 +32,7 @@
 ;; express is a primitive that already has an owner, a contract and tests.
 
 (define actions-root (env-get "ACTIONS_ROOT" "."))
-(define spec-text (env-required "PIPELINE_SPEC"))
+(define spec-text (env-required-unless-test "PIPELINE_SPEC"))
 (define stdlib-path (string-append actions-root "/_tlisp-stdlib/stdlib.tlisp"))
 
 ;; -------------------------------------------------------------- ;;

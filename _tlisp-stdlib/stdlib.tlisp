@@ -149,6 +149,34 @@
         (append-output delim)))))
 
 ;; ────────────────────────────────────────────────────────────────
+;; Required input that does not abort the test harness
+;; ────────────────────────────────────────────────────────────────
+
+;; Required in production; absent-and-empty under `--test`.
+;;
+;; ── ★ WHY THIS EXISTS ─────────────────────────────────────────────
+;; A unit gates its `main` behind TLISP_TEST so the harness can drive it:
+;;
+;;     (if (equal? (env-get "TLISP_TEST" "") "") (main) (log-info "…skipped"))
+;;
+;; but a TOP-LEVEL `(define x (env-required "K"))` runs at LOAD time —
+;; strictly before that guard is reached. The unit aborts while being
+;; loaded, so ZERO deftests run and the harness reports one plain failure
+;; with no roster. "Nothing ran" and "everything failed" look identical.
+;;
+;; MEASURED 2026-08-06: `action-pipeline` (PIPELINE_SPEC) and `cargo-run-bin`
+;; (BIN) were red on main this way, invisibly, because the tlisp-tests job is
+;; continue-on-error. 81 run.tlisp carry a top-level `env-required`, so this
+;; is a landmine under every test file not yet written.
+;;
+;; Use at top level; keep plain `env-required` inside `main`, where the guard
+;; already protects it and a missing input SHOULD abort.
+(define (env-required-unless-test key)
+  (if (equal? (env-get "TLISP_TEST" "") "")
+    (env-required key)
+    (env-get key "")))
+
+;; ────────────────────────────────────────────────────────────────
 ;; exec-capture result accessors
 ;; ────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,25 @@
 ;; whether tracked debt stays tracked, and they are the parts a classifier
 ;; test cannot see.
 
+(deftest "the harness composed the SECOND stdlib this unit ships with"
+  ;; COMPOSITION CANARY. ddl-gate's action.yml cats TWO inlinable stdlibs
+  ;; ahead of run.tlisp — `_tlisp-stdlib` and `_tlisp-ddl` (the classifier) —
+  ;; but tlisp-test used to hardcode only the first. This unit was therefore
+  ;; tested as a DIFFERENT PROGRAM than it ships as, and sat 5/7 red on main
+  ;; with `unbound symbol ddl:classify-document`. Nobody saw it because the
+  ;; tlisp-tests job was continue-on-error.
+  ;;
+  ;; If the harness ever stops reading this action.yml's own loader step, the
+  ;; symbols below go unbound and this test names the reason instead of
+  ;; leaving four unrelated tests to fail with a confusing symbol error.
+  ;; Exercised rather than probed for boundness: an unbound symbol raises and
+  ;; names itself, which is the diagnosis. A boundness predicate would have to
+  ;; reference the symbol to test it, which raises first anyway.
+  (assert
+    (> (length (ddl:classify-document "DROP TABLE users;")) 0)
+    "_tlisp-ddl classifier is composed in and returns statements")
+  (assert (not (equal? (gate:sha8 "DROP TABLE users") "")) "the unit's own defs are present"))
+
 (deftest "a finding key fingerprints the statement, not its position"
   ;; The whole point of content-keying. If the key moved when a statement did,
   ;; every reformat would silently un-baseline real debt and the gate would go
