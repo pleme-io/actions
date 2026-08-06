@@ -60,7 +60,6 @@ slack-notify/run.tlisp
 snyk-test/run.tlisp
 stale-issue-bot/run.tlisp
 tailscale-auth/run.tlisp
-teams-notify/run.tlisp
 terraform-apply/run.tlisp
 terraform-plan/run.tlisp
 tlisp-lint/run.tlisp

@@ -2204,3 +2204,88 @@
             ((equal? (car kvs) "status") (car (cdr kvs)))
             (else (walk (cdr (cdr kvs))))))
     (walk d)))
+
+;; ────────────────────────────────────────────────────────────────
+;; webhook — one shape for every "POST JSON somewhere" action
+;; ────────────────────────────────────────────────────────────────
+;;
+;; Nine actions in this repo do the identical thing: build a JSON body with
+;; `jq`, POST it with `curl`, through `sh -c`. datadog-event, discord-notify,
+;; slack-notify, teams-notify, matrix-notify, pagerduty-notify,
+;; grafana-annotation, honeycomb-marker, prometheus-push. Each hand-rolls it,
+;; and each carries the same three defects:
+;;
+;;   1. THE SECRET IS IN ARGV. `curl -H 'Authorization: Bearer <token>'` and
+;;      `-d '<payload>' '<webhook-url>'` put credentials on a command line,
+;;      readable from `ps` or /proc/<pid>/cmdline by any process on the
+;;      runner. GitHub's log masking does not cover this — it redacts logs,
+;;      not the process table.
+;;
+;;   2. NO `--fail`, SO HTTP ERRORS PASS. curl exits 0 on a 401 or a 500, so
+;;      "the notification was rejected" and "the notification was delivered"
+;;      were the same verdict. Several of these actions then emit
+;;      `sent=true` for a message nobody received.
+;;
+;;   3. THE PAYLOAD IS ASSEMBLED AS SHELL TEXT. A notification title
+;;      containing an apostrophe — "build didn't pass" — closes the quote and
+;;      injects. teams-notify does this with NO escaping at all.
+;;
+;; `http-post-json` is a primitive and fixes all three at once: the body is a
+;; LISP VALUE serialised to JSON (nothing to quote), headers are an alist (the
+;; secret is a header value, never argv), and it RAISES on a non-2xx (so an
+;; HTTP error cannot present as delivery). This wrapper only adds the Result
+;; shape and a usable message.
+
+;; POST `body` (a lisp value) as JSON. Returns (ok <response>) or (err e).
+;;
+;; `headers` is an alist of (name value) — put credentials HERE, never in a
+;; url or an argv element.
+(define (webhook:post url headers body)
+  (cond
+    ((equal? (string-trim url) "")
+      (erro:err
+        (erro:new "webhook/no-url"
+          "no endpoint configured — refusing to report a delivery that cannot happen"
+          (list))))
+    (else
+      (let ((r (erro:attempt (lambda () (http-post-json url headers body)))))
+        (cond
+          ((erro:ok? r) r)
+          ;; ── A NON-JSON RESPONSE IS A SUCCESSFUL DELIVERY ────────────────
+          ;;
+          ;; `http-post-json` insists the RESPONSE parse as JSON, and there is
+          ;; no raw-text POST primitive to fall back to (http-get,
+          ;; http-get-json, http-post-json, http-serve-static — that is all of
+          ;; them at v0.2.5).
+          ;;
+          ;; Most webhooks do not reply in JSON. Slack answers `ok`, Teams
+          ;; answers `1`, Discord answers 204 with an empty body. Treating that
+          ;; raise as a failure would report every successful notification as
+          ;; undelivered — the exact inversion of the bug this helper exists to
+          ;; fix, and it would have been indistinguishable from a real outage.
+          ;;
+          ;; The two raises are distinguishable and the ordering is what makes
+          ;; this safe: the primitive checks the STATUS first, so a non-2xx
+          ;; says "http status: NNN" and never reaches the parse. "response not
+          ;; JSON" is therefore only reachable AFTER a 2xx — the POST landed,
+          ;; and only our reading of the reply failed.
+          ((string-contains? (erro:message (erro:value r)) "response not JSON")
+            (erro:ok ""))
+          (else
+            ;; The primitive's message carries the HTTP status; keep it, since
+            ;; a 401 and a 500 send an operator to completely different places.
+            (erro:err
+              (erro:new "webhook/failed"
+                (erro:message (erro:value r))
+                (list "url-host" (webhook:host-of url))))))))))
+
+;; The host part of a url, for logs. NEVER the full url — a Slack or Teams
+;; webhook url IS the credential, so logging it whole leaks the secret into
+;; exactly the place log-masking might not reach either.
+(define (webhook:host-of url)
+  (let ((parts (string-split url "/")))
+    (cond ((>= (length parts) 3) (car (cdr (cdr parts)))) (else "unknown-host"))))
+
+;; A bearer-auth header alist, ready for webhook:post.
+(define (webhook:bearer token)
+  (list (list "Authorization" (string-append "Bearer " token))))

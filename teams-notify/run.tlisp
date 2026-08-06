@@ -1,4 +1,21 @@
 ;; teams-notify/run.tlisp
+;;
+;; Was: build a MessageCard with `jq` through `sh -c`, then POST it with
+;; `curl` through another `sh -c`. Three defects, all of them structural:
+;;
+;;   1. TITLE and TEXT were interpolated into single quotes with NO ESCAPING
+;;      WHATSOEVER. A notification title containing an apostrophe — "build
+;;      didn't pass", which is about as routine as CI prose gets — closed the
+;;      quote and injected shell. pagerduty-notify at least used "$VAR" for
+;;      this; teams-notify did not.
+;;   2. WEBHOOK_URL is a Teams webhook, which IS the credential, and it sat on
+;;      a command line readable via `ps` or /proc/<pid>/cmdline.
+;;   3. `-o /dev/null` threw away the response body, so a rejection had no
+;;      diagnosis, and the verdict came from a scraped `%{http_code}` string.
+;;
+;; `webhook:post` removes all three: the body is a lisp value serialised to
+;; JSON (nothing to quote), the url is an argument rather than argv text, and
+;; a non-2xx raises instead of being scraped.
 
 (define webhook (env-required "WEBHOOK_URL"))
 
@@ -6,36 +23,25 @@
 
 (define text (env-required "TEXT"))
 
-(define payload-jq
-  (string-append
-    "jq -n --arg title '"
-    title
-    "' --arg text '"
-    text
-    "' '{ \"@type\": \"MessageCard\", \"@context\": \"http://schema.org/extensions\","
-    "    title: $title, text: $text }'"))
+;; The MessageCard, as data. `@type`/`@context` are Teams' own required keys.
+(define card
+  (list
+    (list "@type" "MessageCard")
+    (list "@context" "http://schema.org/extensions")
+    (list "title" title)
+    (list "text" text)))
 
-(define payload
-  (let ((r (exec-capture "sh" "-c" payload-jq)))
-    (cond ((= (status-of r) 0) (stdout-of r)) (else (log-error "payload build failed") (exit 1)))))
-
-(define r
-  (exec-capture "sh"
-    "-c"
-    (string-append
-      "curl -sS -o /dev/null -w '%{http_code}' "
-      "-X POST -H 'Content-Type: application/json' "
-      "-d '"
-      (string-replace
-        payload
-        "'"
-        "'\"'\"'")
-      "' '"
-      webhook
-      "'")))
-
-(define code (string-trim (stdout-of r)))
+(define r (webhook:post webhook (list) card))
 
 (cond
-  ((equal? code "200") (append-output "sent=true") (exit 0))
-  (else (append-output "sent=false") (exit 1)))
+  ((erro:err? r)
+    ;; The host, never the url — the url is the secret.
+    (log-error
+      (string-append "teams-notify: delivery failed — "
+                     (erro:message (erro:value r))))
+    (append-output "sent=false")
+    (exit 1))
+  (else
+    (log-info "teams-notify: delivered")
+    (append-output "sent=true")
+    (exit 0)))
