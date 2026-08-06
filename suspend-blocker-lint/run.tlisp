@@ -1,0 +1,116 @@
+;; suspend-blocker-lint — a suspended declaration must name its blocker.
+;;
+;; Inlined ahead of this file: _tlisp-stdlib/stdlib.tlisp. Parses committed
+;; YAML only; never contacts a cluster.
+;;
+;; WHY. `suspend: true` is how this fleet parks a declaration that is correct
+;; but not yet realizable -- the queue whose IAM boundary is too narrow, the CR
+;; magma cannot re-adopt yet. That is the right move: the declaration stays the
+;; source of truth. The failure mode is what happens NEXT. The reason lives in
+;; prose inside a header (one of them is 146 lines), nothing re-reads it, and
+;; the day the blocker clears there is no signal -- so a parked declaration
+;; quietly becomes a forgotten one. Measured on camelot-eks 2026-08-05: 4
+;; suspended InfrastructureTemplates, ZERO carrying a machine-readable blocker.
+;;
+;; So: every `suspend: true` declares three annotations.
+;;
+;;   pleme.io/blocked-by        stable slug naming the blocker
+;;   pleme.io/blocked-clearing  what clears it -- human-sso-apply |
+;;                              upstream-pangea-operator | operator-reconcile
+;;   pleme.io/blocked-since     ISO date, so age is visible
+;;
+;; Same baseline-debt discipline as ddl-gate / breathe-band-lint: existing
+;; unannotated suspensions are tracked in a baseline and reported every run,
+;; never silently accepted; a NEW one fails the build. The goal is an empty
+;; baseline.
+
+(define root (env-get "ROOT" "."))
+(define fail-on-violation (not (equal? (env-get "FAIL_ON_VIOLATION" "true") "false")))
+(define baseline-path (string-append root "/.suspend-blocker-baseline.txt"))
+
+(define required-annotations
+  (list "pleme.io/blocked-by" "pleme.io/blocked-clearing" "pleme.io/blocked-since"))
+
+;; `(string-suffix? s suffix)` -- SUBJECT first. Reversing these two silently
+;; matches nothing, and a linter that scans zero files exits 0 and reads exactly
+;; like a clean run. Caught here by asserting the file count is non-zero below.
+(define (yaml-files dir)
+  (filter (lambda (p) (string-suffix? p ".yaml")) (walk-dir dir)))
+
+;; A real suspension is `suspend: true` as YAML, not the phrase inside a
+;; comment. Every one of these files discusses suspension in prose, so a
+;; substring match would flag all of them.
+(define (really-suspended? body)
+  (any-line-matches? (string-split body "\n")
+    (lambda (l)
+      (and (string-contains? l "suspend:")
+           (string-contains? l "true")
+           (not (string-prefix? "#" (string-trim l)))
+           (not (string-contains? l "# "))))))
+
+(define (declares-annotation? body key)
+  (any-line-matches? (string-split body "\n")
+    (lambda (l)
+      (and (string-contains? l key)
+           (not (string-prefix? "#" (string-trim l)))))))
+
+(define (missing-for body)
+  (filter (lambda (k) (not (declares-annotation? body k))) required-annotations))
+
+(define (relpath p)
+  (let ((parts (string-split p (string-append root "/"))))
+    (if (> (length parts) 1) (car (cdr parts)) p)))
+
+(define (finding-for path)
+  (let ((body (read-file path)))
+    (cond
+      ((not (really-suspended? body)) '())
+      (else
+        (let ((missing (missing-for body)))
+          (cond
+            ((null? missing) '())
+            (else (list (list (string-append "SUSPEND-UNEXPLAINED " (relpath path))
+                              (string-join ", " missing))))))))))
+
+(define all-findings
+  (reduce (lambda (acc p) (append acc (finding-for p))) '() (yaml-files root)))
+
+(define baseline-lines
+  (if (path-exists? baseline-path)
+      (filter (lambda (l) (and (not (equal? (string-trim l) ""))
+                               (not (string-prefix? "#" (string-trim l)))))
+              (string-split (read-file baseline-path) "\n"))
+      '()))
+
+(define (baselined? f)
+  (> (length (filter (lambda (l) (equal? (string-trim l) (car f))) baseline-lines)) 0))
+
+(define debt (filter baselined? all-findings))
+(define violations (filter (lambda (f) (not (baselined? f))) all-findings))
+
+(define (say-finding tag f)
+  (print-line (string-append tag (string-append " " (string-append (car f)
+    (string-append "  missing: " (car (cdr f))))))))
+
+;; A linter that scanned nothing is not a clean run, it is a broken one, and
+;; the two are indistinguishable from the exit code alone. Fail loudly instead.
+(if (eq? 0 (length (yaml-files root)))
+    (begin
+      (print-line (string-append "suspend-blocker-lint: FAILED — scanned 0 yaml files under " root))
+      (print-line "  a zero-file scan is a bug in the linter or a wrong ROOT, never a pass")
+      (exit 2))
+    #t)
+
+(print-line (string-format "suspend-blocker-lint: {} yaml files under {}"
+                           (length (yaml-files root)) root))
+(map (lambda (f) (say-finding "  debt  " f)) debt)
+(map (lambda (f) (say-finding "  UNNAMED" f)) violations)
+(print-line (string-format "suspend-blocker-lint: {} new, {} tracked debt"
+                           (length violations) (length debt)))
+
+(append-output (string-append "violations=" (string-format "{}" (length violations))))
+(append-output (string-append "baselined=" (string-format "{}" (length debt))))
+
+(if (and fail-on-violation (> (length violations) 0))
+    (exit 1)
+    (exit 0))

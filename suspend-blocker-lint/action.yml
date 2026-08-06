@@ -1,0 +1,45 @@
+name: 'pleme-io · suspend-blocker-lint'
+description: 'A parked declaration must name its blocker. Every `suspend: true` in a GitOps tree carries pleme.io/blocked-by, blocked-clearing and blocked-since, so the reason is machine-readable and the day it clears is a signal rather than something someone remembers. Parses committed YAML only; never contacts a cluster. The sixth baseline-debt sibling of action-shell-lint / runtime-install-lint / no-cve-suppression / breathe-band-lint / ddl-gate.'
+branding:
+  icon: 'pause-circle'
+  color: 'blue'
+
+inputs:
+  root:
+    description: "Tree to scan (e.g. clusters/camelot-eks). Tracked debt is read from <root>/.suspend-blocker-baseline.txt, so each cluster carries its own."
+    required: false
+    default: "."
+  fail-on-violation:
+    description: "Fail the job on a NEW (not-yet-baselined) unexplained suspension. Existing debt in the baseline is always reported, never silently accepted. Set false to adopt report-only first."
+    required: false
+    default: "true"
+
+outputs:
+  violations:
+    description: "Count of NEW (non-baselined) unexplained suspensions."
+    value: ${{ steps.scan.outputs.violations }}
+  baselined:
+    description: "Count of findings matched against the tracked-debt baseline (reported, not failed)."
+    value: ${{ steps.scan.outputs.baselined }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: scan
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        ROOT: ${{ inputs.root }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
