@@ -574,3 +574,76 @@
   (assert (require-scanned! "widgets" 1 1) "exactly at the floor passes")
   (assert (require-scanned! "widgets" 99 1) "above the floor passes")
   (assert (require-scanned! "widgets" 0 0) "a floor of 0 is an explicit opt-out"))
+;; ── shell-free command presence ─────────────────────────────────
+
+(deftest "hash:cmd-present? is true for a binary that exists"
+  (assert (hash:cmd-present? "git") "git is present on any runner this repo runs on"))
+
+(deftest "hash:cmd-present? is false for a binary that does not"
+  ;; exec-capture RAISES on a missing binary; the old shell form converted
+  ;; that into an exit code and back. This asserts the raise is caught rather
+  ;; than escaping and killing the action.
+  (assert (not (hash:cmd-present? "definitely-not-installed-anywhere-xyz"))
+    "an absent binary answers #f, it does not abort the run"))
+
+(deftest "oci:doca-baked returns a NAME or empty, never a path"
+  ;; The old form returned `command -v`'s output, i.e. a filesystem path that
+  ;; varied by how the runner installed it. Callers want a name they can spawn.
+  (let ((v (oci:doca-baked)))
+    (assert (or (equal? v "") (equal? v "oci-push") (equal? v "doca"))
+      "the answer is one of the two names, or empty")
+    (assert (not (string-contains? v "/")) "never a path")))
+
+;; ── shell-free JSON reading ─────────────────────────────────────
+
+(deftest "json-read-field reads a top-level key"
+  (write-file "/tmp/stdlib-json-t1.json" "{\"name\":\"widget\",\"version\":\"1.2.3\"}")
+  (assert (equal? (json-read-field "/tmp/stdlib-json-t1.json" ".name") "widget")
+    "a top-level string field reads back"))
+
+(deftest "json-read-field walks a nested path"
+  (write-file "/tmp/stdlib-json-t2.json"
+    "{\"dependencies\":{\"serde\":\"1.0\"}}")
+  (assert (equal? (json-read-field "/tmp/stdlib-json-t2.json" ".dependencies.serde") "1.0")
+    "a dotted path descends into nested objects"))
+
+(deftest "json-read-field answers empty for a genuinely absent key"
+  (write-file "/tmp/stdlib-json-t3.json" "{\"name\":\"widget\"}")
+  (assert (equal? (json-read-field "/tmp/stdlib-json-t3.json" ".nope") "")
+    "absent is empty — and ONLY absent is empty, which is the point"))
+
+;; ── the refusals, asserted on the DIAGNOSTIC not the exit code ──
+;;
+;; A first cut asserted only `exit != 0`, and that was VACUOUS: with the guard
+;; deleted, `json-read-field` falls through to `read-file` on a nonexistent
+;; path, which raises — so the child exits non-zero either way and the test
+;; passed against a deliberately broken stdlib (measured: 51/51 with the guard
+;; removed from the real file).
+;;
+;; "Exits non-zero" is not the property worth having. The property is that the
+;; operator is TOLD which file was missing and that "" was refused on purpose,
+;; rather than being handed a raw `No such file or directory` from somewhere
+;; inside a read. So the assertion is on the message.
+
+(deftest "json-read-field REFUSES a missing file, and says so"
+  (let* ((f (string-append "/tmp/stdlib-json-miss-" (random-hex 8) ".tlisp")))
+    (write-file f (string-append (read-file "_tlisp-stdlib/stdlib.tlisp")
+      "\n(json-read-field \"/tmp/definitely-no-such-file.json\" \".name\")\n"))
+    (let* ((r (exec-capture "tatara-script" f))
+           (out (string-append (stdout-of r) (stderr-of r))))
+      (assert (not (= (status-of r) 0)) "a missing file must fail")
+      (assert (string-contains? out "Refusing to answer")
+        "and must name the refusal — a bare read-file crash also exits non-zero")
+      (assert (string-contains? out "definitely-no-such-file.json")
+        "naming the offending path is what makes the failure actionable"))))
+
+(deftest "json-read-field REFUSES a jq filter, and says so"
+  (let* ((f (string-append "/tmp/stdlib-json-filter-" (random-hex 8) ".tlisp")))
+    (write-file "/tmp/stdlib-json-t4.json" "{\"a\":1}")
+    (write-file f (string-append (read-file "_tlisp-stdlib/stdlib.tlisp")
+      "\n(json-read-field \"/tmp/stdlib-json-t4.json\" \".a[0] | length\")\n"))
+    (let* ((r (exec-capture "tatara-script" f))
+           (out (string-append (stdout-of r) (stderr-of r))))
+      (assert (not (= (status-of r) 0)) "an unsupported path shape must fail")
+      (assert (string-contains? out "not a plain dotted key path")
+        "and must say WHY, so the caller knows to rewrite the path rather than the file"))))

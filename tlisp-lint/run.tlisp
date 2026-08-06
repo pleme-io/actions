@@ -300,12 +300,32 @@
               (else (log-error (string-trim (stdout-of r))) 1)))
           (composed-unbound-total (action-dirs) 0))))))
 
-;; Every action directory in the repo (those carrying an action.yml).
+;; Every action directory in the repo — those carrying an action.yml.
+;;
+;; This was `(exec-capture "sh" "-c" "ls -d */ 2>/dev/null | sed 's#/##'")`:
+;; a shell pipeline, inside tatara-lisp, in the file whose job is catching
+;; exactly that. `glob` is a primitive and needs no subprocess.
+;;
+;; Globbing `*/action.yml` is also the better question. `ls -d */` returns
+;; every directory including `_tlisp-stdlib`, `_tlisp-ddl` and `.github`,
+;; none of which are actions; the glob returns precisely the directories that
+;; an action.yml DEFINES as actions. And `2>/dev/null` was discarding the one
+;; signal that would say the listing failed — an empty result and a broken
+;; listing were the same answer, which is the defect this whole pass is about.
 (define (action-dirs)
-  (let ((r (exec-capture "sh" "-c" "ls -d */ 2>/dev/null | sed 's#/##'")))
+  (define (dir-of p)
+    ;; "./name/action.yml" -> "name"
+    (let ((parts (string-split p "/")))
+      (cond
+        ((>= (length parts) 2) (car (cdr parts)))
+        (else ""))))
+  (define (walk ps acc)
     (cond
-      ((not (= (status-of r) 0)) (list))
-      (else (string-split (string-trim (stdout-of r)) "\n")))))
+      ((null? ps) acc)
+      (else
+        (let ((d (dir-of (car ps))))
+          (walk (cdr ps) (if (equal? d "") acc (append acc (list d))))))))
+  (walk (glob "*/action.yml") (list)))
 
 (define (composed-unbound-total dirs acc)
   (cond
