@@ -48,26 +48,25 @@
 ;; Subject defaults to the repo slug when the caller passes none.
 (define (attest:normalize-subject raw repo) (if (equal? (string-trim raw) "") repo raw))
 
-;; First whitespace-delimited field of a b3sum result alist, or ""
-;; when the command failed. b3sum prints "<hex>  <path>".
-(define (attest:b3-first result)
-  (if (= (status-of result) 0)
-    (car (string-split (string-trim (stdout-of result)) " "))
-    ""))
-
-;; ── BLAKE3 resolver — real hash or honest failure ───────────────
-
-(define (attest:cmd-present? name)
-  (= 0 (status-of (exec-capture "sh" "-c" (string-append "command -v " name " >/dev/null 2>&1")))))
-
-;; BLAKE3 of a file. Prefer an on-PATH b3sum (baked nix runner),
-;; fall back to `nix run nixpkgs#b3sum`. "" iff no tool is available.
-(define (attest:blake3-file path)
-  (cond
-    ((attest:cmd-present? "b3sum") (attest:b3-first (exec-capture "b3sum" path)))
-    ((attest:cmd-present? "nix")
-      (attest:b3-first (exec-capture "nix" "run" "nixpkgs#b3sum" "--" path)))
-    (else "")))
+;; ── BLAKE3 resolver — the stdlib's, not a third copy ────────────
+;;
+;; `attest:b3-first`, `attest:cmd-present?` and `attest:blake3-file` used to
+;; be defined here, and were a line-for-line duplicate of the shared stdlib's
+;; `hash:b3-first` / `hash:cmd-present?` / `hash:blake3-file` — same fallback
+;; order, same "" sentinel, differing only in prefix.
+;;
+;; Renaming is what let the copy survive. tlisp-lint's Layer 4 catches stdlib
+;; SHADOWING by intersecting define names, so an identically-named copy would
+;; have been flagged on sight; an `attest:`-prefixed one is invisible to it.
+;; That is precisely the gap Layer 5 (differently-named reimplementation)
+;; exists for, and this is a live instance of it.
+;;
+;; The copy also carried the shell: `command -v <name> >/dev/null 2>&1`, with
+;; the name interpolated unquoted. The stdlib version no longer spawns a shell
+;; at all — `exec-capture` raises on an absent binary and returns on a present
+;; one, so presence was always two control paths rather than an exit code.
+;;
+;; Callers below now use `hash:blake3-file` directly.
 
 ;; ── Receipt JSON build — jq is the typed serializer ─────────────
 ;; The jq program contains NO double-quote characters: every string
@@ -273,7 +272,7 @@
               (else
                 (write-file canon-path (string-trim (stdout-of canon)))
                 ;; 3. real BLAKE3 over the canonical pre-image
-                (let ((rhash (attest:blake3-file canon-path)))
+                (let ((rhash (hash:blake3-file canon-path)))
                   (cond
                     ((equal? rhash "")
                       (attest:emit-failure
