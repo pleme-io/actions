@@ -50,13 +50,11 @@ pr-comment/run.tlisp
 prometheus-push/run.tlisp
 pull-request-gate/run.tlisp
 pulumi-up/run.tlisp
-restic-backup/run.tlisp
 runtime-install-lint/run.tlisp
 rust-workspace-bump/run.tlisp
 rust-workspace-publish/run.tlisp
 sbom-generate/run.tlisp
 secrets-scan/run.tlisp
-security-audit/run.tlisp
 semgrep-scan/run.tlisp
 slack-notify/run.tlisp
 snyk-test/run.tlisp
