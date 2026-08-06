@@ -102,14 +102,17 @@
         (let ((existing (if (path-exists? output-file) (read-file output-file) "")))
           (write-file output-file (string-append rendered "\n\n" existing)))))))
 
-;; Emit outputs. Multi-line strings use the heredoc form supported
-;; by GITHUB_OUTPUT.
-(let ((eof-marker "TLISP_OUTPUT_EOF"))
-  (append-output (string-append "changelog<<" eof-marker))
-  (append-output rendered)
-  (append-output eof-marker))
+;; The delimiter used to be the FIXED string `TLISP_OUTPUT_EOF`, and that was
+;; a live injection: `rendered` is built from commit SUBJECTS, so a commit
+;; whose message carried that marker on its own line ended the heredoc early
+;; and every following line was parsed by the runner as a new key=value
+;; output. `emit-output-multiline` derives a random delimiter and then VERIFIES
+;; it is absent from the content, re-rolling if not — the verify is the
+;; load-bearing half, since randomness alone is a probability argument rather
+;; than a check.
+(emit-output-multiline "changelog" rendered)
 
-(append-output (string-append "commit-count=" (string-format "{}" commit-count)))
+(emit-output "commit-count" (string-format "{}" commit-count))
 
 (log-info
   (string-append
