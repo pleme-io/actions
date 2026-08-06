@@ -542,3 +542,35 @@
     (let ((r (exec-capture "tatara-script" f)))
       (assert (string-contains? (string-append (stdout-of r) (stderr-of r)) "my-named-gate")
         "the operator must be told WHICH gate is blind"))))
+
+(deftest "count-or-unknown: a failed command is 'unknown, never 0"
+  ;; The whole point. `|| echo 0` at a count site converts every failure of the
+  ;; underlying tool into the number that means clean. It appears in 10 files
+  ;; here, and secrets-scan already documented it as the highest-blast-radius
+  ;; defect in this repo and removed it from itself -- while nothing stopped
+  ;; its nine siblings. snyk-test is the sharpest case: `|| echo 0` AND an
+  ;; explicit empty-string pass, so that gate cannot go red on a broken scan.
+  (assert
+    (not (count-known? (count-or-unknown (exec-capture "false"))))
+    "a non-zero exit is unknown")
+  (assert
+    (not (count-known? (count-or-unknown (exec-capture "true"))))
+    "empty stdout is unknown, not zero")
+  (assert
+    (not (count-known? (count-or-unknown (exec-capture "echo" "not-a-number"))))
+    "non-numeric stdout is unknown")
+  (assert
+    (eq? (count-or-unknown (exec-capture "echo" "0")) 0)
+    "a real measured zero IS zero and stays distinguishable")
+  (assert
+    (eq? (count-or-unknown (exec-capture "echo" "7")) 7)
+    "a real count comes back as an integer"))
+
+(deftest "require-scanned! passes at or above its floor"
+  ;; Only the passing side is unit-testable in-process: a floor breach calls
+  ;; (exit 3), which ends the interpreter rather than raising something a
+  ;; deftest could catch. The refusal is proven by running a real gate against
+  ;; an empty tree, which ddl-gate's own suite does.
+  (assert (require-scanned! "widgets" 1 1) "exactly at the floor passes")
+  (assert (require-scanned! "widgets" 99 1) "above the floor passes")
+  (assert (require-scanned! "widgets" 0 0) "a floor of 0 is an explicit opt-out"))

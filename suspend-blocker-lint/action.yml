@@ -21,6 +21,9 @@ outputs:
   baselined:
     description: "Count of findings matched against the tracked-debt baseline (reported, not failed)."
     value: ${{ steps.scan.outputs.baselined }}
+  files-scanned:
+    description: "How many yaml files were examined -- the DENOMINATOR behind violations. A gate that reports 0 violations having scanned 0 files is indistinguishable from a clean run by its exit code alone, so this is emitted unconditionally and a zero exits 3."
+    value: ${{ steps.scan.outputs.files-scanned }}
 
 runs:
   using: composite

@@ -226,13 +226,10 @@
   (let ((files (yaml-files root)))
     ;; A linter that scanned nothing is not a clean run, it is a broken one, and
     ;; the two are indistinguishable from the exit code alone. Fail loudly.
-    (if (eq? 0 (length files))
-      (begin
-        (print-line
-          (string-append "suspend-blocker-lint: FAILED — scanned 0 yaml files under " root))
-        (print-line "  a zero-file scan is a bug in the linter or a wrong ROOT, never a pass")
-        (exit 2))
-      #t)
+    (require-scanned!
+      "files"
+      (length files)
+      1)
     (let
       ((all-findings (reduce (lambda (acc p) (append acc (finding-for p))) '() files))
         (baseline-lines (read-baseline)))
