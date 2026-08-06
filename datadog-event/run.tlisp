@@ -22,11 +22,21 @@
     alert
     "' --arg tags '"
     tags
+    ;; The next line used to be FOUR broken fragments:
+    ;;
+    ;;     "    tags: ($tags | split("
+    ;;     ,")), source_type_name: "
+    ;;     github
+    ;;     " }'"
+    ;;
+    ;; The inner `","` of jq's split ended the tlisp string early, so the
+    ;; leading `,` of the following line was read as UNQUOTE and `github`
+    ;; became a bare, unbound symbol. It parsed cleanly — paren balance and
+    ;; the parser dry-run both passed it — and died only when evaluation
+    ;; reached it, taking the whole action with it. The inner quotes need
+    ;; escaping, and then it is one string.
     "' '{ title: $title, text: $text, alert_type: $alert,"
-    "    tags: ($tags | split("
-    ,")), source_type_name: "
-    github
-    " }'"))
+    "    tags: ($tags | split(\",\")), source_type_name: \"github\" }'"))
 
 (define payload
   (let ((r (exec-capture "sh" "-c" payload-jq)))

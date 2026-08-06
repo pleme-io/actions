@@ -350,3 +350,69 @@
     (assert (equal? (rows-of-kind rows "HEAD") (list "HEAD\tcar" "HEAD\tcdr")) "only HEAD rows")
     (assert (equal? (length (rows-of-kind rows "NAMEDLET")) 1) "only NAMEDLET rows")
     (assert (null? (rows-of-kind rows "ARITYVIOL")) "an absent kind yields nothing")))
+
+;; ── Layer 3 composition (regression) ────────────────────────────
+;;
+;; The unbound rule scopes per FILE; an action runs as a CONCATENATION that
+;; action.yml declares. Linting files in isolation reported 2903 violations on
+;; this repo, of which 2893 vanished under composition — so the per-file
+;; reading is ~97% noise and would have gated on false positives.
+;;
+;; Both directions matter and are asserted separately: a genuine unbound
+;; symbol must still be caught (or the fix has disarmed the rule), and a
+;; cross-file reference must not be (or the gate is unusable).
+
+(define (lint-text path) 
+  (let ((r (exec-capture "tatara-script" "lint" path)))
+    (string-append (stdout-of r) (stderr-of r))))
+
+(deftest "composed lint still CATCHES a genuine unbound symbol"
+  (let ((f (string-append "/tmp/tl-real-" (random-hex 8) ".tlisp")))
+    ;; The fixture name must NOT begin with `def` — see the blind-spot test
+    ;; below. `definitely-not-a-real-primitive` was the first name tried here
+    ;; and it is silently exempt, which made this very test pass vacuously.
+    (write-file f "(define (x) 1)\n(no-such-primitive-anywhere 1)\n")
+    (assert (string-contains? (lint-text f) "unbound-symbol")
+      "composition must not disarm the rule — a real unbound symbol still fails")))
+
+(deftest "a cross-file reference is a FALSE positive when linted alone"
+  ;; This is the defect being fixed, pinned as a fact about the tool: the
+  ;; caller must compose, because the linter will not.
+  (let ((f (string-append "/tmp/tl-xfile-" (random-hex 8) ".tlisp")))
+    (write-file f "(append-output \"k=v\")\n")
+    (assert (string-contains? (lint-text f) "unbound-symbol")
+      "alone, a stdlib call reads as unbound — which is why the gate composes")))
+
+(deftest "the same reference is CLEAN once composed as the runtime composes it"
+  (let ((f (string-append "/tmp/tl-comp-" (random-hex 8) ".tlisp")))
+    (write-file f (string-append (read-file "_tlisp-stdlib/stdlib.tlisp")
+                                 "\n(append-output \"k=v\")\n"))
+    (assert (not (string-contains? (lint-text f) "unbound-symbol"))
+      "composed with its stdlib, the same call is bound and must not be flagged")))
+
+(deftest "composed-parts-of reads the declaration, it does not assume two files"
+  ;; ddl-gate composes THREE files. A two-file assumption reports its seven
+  ;; ddl:* helpers as unbound — the same false-positive bug one level down.
+  (assert (= (length (composed-parts-of "ddl-gate/action.yml" "ddl-gate")) 3)
+    "ddl-gate declares three cat'd parts and all three must be picked up")
+  (assert (= (length (composed-parts-of "cargo-bump/action.yml" "cargo-bump")) 2)
+    "a plain action declares two"))
+
+(deftest "KNOWN LIMIT: the unbound rule is blind to any symbol starting with `def`"
+  ;; Not a wish — a measured property of the rule, pinned so it changes
+  ;; loudly. The shape catalog's def-family row is "prefix-matched on `def`",
+  ;; and that prefix match is on the SYMBOL, not on a definition form. So
+  ;; `defualt-config` — a realistic typo for `default-config` — is invisible,
+  ;; while `xefualt-config` is caught. Any capability probe or fixture in this
+  ;; repo must therefore avoid a `def` prefix or it proves nothing.
+  ;;
+  ;; If this test ever fails, the rule got stricter upstream: delete the test
+  ;; and celebrate.
+  (let ((blind (string-append "/tmp/tl-blind-" (random-hex 8) ".tlisp"))
+        (seen  (string-append "/tmp/tl-seen-" (random-hex 8) ".tlisp")))
+    (write-file blind "(defualt-config 1)\n")
+    (write-file seen  "(xefualt-config 1)\n")
+    (assert (not (string-contains? (lint-text blind) "unbound-symbol"))
+      "a def-prefixed unbound symbol is currently NOT reported")
+    (assert (string-contains? (lint-text seen) "unbound-symbol")
+      "the same name without the def prefix IS reported — the prefix is the cause")))
