@@ -29,31 +29,14 @@ jobs:
               exit 1
             fi
           done
+      # Was a `python3 - <<'PY'` heredoc. It also exited 0 when the glob matched
+      # nothing, so a collapsed checkout passed the gate having validated
+      # nothing; tools/check-action-schema.tlisp floors the denominator and
+      # exits 3 for that case instead.
       - name: Parse each action.yml as YAML and check required keys
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import sys, yaml, pathlib
-          rc = 0
-          for p in sorted(pathlib.Path('.').glob('*/action.yml')):
-              try:
-                  doc = yaml.safe_load(p.read_text())
-              except Exception as e:
-                  print(f"FAIL {p}: {e}")
-                  rc = 1
-                  continue
-              required = {'name', 'description', 'runs'}
-              missing = required - set(doc or {})
-              if missing:
-                  print(f"FAIL {p}: missing keys {missing}")
-                  rc = 1
-                  continue
-              using = doc['runs'].get('using')
-              if using != 'composite':
-                  print(f"WARN {p}: not composite (using={using})")
-              print(f"OK   {p}")
-          sys.exit(rc)
-          PY
+        uses: ./tatara-script
+        with:
+          script-file: tools/check-action-schema.tlisp
 
   lint-tlisp:
     name: Lint every *.tlisp file (paren / string / comment balance)
