@@ -6,10 +6,36 @@
 
 (define fail-on (env-get "FAIL_ON_BREAKING" "true"))
 
-(exec-check
-  "sh"
-  "-c"
-  "curl -fsSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz -o /tmp/oasdiff.tgz && tar xz -C /tmp -f /tmp/oasdiff.tgz && sudo mv /tmp/oasdiff /usr/local/bin/")
+;; ── oasdiff comes from nix, and its absence is a BROKEN run ─────────────
+;;
+;; This used to be a bare `exec-check` of:
+;;
+;;   curl -fsSL .../releases/latest/download/oasdiff_linux_amd64.tar.gz
+;;     && tar xz && sudo mv /tmp/oasdiff /usr/local/bin/
+;;
+;; Three defects in one line. The return value was DISCARDED, so the install
+;; failing changed nothing. `latest` is unpinned, so the tool could change
+;; under us between runs. And the URL is DEAD — measured 2026-08-06, it 404s,
+;; because real oasdiff assets are version-stamped
+;; (`oasdiff_1.28.0_linux_amd64.tar.gz`). oasdiff has therefore been installed
+;; on NO run of this action, and because the diff's status was never checked
+;; either (see below), the gate reported a clean API on every single run.
+;;
+;; Operator decision 2026-08-06: third-party CI binaries come from NIX. That
+;; also satisfies ★★ HERMETIC SUPPLY CHAIN, which forbids a release fetching a
+;; third-party artifact at job time — the practice the old line embodied.
+;;
+;; Absence is deliberately exit 3, not a skip: a gate that cannot run has not
+;; found a clean API, and this one spent its whole life proving how expensive
+;; that distinction is.
+(cond
+  ((not (hash:cmd-present? "oasdiff"))
+    (log-error
+      (string-append
+        "api-spec-diff: oasdiff is not runnable. It is provided by nix — add it "
+        "to the job's devShell or `nix profile install nixpkgs#oasdiff` in a "
+        "setup step. Refusing to report a clean diff from a tool that is absent."))
+    (exit 3)))
 
 ;; ── the base spec: written ONLY when git actually produced one ──────────
 ;;
@@ -44,23 +70,58 @@
 
 (write-file "/tmp/base.spec" (stdout-of base-r))
 
-(define r (exec-capture "sh" "-c" (string-append "oasdiff breaking /tmp/base.spec '" spec "'")))
+;; ── the diff, read as JSON ──────────────────────────────────────────────
+;;
+;; Operator decision 2026-08-06: oasdiff's machine contract is `-f json`.
+;;
+;; The old code grepped prose: `echo '<out>' | grep -c '^breaking' || echo 0`.
+;; Three independent ways that could never work:
+;;
+;;   1. `^breaking` MATCHES NOTHING against real oasdiff output, whose report
+;;      is a summary line starting with a digit and then lines beginning
+;;      `error`/`warning`. The count was structurally 0 on a healthy run, so no
+;;      status check anywhere could have made this gate red.
+;;   2. `|| echo 0` — `grep -c` prints `0` AND exits 1 on no match, so the
+;;      fallback appends a SECOND line. `cnt` became "0\n0", which is not "0",
+;;      so with fail-on-breaking=true the gate exited 1 on every run reaching
+;;      it: a false RED produced by the fallback rather than by any detection.
+;;      It also wrote a stray bare `0` line into $GITHUB_OUTPUT.
+;;   3. oasdiff's own status was never read, so 127 read as a clean diff.
+;;
+;; JSON removes all three at once: the count is the array length, and argv
+;; through proc:must means a failure is an error rather than an empty string.
+(define diff-r
+  (proc:must (list "oasdiff" "breaking" "-f" "json" "/tmp/base.spec" spec)))
 
-(define out (stdout-of r))
+(cond
+  ((erro:err? diff-r)
+    (log-error
+      (string-append "api-spec-diff: oasdiff failed — "
+                     (erro:message (erro:value diff-r))))
+    (exit 3)))
 
-(define count-r
-  (exec-capture "sh"
-    "-c"
-    (string-append
-      "echo '"
-      (string-replace
-        out
-        "'"
-        "'\"'\"'")
-      "' | grep -c '^breaking' || echo 0")))
+;; `-f json` emits a top-level array of breaking changes; [] means none.
+(define changes
+  (let ((body (string-trim (erro:value diff-r))))
+    (cond
+      ((equal? body "") (list))
+      (else
+        (let ((parsed (erro:attempt (lambda () (json-parse body)))))
+          (cond
+            ((erro:err? parsed)
+              (log-error
+                (string-append
+                  "api-spec-diff: oasdiff produced output that is not JSON. "
+                  "Refusing to infer a count from it."))
+              (exit 3))
+            (else (erro:value parsed))))))))
 
-(define cnt (string-trim (stdout-of count-r)))
+(define cnt (string-format "{}" (length changes)))
 
 (append-output (string-append "breaking-count=" cnt))
 
-(cond ((and (equal? fail-on "true") (not (equal? cnt "0"))) (exit 1)) (else (exit 0)))
+(log-info (string-append "api-spec-diff: " cnt " breaking change(s)"))
+
+(cond
+  ((and (equal? fail-on "true") (not (equal? cnt "0"))) (exit 1))
+  (else (exit 0)))
