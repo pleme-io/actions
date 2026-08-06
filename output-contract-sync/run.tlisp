@@ -191,9 +191,35 @@
     "\n"
     (map (fn (l) (if (string-starts-with? (string-trim l) ";") "" l)) (lines-of src))))
 
+;; ── the TYPED emitter — a second way to write an output ──────────────────
+;;
+;; `emit-output` / `emit-output-multiline` keep the key and the value SEPARATE
+;; until the renderer joins them, which is the whole point of the type. It is
+;; also why STATIC-RE cannot see them: that pattern anchors on the `=` or `<<`
+;; that immediately follows the key inside a hand-assembled `key=value` string,
+;; and a typed call has neither.
+;;
+;; So the moment a call site converted, its key stopped having any discoverable
+;; writer — not a changed writer, ZERO writers — and the gate reported the key
+;; as declared-but-unwritten. changelog-generate's `changelog` and
+;; `commit-count` are the first two (`changelog-generate/run.tlisp:113,115`).
+;;
+;; This is the shape the repo keeps rediscovering: a second way to do one
+;; thing, where the checker knows only the first. The scanner has to learn
+;; every emission surface the stdlib offers, or its denominator silently
+;; shrinks by exactly the call sites that adopted the newer, better one.
+(define TYPED-RE
+  "emit-output(?:-multiline)?[ \t\n]*\"([a-zA-Z0-9_-]+)\"")
+
+(define (scan-typed src)
+  (let ((s (strip-comments src)))
+    (map (fn (m) (nth 1 (re-captures TYPED-RE m))) (re-find-all TYPED-RE s))))
+
 (define (scan-static src)
   (let ((s (strip-comments src)))
-    (map (fn (m) (nth 2 (re-captures STATIC-RE m))) (re-find-all STATIC-RE s))))
+    (append
+      (map (fn (m) (nth 2 (re-captures STATIC-RE m))) (re-find-all STATIC-RE s))
+      (scan-typed src))))
 
 (define (scan-dynamic src)
   (let ((s (strip-comments src)))
