@@ -11,19 +11,38 @@
   "-c"
   "curl -fsSL https://github.com/Tufin/oasdiff/releases/latest/download/oasdiff_linux_amd64.tar.gz -o /tmp/oasdiff.tgz && tar xz -C /tmp -f /tmp/oasdiff.tgz && sudo mv /tmp/oasdiff /usr/local/bin/")
 
-(exec-capture "sh"
-  "-c" (string-append
-    "git show "
-    base
-    ":"
-    spec
-    " > /tmp/base.spec 2>/dev/null || true"))
+;; ── the base spec: written ONLY when git actually produced one ──────────
+;;
+;; Was:
+;;
+;;   (exec-capture "sh" "-c" (string-append "git show " base ":" spec
+;;                                          " > /tmp/base.spec 2>/dev/null || true"))
+;;   (cond ((not (path-exists? "/tmp/base.spec")) … skip …))
+;;
+;; The shell creates the redirect target BEFORE git runs. So when `git show`
+;; failed — bad ref, path not in the base tree, git absent — an EMPTY
+;; /tmp/base.spec existed anyway, `path-exists?` was true, the "no base spec"
+;; branch never fired, and oasdiff went on to diff the current spec against an
+;; empty file. Every endpoint reads as newly added; a genuinely breaking change
+;; is buried in that noise or missed outright. `2>/dev/null || true` removed
+;; the only evidence of why.
+;;
+;; The existence of the file was never the question — whether git SUCCEEDED
+;; was. Asking that directly also makes the empty-file state unconstructible
+;; rather than guarded: nothing is written unless there are bytes to write.
+;;
+;; argv also removes the injection: base and spec came from env and were
+;; interpolated unquoted into a shell command line.
+(define base-r (exec-capture "git" "show" (string-append base ":" spec)))
 
 (cond
-  ((not (path-exists? "/tmp/base.spec"))
-    (log-info "no base spec — skipping")
+  ((not (= (status-of base-r) 0))
+    (log-info
+      (string-append "no base spec at " base ":" spec " — skipping"))
     (append-output "breaking-count=0")
     (exit 0)))
+
+(write-file "/tmp/base.spec" (stdout-of base-r))
 
 (define r (exec-capture "sh" "-c" (string-append "oasdiff breaking /tmp/base.spec '" spec "'")))
 
