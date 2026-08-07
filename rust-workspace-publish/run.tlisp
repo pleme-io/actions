@@ -906,7 +906,34 @@
 ;;   (e) otherwise               → progress; next pass over `deferred`
 (define max-passes 8)
 
+;; Public entry — 7 args, unchanged. `prev-shipped-n` starts at 0, which is the
+;; honest initial state: before pass 1 nothing has shipped in this run, so a
+;; pass-1 stall really is a cycle or a genuinely stuck index and SHOULD abort.
 (define (drive-passes-with ops pending shipped renamed waited failed pass-n)
+  (drive-passes-from ops pending shipped renamed waited failed pass-n 0))
+
+;; `prev-shipped-n` — how many members the IMMEDIATELY PRECEDING pass shipped.
+;;
+;; It exists to separate two states the abort branch used to conflate, and the
+;; conflation was measured, not theoretical: on 2026-08-07 tatara-lisp's pass 1
+;; shipped 6 members (tatara-closed-set@0.3.38 among them), waited the 15s
+;; window, and pass 2 shipped nothing because the sparse index had not served
+;; them yet. That tripped
+;;
+;;     "no progress this pass; aborting (likely circular dep or stuck registry
+;;      index)"
+;;
+;; naming a cause that was provably false — a cycle cannot ship 6 members one
+;; pass earlier — and threw away the 30s/60s/120s backoff written directly
+;; above for exactly this situation. 14 members stayed unpublished while the
+;; index served the sibling seconds later.
+;;
+;; The rule: a zero-progress pass that FOLLOWS a productive one is propagation
+;; lag; the run has already proven it can publish. Consume a pass with the
+;; longer settle instead of aborting. A real cycle still aborts — it simply
+;; costs two consecutive stalled passes to prove, since a cycle can never
+;; produce the productive pass that buys the retry.
+(define (drive-passes-from ops pending shipped renamed waited failed pass-n prev-shipped-n)
   (cond
     ((null? pending)
       (emit-outputs
@@ -962,18 +989,42 @@
              (null? newly-shipped)
              (null? newly-waited)
              (= (length deferred) (length pending)))
-            (emit-outputs
-              shipped
-              renamed
-              (append deferred all-waited)
-              all-failed
-              #f)
-            (log-error
-              (string-append
-                "no progress this pass; aborting (likely circular dep "
-                "or stuck registry index). still blocked: "
-                (string-join "," deferred)))
-            1)
+            ;; Zero progress. Whether that is fatal depends entirely on whether
+            ;; the PREVIOUS pass shipped anything — see drive-passes-from.
+            (if (> prev-shipped-n 0)
+              (begin
+                (log-info
+                  (string-append
+                    "no progress this pass, but the previous one shipped "
+                    (string-format "{}" prev-shipped-n)
+                    " member(s) — treating as sparse-index lag, not a cycle; "
+                    "waiting "
+                    (string-format "{}" (index-settle-secs pass-n))
+                    "s before re-attempting: "
+                    (string-join "," deferred)))
+                ((ops-fn ops "settle") (index-settle-secs pass-n))
+                (drive-passes-from
+                  ops
+                  deferred
+                  shipped
+                  renamed
+                  all-waited
+                  all-failed
+                  (+ pass-n 1)
+                  0))
+              (begin
+                (emit-outputs
+                  shipped
+                  renamed
+                  (append deferred all-waited)
+                  all-failed
+                  #f)
+                (log-error
+                  (string-append
+                    "no progress across two consecutive passes; aborting "
+                    "(circular dep or stuck registry index). still blocked: "
+                    (string-join "," deferred)))
+                1)))
           ((null? newly-shipped)
             (emit-outputs
               shipped
@@ -1002,14 +1053,15 @@
                     " newly-published sibling(s)"))
                 ((ops-fn ops "settle") (index-settle-secs pass-n)))
               (else #t))
-            (drive-passes-with
+            (drive-passes-from
               ops
               deferred
               (append shipped newly-shipped)
               (append renamed newly-renamed)
               all-waited
               all-failed
-              (+ pass-n 1))))))))
+              (+ pass-n 1)
+              (length newly-shipped))))))))
 
 (define (run-main)
   (configure-git-bot)

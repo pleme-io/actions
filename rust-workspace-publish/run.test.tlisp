@@ -483,3 +483,65 @@
     (assert
       (string-contains? row "package = \"pleme-io-tatara-lisp-derive\"")
       "while the PUBLISHED name is the renamed one")))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Defect 5 — a stalled pass AFTER a productive one is index lag, not a cycle
+;; ─────────────────────────────────────────────────────────────────────
+;; Measured on tatara-lisp 2026-08-07: pass 1 shipped 6 members, the 15s
+;; settle window elapsed, and pass 2 shipped nothing because the sparse index
+;; had not served them yet. The old abort branch fired
+;;   "no progress this pass; aborting (likely circular dep or stuck registry
+;;    index)"
+;; — a cause that was provably false, since a cycle cannot ship 6 members one
+;; pass earlier — and 14 members went unpublished while the index caught up
+;; seconds later.
+
+(deftest "drive-passes: a stall AFTER a productive pass retries with backoff instead of aborting"
+  (let ((slept (list)) (dependent-tries 0))
+    (let
+      ((ops
+         (list
+           (cons
+             "publish-one"
+             (lambda (name attempt)
+               (cond
+                 ;; The dependent defers TWICE — once for the pass-1 settle
+                 ;; window (too short, the real failure) and once more — then
+                 ;; ships. The old code aborted on the second defer.
+                 ((equal? name "dependent")
+                   (set! dependent-tries (+ dependent-tries 1))
+                   (if (<= dependent-tries 2)
+                     (list "defer" name)
+                     (list "done" name)))
+                 (else (list "done" name)))))
+           (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
+      (let ((code
+          (drive-passes-with
+            ops
+            (list "leaf" "dependent")
+            (list) (list) (list) (list)
+            1)))
+        (assert (= code 0)
+          "green — index lag after a productive pass must not be reported as a circular dep")
+        (assert (= dependent-tries 3)
+          "the dependent was re-attempted a third time rather than abandoned on the second stall")
+        (assert (equal? slept (list 30 15))
+          "backed off 15s after the productive pass, then 30s after the stall (newest first)")))))
+
+(deftest "drive-passes: a stall on pass 1 still aborts — nothing has ever shipped"
+  (let ((slept (list)))
+    (let
+      ((ops
+         (list
+           (cons "publish-one" (lambda (name attempt) (list "defer" name)))
+           (cons "settle" (lambda (secs) (set! slept (cons secs slept)))))))
+      (let ((code
+          (drive-passes-with
+            ops
+            (list "a" "b")
+            (list) (list) (list) (list)
+            1)))
+        (assert (= code 1)
+          "red — a run that never published anything is a genuine cycle/stuck index")
+        (assert (null? slept)
+          "no backoff burned on a run that has proven nothing can ship")))))
