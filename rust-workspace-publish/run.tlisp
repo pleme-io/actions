@@ -726,14 +726,27 @@
                     name
                     attempt))
                 (else
-                  ;; Capacity exhausted (or a drip tick): re-queue this
-                  ;; crate for the next cron tick and keep the pass going.
-                  ;; A rate-limited bootstrap is NOT a failed run.
+                  ;; Capacity exhausted: park this crate and keep the pass
+                  ;; going. A rate-limited bootstrap is NOT a failed run.
+                  ;;
+                  ;; ★ The message deliberately does NOT promise a "next
+                  ;; tick". It used to, and that was the misleading half of a
+                  ;; real incident (magma, 2026-08-07): ten crates parked
+                  ;; behind magma-attest, the log said "re-queueing for next
+                  ;; tick", and no tick ever came — the calling shim declares
+                  ;; no `on: schedule`, and only 3 of 434 shims in the org do.
+                  ;; A parked crate resumes on the NEXT RUN, whatever causes
+                  ;; it; if the caller has no cron, that means a push or a
+                  ;; manual dispatch. Say what is true and let the operator
+                  ;; decide, rather than implying an automation that may not
+                  ;; exist.
                   (log-info
                     (string-append
-                      "capacity exhausted — re-queueing '"
+                      "capacity exhausted — parking '"
                       name
-                      "' for next tick"))
+                      "'; it resumes on the next run of this workflow "
+                      "(cron if the caller declares `on: schedule`, "
+                      "otherwise a push or `workflow_dispatch`)"))
                   (list "wait" name)))))
           ((equal? outcome 'conflict)
             (log-info (string-append "name conflict on '" name "', renaming"))
