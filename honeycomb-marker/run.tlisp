@@ -49,9 +49,9 @@
   ((erro:err? r)
     (log-error
       (string-append "honeycomb-marker: create failed — " (erro:message (erro:value r))))
-    (append-output "created=false")
+    (emit-output "created" "false")
     (exit 1))
   (else
     (log-info "honeycomb-marker: created")
-    (append-output "created=true")
+    (emit-output "created" "true")
     (exit 0)))
