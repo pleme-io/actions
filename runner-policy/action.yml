@@ -1,0 +1,34 @@
+name: 'pleme-io · runner-policy'
+description: >-
+  Fail the build when a PRIVATE repo declares a metered GitHub-hosted runner.
+  Enforces the invariant stated once in `pleme-io/actions/runner-resolve`: a CI
+  path either flows through a genuinely public repo on free GitHub-hosted
+  minutes, or through Camelot self-hosted — never a metered runner on a private
+  repo. Checks BOTH shapes, the literal `runs-on: ubuntu-latest` and the
+  matrix-supplied `runs-on: ${{ matrix.os }}`; the second is the one a grep for
+  `runs-on: ubuntu-*` silently misses. No-op on public repos.
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  workflows-dir:
+    description: "Directory of workflow files to check."
+    required: false
+    default: ".github/workflows"
+  private:
+    description: >-
+      Whether the CALLING repo is private. Defaults to the event payload, which
+      is the authoritative source; override only in a test harness.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ github.action_path }}/run.tlisp
+      env:
+        WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
+        REPO_PRIVATE: ${{ inputs.private != '' && inputs.private || github.event.repository.private }}

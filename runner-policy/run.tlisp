@@ -1,0 +1,138 @@
+;; runner-policy — a PRIVATE repo may not declare a metered GitHub-hosted
+;; runner.
+;;
+;; The invariant, stated once in pleme-io/actions/runner-resolve and enforced
+;; here: a CI path either flows through a genuinely public repo on free
+;; GitHub-hosted minutes, or through Camelot self-hosted. Never a metered
+;; GitHub-hosted runner on a private repo.
+;;
+;; WHY A GATE AND NOT A SWEEP. On 2026-08-08 that invariant was violated in 56
+;; places inside substrate's own reusables and in ~150 workflow files across
+;; the fleet, and it exhausted the org's Actions spending limit — after which
+;; every private pleme-io repo refused to start any job at all. It was fixed by
+;; hand, twice, because the FIRST sweep missed a shape:
+;;
+;;   runs-on: ubuntu-latest              <- a literal; the first sweep found it
+;;   runs-on: ${{ matrix.os }}           <- a MATRIX supplies it; invisible to
+;;     ...  os: [macos-15, ubuntu-latest]    a grep for `runs-on: ubuntu-*`
+;;
+;; Nine more repos were still billing after the fleet "was routed" for exactly
+;; that reason. A sweep finds what its author remembered; a gate finds what the
+;; next author writes. This checks BOTH shapes and fails the build.
+;;
+;; TIER, honestly: CI-caught, not unrepresentable. GitHub's `runs-on` takes a
+;; free-form string, so nothing can make a metered label unconstructible — the
+;; honest ceiling is a red gate at the parse boundary of the workflow file.
+;;
+;; WAIVER. Some legs genuinely cannot route: Camelot is linux-only, so a darwin
+;; release binary has no alternative to a macOS runner. That is a fact about
+;; the world, not about our abstractions, so it gets a typed escape rather than
+;; a silent exception — put this on the line above, and the reason is required:
+;;
+;;   # runner-policy: allow <reason>
+;;   runs-on: macos-14
+
+(define workflows-dir (env-get "WORKFLOWS_DIR" ".github/workflows"))
+(define is-private (string-contains? (env-get "REPO_PRIVATE" "false") "true"))
+
+;; Metered = any GitHub-hosted image. Self-hosted labels (camelot-*) and any
+;; expression that resolves by visibility are fine.
+(define (metered-label? s)
+  (or (string-contains? s "ubuntu-")
+      (string-contains? s "macos-")
+      (string-contains? s "windows-")))
+
+;; An expression that names repository.private is routing correctly BY
+;; CONSTRUCTION — it cannot resolve to a metered label on a private repo.
+(define (routes-by-visibility? s)
+  (string-contains? s "repository.private"))
+
+(define (waived? lines idx)
+  ;; Look back up to 6 lines for the typed waiver. Bounded deliberately: an
+  ;; unbounded search would let a waiver at the top of a 400-line file excuse
+  ;; every job in it.
+  (define start (if (< (- idx 6) 0) 0 (- idx 6)))
+  (define window (take (- idx start) (drop start lines)))
+  (> (length (filter (lambda (l) (string-contains? l "runner-policy: allow")) window)) 0))
+
+;; NOTE on argument order, verified against the interpreter rather than assumed:
+;; `nth`, `take` and `drop` take the COUNT/INDEX first and the list second, and
+;; `re-match?` / `re-captures` / `re-find-all` take the PATTERN first and the
+;; subject second. Both were guessed backwards on the first write and failed
+;; loudly — `re-match?` reversed reports the SUBJECT as a bad regex, which
+;; reads as a broken pattern rather than swapped arguments.
+;; Getting it backwards fails at runtime with "expected integer, got list".
+;;
+;; Collect the values a matrix variable can take, so `runs-on: ${{ matrix.os }}`
+;; is judged on what `os:` actually holds rather than waved through.
+(define (matrix-values-for text var)
+  (define inline (re-captures (string-append "(?m)^\\s*" var ":\\s*\\[([^\\]]*)\\]") text))
+  (if (> (length inline) 1)
+      (nth 1 inline)
+      ;; block form:  os:\n  - macos-15\n  - ubuntu-latest
+      (string-join (re-find-all (string-append "(?ms)^\\s*" var ":\\s*\\n((?:\\s*-\\s*.*\\n)+)") text) " ")))
+
+(define violations '())
+
+(define (check-file path)
+  (define text (read-file path))
+  (define lines (string-split text "\n"))
+  (define n (length lines))
+  (define (walk i)
+    (if (>= i n)
+        #t
+        (begin
+          (define line (nth i lines))
+          (if (re-match? "^\\s*runs-on\\s*:" line)
+              (begin
+                (define value (string-trim (nth 1 (string-split line "runs-on:"))))
+                (define matrix-ref (re-captures "matrix\\.([A-Za-z_][A-Za-z0-9_-]*)" value))
+                (define effective
+                  (if (> (length matrix-ref) 1)
+                      (matrix-values-for text (nth 1 matrix-ref))
+                      value))
+                (if (and (metered-label? effective)
+                         (not (routes-by-visibility? effective))
+                         (not (routes-by-visibility? value))
+                         (not (waived? lines i)))
+                    (set! violations
+                          (concat violations
+                                  (list (string-format "{}:{}  runs-on -> {}"
+                                                       path (+ i 1) (string-trim effective)))))
+                    #t))
+              #t)
+          (walk (+ i 1)))))
+  (walk 0))
+
+(if (not is-private)
+    (begin
+      (print-line "runner-policy: repo is PUBLIC — GitHub-hosted minutes are free here, nothing to enforce.")
+      (exit 0))
+    #t)
+
+(define files (concat (glob (string-append workflows-dir "/*.yml"))
+                      (glob (string-append workflows-dir "/*.yaml"))))
+
+(if (= (length files) 0)
+    (begin (print-line "runner-policy: no workflow files found — nothing to check.") (exit 0))
+    #t)
+
+(for-each check-file files)
+
+(if (> (length violations) 0)
+    (begin
+      (eprint-line "runner-policy: FAIL — this repo is PRIVATE and declares metered GitHub-hosted runners.")
+      (eprint-line "")
+      (for-each (lambda (v) (eprint-line (string-append "  " v))) violations)
+      (eprint-line "")
+      (eprint-line "Route on visibility instead:")
+      (eprint-line "  runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-latest' }}")
+      (eprint-line "")
+      (eprint-line "If the leg genuinely cannot route (Camelot is linux-only, so a darwin")
+      (eprint-line "binary has no alternative), put the typed waiver on the line above:")
+      (eprint-line "  # runner-policy: allow <reason>")
+      (exit 1))
+    (begin
+      (print-line (string-format "runner-policy: ok — {} workflow file(s), no metered runner on a private repo."
+                                 (length files)))
+      (exit 0)))
