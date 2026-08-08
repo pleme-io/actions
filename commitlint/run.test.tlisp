@@ -1,0 +1,91 @@
+;; commitlint/run.test.tlisp — (deftest …) units for the RULE SURFACE.
+;; Run by the tlisp-test action as
+;;   <stdlib> + run.tlisp + run.test.tlisp   with TLISP_TEST=1
+;; so every rule is driven with no git, no repo and no network.
+;;
+;; ─────────────────────────────────────────────────────────────────────
+;; THE DEFECT THESE PIN. Until 2026-08-08 run.tlisp was three lines:
+;; a `::warning::` that never rendered, `violations=stub`, and `(exit 0)`.
+;; A required check that could not fail on any input. There was no test file
+;; because there was nothing to test — which is precisely how a vacuous gate
+;; survives: it has no red run to be missing.
+;;
+;; So the assertions below are weighted toward proving the rules can say NO.
+;; A rule set that only ever confirms good input is the same defect wearing
+;; a test suite.
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "conforming subjects produce ZERO violations"
+  (assert (null? (subject-violations "feat: add the thing")) "plain type + description")
+  (assert (null? (subject-violations "fix(api): handle an empty payload")) "with a scope")
+  (assert (null? (subject-violations "chore!: drop the legacy path")) "breaking-change marker")
+  (assert (null? (subject-violations "refactor(core/db)!: scope + bang together")) "scope and bang")
+  (assert (null? (subject-violations "docs: a colon: inside the description is fine")) "colon in description"))
+
+(deftest "the shape rules can say NO"
+  (assert (not (null? (subject-violations "Fix: uppercase type"))) "type-case")
+  (assert (not (null? (subject-violations "wibble: type outside the enum"))) "type-enum")
+  (assert (not (null? (subject-violations "feat:no space after the colon"))) "the space is required")
+  (assert (not (null? (subject-violations "just a sentence"))) "no type prefix at all")
+  (assert (not (null? (subject-violations "feat: "))) "empty description")
+  (assert (not (null? (subject-violations ""))) "empty subject")
+  (assert (not (null? (subject-violations "feat: ends with a period."))) "subject-full-stop")
+  (assert (not (null? (subject-violations "feat(API): uppercase scope"))) "scope-case")
+  (assert (not (null? (subject-violations "feat(): empty parens"))) "empty scope"))
+
+(deftest "fixup!/squash! is refused — stricter than commitlint's defaultIgnores"
+  ;; commitlint SKIPS these. Here they fail, because a fixup inside the linted
+  ;; range is a fixup about to reach the branch.
+  (assert (not (null? (subject-violations "fixup! feat: something"))) "fixup!")
+  (assert (not (null? (subject-violations "squash! feat: something"))) "squash!"))
+
+(deftest "merge and revert subjects are IGNORED, not linted"
+  ;; They are machine-authored and can never be conventional, so linting them
+  ;; would be a guaranteed false positive.
+  (assert (ignored-subject? "Merge branch 'x' into main") "merge")
+  (assert (ignored-subject? "Merge pull request #12 from o/b") "merge pull request")
+  (assert (ignored-subject? "Revert \"feat: something\"") "revert")
+  (assert (ignored-subject? "Automatic merge from a-branch") "automatic merge")
+  ;; …and the ignore list must not swallow real work.
+  (assert (not (ignored-subject? "feat: merge the two code paths")) "'merge' mid-subject is NOT an ignore")
+  (assert (not (ignored-subject? "revert: undo the thing")) "a conventional `revert:` IS linted"))
+
+(deftest "header parsing survives a subject containing the field separator"
+  ;; git log renders `%H|%s`; a subject may legitimately contain "|", so the
+  ;; tail is re-joined rather than dropped. Losing it would silently truncate
+  ;; the subject and change the verdict.
+  (assert (equal? (line->subject "abc123|feat: a | b | c") "feat: a | b | c") "tail re-joined")
+  (assert (equal? (line->sha "abc123|feat: x") "abc123") "sha is the head")
+  (assert (equal? (line->subject "abc123|") "") "an empty subject stays empty")
+  (assert (not (null? (subject-violations (line->subject "abc123|")))) "…and is then flagged"))
+
+;; Under TLISP_TEST the limit is pinned at 100 (run.tlisp skips parsing the
+;; env input), so these two literals straddle it: 99 characters and 106.
+(define subject-99
+  "feat: 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012")
+
+(define subject-106
+  "feat: 0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789")
+
+(deftest "length is measured in CHARACTERS and the limit is enforced"
+  (assert (= (str-len "feat: abc") 9) "str-len counts characters")
+  (assert (= (str-len subject-99) 99) "the 99-char fixture really is 99")
+  (assert (= (str-len subject-106) 106) "the 106-char fixture really is 106")
+  (assert (null? (length-violations subject-99)) "99 is under the 100 limit")
+  ;; The red side: without this the rule could be a no-op and still look green.
+  (assert (not (null? (length-violations subject-106))) "106 is over the limit and IS flagged")
+  (assert (not (null? (subject-violations subject-106))) "and it reaches the full rule set"))
+
+(deftest "csv->list drops the empties that would otherwise widen an allowlist"
+  ;; A trailing comma must not put "" into an allowlist, where it would match
+  ;; an absent value and quietly permit it.
+  (assert (= (length (csv->list "a, b ,c")) 3) "trimmed, three entries")
+  (assert (= (length (csv->list "a,,b,")) 2) "empties dropped")
+  (assert (= (length (csv->list "")) 0) "empty input is the empty allowlist")
+  (assert (not (mem? "" (csv->list "a,,b"))) "\"\" never enters an allowlist"))
+
+(deftest "an empty scope allowlist means ANY scope, and a non-empty one binds"
+  ;; scope-enum's `[]` default permits every scope; only a configured list
+  ;; restricts. An ABSENT scope is never a violation either way.
+  (assert (null? (scope-violations #f "")) "no scope written — nothing to check")
+  (assert (not (null? (scope-violations #t ""))) "written but empty is malformed"))

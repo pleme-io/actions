@@ -55,3 +55,55 @@
   (assert
     (not (enforcement-complete? (list "anything-at-all")))
     "any non-empty value is a failure, whatever the step was called"))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; 2026-08-08 — THE GATE FAILED OPEN. `json-read-field` answers "" for an
+;; absent-or-null key, and `(string-split "" "\n")` is `("")` — ONE EMPTY
+;; ELEMENT. So an unidentifiable author matched the default empty allowlist
+;; and the gate took branch (1): exit 0, ZERO mutations, on a
+;; FIRST_TIME_CONTRIBUTOR PR. Configuring an allowlist did not help: every
+;; YAML `|` block scalar ends in a newline, so the split ends in "" too.
+;;
+;; Reproduced before the fix:
+;;   event {"pull_request":{"number":1337,"user":null,
+;;          "author_association":"FIRST_TIME_CONTRIBUTOR"}}
+;;   → "Author '' is in allowlist; passing through."  exit=0  gh_mutations=0
+;; ─────────────────────────────────────────────────────────────────────
+
+(deftest "author-in-list?: an EMPTY author matches NOTHING (the fail-open)"
+  (assert
+    (not (author-in-list? "" ""))
+    "empty author vs empty allowlist — this exact pair returned #t and passed the gate")
+  (assert
+    (not (author-in-list? "" "alice\nbob\n"))
+    "empty author vs a populated YAML-block allowlist: its trailing \"\" must not match")
+  (assert
+    (not (author-in-list? "   " "alice\n\nbob\n"))
+    "a whitespace-only author is empty too, and blank list lines are not needles"))
+
+(deftest "author-in-list?: real membership still works"
+  (assert (author-in-list? "alice" "alice\nbob\n") "a listed author is still matched")
+  (assert (author-in-list? "bob" "alice\nbob") "no trailing newline is fine")
+  (assert (author-in-list? "carol" "  carol  \n") "surrounding whitespace is trimmed")
+  (assert (not (author-in-list? "mallory" "alice\nbob\n")) "an unlisted author is not matched"))
+
+(deftest "looks-like-bot?: an empty author is NOT a bot"
+  ;; The same fail-open via branch (2): "" matched BOT_ALLOWLIST's trailing
+  ;; blank line, so an unidentifiable PR was labelled `bot-pr` and passed.
+  (assert
+    (not (looks-like-bot? ""))
+    "empty author must not be waved through as a bot")
+  (assert
+    (looks-like-bot? "dependabot[bot]")
+    "the [bot] suffix is still detected")
+  (assert
+    (not (looks-like-bot? "OyaAIProd"))
+    "a human vendor-spam account is not a bot"))
+
+(deftest "rejection-action validation is total"
+  (assert (valid-rejection-action? "close_and_lock") "close_and_lock is valid")
+  (assert (valid-rejection-action? "label_only") "label_only is valid")
+  (assert (valid-rejection-action? "request_approval") "request_approval is valid")
+  (assert (not (valid-rejection-action? "close-and-lock")) "a hyphen typo is rejected")
+  (assert (not (valid-rejection-action? "")) "empty is rejected, not defaulted")
+  (assert (not (valid-rejection-action? "CLOSE_AND_LOCK")) "matching is exact, not case-folded"))

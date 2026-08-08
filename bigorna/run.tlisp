@@ -35,9 +35,9 @@
 ;; This is stated, not hidden.
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
-;;   append-output, log-info, log-error, path-exists?, write-file,
+;;   emit-output, log-info, log-error, path-exists?, write-file,
 ;;   read-file, exec-capture / exec-ok?, status-of, stdout-of,
-;;   string-format, string-split, string-trim.
+;;   string-format, string-split, string-trim, re-match?.
 ;;
 ;; Inputs (env):
 ;;   PLATFORMS       comma/space OCI platform list (default "linux/amd64")
@@ -52,7 +52,8 @@
 ;;   BIGORNA_VERSION sui ref for `nix run github:pleme-io/sui/<ref>#bigorna`
 ;;                   (default "main"). Ignored when a `bigorna` is on PATH.
 ;;
-;; Outputs (append-output → GITHUB_OUTPUT):
+;; Outputs (emit-output → GITHUB_OUTPUT; one `emit-receipt` renders all
+;; seven on every exit path, so they can never disagree):
 ;;   builder            the buildx builder name that was set up
 ;;   native-platforms   comma-joined platforms with a native node (the
 ;;                      builder's covered set)
@@ -64,10 +65,12 @@
 ;;                      AND every create step succeeded
 ;;   result             generic catch-all == builder name (or "" on failure)
 ;;
-;; Exit (keyway): 0 setup succeeded (or a native-subset partial); 1 a
-;; requested platform is emulated under FALLTHROUGH=error, or a buildx
-;; create step failed, or the binary could not be resolved. NEVER a faked
-;; green — an emulated request under error, or a failed create, is loud.
+;; Exit (keyway): 0 setup succeeded (or a native-subset partial); non-zero
+;; when a requested platform is emulated and FALLTHROUGH does not permit a
+;; partial, when a buildx create step failed (the binary's own status is
+;; forwarded — 1 create failure, 2 config error), when the binary could not
+;; be resolved, or when an input fails the shape gate. NEVER a faked green
+;; — an emulated request without permission, or a failed create, is loud.
 
 ;; ── pure helpers (unit-tested via run.test.tlisp; no side effects) ───
 
@@ -195,12 +198,132 @@
 (define (normalize-cache-mode m)
   (let ((t (string-trim m))) (cond ((equal? t "min") "min") (else "max"))))
 
+;; ── ★ input shape gate — the boundary that closes TWO live injections ─
+;;
+;; MEASURED 2026-08-08 against this file, both reproduced before the fix.
+;; Every value below is interpolated into wire formats by plain string
+;; concatenation, and NEITHER concatenation escapes anything, so a newline
+;; is not a formatting slip — it rewrites the document:
+;;
+;;   (1) the rendered BigornaConfig YAML.
+;;       DRIVER=$'docker-container\nuse_as_default: false\nbootstrap: false'
+;;       put `use_as_default: false` into the config as a real top-level
+;;       key — the CALLER deciding a field this action exists to fix.
+;;       (The section header below used to claim this was "NOT freeform
+;;       string composition of a foreign syntax". The field NAMES are
+;;       fixed; the VALUES were not, and that is the half that bites.)
+;;
+;;   (2) $GITHUB_OUTPUT, which is newline-separated `key=value`.
+;;       BUILDER_NAME=$'bigorna\nok=true\nnative-platforms=linux/amd64,linux/arm64'
+;;       parsed as ok=true / native-platforms=linux/amd64,linux/arm64 on a
+;;       run whose REAL verdict was ok=false / native-platforms=linux/arm64.
+;;       `result=` is emitted LAST and carries the same payload, so the
+;;       forgery wins under last-assignment-wins. That is a faked green on
+;;       the one guarantee this action exists to make — native, not QEMU —
+;;       and the consumer's next step would hand amd64 to a node that
+;;       cannot build it natively.
+;;
+;;   (3) the consumer's own shell. README's usage example interpolates
+;;       `${{ steps.bigorna.outputs.cache-from }}` UNQUOTED into a `run:`
+;;       block, so the CACHE ref reaches a command line.
+;;
+;; So every value is checked against a shape that cannot carry a newline
+;; (or a YAML/shell metacharacter) BEFORE it reaches any renderer, and a
+;; violation is a loud refusal — never a sanitized-and-continued value,
+;; which would hide the caller's mistake instead of naming it. stdlib's
+;; `emit-output` is the second, independent guard at the write itself.
+
+(define bigorna:name-shape "^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+; builder / arch token
+
+(define bigorna:platform-shape "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){0,2}$")
+
+; os/arch[/variant]
+
+(define bigorna:endpoint-shape "^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+
+; ctx name | tcp:// | ssh://
+
+(define bigorna:ref-shape "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$")
+
+; an OCI registry ref
+
+(define (require-shape label value pattern hint)
+  (cond
+    ((re-match? pattern value) value)
+    (else
+      (log-error
+        (string-append
+          "bigorna: refusing "
+          label
+          " `"
+          value
+          "` — "
+          hint
+          " The value is interpolated by concatenation into a wire format "
+          "— the rendered BigornaConfig YAML, $GITHUB_OUTPUT, or the cache "
+          "token a consumer pastes into their own build — where a newline "
+          "or a metacharacter forges document structure rather than "
+          "malforming a line, so an out-of-shape value is refused here "
+          "instead of sanitized."))
+      (exit 1))))
+
+;; DRIVER is an ENUM in this action's own published contract
+;; (docker-container | kubernetes | remote), so the honest check is
+;; membership, not a charset. It closes the YAML injection AND catches a
+;; typo that would otherwise be handed to the binary as a driver it has
+;; never heard of.
+(define (require-driver d)
+  (cond
+    ((equal? d "docker-container") d)
+    ((equal? d "kubernetes") d)
+    ((equal? d "remote") d)
+    (else
+      (log-error
+        (string-append
+          "bigorna: refusing driver `"
+          d
+          "` — the documented values are docker-container | kubernetes | remote."))
+      (exit 1))))
+
+(define (require-platforms plats)
+  (cond
+    ((null? plats) #t)
+    (else
+      (require-shape
+        "platform"
+        (car plats)
+        bigorna:platform-shape
+        "an OCI platform is 1-3 `/`-separated alphanumeric segments (linux/amd64, linux/arm64/v8).")
+      (require-platforms (cdr plats)))))
+
+;; Both halves of every ARCH_ENDPOINTS entry reach the config: the arch
+;; key lands in `host_arch:` and in the node name, the endpoint in
+;; `endpoint:`.
+(define (require-endpoints eps)
+  (cond
+    ((null? eps) #t)
+    (else
+      (require-shape
+        "arch-endpoint arch"
+        (car (car eps))
+        bigorna:name-shape
+        "an arch token is alphanumeric (arm64, amd64, s390x).")
+      (require-shape
+        "arch-endpoint endpoint"
+        (car (cdr (car eps)))
+        bigorna:endpoint-shape
+        "an endpoint is a docker context name or a tcp:// / ssh:// / unix:// remote.")
+      (require-endpoints (cdr eps)))))
+
 ;; ── config rendering — one BigornaConfig node block per native platform.
 ;; Emitted as YAML the shipped `bigorna setup --config` deserializes into
-;; BigornaConfig (serde). This is a mechanical projection of typed inputs,
-;; NOT freeform string composition of a foreign syntax: every field name
-;; is fixed by the Rust struct's serde contract (builder_name / driver /
-;; nodes[].{name,platform,host_arch,endpoint}).
+;; BigornaConfig (serde). Every field NAME is fixed by the Rust struct's
+;; serde contract (builder_name / driver / nodes[].{name,platform,
+;; host_arch,endpoint}); every field VALUE has passed the shape gate
+;; above, which is what makes this a mechanical projection of typed inputs
+;; rather than freeform composition of a foreign syntax.
 
 ;; The node name for a platform ("bigorna-arm64").
 (define (node-name builder p) (string-append builder "-" (normalize-arch (platform-arch p))))
@@ -259,6 +382,52 @@
       host-arch
       endpoints)))
 
+;; ── the receipt — ONE renderer for all four exit paths ───────────────
+;;
+;; Before this, each of the four paths hand-listed the same seven keys as
+;; `append-output (string-append "k=" v)`. Two problems, one fix: four
+;; hand-lists are four places to forget a key or let them disagree, and
+;; `append-output` structurally CANNOT see the injection above — by the
+;; time it is called, `string-append` has fused key and value into one
+;; string and the boundary is gone. `emit-output` keeps them separate and
+;; refuses a newline in the value, so the forged-green reproduction is a
+;; loud failure at the write even if a future edit slips a value past the
+;; shape gate.
+(define (emit-receipt builder natives emulation cache-from cache-to ok result)
+  (emit-output "builder" builder)
+  (emit-output "native-platforms" natives)
+  (emit-output "emulation" emulation)
+  (emit-output "cache-from" cache-from)
+  (emit-output "cache-to" cache-to)
+  (emit-output "ok" ok)
+  (emit-output "result" result))
+
+;; The coverage verdict, which is a statement about the REQUEST (the
+;; documented contract: "native-for-all (every requested platform is
+;; native) | needs-native-node") and NOT about whether the create step
+;; then worked. The failure path used to report `needs-native-node`
+;; unconditionally, so a fully-native request whose buildx create failed
+;; sent the reader hunting for an endpoint that was never the problem.
+;; `ok=false` plus a non-zero exit already carry the failure.
+(define (coverage-verdict emulated)
+  (cond ((null? emulated) "native-for-all") (else "needs-native-node")))
+
+;; ── ★ FALLTHROUGH is fail-CLOSED ─────────────────────────────────────
+;;
+;; The test used to be `(equal? fallthrough "error")`, so ONLY the exact
+;; string "error" hard-failed and EVERY other value — including a typo —
+;; silently granted native-subset permission. Reproduced 2026-08-08:
+;; FALLTHROUGH=Error on a request with an emulated platform exited 0 with
+;; a partial builder, where the contract says exit 1. A typo in the knob
+;; whose whole job is to fail closed must not fail open, so the predicate
+;; now reads the other way round: `native-subset` is the ONLY value that
+;; permits a partial, and anything unrecognized lands on the safe side.
+(define (permits-partial? fallthrough) (equal? (string-trim fallthrough) "native-subset"))
+
+(define (known-fallthrough? fallthrough)
+  (let ((t (string-trim fallthrough)))
+    (or (equal? t "error") (equal? t "native-subset"))))
+
 ;; ── side-effecting main (gated off under TLISP_TEST) ─────────────────
 
 ;; Resolve a runnable `bigorna` argv. Prefer a bigorna already on PATH
@@ -289,18 +458,39 @@
       (cache-mode (env-get "CACHE_MODE" "max"))
       (ae-raw (env-get "ARCH_ENDPOINTS" ""))
       (fallthrough (env-get "FALLTHROUGH" "error"))
+      ;; Each of the four values below reaches a renderer that does not
+      ;; escape: `builder` and `driver` the config YAML, `cache-ref` the
+      ;; cache token a consumer pastes UNQUOTED into their own `run:`.
+      ;; The shape gate is applied at the binding, so nothing downstream
+      ;; ever holds an unchecked value.
       (builder
         (let ((b (string-trim (env-get "BUILDER_NAME" "bigorna"))))
-          (cond ((equal? b "") "bigorna") (else b))))
+          (cond
+            ((equal? b "") "bigorna")
+            (else (require-shape "builder-name" b bigorna:name-shape "a builder name is alphanumeric with . _ -.")))))
       (driver
         (let ((d (string-trim (env-get "DRIVER" "docker-container"))))
-          (cond ((equal? d "") "docker-container") (else d))))
+          (cond ((equal? d "") "docker-container") (else (require-driver d)))))
+      (cache-checked
+        (cond
+          ((equal? (string-trim cache-ref) "") "")
+          (else
+            (require-shape
+              "cache"
+              (string-trim cache-ref)
+              bigorna:ref-shape
+              "a cache ref is an OCI registry reference (ghcr.io/org/name:tag)."))))
       (version (env-get "BIGORNA_VERSION" "main"))
       (host-arch (normalize-arch (host-uname-arch)))
       (endpoints (parse-arch-endpoints ae-raw))
       (requested (tokens plats-raw))
       (native (native-platforms requested host-arch endpoints))
       (emulated (emulated-platforms requested host-arch endpoints)))
+
+    ;; The list-valued halves of the gate. Both refuse loudly; neither
+    ;; returns a value anything downstream reads, so they are statements.
+    (require-platforms requested)
+    (require-endpoints endpoints)
 
     (log-info (string-append "bigorna: host arch " host-arch ", requested " (join-comma requested)))
     (cond
@@ -311,10 +501,23 @@
             (join-comma (map (lambda (kv) (car kv)) endpoints)))))
       (else #t))
 
+    ;; An unrecognized FALLTHROUGH is named rather than silently absorbed;
+    ;; `permits-partial?` has already routed it to the safe side.
+    (cond
+      ((not (known-fallthrough? fallthrough))
+        (log-info
+          (string-append
+            "::warning::bigorna: FALLTHROUGH=`"
+            (string-trim fallthrough)
+            "` is not one of error | native-subset — treating it as `error` "
+            "(fail closed). A typo in this knob must not silently grant "
+            "native-subset permission.")))
+      (else #t))
+
     ;; An emulated request under FALLTHROUGH=error is the honest hard fail
     ;; BEFORE touching docker — never a faked green, never a QEMU node.
     (cond
-      ((and (not (null? emulated)) (equal? fallthrough "error"))
+      ((and (not (null? emulated)) (not (permits-partial? fallthrough)))
         (log-error
           (string-append
             "bigorna: no native node for "
@@ -323,25 +526,27 @@
             "<arch>=<endpoint> for each (a native docker context / "
             "tcp:// remote), or set FALLTHROUGH=native-subset to set "
             "up only the native-covered platforms."))
-        (append-output (string-append "builder=" builder))
-        (append-output "native-platforms=")
-        (append-output "emulation=needs-native-node")
-        (append-output "cache-from=")
-        (append-output "cache-to=")
-        (append-output "ok=false")
-        (append-output "result=")
+        (emit-receipt
+          builder
+          ""
+          "needs-native-node"
+          ""
+          ""
+          "false"
+          "")
         1)
 
       ((null? native)
         ;; native-subset but nothing is native — an empty builder is useless.
         (log-error "bigorna: no requested platform maps to a native node.")
-        (append-output (string-append "builder=" builder))
-        (append-output "native-platforms=")
-        (append-output "emulation=needs-native-node")
-        (append-output "cache-from=")
-        (append-output "cache-to=")
-        (append-output "ok=false")
-        (append-output "result=")
+        (emit-receipt
+          builder
+          ""
+          "needs-native-node"
+          ""
+          ""
+          "false"
+          "")
         1)
 
       (else
@@ -381,23 +586,22 @@
               ;; every create step succeeded. Trust the exit code (0 = ok,
               ;; 1 = a create step failed, 2 = config error) as the typed
               ;; contract; surface the receipt tail for the log.
-              (from-t (cache-token cache-ref cache-mode))
-              (to-t (cache-token cache-ref cache-mode)))
+              ;; `cache-checked` — never the raw CACHE — is what reaches
+              ;; the token a consumer pastes into their own build.
+              (from-t (cache-token cache-checked cache-mode))
+              (to-t (cache-token cache-checked cache-mode)))
             (log-info out)
             (cond
               ((= st 0)
-                (append-output (string-append "builder=" builder))
-                (append-output (string-append "native-platforms=" (join-comma native)))
-                (append-output
-                  (string-append
-                    "emulation="
-                    (cond ((null? emulated) "native-for-all") (else "needs-native-node"))))
-                (append-output (string-append "cache-from=" from-t))
-                (append-output (string-append "cache-to=" to-t))
-                ;; ok=true only when the full requested set is native.
-                (append-output
-                  (string-append "ok=" (cond ((null? emulated) "true") (else "false"))))
-                (append-output (string-append "result=" builder))
+                (emit-receipt
+                  builder
+                  (join-comma native)
+                  (coverage-verdict emulated)
+                  from-t
+                  to-t
+                  ;; ok=true only when the full requested set is native.
+                  (cond ((null? emulated) "true") (else "false"))
+                  builder)
                 (log-info
                   (string-append
                     "bigorna: builder `"
@@ -409,13 +613,18 @@
               (else
                 (log-error
                   (string-append "bigorna: `bigorna setup` exited " (string-format "{}" st)))
-                (append-output (string-append "builder=" builder))
-                (append-output "native-platforms=")
-                (append-output "emulation=needs-native-node")
-                (append-output "cache-from=")
-                (append-output "cache-to=")
-                (append-output "ok=false")
-                (append-output "result=")
+                ;; `native-platforms` is emptied because setup failed and
+                ;; there is no builder to cover anything — but `emulation`
+                ;; keeps telling the truth about the REQUEST rather than
+                ;; blaming a missing endpoint for a create failure.
+                (emit-receipt
+                  builder
+                  ""
+                  (coverage-verdict emulated)
+                  ""
+                  ""
+                  "false"
+                  "")
                 st))))))))
 
 ;; ── host-arch probe (isolated so main's helpers stay pure) ───────────

@@ -1,6 +1,392 @@
-;; commitlint/run.tlisp — typed schema locked, body lands on consumer demand
-(log-info "::warning::commitlint not yet implemented")
+;; commitlint/run.tlisp — validate every commit subject in a git range
+;; against the Conventional Commits v1.0.0 grammar.
+;;
+;; ─────────────────────────────────────────────────────────────────────
+;; WHAT THIS REPLACES, and why the replacement is a rewrite not a port
+;; ─────────────────────────────────────────────────────────────────────
+;;
+;; The previous body was, in full:
+;;
+;;     (log-info "::warning::commitlint not yet implemented")
+;;     (append-output "violations=stub")
+;;     (exit 0)
+;;
+;; A LINT GATE THAT CANNOT FAIL. Not "fails open when the range is empty" —
+;; fails open on EVERY input, unconditionally, since 7fb8a98. Any workflow
+;; carrying `uses: pleme-io/actions/commitlint@main` has a green required
+;; check that has never once read a commit message. That is strictly worse
+;; than no gate at all: no gate is visibly absent, a vacuous gate is
+;; evidence-shaped and gets trusted.
+;;
+;; Three more defects rode along in those three lines (details at each
+;; closing site below): the `::warning::` never rendered as an annotation,
+;; `violations=stub` is not a count so any consumer arithmetic on it is a
+;; type error, and `append-output` is the injection-prone raw appender.
+;;
+;; ─────────────────────────────────────────────────────────────────────
+;; WHY NATIVE, AND NOT `npx commitlint`
+;; ─────────────────────────────────────────────────────────────────────
+;;
+;; The action is named for the npm tool, so the obvious move is to shell out
+;; to `npx @commitlint/cli --from … --to …`. Two reasons that is the wrong
+;; destination, not merely the slower one:
+;;
+;;   1. ★★ HERMETIC SUPPLY CHAIN — no release step fetches a third-party
+;;      artifact at job time. `npx` is precisely that: an unpinned network
+;;      install of a package tree, on every run, inside the gate that decides
+;;      whether code may merge.
+;;
+;;   2. A "use the binary if it happens to be on PATH, else validate here"
+;;      arrangement is worse than either pure option, because the SAME commits
+;;      then pass on one runner and fail on another. A gate whose verdict
+;;      depends on the runner's incidental toolchain is not a gate.
+;;
+;; So: the rule set below is a native reading of Conventional Commits v1.0.0
+;; plus the @commitlint/config-conventional defaults (type-enum, type-case,
+;; subject-empty, subject-full-stop, header-max-length 100, scope-case,
+;; scope-enum, and the Merge/Revert defaultIgnores). Runtime dependency: git.
+;; Nothing is downloaded, and the verdict is a function of the commits alone.
+;;
+;; Deliberate deviation, and it is STRICTER not looser: `fixup!` / `squash!`
+;; subjects are FLAGGED here, where commitlint's defaultIgnores skips them. A
+;; fixup reaching the linted range means it is about to reach the branch.
+;;
+;; ─────────────────────────────────────────────────────────────────────
+;; THE THREE FAIL-OPEN ROUTES, EACH CLOSED
+;; ─────────────────────────────────────────────────────────────────────
+;;
+;;   [1] `git log main..HEAD` on a SHALLOW CLONE. actions/checkout defaults to
+;;       fetch-depth: 1, so `main` is very often absent in the work tree. git
+;;       exits non-zero and prints nothing; code that reads only stdout sees
+;;       "no commits", counts 0 violations and passes. Closed by resolving
+;;       BOTH refs up front and by checking `status-of` on the log itself.
+;;
+;;   [2] An empty range reading as a clean range. Zero commits examined is a
+;;       BROKEN RUN, not a pass — closed with the stdlib's own
+;;       `require-scanned!` floor (exit 3), configurable but default-on.
+;;
+;;   [3] Violations counted and then not enforced. Closed at the bottom:
+;;       any violation is exit 1.
+;;
+;; On every hard-fail path the count emitted is `unknown`, never `0` — the
+;; stdlib's `count-or-unknown` stance. A failed scan must never be able to
+;; render as "clean" in a downstream summary.
 
-(append-output "violations=stub")
+(define tlisp-test-mode (equal? (env-get "TLISP_TEST" "") "1"))
 
-(exit 0)
+;; ── Inputs ──────────────────────────────────────────────────────────
+;; from-ref / to-ref keep their original names and defaults verbatim. The
+;; rest are additive; every one has a default that preserves the documented
+;; commitlint behaviour, so no existing caller changes meaning.
+
+(define from-ref (string-trim (env-get "FROM_REF" "main")))
+
+(define to-ref (string-trim (env-get "TO_REF" "HEAD")))
+
+(define types-in (string-trim (env-get "TYPES" "")))
+
+(define scopes-in (string-trim (env-get "SCOPES" "")))
+
+(define max-len-in (string-trim (env-get "MAX_SUBJECT_LENGTH" "100")))
+
+(define require-commits-in (string-trim (env-get "REQUIRE_COMMITS" "true")))
+
+;; @commitlint/config-conventional's type-enum, verbatim.
+(define default-types "build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test")
+
+;; ── Small list/string helpers ───────────────────────────────────────
+
+(define (non-empty? s) (not (equal? (string-trim s) "")))
+
+(define (trim-each xs)
+  (cond ((null? xs) (list)) (else (cons (string-trim (car xs)) (trim-each (cdr xs))))))
+
+;; "a, b ,c" -> ("a" "b" "c"); "" -> (). Empty pieces are dropped so a
+;; trailing comma cannot smuggle "" into an allowlist and match a missing
+;; value.
+(define (csv->list s)
+  (cond ((equal? (string-trim s) "") (list)) (else (filter non-empty? (trim-each (string-split s ","))))))
+
+(define (mem? x lst)
+  (cond ((null? lst) #f) ((equal? (car lst) x) #t) (else (mem? x (cdr lst)))))
+
+;; No `string-slice` / `string-ref` in this interpreter (probed 2026-08-08);
+;; chars + reverse is the available shape.
+(define (str-drop-last s)
+  (let ((cs (string-chars s)))
+    (cond ((null? cs) "") (else (string-join "" (reverse (cdr (reverse cs))))))))
+
+(define (str-len s) (length (string-chars s)))
+
+(define (num->str n) (string-format "{}" n))
+
+(define allowed-types (csv->list (cond ((equal? types-in "") default-types) (else types-in))))
+
+;; Empty allowlist means "any scope", matching scope-enum's `[]` default.
+(define allowed-scopes (csv->list scopes-in))
+
+;; ── Emission + hard-fail ────────────────────────────────────────────
+
+;; `emit-output`, never `append-output`. The old body wrote
+;; `(append-output "violations=stub")`, which is the raw appender: key and
+;; value are already one string by the time it is called, so nothing can
+;; check that the value carries no newline. Commit subjects are exactly the
+;; contributor-controlled text that makes that matter.
+(define (emit-violations v) (emit-output "violations" v))
+
+;; A broken scan reports `unknown`, never `0`.
+;;
+;; This is the stdlib's `count-or-unknown` stance applied to the gate's own
+;; verdict: 0 is the number that means CLEAN, so handing it to a consumer
+;; after the scan failed converts a broken run into a passing one at the
+;; first summary that renders it.
+(define (fail-hard msg)
+  (log-error msg)
+  (emit-violations "unknown")
+  (exit 1))
+
+;; ── git surface ─────────────────────────────────────────────────────
+
+;; `^{commit}` makes this reject a tag that does not peel to a commit, and
+;; `--verify --quiet` keeps the failure in the status rather than on stderr.
+(define (ref-resolves? ref)
+  (= (status-of (exec-capture "git" "rev-parse" "--verify" "--quiet" (string-append ref "^{commit}"))) 0))
+
+;; `%H|%s` — the sha is hex so the FIRST "|" is always the separator; the
+;; subject may legitimately contain more, which is why the tail is re-joined
+;; rather than dropped.
+(define (line->sha line) (car (string-split line "|")))
+
+(define (line->subject line) (string-join "|" (cdr (string-split line "|"))))
+
+;; DEFECT [1] CLOSED HERE: the status is checked. `git log A..B` with `A`
+;; missing (the shallow-clone case) exits 128 with empty stdout; reading only
+;; stdout turns that into "0 commits" and then into a pass.
+(define (commit-lines)
+  (let ((r
+          (exec-capture
+            "git"
+            "log"
+            "--no-merges"
+            "--pretty=format:%H|%s"
+            (string-append from-ref ".." to-ref))))
+    (cond
+      ((not (= (status-of r) 0))
+        (fail-hard
+          (string-append
+            "git log "
+            from-ref
+            ".."
+            to-ref
+            " failed (status "
+            (num->str (status-of r))
+            "): "
+            (string-trim (stderr-of r)))))
+      (else
+        (let ((out (string-trim (stdout-of r))))
+          ;; `(string-split "" "\n")` yields ("") — one empty element, not the
+          ;; empty list — so an empty log would otherwise be counted as one
+          ;; commit with an empty subject.
+          (cond ((equal? out "") (list)) (else (string-split out "\n"))))))))
+
+;; ── Conventional Commits grammar ────────────────────────────────────
+;;
+;; subject := type ["(" scope ")"] ["!"] ": " description
+
+(define (header-of subject) (car (string-split subject ": ")))
+
+(define (desc-of subject) (string-join ": " (cdr (string-split subject ": "))))
+
+(define (header-core h) (cond ((string-suffix? h "!") (str-drop-last h)) (else h)))
+
+(define (core-has-scope? c) (string-contains? c "("))
+
+(define (core-type c) (cond ((core-has-scope? c) (car (string-split c "("))) (else c)))
+
+(define (core-scope c)
+  (let ((raw (string-join "(" (cdr (string-split c "(")))))
+    (cond ((string-suffix? raw ")") (str-drop-last raw)) (else raw))))
+
+(define (type-violations type)
+  (cond
+    ((not (re-match? "^[a-z][a-z0-9]*$" type))
+      (list
+        (string-append
+          "type '"
+          type
+          "' is not lower-case — conventional commits use `feat`, `fix`, `ci`, …")))
+    ((not (mem? type allowed-types))
+      (list (string-append "type '" type "' is not allowed here; allowed: " (string-join ", " allowed-types))))
+    (else (list))))
+
+;; An ABSENT scope is never a violation — scope-enum constrains the scopes
+;; that are written, and scope-empty is off by default in
+;; config-conventional. Only a written scope is checked.
+(define (scope-violations has-scope scope)
+  (cond
+    ((not has-scope) (list))
+    ((equal? scope "")
+      (list "empty scope — write `type(scope): …` or drop the parentheses"))
+    ((not (re-match? "^[a-z0-9][a-z0-9._/-]*$" scope))
+      (list (string-append "scope '" scope "' must be lower-case")))
+    ((and (not (null? allowed-scopes)) (not (mem? scope allowed-scopes)))
+      (list (string-append "scope '" scope "' is not allowed here; allowed: " (string-join ", " allowed-scopes))))
+    (else (list))))
+
+(define (desc-violations desc)
+  (append
+    (cond ((equal? (string-trim desc) "") (list "empty description after the type")) (else (list)))
+    (cond
+      ((string-suffix? (string-trim desc) ".")
+        (list "description must not end with a period (subject-full-stop)"))
+      (else (list)))))
+
+(define (length-violations subject)
+  (cond
+    ((> (str-len subject) max-len)
+      (list
+        (string-append
+          "subject is "
+          (num->str (str-len subject))
+          " characters; the limit is "
+          (num->str max-len))))
+    (else (list))))
+
+;; The whole rule set for ONE subject. Pure — no git, no env, no IO — which
+;; is what lets run.test.tlisp drive every branch offline.
+(define (subject-violations subject)
+  (cond
+    ((equal? (string-trim subject) "") (list "empty commit subject"))
+    ((or (string-prefix? subject "fixup!") (string-prefix? subject "squash!"))
+      (list "fixup!/squash! commit must be squashed away before it lands"))
+    ((not (string-contains? subject ": "))
+      (list
+        (string-append
+          "not a conventional commit — expected `type(scope): description`, "
+          "with a space after the colon")))
+    (else
+      (let* ((h (header-of subject))
+              (desc (desc-of subject))
+              (core (header-core h))
+              (has-scope (core-has-scope? core)))
+        (append
+          (type-violations (core-type core))
+          (scope-violations has-scope (cond (has-scope (core-scope core)) (else "")))
+          (desc-violations desc)
+          (length-violations subject))))))
+
+;; commitlint's defaultIgnores: machine-authored merge/revert subjects can
+;; never be conventional, so linting them is a guaranteed false positive.
+;; They are EXCLUDED FROM THE DENOMINATOR too (see require-scanned! below),
+;; so a range consisting only of ignored commits is a broken scan rather
+;; than a clean one.
+(define (ignored-subject? s)
+  (or
+    (string-prefix? s "Merge ")
+    (string-prefix? s "Revert ")
+    (string-prefix? s "Auto-merged ")
+    (string-prefix? s "Automatic merge")))
+
+(define (lintable lines)
+  (cond
+    ((null? lines) (list))
+    ((ignored-subject? (line->subject (car lines))) (lintable (cdr lines)))
+    (else (cons (car lines) (lintable (cdr lines))))))
+
+;; ── Reporting ───────────────────────────────────────────────────────
+
+;; DEFECT [4] CLOSED HERE: `print-line`, not `log-info`.
+;;
+;; The old body emitted its annotation as `(log-info "::warning::…")`, and
+;; log-info prefixes a timestamp — the line reaches the log as
+;; `[16:01:47] INFO ::warning::…`. GitHub only interprets a workflow command
+;; when `::` begins the line, so that annotation has never rendered. Measured
+;; against the live interpreter, 2026-08-08.
+(define (report-violations sha subject vs)
+  (cond
+    ((null? vs) #t)
+    (else
+      (print-line (string-append "::error::" (string-take sha 8) " \"" subject "\" — " (car vs)))
+      (report-violations sha subject (cdr vs)))))
+
+(define (lint-walk lines acc)
+  (cond
+    ((null? lines) acc)
+    (else
+      (let* ((line (car lines))
+              (vs (subject-violations (line->subject line))))
+        (report-violations (line->sha line) (line->subject line) vs)
+        (lint-walk (cdr lines) (+ acc (length vs)))))))
+
+;; ── main ────────────────────────────────────────────────────────────
+
+(define (parse-max-len)
+  (let ((r (num:parse-int max-len-in)))
+    (cond
+      ((erro:err? r)
+        (fail-hard (string-append "max-subject-length is not an integer: '" max-len-in "'")))
+      (else (erro:value r)))))
+
+(define max-len (cond (tlisp-test-mode 100) (else (parse-max-len))))
+
+(define (main)
+  ;; An empty ref is refused rather than quietly reinterpreted. The shape that
+  ;; produces one is `from-ref: ${{ github.event.pull_request.base.sha }}` on a
+  ;; non-PR event — exactly the case where a silent default would lint nothing
+  ;; and report success.
+  (cond
+    ((equal? from-ref "")
+      (fail-hard "from-ref is empty — pass a ref; there is no safe default range to guess")))
+  (cond ((equal? to-ref "") (fail-hard "to-ref is empty — pass a ref (usually HEAD)")))
+  (cond
+    ((not (ref-resolves? to-ref))
+      (fail-hard (string-append "to-ref '" to-ref "' does not resolve to a commit in this checkout"))))
+  ;; DEFECT [1], the diagnostic half: name the cause, because a missing base
+  ;; ref is nearly always fetch-depth rather than a typo.
+  (cond
+    ((not (ref-resolves? from-ref))
+      (fail-hard
+        (string-append
+          "from-ref '"
+          from-ref
+          "' does not resolve to a commit in this checkout. actions/checkout "
+          "defaults to fetch-depth: 1, which does not fetch the base branch — "
+          "set `fetch-depth: 0` on the checkout step. Refusing to lint an "
+          "unresolvable range, because 'no commits found' would read as a pass."))))
+  (let* ((raw (commit-lines))
+          (todo (lintable raw))
+          (n-raw (length raw))
+          (n-todo (length todo))
+          ;; DEFECT [2] CLOSED HERE. Default-on, and opting out is a typed,
+          ;; visible input rather than an accident of an empty range.
+          (floor (cond ((equal? require-commits-in "true") 1) (else 0))))
+    (log-info
+      (string-format
+        "commitlint: {}..{} — {} non-merge commit(s), {} lintable"
+        from-ref
+        to-ref
+        (num->str n-raw)
+        (num->str n-todo)))
+    ;; Ordering matters: require-scanned! exits 3 on its own, so the honest
+    ;; count has to be on the wire BEFORE it is reached.
+    (cond ((< n-todo floor) (emit-violations "unknown")))
+    (require-scanned! "commits" n-todo floor)
+    (let ((v (lint-walk todo 0)))
+      ;; A real count, so `violations` is arithmetic-safe. The old body wrote
+      ;; the string "stub" into an output every consumer would read as a
+      ;; number.
+      (emit-violations (num->str v))
+      ;; DEFECT [3] CLOSED HERE: counting is not gating.
+      (cond
+        ((> v 0)
+          (log-error
+            (string-format "commitlint: {} violation(s) across {} commit(s)" (num->str v) (num->str n-todo)))
+          (exit 1))
+        (else
+          (log-info (string-format "commitlint: {} commit subject(s) conform" (num->str n-todo)))
+          (exit 0))))))
+
+(cond
+  (tlisp-test-mode
+    (log-info "TLISP_TEST=1 — rules loaded; the range walk is skipped (the harness drives the predicates)"))
+  (else (main)))

@@ -14,6 +14,13 @@ outputs:
 runs:
   using: composite
   steps:
+    # NO actions/checkout HERE, deliberately. The template carries one because
+    # it reads a spec file out of the CONSUMER's workspace; this action reads
+    # nothing from the workspace -- the stdlib below comes from
+    # github.action_path, which is this action's own downloaded copy. Adding a
+    # checkout would clobber $GITHUB_WORKSPACE mid-job (a fresh clone over
+    # whatever a prior build step produced), which is a real regression for a
+    # step whose whole job is to query an API.
     - id: src
       shell: bash
       run: |
@@ -29,5 +36,11 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
+      # AWS credentials are NOT forwarded here and NOT passed as arguments.
+      # The CLI resolves them from the ambient job environment (the vars
+      # aws-actions/configure-aws-credentials exports, the OIDC web-identity
+      # token file, or an instance role), which composite steps inherit. A
+      # credential in `env:` here would be fine; a credential in argv would be
+      # world-readable via `ps` -- GitHub masks logs, not the process table.
       env:
         GRANULARITY: ${{ inputs.granularity }}

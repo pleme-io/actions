@@ -48,14 +48,97 @@
     (equal? (mlj:regctl-ref-flags (list "A" "B")) (list "--ref" "A" "--ref" "B"))
     "regctl --ref flags"))
 
-;; ── registry write credentials (2026-07-24: this action shipped with
-;; ZERO credential wiring since inception -- fixed alongside zot-push's
-;; own stale-password 401; see run.tlisp's "registry write credentials"
-;; header note for the full incident).
-(deftest "mlj:creds-flag composes buildah/podman's --creds user:pass"
+;; ── registry write credentials.
+;;
+;; 2026-07-24: this action shipped with ZERO credential wiring since
+;; inception -- fixed alongside zot-push's own stale-password 401.
+;; 2026-08-08: the credential stopped travelling on argv. `mlj:creds-flag`
+;; (`--creds <user>:<pass>`) is deliberately GONE, not renamed:
+;; /proc/<pid>/cmdline is world-readable and buildah/podman re-passed it on
+;; every `manifest add`, so the password appeared once per architecture in
+;; the process table of a shared runner. The tests below pin the file-based
+;; replacements instead -- a test asserting the old flag would have been a
+;; test asserting the defect.
+(deftest "mlj:authfile-flag points buildah/podman at a file, never at argv"
   (assert
-    (equal? (mlj:creds-flag "akeyless-builder" "s3cr3t") (list "--creds" "akeyless-builder:s3cr3t"))
-    "--creds <user>:<pass>"))
+    (equal? (mlj:authfile-flag "/tmp/x/config.json") (list "--authfile" "/tmp/x/config.json"))
+    "--authfile <path>"))
+
+(deftest "mlj:auth-json is the docker/containers credential format, JSON-escaped"
+  (assert
+    (equal?
+      (mlj:auth-json (list "zot:5000") "u" "p")
+      "{\"auths\":{\"zot:5000\":{\"auth\":\"dTpw\"}}}")
+    "single host, base64 of user:pass")
+  (assert
+    (equal?
+      (mlj:auth-json (list "a:1") "u" "p\"q")
+      "{\"auths\":{\"a:1\":{\"auth\":\"dTpwInE=\"}}}")
+    "a quote in the password cannot break out of the JSON string")
+  (assert
+    (string-contains? (mlj:auth-json (list "a:1" "b:2") "u" "p") "\"a:1\"")
+    "multi-host: first host present")
+  (assert
+    (string-contains? (mlj:auth-json (list "a:1" "b:2") "u" "p") "\"b:2\"")
+    "multi-host: second host present"))
+
+(deftest "mlj:regctl-config-json: regcert pins, tls=insecure only as the fallback"
+  (assert
+    (equal?
+      (mlj:regctl-config-json (list "z:5000") "PEM" #t "u" "p")
+      "{\"hosts\":{\"z:5000\":{\"hostname\":\"z:5000\",\"regcert\":\"PEM\",\"user\":\"u\",\"pass\":\"p\"}}}")
+    "a fetched cert pins verification and never emits tls:insecure")
+  (assert
+    (equal?
+      (mlj:regctl-config-json (list "z:5000") "" #t "u" "p")
+      "{\"hosts\":{\"z:5000\":{\"hostname\":\"z:5000\",\"tls\":\"insecure\",\"user\":\"u\",\"pass\":\"p\"}}}")
+    "no cert + INSECURE -> the named degradation")
+  (assert
+    (equal?
+      (mlj:regctl-config-json (list "z:5000") "" #f "u" "p")
+      "{\"hosts\":{\"z:5000\":{\"hostname\":\"z:5000\",\"user\":\"u\",\"pass\":\"p\"}}}")
+    "no cert + no INSECURE -> plain TLS (and mlj:regctl-trust-ok? refuses the join)"))
+
+(deftest "mlj:regctl-trust-ok? refuses an unverified connection unless INSECURE says so"
+  (assert (mlj:regctl-trust-ok? "PEM" #f) "a pinned cert is enough on its own")
+  (assert (mlj:regctl-trust-ok? "" #t) "no cert + INSECURE is the tracked fallback")
+  (assert (not (mlj:regctl-trust-ok? "" #f)) "no cert + no INSECURE is an honest refusal"))
+
+;; The credential file must cover EVERY host the join touches, because the
+;; `--creds`/`docker login` forms it replaces sent the same credential to
+;; whatever host each ref was on. Narrowing to the target host only would
+;; have been a silent behaviour change.
+(deftest "mlj:ref-host / mlj:hosts-of enumerate every registry the join touches"
+  (assert (equal? (mlj:ref-host "zot:5000/akeyless-auth:amd64-r1-a") "zot:5000") "tagged ref")
+  (assert (equal? (mlj:ref-host "zot:5000/x/y@sha256:ab") "zot:5000") "digest ref, nested path")
+  (assert
+    (equal?
+      (mlj:hosts-of "zot:5000/akeyless-auth:r1-a" (list "zot:5000/akeyless-auth:amd64-r1-a"))
+      (list "zot:5000"))
+    "same host collapses to one entry")
+  (assert
+    (= (length (mlj:hosts-of "a:1/x:t" (list "b:2/x:t" "c:3/x:t" "b:2/y:t"))) 3)
+    "distinct hosts are all covered, deduplicated"))
+
+;; regctl is no longer `nix profile install`-ed by a shell step in
+;; action.yml (deleted 2026-08-08 -- it was 11 lines of non-loader shell AND
+;; a ★★ HERMETIC SUPPLY CHAIN violation). It resolves the same way doca does.
+(deftest "mlj:regctl-argv prefers a baked binary and falls back to `nix run`"
+  (assert
+    (equal?
+      (mlj:regctl-argv "index")
+      (if (equal? (mlj:regctl-baked) "")
+        (list
+          "nix"
+          "run"
+          (mlj:regctl-ref)
+          "--"
+          "index")
+        (list "regctl" "index")))
+    "argv prefix matches whichever source is actually available here")
+  (assert
+    (string-contains? (mlj:regctl-source-note) "regctl source: ")
+    "the chosen source is always stated, never silent"))
 
 ;; ── the stdlib oci: helpers this action's regctl trust-config path
 ;; leans on -- covered here (the ≥2-consumer rule already applies:

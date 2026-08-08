@@ -6,13 +6,58 @@
 ;;   1. Author in ALLOWLIST                                  → no-op, pass
 ;;   2. Author is a bot (suffix '[bot]' or in BOT_ALLOWLIST) → label `bot-pr`, pass
 ;;   3. FIRST_TIME_CONTRIBUTOR + every-file matches the
-;;      RESTRICTED_PATHS_REGEX                               → reject per REJECTION_ACTION
+;;      RESTRICTED_PATHS_JQ_PREDICATE                        → reject per REJECTION_ACTION
 ;;   4. Else (FIRST_TIME_CONTRIBUTOR with substantive diff)  → label `external-review-required`
 ;;
 ;; Defends against vendor badge-trojan PRs (e.g. SafeSkill / OyaAIProd) that
 ;; insert a single shields.io badge in README.md. Designed to be reconciled
 ;; fleet-wide by pangea-operator on rio via the ExternalContributorPolicy
 ;; typed primitive (Phase 2).
+;;
+;; ─────────────────────────────────────────────────────────────────────
+;; 2026-08-08 — THIS GATE FAILED OPEN, AND COULD BE MADE TO EXECUTE
+;; ARBITRARY COMMANDS. Four defects closed below; each is marked [D<n>]
+;; at the line that closes it.
+;;
+;;   [D1] FAIL-OPEN on an unidentifiable author. `json-read-field` answers ""
+;;        when a key is absent or null, and `(string-split "" "\n")` is `("")`
+;;        — one EMPTY element. So `author-in-list? "" ALLOWLIST` matched the
+;;        default empty allowlist and the gate took branch (1): exit 0, zero
+;;        mutations, log line "Author '' is in allowlist; passing through."
+;;        A newline-terminated allowlist (every YAML `|` block scalar is one)
+;;        ends in "" too, so CONFIGURING an allowlist did not help — it made
+;;        the hole permanent. Reachable whenever `.pull_request.user` is null
+;;        (ghost/deleted account) or the action is wired to an event with no
+;;        `.pull_request` at all. Closed by require-event-field + an
+;;        empty-needle guard in author-in-list?.
+;;
+;;   [D2] COMMAND INJECTION. RESTRICTED_PATHS_JQ_PREDICATE — an action input —
+;;        was string-appended inside `--jq '…'` in a `sh -c` command line. A
+;;        predicate carrying one apostrophe closes the quote and starts a new
+;;        command; proven executing an arbitrary binary. Closed by deleting the
+;;        shell: gh is invoked with argv elements, so the predicate is data.
+;;
+;;   [D3] `sh -c` REPORTED THE WRONG STATUS. `status-of` on `sh -c "a ; b"` is
+;;        b's status, so an injected (or merely careless) `;` made the gate read
+;;        success while gh failed. Gone with the shell.
+;;
+;;   [D4] LARGE DRIVE-BYS EVADED DETECTION. `gh api --paginate` emits ONE JSON
+;;        DOCUMENT PER PAGE and `--jq` runs over each separately (gh's own help:
+;;        "Each page is a separate JSON array or object. Pass --slurp …"). So a
+;;        >30-file PR produced "true\ntrue", which is not "true", and a 62-file
+;;        all-documentation drive-by was merely labelled instead of closed. The
+;;        old comment claimed --paginate handled this; it did not. Closed with
+;;        --slurp + a `.[][]` flatten.
+;;
+;;   [D5] An empty file list read as "every file is documentation". `jq '[]|all'`
+;;        is TRUE, so a PR whose file list came back empty was classified a
+;;        drive-by and auto-closed+locked. Closed with a `length > 0` guard.
+;;
+;;   [D6] A gh failure was indistinguishable from a clean "this PR has real
+;;        code": both returned #f, silently. Closed by a typed three-state
+;;        verdict — restricted | substantive | error — where error is loud
+;;        and red.
+;; ─────────────────────────────────────────────────────────────────────
 
 ;; TLISP_TEST gate — same shape as rust-workspace-publish/secrets-scan. Under
 ;; the harness the definitions load but the decision tree is SKIPPED and the
@@ -37,14 +82,83 @@
 
 (define rejection-action (env-get "REJECTION_ACTION" "close_and_lock"))
 
-(define pr-number (if tlisp-test-mode "0" (json-read-field event-path ".pull_request.number")))
+;; ── [D1] event identity is REQUIRED, never defaulted ───────────────────
+;; `json-read-field` deliberately answers "" for an absent-or-null key rather
+;; than guessing. That is the right contract for a reader — and lethal for a
+;; GATE that then compares "" against a list which contains "". A gate that
+;; cannot say WHICH pull request it is looking at has not gated anything, so
+;; the only honest response is to go red. Never pass, and never fall through
+;; to a destructive branch either.
+(define (require-event-field name value)
+  (let ((v (string-trim value)))
+    (cond
+      ((equal? v "")
+        (log-error
+          (string-append
+            "pull-request-gate: event field '"
+            name
+            "' is absent or null in $GITHUB_EVENT_PATH. The gate cannot identify "
+            "this pull request and therefore cannot enforce policy on it — "
+            "refusing to pass it. Wire this action to `pull_request_target` "
+            "(or `pull_request`); it has no meaning on any other event. If the "
+            "event IS a pull request, the author account was most likely deleted "
+            "(`user: null`), which needs a human."))
+        (exit 1))
+      (else v))))
 
-(define pr-author (if tlisp-test-mode "" (json-read-field event-path ".pull_request.user.login")))
+;; The number goes into a URL path and into `gh pr` argv. "" produced the
+;; malformed path /pulls//files and a `gh pr comment ""`; a non-numeric value
+;; has no legitimate source. Refuse both rather than emitting a request that
+;; fails somewhere less obvious.
+(define (require-pr-number value)
+  (let ((v (require-event-field ".pull_request.number" value)))
+    (cond
+      ((re-match? "^[0-9]+$" v) v)
+      (else
+        (log-error
+          (string-append "pull-request-gate: '.pull_request.number' is not numeric: '" v "'"))
+        (exit 1)))))
 
+(define pr-number
+  (if tlisp-test-mode
+    "0"
+    (require-pr-number (json-read-field event-path ".pull_request.number"))))
+
+(define pr-author
+  (if tlisp-test-mode
+    ""
+    (require-event-field
+      ".pull_request.user.login"
+      (json-read-field event-path ".pull_request.user.login"))))
+
+;; author_association drives the FIRST_TIME_CONTRIBUTOR branch. Absent, it
+;; silently demotes every drive-by to branch (4) — enforcement quietly weakened
+;; rather than announced. Required for the same reason as the two above.
 (define pr-association
   (if tlisp-test-mode
     ""
-    (json-read-field event-path ".pull_request.author_association")))
+    (require-event-field
+      ".pull_request.author_association"
+      (json-read-field event-path ".pull_request.author_association"))))
+
+;; ── rejection-action is validated UP FRONT, not on first use ───────────
+;; It used to be checked only inside the drive-by branch, so a typo lay dormant
+;; until the one run where it mattered — and then failed instead of enforcing.
+(define (valid-rejection-action? a)
+  (or
+    (equal? a "close_and_lock")
+    (or (equal? a "label_only") (equal? a "request_approval"))))
+
+(cond
+  (tlisp-test-mode #t)
+  ((valid-rejection-action? rejection-action) #t)
+  (else
+    (log-error
+      (string-append
+        "pull-request-gate: unknown rejection-action: '"
+        rejection-action
+        "' — expected close_and_lock | label_only | request_approval"))
+    (exit 1)))
 
 (cond
   (tlisp-test-mode #t)
@@ -61,34 +175,85 @@
 
 ;; ── predicates ────────────────────────────────────────────────────────
 
+;; [D1] Two guards, both load-bearing, both cheap:
+;;   - an EMPTY author matches nothing, ever. require-event-field already makes
+;;     it unreachable; this makes it unrepresentable at the predicate too, so a
+;;     future caller that reintroduces an empty author cannot be let through.
+;;   - blank list lines are skipped. Every allowlist authored as a YAML `|`
+;;     block scalar ends in one, so this is the normal case, not the edge.
 (define (author-in-list? author list-str)
-  (any-line-matches?
-    (string-split list-str "\n")
-    (lambda (line) (equal? (string-trim line) author))))
+  (and
+    (not (equal? (string-trim author) ""))
+    (any-line-matches?
+      (string-split list-str "\n")
+      (lambda (line)
+        (and (not (equal? (string-trim line) "")) (equal? (string-trim line) author))))))
 
 (define (looks-like-bot? author)
-  (or (string-contains? author "[bot]") (author-in-list? author bot-allowlist)))
+  (and
+    (not (equal? (string-trim author) ""))
+    (or (string-contains? author "[bot]") (author-in-list? author bot-allowlist))))
 
-;; Run a typed jq predicate over every file in the PR. The predicate binds
-;; `.` to the filename string and returns bool; all() across the file array
-;; gives the "every file is documentation" decision. --paginate handles
-;; large diffs (>30 files per page). Returns true|false on stdout.
-(define (all-files-restricted?)
-  (let
-    ((r
-       (exec-capture "sh"
-         "-c"
-         (string-append
-           "gh api /repos/"
-           repo
-           "/pulls/"
-           pr-number
-           "/files "
-           "--paginate "
-           "--jq '[.[].filename] | map("
-           restricted-pred
-           ") | all'"))))
-    (and (= (status-of r) 0) (equal? (string-trim (stdout-of r)) "true"))))
+;; ── file classification: a typed three-state, and NO SHELL ─────────────
+;; [D2][D3] gh is invoked with argv elements. RESTRICTED_PATHS_JQ_PREDICATE is
+;; therefore DATA handed to gh's --jq flag, not source text spliced into a
+;; command line — the injection and the wrong-status-from-`sh -c` classes are
+;; both gone, not guarded.
+;;
+;; [D4] --slurp wraps every page into one outer array, so `.[][]` flattens
+;; page→file and the predicate is evaluated over the WHOLE diff exactly once.
+;; Without it gh emits one JSON document per page, --jq runs per document, and
+;; a 62-file drive-by answered "true\ntrue" — which is not "true".
+;;
+;; [D5] `length > 0` first: jq's `all` over an empty array is TRUE, so an empty
+;; file list used to read as "every file is documentation" and earn an
+;; auto-close+lock. An unknown set is not an all-matching set.
+;;
+;; [D6] Returns "restricted" | "substantive" | "error". The caller must handle
+;; all three; there is no boolean into which a gh failure can collapse.
+(define (pr-files-verdict)
+  (let*
+    ((jq-expr
+       (string-append
+         "[.[][].filename] | (length > 0) and (map("
+         restricted-pred
+         ") | all)"))
+     (r
+       (exec-capture
+         "gh"
+         "api"
+         (string-append "/repos/" repo "/pulls/" pr-number "/files")
+         "--paginate"
+         "--slurp"
+         "--jq"
+         jq-expr))
+     (out (string-trim (stdout-of r))))
+    (cond
+      ((not (= (status-of r) 0))
+        (log-error
+          (string-append
+            "pull-request-gate: could not list the files of PR #"
+            pr-number
+            " (gh exit "
+            (string-format "{}" (status-of r))
+            "). The drive-by predicate was never evaluated, so this run has NOT "
+            "gated the PR. stderr: "
+            (string-trim (stderr-of r))))
+        "error")
+      ((equal? out "true") "restricted")
+      ((equal? out "false") "substantive")
+      ;; Anything else is a jq error, an empty body, or the multi-page shape
+      ;; [D4] used to produce. Previously every one of these read as "false"
+      ;; — a weakened gate reporting success.
+      (else
+        (log-error
+          (string-append
+            "pull-request-gate: expected `true` or `false` from the file "
+            "predicate, got: '"
+            out
+            "'. Check `restricted-paths-jq-predicate` is a valid jq boolean "
+            "expression over a filename string. NOT gated."))
+        "error"))))
 
 ;; ── actions ───────────────────────────────────────────────────────────
 
@@ -280,21 +445,41 @@
               "--add-label"
               "bot-pr"))))))
 
-  ;; (3) First-time external + restricted-only diff
-  ((and (equal? pr-association "FIRST_TIME_CONTRIBUTOR") (all-files-restricted?))
-    (cond
-      ((equal? rejection-action "close_and_lock") (exit-on-enforcement (close-and-lock-drive-by)))
-      ((equal? rejection-action "label_only")
-        (exit-on-enforcement (label-and-request-review "external-drive-by")))
-      ((equal? rejection-action "request_approval")
-        (exit-on-enforcement (label-and-request-review "external-review-required")))
-      (else
-        (log-error
-          (string-append
-            "Unknown rejection-action: '"
-            rejection-action
-            "' — expected close_and_lock | label_only | request_approval"))
-        (exit 1))))
+  ;; (3) First-time external. The file verdict decides reject-vs-review, and
+  ;; [D6] its third state — "we could not tell" — is now a branch of its own
+  ;; instead of collapsing into (4). rejection-action was already validated at
+  ;; load, so the inner cond has no unknown-value arm left to reach.
+  ((equal? pr-association "FIRST_TIME_CONTRIBUTOR")
+    (let ((verdict (pr-files-verdict)))
+      (cond
+        ((equal? verdict "restricted")
+          (cond
+            ((equal? rejection-action "close_and_lock")
+              (exit-on-enforcement (close-and-lock-drive-by)))
+            ((equal? rejection-action "label_only")
+              (exit-on-enforcement (label-and-request-review "external-drive-by")))
+            (else (exit-on-enforcement (label-and-request-review "external-review-required")))))
 
-  ;; (4) External with substantive diff
+        ((equal? verdict "substantive")
+          (exit-on-enforcement (label-and-request-review "external-review-required")))
+
+        ;; "error" — the predicate never ran. Do the CONSERVATIVE thing (mark
+        ;; it for humans; never auto-close a PR we failed to evaluate), then go
+        ;; RED regardless of whether the label landed. A gate that could not
+        ;; evaluate its own predicate must not report a green check: the usual
+        ;; cause is a missing token scope, which is permanent and actionable,
+        ;; not a transient blip to be swallowed.
+        (else
+          (label-and-request-review "external-review-required")
+          (log-error
+            (string-append
+              "pull-request-gate: FAILED to evaluate PR #"
+              pr-number
+              " — it has been labelled for human review but NOT gated. "
+              "Exiting non-zero so this cannot pass as an enforced run."))
+          (exit 1)))))
+
+  ;; (4) Not a first-time contributor and not allowlisted. Note this is by
+  ;; design, not an oversight: the `allowlist` input's own documentation says
+  ;; to list org members there, so anyone absent from it is review-gated.
   (else (exit-on-enforcement (label-and-request-review "external-review-required"))))

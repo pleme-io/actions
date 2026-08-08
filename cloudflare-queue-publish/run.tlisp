@@ -1,6 +1,56 @@
-;; cloudflare-queue-publish/run.tlisp — typed schema locked, body on demand
+;; cloudflare-queue-publish/run.tlisp
+;;
+;; WHAT THIS REPLACES: nothing. This action never carried a bash body. It was
+;; born in the `wave 9: 25 vendor-deep primitives` scaffold already in the
+;; loader shape (an exempt `src` step that cats ../_tlisp-stdlib/stdlib.tlisp +
+;; this file into a TLISP_EOF heredoc, then tatara-script), and its body has
+;; always been a schema-locked stub — "typed schema locked, body on demand".
+;; There are 165 identical stubs in this repo. Measured non-loader shell in
+;; this directory: 0 lines.
+;;
+;; ── DEFECT D1, PROVEN, NOT CLOSED HERE (it is CLASS-WIDE, all 165 stubs) ────
+;; This is a MUTATION action that reports SUCCESS without mutating:
+;;
+;;   $ GITHUB_OUTPUT=out QUEUE_NAME=my-queue MESSAGE=hello tatara-script …
+;;   ::warning::cloudflare-queue-publish not yet implemented
+;;   exit=0            <- green step
+;;   published=stub    <- non-empty, truthy to every `if:` a consumer writes
+;;
+;; `::warning::` does not fail a step, so a workflow that does
+;; `uses: pleme-io/actions/cloudflare-queue-publish@main` gets a green tick and
+;; no message on the queue. QUEUE_NAME and MESSAGE are forwarded through `env:`
+;; by action.yml and read by NOTHING (defect D3) — the declared contract is
+;; inert. This is the exact "failure indistinguishable from success" class the
+;; deshellify campaign hunts.
+;;
+;; It is deliberately NOT closed in this one file: flipping one member of a
+;; 165-member scaffold family leaves 164 lies in place and makes the family
+;; inconsistent — patching the instance instead of the class. The class fix is
+;; two lines in every stub: emit the output as `false` (so a consumer gating on
+;; `== 'true'` is correct), then `log-error` + `(exit 1)` so an unimplemented
+;; mutation cannot be mistaken for a performed one.
+;;
+;; ── WHY NOT JUST IMPLEMENT IT ──────────────────────────────────────────────
+;; Not in scope for a shell conversion, and not verifiable here. wrangler has
+;; no publish-a-message-to-a-queue verb (queues create/delete/list/consumer
+;; only) — producing requires the REST API
+;; (POST /accounts/{account_id}/queues/{queue_id}/messages), which needs a
+;; name->id lookup plus two inputs this action does not declare (account-id,
+;; api-token). Writing that untested would be inventing behaviour. Note for
+;; whoever does implement it: `exec-capture` has no stdin channel and
+;; `curl -H "Authorization: Bearer $TOK"` puts the token in the PROCESS TABLE
+;; (`ps` / /proc/<pid>/cmdline) — GitHub masks LOGS, not argv. Use
+;; `curl --config <file>` with the header in the file, or leave that one
+;; invocation as a one-line `shell: bash` step.
+
 (log-info "::warning::cloudflare-queue-publish not yet implemented")
 
-(append-output "published=stub")
+;; CLOSES DEFECT D2: was `(append-output "published=stub")`. `append-output` is
+;; the RAW appender — key and value arrive already joined, so it cannot see a
+;; newline in the value, and a newline in a $GITHUB_OUTPUT value writes EXTRA
+;; keys chosen by whoever controls it. `emit-output` keeps them apart and
+;; refuses both a malformed key and an embedded newline at the write. Wire
+;; output is byte-identical: `published=stub`.
+(emit-output "published" "stub")
 
 (exit 0)
