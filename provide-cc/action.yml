@@ -1,0 +1,49 @@
+name: 'pleme-io · provide-cc'
+description: >-
+  Put a C toolchain (`cc`, `gcc`) on PATH for every LATER step in the job, from
+  nixpkgs. Exists because the Camelot ARC runner image is stock
+  `ghcr.io/actions/actions-runner:latest` — deliberately minimal, with NO
+  compiler — where GitHub-hosted `ubuntu-*` ships build-essential. Any repo
+  running `cargo`/`cc`/`go build` directly on that pool dies with ``linker `cc`
+  not found`` before compiling a single crate. This is the one place that gap is
+  closed, instead of each repo growing its own toolchain story.
+branding:
+  icon: 'tool'
+  color: 'blue'
+
+inputs:
+  package:
+    description: >-
+      nixpkgs flake attribute providing the compiler. Default `gcc`. The `.out`
+      output is selected explicitly by the step below — `gcc` is MULTI-OUTPUT,
+      so `--print-out-paths` on the bare attr emits both `-man` and the real
+      one, and appending `/bin` to that two-line string yields a path that does
+      not exist. Measured 2026-08-08 on rio.
+    required: false
+    default: "gcc"
+
+outputs:
+  bin-dir:
+    description: "The nix store bin/ directory prepended to PATH."
+    value: ${{ steps.cc.outputs.bin-dir }}
+
+runs:
+  using: composite
+  steps:
+    # The runner may already carry a compiler (GitHub-hosted images do), in
+    # which case this is a no-op and costs one `command -v`. Checking rather
+    # than always installing keeps public-repo callers on the image's own
+    # toolchain, so adopting this action never silently changes which compiler
+    # a green build used.
+    - id: cc
+      shell: bash
+      run: |
+        if command -v cc >/dev/null 2>&1; then
+          echo "cc already on PATH: $(command -v cc)"
+          echo "bin-dir=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        out=$(nix build --no-link --print-out-paths "nixpkgs#${{ inputs.package }}.out")
+        echo "$out/bin" >> "$GITHUB_PATH"
+        echo "bin-dir=$out/bin" >> "$GITHUB_OUTPUT"
+        echo "provided cc from $out/bin"
