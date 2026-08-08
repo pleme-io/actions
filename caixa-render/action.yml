@@ -1,5 +1,5 @@
 name: 'pleme-io · caixa-render'
-description: 'Render cluster artifacts (Helm chart + Kubernetes manifests + Flux + CI workflows) from a (defcaixa ...) form via the `feira` CLI.'
+description: 'Render a per-program Helm chart from a (defcaixa ...) form via `feira chart`. (Kubernetes manifests, Flux and CI workflows were promised by an earlier description and have never had a feira renderer — see mode=full and SUPERSEDED.md.)'
 branding: { icon: 'layers', color: 'green' }
 
 inputs:
@@ -11,6 +11,26 @@ inputs:
     description: "Destination directory for the rendered artifacts. An explicitly-empty value resolves to the default rather than reaching `mkdir` as an empty path."
     required: false
     default: "rendered/"
+  mode:
+    description: >-
+      `chart` (default) renders the per-program Helm chart via `feira chart` —
+      the only artifact class feira can render, and the only one the live
+      consumer chain (caixa-publish) reads. `full` names the original
+      four-artifact promise (chart + Kubernetes manifests + Flux + CI
+      workflows) and REFUSES with the gap named, because feira has a renderer
+      for none of the other three. Retained as a typed state rather than
+      deleted, per MODULARIZE, DON'T DELETE: when those renderers land, `full`
+      becomes reachable by implementing it, and the declaration is already
+      where that goes.
+    required: false
+    default: "chart"
+  chart-subdir:
+    description: >-
+      Subdirectory of output-dir the chart is written to. Must match
+      caixa-publish's `chart-subdir`, since the two actions are one pipeline
+      and this is the seam between them.
+    required: false
+    default: "helm"
   feira-ref:
     description: "The feira flake ref `nix run` resolves when no feira binary is baked into the runner. Pin to a tagged/commit ref for build reproducibility. Mirrors `doca-ref` on oci-image-push. Nothing is ever installed into the runner's nix profile."
     required: false
@@ -61,3 +81,5 @@ runs:
         CAIXA_PATH: ${{ inputs.caixa-path }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
         FEIRA_REF: ${{ inputs.feira-ref }}
+        MODE: ${{ inputs.mode }}
+        CHART_SUBDIR: ${{ inputs.chart-subdir }}

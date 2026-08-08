@@ -172,6 +172,39 @@
 ;; D5 CLOSED: nothing is installed. Prefer a feira already baked into the
 ;; runner image; otherwise `nix run` the (pinnable) flake ref, which fetches
 ;; into the store for the life of the job and mutates no profile.
+;; ── Supersession inputs (added 2026-08-08, both additive) ───────────────────
+;; `mode` makes the retired promise a TYPED state instead of a broken argv:
+;;   chart (default) — what feira can actually render, and the only artifact
+;;                     the live consumer chain (caixa-publish) reads
+;;   full            — the original four-artifact promise; REFUSES, naming the
+;;                     gap, until feira grows the other three renderers
+(define mode (env-get "MODE" "chart"))
+
+;; Where caixa-publish looks: `<rendered-dir>/<chart-subdir>`. Kept as an input
+;; so the two actions' seam is configured in one place rather than assumed.
+(define chart-subdir
+  (let ((v (string-trim (env-get "CHART_SUBDIR" "")))) (if (equal? v "") "helm" v)))
+
+;; `feira chart` takes `--path <caixa ROOT>`, not the manifest file that
+;; `--in` took. Derive the root from the resolved manifest path so auto-detect
+;; still governs which caixa is rendered. A bare filename (no `/`) yields ""
+;; from the join, which must become "." — feira reads `--path` as a directory,
+;; and an empty string would silently mean "the filesystem root's parent".
+(define (cr:drop-last xs)
+  (cond ((null? xs) '()) ((null? (cdr xs)) '()) (else (cons (car xs) (cr:drop-last (cdr xs))))))
+(define (cr:join xs sep)
+  (cond ((null? xs) "") ((null? (cdr xs)) (car xs))
+        (else (string-append (car xs) sep (cr:join (cdr xs) sep)))))
+(define caixa-root
+  (let ((d (cr:join (cr:drop-last (string-split caixa "/")) "/")))
+    (if (equal? d "") "." d)))
+
+;; Reported in the mode=full refusal so the message names the version it was
+;; measured against rather than asserting a timeless fact.
+(define feira-version
+  (let ((r (exec-capture "feira" "--version")))
+    (if (equal? (status-of r) 0) (string-trim (stdout-of r)) "(version unavailable)")))
+
 (define feira-ref (env-get "FEIRA_REF" "github:pleme-io/caixa#feira"))
 
 (define feira-baked (hash:cmd-present? "feira"))
@@ -191,12 +224,60 @@
       "baked on PATH"
       (string-append "nix run " feira-ref " (NOT baked — needs a working nix daemon at job time)"))))
 
-(log-info (string-append "rendering " caixa " -> " out-dir))
+;; ── SUPERSESSION, 2026-08-08: `feira render` NEVER EXISTED ──────────────────
+;; This action's original argv was `feira render --in <caixa> --out <dir>`.
+;; Measured against the installed feira 0.1.46: there is no `render`
+;; subcommand and no `--in` flag, so EVERY invocation died at clap. The verbs
+;; that do exist are init/add/resolve/lock/build/fmt/lint/dialeto/nix/chart/
+;; deploy/app/ephemeral/pool/allocation/publish/tofu.
+;;
+;; The `description` promised four artifact classes — Helm chart, Kubernetes
+;; manifests, Flux, CI workflows. Exactly one of them has a verb: `feira
+;; chart`. So the honest reading is that three quarters of the promise was
+;; ASPIRATIONAL and one quarter was misspelled.
+;;
+;; ★ AND THE ONE THAT EXISTS IS THE ONLY ONE ANYBODY CONSUMED. The single live
+;; consumer chain is substrate's caixa-auto-release.yml: caixa-render ->
+;; caixa-publish, and caixa-publish reads `<rendered-dir>/<chart-subdir>`
+;; (default `helm`) and runs `helm package` on it. It wants a Helm chart and
+;; nothing else. So switching the default to `chart` is not a downgrade to a
+;; quarter of the promise — it is 100% of the CONSUMED promise, restored from
+;; permanently-broken to working.
+;;
+;; MODULARIZE, DON'T DELETE: `full` is retained as a typed mode that REFUSES
+;; with the gap named, rather than deleted or silently aliased to `chart`.
+;; When feira grows the other three renderers, `full` becomes reachable by
+;; implementing it here — the declaration is already the place it goes.
+(cond
+  ((equal? mode "full")
+    (log-error
+      (string-append
+        "mode=full is DECLARED BUT NOT IMPLEMENTABLE against " feira-version ". "
+        "It would need renderers for Kubernetes manifests, Flux resources and CI "
+        "workflows; feira has a verb for none of them. `feira chart` is the only "
+        "artifact renderer that exists, and mode=chart (the default) uses it. "
+        "This refusal is deliberate and typed: the previous behaviour was `feira "
+        "render`, a subcommand that has never existed, which died at clap on every "
+        "run. Refusing with the gap named beats failing with `unrecognized "
+        "subcommand`."))
+    (exit 1))
+  ((not (equal? mode "chart"))
+    (log-error
+      (string-append "unknown mode '" mode "' — expected `chart` (default) or `full`."))
+    (exit 1)))
+
+(define chart-out (string-append out-dir "/" chart-subdir))
+
+(log-info (string-append "rendering Helm chart from " caixa " -> " chart-out))
 
 ;; ── Render ──────────────────────────────────────────────────────────────────
 ;; exec-or-die inherits stdio, so feira's own progress and diagnostics reach
 ;; the job log unbuffered, and a non-zero exit aborts with feira's own code.
-(exec-or-die (append feira-argv (list "render" "--in" caixa "--out" out-dir)))
+;; `feira chart` takes `--out <dir>` and `--path <caixa root>` — NOT `--in`.
+;; The chart lands at <output-dir>/<chart-subdir> because that is precisely
+;; where caixa-publish looks for it; the two actions are one pipeline and this
+;; is the seam between them.
+(exec-or-die (append feira-argv (list "chart" "--out" chart-out "--path" caixa-root)))
 
 ;; ── Count what was actually produced ────────────────────────────────────────
 (define find-r (proc:must (list "find" out-dir "-type" "f")))
