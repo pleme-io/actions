@@ -63,14 +63,34 @@
 ;; reads as a broken pattern rather than swapped arguments.
 ;; Getting it backwards fails at runtime with "expected integer, got list".
 ;;
-;; Collect the values a matrix variable can take, so `runs-on: ${{ matrix.os }}`
-;; is judged on what `os:` actually holds rather than waved through.
-(define (matrix-values-for text var)
-  (define inline (re-captures (string-append "(?m)^\\s*" var ":\\s*\\[([^\\]]*)\\]") text))
-  (if (> (length inline) 1)
-      (nth 1 inline)
-      ;; block form:  os:\n  - macos-15\n  - ubuntu-latest
-      (string-join (re-find-all (string-append "(?ms)^\\s*" var ":\\s*\\n((?:\\s*-\\s*.*\\n)+)") text) " ")))
+;; A matrix supplies runners in THREE shapes, all of which appear in this
+;; fleet, and a gate that knows only the first is the gate that already failed
+;; once:
+;;
+;;   os: [macos-15, ubuntu-latest]     inline list
+;;   os:\n  - macos-15\n  - ubuntu-latest   block list
+;;   include:\n  - runner: macos-14   scalar inside an include entry  <- kura
+;;
+;; Rather than reconstruct YAML, collect the LINE INDICES that carry values for
+;; the named variable — the var line itself plus any `-` items directly under
+;; it. Working in line indices (not a joined string) is what lets each value
+;; carry its OWN waiver: kura's darwin leg is waived at its `runner: macos-14`
+;; line, which is nowhere near the `runs-on:` that consumes it.
+(define (matrix-value-lines lines var)
+  (define n (length lines))
+  (define (scan i acc in-block)
+    (if (>= i n)
+        acc
+        (begin
+          (define l (nth i lines))
+          (define declares (re-match? (string-append "^\\s*" var "\\s*:") l))
+          (define item (re-match? "^\\s*-\\s" l))
+          (if declares
+              (scan (+ i 1) (concat acc (list i)) #t)
+              (if (and in-block item)
+                  (scan (+ i 1) (concat acc (list i)) #t)
+                  (scan (+ i 1) acc (if (string-contains? l ":") #f in-block)))))))
+  (scan 0 '() #f))
 
 (define violations '())
 
@@ -87,19 +107,29 @@
               (begin
                 (define value (string-trim (nth 1 (string-split line "runs-on:"))))
                 (define matrix-ref (re-captures "matrix\\.([A-Za-z_][A-Za-z0-9_-]*)" value))
-                (define effective
-                  (if (> (length matrix-ref) 1)
-                      (matrix-values-for text (nth 1 matrix-ref))
-                      value))
-                (if (and (metered-label? effective)
-                         (not (routes-by-visibility? effective))
-                         (not (routes-by-visibility? value))
-                         (not (waived? lines i)))
-                    (set! violations
-                          (concat violations
-                                  (list (string-format "{}:{}  runs-on -> {}"
-                                                       path (+ i 1) (string-trim effective)))))
-                    #t))
+                (if (> (length matrix-ref) 1)
+                    ;; matrix-sourced: judge each candidate value at ITS OWN line,
+                    ;; so a waiver next to one entry does not excuse the others.
+                    (for-each
+                      (lambda (vi)
+                        (define vl (nth vi lines))
+                        (if (and (metered-label? vl)
+                                 (not (routes-by-visibility? vl))
+                                 (not (waived? lines vi)))
+                            (set! violations
+                                  (concat violations
+                                          (list (string-format "{}:{}  matrix runner -> {}"
+                                                               path (+ vi 1) (string-trim vl)))))
+                            #t))
+                      (matrix-value-lines lines (nth 1 matrix-ref)))
+                    (if (and (metered-label? value)
+                             (not (routes-by-visibility? value))
+                             (not (waived? lines i)))
+                        (set! violations
+                              (concat violations
+                                      (list (string-format "{}:{}  runs-on -> {}"
+                                                           path (+ i 1) value))))
+                        #t)))
               #t)
           (walk (+ i 1)))))
   (walk 0))
@@ -118,6 +148,10 @@
     #t)
 
 (for-each check-file files)
+
+;; Two jobs can reference the SAME matrix variable, so the same value line is
+;; reachable twice; report each offending line once.
+(define violations (distinct violations))
 
 (if (> (length violations) 0)
     (begin
