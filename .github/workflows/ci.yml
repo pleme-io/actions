@@ -107,7 +107,7 @@ jobs:
     name: Enforce hard rule -- no runtime tool installation (theory/NIX-HARDENING.md)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Existing debt is tracked in runtime-install-lint/baseline.txt and
       # reported every run (never silently accepted) -- only a NEW,
       # non-baselined violation fails the build. Graduating an entry out of
@@ -122,7 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # RATCHET, same discipline as runtime-install-lint above: the 4 known
       # skopeo call sites in this repo are listed in banned-tool-lint/baseline.txt
       # with a stated reason each (two retired actions with zero consumers, the
