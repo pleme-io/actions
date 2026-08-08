@@ -9,11 +9,14 @@ description: >-
   second is the one a grep for `runs-on: ubuntu-*` silently misses. No-op on
   public repos.
 
-  NOTE: this description deliberately spells the matrix form in prose. GitHub
-  evaluates `${{ ... }}` inside an action manifest's DESCRIPTION, so writing
-  the literal expression here fails the whole manifest to load with
-  "Unrecognized named-value: 'matrix'" — a documentation string breaking the
-  action, measured on pleme-io/nix run 31251090680.
+  NOTE: this description spells the matrix form in prose ON PURPOSE. GitHub
+  evaluates expression syntax (dollar-brace-brace) inside an action manifest's
+  DESCRIPTION, so writing a literal expression here fails the whole manifest
+  to load with "Unrecognized named-value: 'matrix'" — a documentation string
+  breaking the action it documents. Measured on pleme-io/nix run 31251090680,
+  and then measured AGAIN on the commit that fixed it, because the warning
+  note itself quoted the syntax it was warning about. Do not put expression
+  syntax in this field, not even as an example.
 branding:
   icon: 'shield'
   color: 'blue'
