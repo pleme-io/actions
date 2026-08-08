@@ -24,22 +24,47 @@ inputs:
     required: true
   cache-backend-config:
     description: >-
-      JSON-encoded sui-cache `BackendConfig` for the remote cache tier
-      (e.g. `{"kind":"s3", ...}` or `{"kind":"local", ...}`).
+      JSON-encoded sui-cache `BackendConfig` for the remote cache tier. The
+      tagged-union discriminant is `type`, NOT `kind`
+      (`#[serde(tag = "type", rename_all = "lowercase")]`) — e.g.
+      `{"type":"s3","bucket":…,"region":…}` or `{"type":"local","path":…}`.
+      Corrected 2026-08-08: this description used to say `kind`, which the
+      binary rejects with `missing field \`type\`` before any build runs; a
+      `kind`-tagged config is now refused up front with that fix named.
     required: true
   node-cache-socket-path:
     description: >-
       Override for the well-known node-local daemon socket path. Empty
-      uses `sui_dockerfile_node_cache_daemon::default_socket_path()`.
+      resolves to `sui_dockerfile_node_cache_daemon::default_socket_path()`
+      (`/var/run/sui-dockerfile-cache/node-cache.sock`) — resolved once by
+      the action and handed to the binary, so the `daemon-used` output and
+      the binary's own routing decision are made on the SAME path.
     required: false
     default: ""
+  sui-ref:
+    description: >-
+      pleme-io/sui ref used ONLY when no `gha-entrypoint` is on PATH, for the
+      `nix run github:pleme-io/sui/<ref>#sui-dockerfile-wrapper` degradation.
+      The intended path is a wrapper baked into the runner image; this action
+      no longer performs the job-time `nix profile install` (★★ HERMETIC
+      SUPPLY CHAIN) and pins nothing floating on the caller's behalf.
+    required: false
+    default: "main"
 
 outputs:
   daemon-used:
-    description: "true when the node-local DaemonSet socket was present and used"
+    description: >-
+      true when the node-local DaemonSet socket was present and used. Existence
+      is the predicate the binary itself branches on (`Path::exists`), so this
+      reports what the wrapper did rather than a second, divergent `-S` test.
     value: ${{ steps.run.outputs.daemon-used }}
   outcome:
-    description: "cache-hit | cache-miss | build-failed (WrapperOutcome kind)"
+    description: >-
+      The receipt's raw `outcome.kind`: CacheHit | CacheMiss | BuildFailed.
+      `build-failed` is the fallback when the wrapper produced no parseable
+      receipt. Corrected 2026-08-08: this used to be documented as
+      `cache-hit | cache-miss | build-failed`, values no well-formed receipt
+      can ever produce.
     value: ${{ steps.run.outputs.outcome }}
   cache-hit:
     description: "true when every Dockerfile-graph node was already cached (no docker build ran)"
@@ -54,48 +79,36 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/nix-installer-action@main
-
-    - name: Install sui-dockerfile-wrapper (gha-entrypoint)
+    # No `actions/checkout` here on purpose: this action reads the CALLER's
+    # build context, and a checkout would reset the workspace the Dockerfile
+    # and its context live in.
+    #
+    # No `DeterminateSystems/nix-installer-action@main` and no
+    # `nix profile install github:pleme-io/sui#sui-dockerfile-wrapper` either.
+    # Both were deleted rather than hardened: the first was an unpinned
+    # third-party action in the privileged position, the second an imperative,
+    # floating-ref, non-idempotent job-time install that the step's own comment
+    # already described as forbidden. run.tlisp resolves the binary from PATH
+    # (the baked runner image) and refuses loudly if it cannot.
+    - id: src
       shell: bash
-      # packages.<system>.sui-dockerfile-wrapper (pleme-io/sui flake — the
-      # workspace member's default_bin is `gha-entrypoint`, explicit
-      # `toolName` in the flake keeps the package attribute crate-named).
-      # The fleet-wide rule is that no CI action installs a binary
-      # imperatively at job time.
-      run: nix profile install github:pleme-io/sui#sui-dockerfile-wrapper
-
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
     - id: run
-      shell: bash
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
       env:
         SUI_DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
         SUI_BUILD_CONTEXT: ${{ inputs.build-context }}
         SUI_IMAGE_TAG: ${{ inputs.image-tag }}
         SUI_CACHE_BACKEND_CONFIG: ${{ inputs.cache-backend-config }}
         SUI_NODE_CACHE_SOCKET_PATH: ${{ inputs.node-cache-socket-path }}
-      run: |
-        set +e
-        receipt="$(gha-entrypoint)"
-        status=$?
-        set -e
-        echo "$receipt"
-
-        resolved_socket="${SUI_NODE_CACHE_SOCKET_PATH:-/var/run/sui-dockerfile-cache/node-cache.sock}"
-        daemon_used="false"
-        [ -S "$resolved_socket" ] && daemon_used="true"
-
-        outcome="$(echo "$receipt" | jq -r '.outcome.kind // "build-failed"')"
-        cache_hit="false"
-        [ "$outcome" = "CacheHit" ] && cache_hit="true"
-        docker_ran="$(echo "$receipt" | jq -r '.docker_ran // false')"
-        duration_ms="$(echo "$receipt" | jq -r '.total_wall_clock_ms // 0')"
-
-        {
-          echo "daemon-used=$daemon_used"
-          echo "outcome=$outcome"
-          echo "cache-hit=$cache_hit"
-          echo "docker-ran=$docker_ran"
-          echo "duration-ms=$duration_ms"
-        } >> "$GITHUB_OUTPUT"
-
-        exit "$status"
+        SUI_REF: ${{ inputs.sui-ref }}

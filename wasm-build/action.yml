@@ -21,30 +21,42 @@ inputs:
 
 outputs:
   artifact-path:
-    value: ${{ steps.wb.outputs.artifact-path }}
+    description: "Directory holding the built wasm artifacts. Emitted only after it is confirmed to exist."
+    value: ${{ steps.run.outputs.artifact-path }}
 
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/nix-installer-action@main
+    # No `actions/checkout` here, deliberately: the caller has already checked
+    # out (cargo has to have something to build) and checkout v4 CLEANS the
+    # destination, which would discard whatever earlier steps generated. The
+    # loader below reads only from github.action_path, which is always present.
     - uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ inputs.target }}
-    - id: wb
+    # Only the wasm-pack path needs Nix. It used to run on every invocation,
+    # including the default plain-cargo one, which paid a full Nix install for
+    # nothing. Gating it is also what keeps the hermetic-supply-chain debt
+    # confined to the branch that actually incurs it.
+    - if: inputs.wasm-pack == 'true'
+      uses: DeterminateSystems/nix-installer-action@main
+    - id: src
       shell: bash
       run: |
-        if [ "${{ inputs.wasm-pack }}" = "true" ]; then
-          # Nix-installed, not runtime-curled (theory/NIX-HARDENING.md §VI)
-          # -- exact-pinned to nixos-24.05 rather than an installer script
-          # fetched fresh from rustwasm.github.io on every run.
-          nix profile install github:NixOS/nixpkgs/nixos-24.05#wasm-pack
-          wasm-pack build ${{ inputs.package && format('--package {0}', inputs.package) || '' }} --target web
-          echo "artifact-path=pkg/" >> "$GITHUB_OUTPUT"
-        else
-          args=( "build" "--target" "${{ inputs.target }}" )
-          [ "${{ inputs.release }}" = "true" ] && args+=( "--release" )
-          [ -n "${{ inputs.package }}" ] && args+=( "--package" "${{ inputs.package }}" )
-          cargo "${args[@]}"
-          profile=$([ "${{ inputs.release }}" = "true" ] && echo "release" || echo "debug")
-          echo "artifact-path=target/${{ inputs.target }}/$profile/" >> "$GITHUB_OUTPUT"
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        TARGET: ${{ inputs.target }}
+        RELEASE: ${{ inputs.release }}
+        WASM_PACK: ${{ inputs.wasm-pack }}

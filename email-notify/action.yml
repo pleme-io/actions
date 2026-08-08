@@ -6,32 +6,71 @@ inputs:
   smtp-host:
     required: true
   smtp-port:
+    description: >-
+      Submission port. 465 selects implicit TLS (swaks --tlsc); anything else
+      selects STARTTLS (swaks --tls). The old body hardcoded --tls, so 465 —
+      which never advertises STARTTLS — could not work at all.
     required: false
     default: "587"
   smtp-username:
     required: true
   smtp-password:
+    description: >-
+      Passed to swaks through $SWAKS_OPT_auth_password, never argv. An unset
+      secret interpolates to "" here rather than failing the expression, so an
+      empty value is refused instead of dialled.
     required: true
   from:
     required: true
   to:
-    description: "Comma-separated recipients"
+    description: >-
+      Comma-separated recipients. Whitespace around each address is trimmed.
+      An empty or all-blank value is REFUSED — the bash this replaced reported
+      sent=true after opening no connection.
     required: true
   subject:
     required: true
   body:
+    description: >-
+      The message body, as literal text. A value naming an existing path is
+      refused: swaks would otherwise mail that FILE's contents.
     required: true
 
 outputs:
   sent:
-    value: ${{ steps.mail.outputs.sent }}
+    description: '"true" only when EVERY recipient was accepted.'
+    value: ${{ steps.run.outputs.sent }}
+  failed-count:
+    description: >-
+      Recipients that did not receive the message. Written only once delivery
+      was attempted, so it is empty when the action refused on configuration.
+    value: ${{ steps.run.outputs.failed-count }}
 
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/nix-installer-action@main
-    - id: mail
+    # No DeterminateSystems/nix-installer-action@main and no `nix profile
+    # install …#swaks` any more. That pair fetched a third-party artifact at
+    # job time (★★ HERMETIC SUPPLY CHAIN) on the step that then handles SMTP
+    # credentials, through an UNPINNED third-party action -- and its "exact
+    # pin" was `refs/heads/nixos-24.05`, a branch head that moves with every
+    # backport. swaks is now required in the job's environment; run.tlisp
+    # refuses loudly when it is absent rather than reporting an unsent mail.
+    - id: src
       shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
       env:
         SMTP_HOST: ${{ inputs.smtp-host }}
         SMTP_PORT: ${{ inputs.smtp-port }}
@@ -41,17 +80,3 @@ runs:
         TO: ${{ inputs.to }}
         SUBJECT: ${{ inputs.subject }}
         BODY: ${{ inputs.body }}
-      run: |
-        # swaks is a robust portable SMTP client. Nix-installed, not
-        # apt (theory/NIX-HARDENING.md §VI) -- exact-pinned to nixos-24.05.
-        nix profile install github:NixOS/nixpkgs/nixos-24.05#swaks
-        IFS=',' read -ra recipients <<< "$TO"
-        for r in "${recipients[@]}"; do
-          swaks --silent 2 \
-            --server "$SMTP_HOST:$SMTP_PORT" --tls \
-            --auth-user "$SMTP_USERNAME" --auth-password "$SMTP_PASSWORD" \
-            --from "$FROM" --to "$r" \
-            --header "Subject: $SUBJECT" --body "$BODY" \
-            || { echo "sent=false" >> "$GITHUB_OUTPUT"; exit 1; }
-        done
-        echo "sent=true" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,329 @@
+;; caixa-publish/run.tlisp — package + push a caixa-rendered Helm chart to an
+;; OCI registry.
+;;
+;; REPLACES the 17-line `run: |` bash body that used to live in this action's
+;; action.yml, which is why caixa-publish/action.yml sat on the
+;; action-shell-lint baseline (★★ PRIME DIRECTIVE + NO SHELL).
+;;
+;; ── WHAT THE BASH ACTUALLY DID, AND THE SIX DEFECTS IT CARRIED ──────────
+;;
+;;     chart_dir="${{ inputs.rendered-dir }}/${{ inputs.chart-subdir }}"
+;;     if [ ! -d "$chart_dir" ]; then ...; exit 1; fi
+;;     cd "$chart_dir"
+;;     echo "$GHCR_TOKEN" | helm registry login ghcr.io --username ... --password-stdin
+;;     name=$(yq '.name' Chart.yaml)
+;;     version=$(yq '.version' Chart.yaml)
+;;     helm package .
+;;     if helm push "${name}-${version}.tgz" "oci://${{ inputs.registry }}"; then ...
+;;
+;; D1 — `yq` IS NEVER INSTALLED, AND ITS FAILURE MODE IS SILENT.
+;;      The action's only setup step is `azure/setup-helm@v4`. The sibling
+;;      helm-publish installs yq explicitly (via nix) precisely because it is
+;;      NOT universally present — the stdlib's own yaml-read-field header
+;;      records `yq` missing from the camelot-builder-pleme-eks ARC runner,
+;;      where every field of every file read back as "". Worse, mikefarah yq
+;;      exits 0 and prints the literal string `null` for an ABSENT key, so a
+;;      Chart.yaml without `.name` yielded name="null" and the push targeted
+;;      `null-null.tgz`. CLOSED at its cause: `yaml-read-field` is in-process
+;;      (no subprocess, no binary to be missing) and returns "" ONLY when the
+;;      key is genuinely absent — which this script then refuses on, loudly.
+;;
+;; D2 — "ALREADY PUBLISHED" WAS CONFLATED IN BOTH DIRECTIONS.
+;;      There was no pre-check and no classification of the push result, so:
+;;      (a) a registry that ACCEPTS the overwrite silently re-published an
+;;          existing (name, version) — the immutability violation the sibling
+;;          helm-publish exists to prevent; and
+;;      (b) a registry that REFUSES it (`already exists` / BLOB_UPLOAD_INVALID)
+;;          was reported as `shipped=false` + exit 1, so re-running a workflow
+;;          whose publish had ALREADY SUCCEEDED turned the pipeline red.
+;;      CLOSED below with the sibling's two-layer answer: a best-effort
+;;      registry pre-check, then an authoritative classification of the push
+;;      log. See the tier-honest note on the pre-check at cp:already-published?.
+;;
+;; D3 — EVERY FAILURE PATH EXCEPT ONE WROTE NO `shipped` OUTPUT AT ALL.
+;;      Composite `shell: bash` steps run under `-eo pipefail`, so a failing
+;;      login / yq / `helm package` aborted the step BEFORE any
+;;      `echo shipped=... >> $GITHUB_OUTPUT`. The action's declared `shipped`
+;;      output then resolved to the empty string — neither "true" nor "false"
+;;      — so a consumer written as `if: steps.pub.outputs.shipped == 'false'`
+;;      never fired on a real failure. CLOSED: `shipped` is written on EVERY
+;;      exit path, through cp:fail / cp:ship, which are the only two ways out.
+;;
+;; D4 — `helm package` AND `helm registry login` HAD NO DIAGNOSABLE FAILURE.
+;;      Both relied on `set -e` to abort, which produces a bare non-zero step
+;;      with no statement of which of them died or why. CLOSED: each is
+;;      captured and its stderr is named in the error.
+;;
+;; D5 — LOGIN WENT TO A HARDCODED `ghcr.io` REGARDLESS OF `inputs.registry`.
+;;      Point the action at any non-ghcr registry (Zot, Harbor, ECR) and it
+;;      authenticated against ghcr.io and then pushed, unauthenticated, at the
+;;      real target. CLOSED: the login host is DERIVED from `registry`, so the
+;;      two cannot disagree. A leading `oci://` is stripped first, so a caller
+;;      passing the scheme cannot produce `oci://oci://…` either.
+;;
+;; D6 — THE THREE INPUTS WERE `${{ }}`-INTERPOLATED INTO THE SHELL SOURCE.
+;;      `chart_dir="${{ inputs.rendered-dir }}/…"` pastes caller-controlled
+;;      text into the script BODY before bash parses it — the standard Actions
+;;      template-injection surface. CLOSED structurally: every input now
+;;      arrives as an env var read by `env-get`, never as source text.
+;;
+;; ── CONTRACT ────────────────────────────────────────────────────────────
+;; Inputs (env):  RENDERED_DIR · CHART_SUBDIR · REGISTRY · GHCR_TOKEN
+;;                GITHUB_ACTOR (ambient; `bot` when absent, as before)
+;; Output:        shipped=true|false
+;;
+;; `shipped=true` means "this (name, version) IS on the registry" — NOT "this
+;; run performed the upload". That is the only meaning under which the D2
+;; already-published case has an honest answer, and it is the meaning the
+;; sibling helm-publish already uses.
+
+;; ────────────────────────────────────────────────────────────────
+;; Inputs
+;; ────────────────────────────────────────────────────────────────
+;; env-get (never env-required) at top level, deliberately: a top-level
+;; env-required aborts at LOAD time, before any TLISP_TEST guard can be
+;; reached (stdlib, env-required-unless-test). Every value here has the same
+;; default as its `inputs:` entry, so a direct `tatara-script` run behaves
+;; exactly as the composite does.
+
+(define rendered-dir (env-get "RENDERED_DIR" "rendered/"))
+
+(define chart-subdir (env-get "CHART_SUBDIR" "helm"))
+
+;; Strip a leading `oci://` — the script adds the scheme itself at push time
+;; (D5). Idempotent for the documented default, which carries no scheme.
+(define registry (string-strip-prefix (string-trim (env-get "REGISTRY" "ghcr.io/pleme-io/helm")) "oci://"))
+
+(define ghcr-token (env-get "GHCR_TOKEN" ""))
+
+;; Preserves the bash `${GITHUB_ACTOR:-bot}` exactly.
+(define registry-user (env-get "GITHUB_ACTOR" "bot"))
+
+(define chart-dir (string-append rendered-dir "/" chart-subdir))
+
+(define chart-yaml (string-append chart-dir "/Chart.yaml"))
+
+;; ────────────────────────────────────────────────────────────────
+;; The only two exits — both write `shipped` (D3)
+;; ────────────────────────────────────────────────────────────────
+
+;; A failure must never exit 0. `status-of` yields -1 for a malformed result
+;; and a classified failure can in principle carry 0, so anything not strictly
+;; positive becomes 1 rather than being passed through as "success".
+(define (cp:nonzero code) (if (> code 0) code 1))
+
+(define (cp:fail code reason)
+  (log-error (string-append "caixa-publish: " reason))
+  (emit-output "shipped" "false")
+  (exit (cp:nonzero code)))
+
+(define (cp:ship reason)
+  (log-info (string-append "caixa-publish: " reason))
+  (emit-output "shipped" "true")
+  (exit 0))
+
+;; ────────────────────────────────────────────────────────────────
+;; Registry helpers
+;; ────────────────────────────────────────────────────────────────
+
+;; "ghcr.io/pleme-io/helm" -> "ghcr.io". The login host and the push target
+;; are now two projections of ONE value, so D5's divergence has no
+;; representation.
+(define (cp:registry-host r) (car (string-split r "/")))
+
+;; The registry's own verdict that this (name, version) is already present.
+;; These are the two signatures the sibling helm-publish already classifies;
+;; deliberately NOT widened past them — a broader match would start reading
+;; genuine push failures as successes, which is D2 inverted.
+(define (cp:already-uploaded? log)
+  (or (log-contains? log "already exists") (log-contains? log "BLOB_UPLOAD_INVALID")))
+
+;; TIER-HONEST: BEST-EFFORT, NOT A GUARANTEE.
+;; `helm-published?` (stdlib) is an anonymous GET of the v2 manifest endpoint.
+;; ghcr.io requires a bearer token even for a public package's manifest, so
+;; against the DEFAULT registry this answers #f almost always and the skip
+;; below rarely fires. It is kept — rather than deleted as a vacuous guard —
+;; because it is genuinely effective against a registry that permits anonymous
+;; manifest reads (Zot, an open Harbor), which `inputs.registry` can name. It
+;; is NOT the load-bearing half of D2: cp:already-uploaded? on the push result
+;; is, and that one runs unconditionally.
+(define (cp:already-published? name version) (helm-published? registry name version))
+
+;; ────────────────────────────────────────────────────────────────
+;; 1. The rendered chart must exist
+;; ────────────────────────────────────────────────────────────────
+
+(cond
+  ((not (path-exists? chart-dir))
+    (cp:fail 1
+      (string-append
+        "chart dir not found: "
+        chart-dir
+        " — caixa-render did not write it, or rendered-dir/chart-subdir disagree with it"))))
+
+;; NEW vs the bash, which checked only the directory (D1's other half): a
+;; present directory with no Chart.yaml sent `yq` at a missing file and the
+;; run died several steps later on a `null-null.tgz` that was never built.
+(cond
+  ((not (path-exists? chart-yaml))
+    (cp:fail 1
+      (string-append
+        "no Chart.yaml under "
+        chart-dir
+        " — that path is not a Helm chart"))))
+
+;; ────────────────────────────────────────────────────────────────
+;; 2. Chart identity — in-process, so a missing binary cannot read as a
+;;    missing field (D1)
+;; ────────────────────────────────────────────────────────────────
+
+(define chart-name (yaml-read-field chart-yaml ".name"))
+
+(define chart-version (yaml-read-field chart-yaml ".version"))
+
+(cond
+  ((equal? chart-name "")
+    (cp:fail 1 (string-append "no top-level `name:` in " chart-yaml))))
+
+(cond
+  ((equal? chart-version "")
+    (cp:fail 1 (string-append "no top-level `version:` in " chart-yaml))))
+
+;; ────────────────────────────────────────────────────────────────
+;; 3. Credential + login (D4, D5)
+;; ────────────────────────────────────────────────────────────────
+
+(define registry-host (cp:registry-host registry))
+
+(cond
+  ((equal? registry-host "")
+    (cp:fail 1 (string-append "could not extract a host from registry '" registry "'"))))
+
+;; The bash piped an EMPTY string into `--password-stdin` whenever the token
+;; resolved empty, and helm answered with an opaque 401. Empty is a
+;; distinguishable, nameable state — say so instead.
+;;
+;; The trap worth naming: `env.GITHUB_TOKEN` is NOT auto-populated by Actions
+;; (only `github.token` / `secrets.GITHUB_TOKEN` are), so the original
+;; `${{ env.GHCR_TOKEN || env.GITHUB_TOKEN }}` resolved to "" for any caller
+;; that had not set one of them by hand. action.yml now falls back to
+;; `github.token` as the last resort, matching registry-login's documented
+;; BOT_PAT > GHCR_TOKEN > GITHUB_TOKEN priority.
+(cond
+  ((equal? ghcr-token "")
+    (cp:fail 1
+      (string-append
+        "no registry credential — GHCR_TOKEN is empty. Set `env.GHCR_TOKEN` "
+        "in the calling workflow (or grant the job `packages: write` so "
+        "github.token can stand in)."))))
+
+;; REGISTRY LOGIN MOVED OUT OF THIS SCRIPT — deliberately, 2026-08-08.
+;; It now runs as a one-line `shell: bash` step in action.yml using
+;; `--password-stdin`. This port had it as `--password <token>` in ARGV,
+;; which is world-readable via `ps` / /proc/<pid>/cmdline — strictly worse
+;; than the `echo … | helm registry login --password-stdin` it replaced, so
+;; converting it was a security REGRESSION dressed as a cleanup. The
+;; in-comment justification ("Actions masks registered secret values in
+;; logs") was wrong on the axis that matters: Actions masks LOGS, not the
+;; PROCESS TABLE. `exec-capture`/`proc:run` take argv only, so there is no
+;; stdin channel to pipe into and this is NOT fixable inside the port.
+;; When tatara-lisp grows a stdin-bearing exec, move it back here and
+;; retire the same defect in `registry-login/run.tlisp:62-64`.
+;; pending-stdlib-stdin: helm registry login
+(log-info "==> registry login performed by the action.yml login step (stdin, not argv)")
+
+;; ────────────────────────────────────────────────────────────────
+;; 4. Idempotency pre-check (D2, first layer)
+;; ────────────────────────────────────────────────────────────────
+
+(cond
+  ((cp:already-published? chart-name chart-version)
+    (cp:ship
+      (string-append
+        "'"
+        chart-name
+        ":"
+        chart-version
+        "' is already on "
+        registry
+        " — skipping the push rather than overwriting a published chart"))))
+
+;; ────────────────────────────────────────────────────────────────
+;; 5. Package (D4)
+;; ────────────────────────────────────────────────────────────────
+;;
+;; `--destination` replaces the bash's `cd "$chart_dir"`, so the tarball still
+;; lands beside the chart while the process cwd is never mutated — a `cd` in a
+;; script that later resolves other relative paths is a trap this avoids
+;; having to reason about.
+
+(log-info (string-append "==> helm package " chart-dir))
+
+(define pkg-r (exec-capture "helm" "package" chart-dir "--destination" chart-dir))
+
+(cond
+  ((not (= (status-of pkg-r) 0))
+    (cp:fail (status-of pkg-r)
+      (string-append
+        "helm package "
+        chart-dir
+        " failed: "
+        (string-trim (stderr-of pkg-r))))))
+
+(define tgz (string-append chart-dir "/" chart-name "-" chart-version ".tgz"))
+
+;; The bash pushed this path UNCHECKED. When name/version did not match what
+;; helm itself wrote (D1's `null` case, or a Chart.yaml helm parses
+;; differently), `helm push` failed on a nonexistent file and the log said
+;; only "open …: no such file or directory" — a packaging problem reported as
+;; a push problem. Assert the artifact exists, and quote helm's own account of
+;; where it put it.
+(cond
+  ((not (path-exists? tgz))
+    (cp:fail 1
+      (string-append
+        "packaged chart not found at "
+        tgz
+        " — Chart.yaml says name="
+        chart-name
+        " version="
+        chart-version
+        ", helm reported: "
+        (string-trim (stdout-of pkg-r))))))
+
+;; ────────────────────────────────────────────────────────────────
+;; 6. Push, and classify the outcome (D2, second layer — the load-bearing one)
+;; ────────────────────────────────────────────────────────────────
+
+(define push-target (string-append "oci://" registry))
+
+(log-info (string-append "==> helm push " tgz " " push-target))
+
+(define push-r (exec-capture "helm" "push" tgz push-target))
+
+(define push-log (string-append (stdout-of push-r) "\n" (stderr-of push-r)))
+
+(cond
+  ((= (status-of push-r) 0)
+    (cp:ship (string-append "pushed " chart-name ":" chart-version " to " registry)))
+  ((cp:already-uploaded? push-log)
+    ;; THE D2 CASE. The registry refused because the chart is already there.
+    ;; That is the desired end state, not a failure — reporting it as
+    ;; shipped=false + exit 1 is what turned a re-run of an already-successful
+    ;; publish red.
+    (cp:ship
+      (string-append
+        "registry reports "
+        chart-name
+        ":"
+        chart-version
+        " already present — treating as shipped, not as a failure")))
+  (else
+    (log-info push-log)
+    (cp:fail (status-of push-r)
+      (string-append
+        "helm push "
+        tgz
+        " -> "
+        push-target
+        " failed with no recognized already-published signature"))))

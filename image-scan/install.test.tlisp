@@ -1,0 +1,113 @@
+;; image-scan/install.test.tlisp — unit tests for the pinned-trivy install
+;; decisions.
+;;
+;; None of these assertions could exist while this was a `run: |` block: the
+;; digest comparison, the elevation choice and the "is the trivy on PATH the
+;; one we pinned" check were inline shell, and the last of those did not
+;; exist at all. They are the predicates that decide whether a scan verdict
+;; from this action may be believed, so "untestable" was the wrong place for
+;; them to live.
+;;
+;; Run via tatara-script --test by the tlisp-test action, which assembles
+;; stdlib + install.tlisp + this file with TLISP_TEST=1 so the unit defines
+;; its functions but skips its main.
+
+;; Local helper — `list-contains?` lives inside action-shell-lint, not the
+;; stdlib, so this test file carries its own rather than reaching for a
+;; symbol that is not in scope here. Defined BEFORE the first deftest that
+;; uses it: a deftest body is evaluated where it stands, not deferred.
+(define (list-contains-str? lst item)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) item) #t)
+    (else (list-contains-str? (cdr lst) item))))
+
+(deftest "first-field pulls the digest out of a real checksum line"
+  ;; Both tools print "<hex>  <path>" with TWO spaces, which is why the
+  ;; naive split has an empty middle piece.
+  (assert
+    (equal?
+      (first-field "e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a  /tmp/x.sh")
+      "e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a")
+    "sha256sum's two-space form yields the digest, not the empty middle field")
+  (assert
+    (equal? (first-field "  abc  /tmp/x.sh\n") "abc")
+    "surrounding whitespace and a trailing newline do not leak into the digest")
+  (assert (equal? (first-field "") "") "empty output yields an empty digest, never a false match"))
+
+(deftest "reported-version reads the SCANNER version, never the vulnerability-DB one"
+  ;; The real v0.72.0 output, measured 2026-08-08. The indented `  Version: 2`
+  ;; is the trap: a substring search for "Version: " matches it too.
+  (let* ((real
+           (string-append
+             "Version: 0.72.0\n"
+             "Vulnerability DB:\n"
+             "  Version: 2\n"
+             "  UpdatedAt: 2026-08-06 01:12:46 +0000 UTC\n"
+             "Java DB:\n"
+             "  Version: 1\n")))
+    (assert (equal? (reported-version real) "0.72.0") "the first line is the scanner version")
+    (assert
+      (not (equal? (reported-version real) "2"))
+      "the indented vulnerability-DB schema number is never mistaken for it")))
+
+(deftest "reported-version refuses to guess at an unrecognized shape"
+  (assert (equal? (reported-version "") "") "no output yields no version")
+  (assert
+    (equal? (reported-version "  Version: 2\nVersion: 9.9.9\n") "")
+    "an INDENTED first line is not the scanner version — prefix is checked before trimming")
+  (assert
+    (equal? (reported-version "trivy: command not found\n") "")
+    "an error message does not parse as a version"))
+
+(deftest "version-matches? is EXACT — a scanner pin must not be approximately right"
+  (assert (version-matches? "Version: 0.72.0\n" "0.72.0") "the pinned version matches")
+  (assert
+    (not (version-matches? "Version: 0.52.0\n" "0.72.0"))
+    "an older trivy already on PATH does NOT satisfy the pin")
+  (assert
+    (not (version-matches? "Version: 10.72.05\n" "0.72.0"))
+    "a substring match would have accepted this; exact comparison rejects it")
+  (assert
+    (not (version-matches? "" "0.72.0"))
+    "no output never satisfies the pin — an absent scanner is not a pinned one"))
+
+(deftest "elevation: root needs no sudo, and a missing sudo is NAMED not surfaced as 'not found'"
+  (assert (equal? (elevation "0" #f) (quote none)) "uid 0 without sudo installs directly")
+  (assert (equal? (elevation "0" #t) (quote none)) "uid 0 with sudo still skips sudo — same effect")
+  (assert (equal? (elevation "1001" #t) (quote sudo)) "a normal runner user elevates via sudo")
+  (assert
+    (equal? (elevation "1001" #f) (quote blocked))
+    "non-root with no sudo is a distinct, reportable state — the rootful-ARC-container case")
+  (assert
+    (equal? (elevation "" #f) (quote blocked))
+    "an unreadable uid is treated as NOT root — the conservative direction"))
+
+(deftest "install-argv preserves the measured argv exactly, sudo only when required"
+  (assert
+    (equal?
+      (install-argv (quote sudo) "/rt/i.sh" "/usr/local/bin" "v0.72.0")
+      (list "sudo" "sh" "/rt/i.sh" "-b" "/usr/local/bin" "v0.72.0"))
+    "the non-root form is byte-for-byte the shell body's command")
+  (assert
+    (equal?
+      (install-argv (quote none) "/rt/i.sh" "/usr/local/bin" "v0.72.0")
+      (list "sh" "/rt/i.sh" "-b" "/usr/local/bin" "v0.72.0"))
+    "already-root drops sudo and nothing else")
+  ;; The measurement the old body recorded and this must not lose: `-s --`
+  ;; belongs to the PIPED form only. Against a file it is passed to the
+  ;; script as arguments, exits 2 and installs nothing.
+  (assert
+    (not (list-contains-str? (install-argv (quote none) "/rt/i.sh" "/b" "v0.72.0") "-s"))
+    "the stdin-only `-s` flag is never passed to a script run as a FILE"))
+
+(deftest "the pin is derived from ONE version, so the URL and the argv cannot drift apart"
+  (assert
+    (equal? trivy-tag (string-append "v" trivy-version))
+    "the tag is derived, never re-typed")
+  (assert
+    (string-contains? install-script-url trivy-tag)
+    "the installer URL carries the same tag the installer is asked to install")
+  (assert
+    (equal? (length (string-split install-script-sha256 " ")) 1)
+    "the pinned digest is a bare hex string, not a checksum LINE"))

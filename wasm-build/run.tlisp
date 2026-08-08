@@ -1,0 +1,256 @@
+;; wasm-build/run.tlisp — build a Rust crate to a wasm32 target.
+;;
+;; Replaces the 15-line `run: |` bash body of wasm-build/action.yml (the entry
+;; on action-shell-lint/baseline.txt). Five defects were reproduced in
+;; isolation before this port was written; each is named at the line that
+;; closes it. This is a bug fix that happens to also be a translation.
+;;
+;; ── D1 · TEMPLATE INJECTION, both inputs, PROVEN ─────────────────────────
+;; The bash interpolated `${{ inputs.package }}` and `${{ inputs.target }}`
+;; straight into a shell body. Reproduced 2026-08-08 against a faithful copy
+;; of the rendered script:
+;;
+;;   target  = 'wasm32$(touch /tmp/fb-wasmbuild/PWNED-TARGET)'  -> file created
+;;   package = 'demo$(touch /tmp/fb-wasmbuild/PWNED-PKG)'       -> file created
+;;
+;; Both ran arbitrary code on the runner, at rc=0, with the step reporting
+;; success. Composite-action inputs come from the caller's workflow, which
+;; routinely interpolates `github.event.*` — so this is reachable from a PR
+;; title in any consumer that wires one through. Closed BY CONSTRUCTION: the
+;; values arrive as env vars and every command is built as an argv LIST, so
+;; there is no string for a value to escape out of.
+;;
+;; ── D2 · `wasm-pack --package` DISABLES wasm-pack's OWN `--target`, PROVEN ─
+;; The bash ran, whenever `package` was non-empty and `wasm-pack` was true:
+;;
+;;   wasm-pack build --package <p> --target web
+;;
+;; `wasm-pack build` has NO `--package` option. Measured against wasm-pack
+;; 0.15.0 (`nix run nixpkgs#wasm-pack -- build --help`): the signature is
+;; `wasm-pack build [OPTIONS] [PATH] [EXTRA_OPTIONS]...`, where PATH is the
+;; crate directory and EXTRA_OPTIONS is a trailing var-arg forwarded to
+;; `cargo build`. An unknown flag flips clap into capturing the rest as
+;; EXTRA_OPTIONS. Three runs, same binary, differing only in argv order:
+;;
+;;   A  build --target NOPE                 -> clap: invalid value 'NOPE'
+;;   B  build --package demo --target NOPE  -> NO clap error (swallowed)
+;;   C  build --target NOPE --package demo  -> clap: invalid value 'NOPE'
+;;
+;; B is the shape the bash emitted. `--target web` never reaches wasm-pack, so
+;; it falls back to its DEFAULT target `bundler` — a silently different npm
+;; package than the one asked for — and `--package demo --target web` is
+;; appended to `cargo build`, where `web` is not a Rust target triple. Closed
+;; by using wasm-pack's actual surface: resolve the package NAME to its crate
+;; DIRECTORY via `cargo metadata` and pass it as the positional PATH, with
+;; every option ahead of it (case D of the same probe confirms `--target` is
+;; still parsed when options precede a positional path).
+;;
+;; ── D3 · `release: false` SILENTLY BUILT RELEASE on the wasm-pack path ────
+;; The bash passed no profile flag at all to wasm-pack, and wasm-pack's
+;; default profile is release (`--dev` exists precisely to opt out). So
+;; `release: false` + `wasm-pack: true` produced an optimized build while the
+;; action's own contract said debug — reproduced: `wasm-pack build --target
+;; web`, no `--dev` anywhere. Closed by passing exactly one explicit profile
+;; flag, derived from the same `release?` the cargo path uses.
+;;
+;; ── D4 · artifact-path WAS EMITTED WITHOUT EVER BEING PRODUCED ───────────
+;; `echo "artifact-path=target/$T/$profile/"` wrote a path nobody had looked
+;; at. A repo with `CARGO_TARGET_DIR` set, or a `build.target-dir` in
+;; `.cargo/config.toml`, gets a green step and a path that does not exist;
+;; the downstream upload/publish step then ships nothing, successfully. Closed
+;; by verifying the directory exists before emitting, and refusing loudly with
+;; the cause named when it does not. (Same class cargo-run-bin closes for its
+;; binary path.)
+;;
+;; ── D5 · `nix profile install` RAN UNCONDITIONALLY, AND UNVERIFIED ───────
+;; The install ran on every wasm-pack invocation even when wasm-pack was
+;; already baked into the runner image, and nothing ever confirmed a binary
+;; landed on PATH. Closed by probing first and re-probing after — mutate, then
+;; re-read and assert the effect. The install itself stays Nix-pinned to
+;; nixos-24.05 (theory/NIX-HARDENING.md §VI): it is job-time installation and
+;; therefore still ★★ HERMETIC SUPPLY CHAIN debt, but it is at least
+;; hash-verified and exact-pinned rather than a floating `nixpkgs#wasm-pack`.
+;; The destination is a hardened image consumed as a `docker://` action; this
+;; port does not reach it, and does not pretend to.
+
+;; ── inputs ───────────────────────────────────────────────────────────────
+
+;; D1: values arrive as env, never as interpolated script text.
+(define package (string-trim (env-get "PACKAGE" "")))
+
+(define target (string-trim (env-get "TARGET" "wasm32-unknown-unknown")))
+
+;; Byte-identical to the bash's `[ "$x" = "true" ]`: only the exact literal
+;; "true" is true, so a caller passing "TRUE" or "1" keeps meaning false. The
+;; contract must not drift on a value nobody has audited.
+(define release? (equal? (env-get "RELEASE" "true") "true"))
+
+(define use-wasm-pack? (equal? (env-get "WASM_PACK" "false") "true"))
+
+;; D5: exact-pinned channel, not a floating `nixpkgs#wasm-pack` that resolves
+;; to whatever registry the runner happens to carry. Same channel the
+;; hardened-images primary pin uses.
+(define wasm:nixpkgs-pin "github:NixOS/nixpkgs/nixos-24.05#wasm-pack")
+
+;; ── helpers ──────────────────────────────────────────────────────────────
+
+;; #t iff wasm-pack answers `--version`. `proc:run` is the typed boundary:
+;; a missing binary raises out of `exec-capture`, and this needs an ANSWER
+;; rather than an abort, so the raise is caught into an `err` here.
+(define
+  (wasm:have-wasm-pack?)
+  (let ((r (proc:run (list "wasm-pack" "--version"))))
+    (and (erro:ok? r) (= (status-of (erro:value r)) 0))))
+
+;; D5: install only when absent, then PROVE the install landed. A
+;; `nix profile install` whose effect is never re-read is the
+;; mutate-and-report-success-regardless shape the stdlib documents at length.
+(define
+  (wasm:ensure-wasm-pack)
+  (cond
+    ((wasm:have-wasm-pack?) (log-info "wasm-pack already on PATH — skipping install"))
+    (else
+      (log-info "==> installing wasm-pack (nix profile install, nixos-24.05)")
+      (exec-or-die (list "nix" "profile" "install" wasm:nixpkgs-pin))
+      (cond
+        ((wasm:have-wasm-pack?) (log-info "wasm-pack installed"))
+        (else
+          (log-error
+            (string-append
+              "`nix profile install "
+              wasm:nixpkgs-pin
+              "` exited 0 but wasm-pack is still not runnable. The profile bin "
+              "directory is probably not on PATH for this step — check that the "
+              "Nix install step ran before this one."))
+          (exit 1))))))
+
+;; The verbatim manifest path of the workspace member named NAME, or "".
+(define
+  (wasm:find-manifest pkgs name)
+  (cond
+    ((null? pkgs) "")
+    ((equal? (alist-get (car pkgs) "name" "") name) (alist-get (car pkgs) "manifest_path" ""))
+    (else (wasm:find-manifest (cdr pkgs) name))))
+
+;; D2: a package NAME resolved to the crate DIRECTORY wasm-pack actually
+;; takes. `--no-deps` keeps the document to workspace members only.
+(define
+  (wasm:crate-dir-of name)
+  (let ((r (exec-capture "cargo" "metadata" "--no-deps" "--format-version" "1")))
+    (cond
+      ((not (= (status-of r) 0))
+        (log-error
+          (string-append
+            "`cargo metadata` exited "
+            (string-format "{}" (status-of r))
+            " — cannot resolve package '"
+            name
+            "' to a crate directory. "
+            (string-trim (stderr-of r))))
+        (exit 1))
+      (else
+        (let*
+          ((doc (json-parse (stdout-of r)))
+            (pkgs (alist-get doc "packages" (list)))
+            (manifest (wasm:find-manifest pkgs name)))
+          (cond
+            ((equal? manifest "")
+              (log-error
+                (string-append
+                  "no workspace member is named '"
+                  name
+                  "'. `wasm-pack build` takes a crate PATH, not a --package "
+                  "flag, so the name has to resolve here or not at all."))
+              (exit 1))
+            ;; manifest_path always ends in /Cargo.toml; the directory is what
+            ;; wasm-pack wants.
+            (else (car (string-split manifest "/Cargo.toml")))))))))
+
+;; D4: emit only a path that exists. A build can exit 0 and still leave the
+;; expected directory absent (a redirected target dir, a crate that produced
+;; no artifact), and a downstream upload of a missing path is a green step
+;; that ships nothing.
+(define
+  (wasm:emit-verified path hint)
+  (cond
+    ((path-exists? path)
+      (log-info (string-append "artifact-path=" path))
+      (emit-output "artifact-path" path)
+      0)
+    (else
+      (log-error
+        (string-append
+          "the build reported success but '"
+          path
+          "' does not exist. Refusing to emit an artifact-path nothing "
+          "produced — a downstream upload or publish step would ship nothing "
+          "and report success. "
+          hint))
+      (exit 1))))
+
+(define (wasm:profile-dir) (if release? "release" "debug"))
+
+;; Same flag order the bash produced: build --target T [--release] [--package P].
+(define
+  (wasm:cargo-argv)
+  (let*
+    ((base (list "cargo" "build" "--target" target))
+      (with-profile (if release? (append base (list "--release")) base)))
+    (if (equal? package "") with-profile (append with-profile (list "--package" package)))))
+
+;; D2 + D3: every option ahead of the positional crate PATH, and exactly one
+;; explicit profile flag.
+(define
+  (wasm:wasm-pack-argv crate-dir)
+  (let
+    ((base
+       (list "wasm-pack" "build" (if release? "--release" "--dev") "--target" "web")))
+    (if (equal? crate-dir "") base (append base (list crate-dir)))))
+
+;; ── build paths ──────────────────────────────────────────────────────────
+
+(define
+  (wasm:build-cargo)
+  (cond
+    ;; An empty target reached `cargo build --target ''` before, which fails
+    ;; with a message about the empty string rather than about the input.
+    ((equal? target "")
+      (log-error
+        "`target` is empty — name a wasm target triple (wasm32-unknown-unknown, wasm32-wasip1, ...)")
+      (exit 1))
+    (else
+      ;; exec-or-die inherits stdio, so cargo's progress streams live rather
+      ;; than arriving in one block at the end, and a non-zero exit aborts
+      ;; with that exact code instead of being read past.
+      (exec-or-die (wasm:cargo-argv))
+      (wasm:emit-verified
+        (string-append "target/" target "/" (wasm:profile-dir) "/")
+        (string-append
+          "Most likely cause: CARGO_TARGET_DIR or a build.target-dir in "
+          ".cargo/config.toml redirects cargo's output, or '"
+          target
+          "' is not the triple this crate actually built for.")))))
+
+(define
+  (wasm:build-wasm-pack)
+  (wasm:ensure-wasm-pack)
+  (let*
+    ((crate-dir (if (equal? package "") "" (wasm:crate-dir-of package)))
+      ;; wasm-pack's --out-dir default ("pkg") is relative to the CRATE path,
+      ;; not to the cwd — so a resolved crate directory moves the artifact
+      ;; with it. The bash emitted a bare "pkg/" in both cases, which was
+      ;; wrong for every workspace member.
+      (out-dir (if (equal? crate-dir "") "pkg/" (string-append crate-dir "/pkg/"))))
+    (exec-or-die (wasm:wasm-pack-argv crate-dir))
+    (wasm:emit-verified
+      out-dir
+      (string-append
+        "wasm-pack writes to <crate>/pkg by default; if this repo sets "
+        "--out-dir elsewhere the action cannot see it."))))
+
+(define (wasm:main) (if use-wasm-pack? (wasm:build-wasm-pack) (wasm:build-cargo)))
+
+(if
+  (equal? (env-get "TLISP_TEST" "") "")
+  (wasm:main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))

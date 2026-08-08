@@ -24,7 +24,26 @@
 ;; entry out of the baseline (converting the action to consume a hardened
 ;; image) is the intended, tracked path to zero.
 
-(define paths (env-get "PATHS" "*/action.yml */run.tlisp"))
+;; ── THE DESHELLIFY BLIND SPOT, closed 2026-08-08 ──────────────────────────
+;; This glob was `*/action.yml */run.tlisp`. Converting an action to tlisp
+;; then MOVED ITS DEBT OUT OF THE SUBJECT SET: `image-scan`'s trivy fetch
+;; went to `image-scan/install.tlisp`, which the old glob does not reach, and
+;; the entry vanished from this report entirely — no new violation, but no
+;; tracked one either. The debt went INVISIBLE, not away, and the baseline
+;; line guarding it became a guard that can never fire again.
+;;
+;; That is a general property of the deshellify campaign, not a one-off: every
+;; conversion that adds a NEW `.tlisp` beside `run.tlisp` silently shrinks what
+;; this lint can see. `*/*.tlisp` covers the whole family.
+;;
+;; KNOWN REMAINING GAP, stated rather than implied: widening the glob does not
+;; make the PATTERNS tlisp-shaped. They are written for shell, where a command
+;; and its URL share a line; in tlisp the argv is split across expressions —
+;; `(exec-capture "curl" "-sfL" "-o" staged url)` with `url` bound elsewhere —
+;; so `curl[^\n]*install\.sh` still cannot match it. This change restores the
+;; FILES to the subject set; matching a split argv needs argv-aware rules.
+;; pending-runtime-install-lint: argv-shaped patterns for tlisp call sites
+(define paths (env-get "PATHS" "*/action.yml */*.tlisp"))
 
 (define fail-on (env-get "FAIL_ON_VIOLATION" "true"))
 

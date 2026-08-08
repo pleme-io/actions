@@ -1,0 +1,301 @@
+;; sui-dockerfile-node-cache/run.tlisp — the Phase 3b daemon-aware
+;; sui-dockerfile-wrapper entrypoint, as a typed script.
+;;
+;; Replaces the 25-line `run: |` bash body of this action's `run` step, plus
+;; the two steps that preceded it (`DeterminateSystems/nix-installer-action@main`
+;; and `nix profile install github:pleme-io/sui#sui-dockerfile-wrapper`).
+;; ★★ PRIME DIRECTIVE + NO SHELL, and ★★ HERMETIC SUPPLY CHAIN for the two
+;; deleted steps.
+;;
+;; ─────────────────────────────────────────────────────────────────────────
+;; SIX DEFECTS, each reproduced in isolation before this port was written and
+;; each named at the line that closes it. This is a bug fix that happens also
+;; to be a translation.
+;; ─────────────────────────────────────────────────────────────────────────
+;;
+;; D1  HERMETIC SUPPLY CHAIN — `nix profile install github:pleme-io/sui#…` at
+;;     job time, on a FLOATING ref (no rev, no tag), imperatively mutating the
+;;     runner's nix profile. The step's own comment stated the rule it broke:
+;;     "The fleet-wide rule is that no CI action installs a binary imperatively
+;;     at job time." `nix profile install` is also non-idempotent — a second
+;;     job on the same self-hosted runner hits a profile conflict.
+;;
+;; D2  UNPINNED THIRD-PARTY ACTION — `DeterminateSystems/nix-installer-action@main`
+;;     ran with the job's token before anything else. A moving branch on a
+;;     third-party repo is arbitrary code in the privileged position.
+;;
+;; D3  THE STEP DIED BEFORE WRITING ANY OUTPUT. `outcome="$(echo "$receipt" |
+;;     jq -r …)"` under the runner's default `bash -e`: when the wrapper cannot
+;;     spawn docker it prints a plain-text diagnostic and NO json, jq exits 5,
+;;     and `set -e` kills the step at that assignment — before the
+;;     `>> "$GITHUB_OUTPUT"` block and before `exit "$status"`.
+;;     REPRODUCED: step exit 5 (jq's status, not the wrapper's 1) and
+;;     $GITHUB_OUTPUT empty — all five declared outputs unset.
+;;
+;; D4  THE DOCUMENTED FALLBACKS COULD NEVER FIRE. jq on EMPTY stdin exits 0
+;;     printing nothing, so `.outcome.kind // "build-failed"`, `.docker_ran //
+;;     false` and `.total_wall_clock_ms // 0` yielded the EMPTY STRING, never
+;;     the documented default. REPRODUCED with a wrapper that exits 1 silently:
+;;       daemon-used=false / outcome= / cache-hit=false / docker-ran= / duration-ms=
+;;     Three of five outputs empty where the contract promises a value.
+;;
+;; D5  daemon-used DESCRIBED A DIFFERENT SOCKET THAN THE BINARY USED, and this
+;;     is the headline output of the action. `${SUI_NODE_CACHE_SOCKET_PATH:-…}`
+;;     treats EMPTY as UNSET and substitutes the well-known path; the binary's
+;;     `env::var(…).ok().as_deref()` treats empty as SET, so
+;;     `map_or_else(default_socket_path, PathBuf::from)` yields `PathBuf::from("")`,
+;;     which never exists. With this action's own default input (`""`, which GHA
+;;     materialises as an empty env var) the binary therefore NEVER routes
+;;     through the daemon, while the shell reported `daemon-used=true` whenever
+;;     the well-known socket happened to exist. The whole point of the action,
+;;     inverted, silently. REPRODUCED both halves: bash `${X:-/d}` with X="" =>
+;;     /d; `(path-exists? "")` => false.
+;;     Closed by resolving the path ONCE here and handing the binary that
+;;     resolved, always-non-empty value, so both halves decide on one path.
+;;     The probe also switches `-S` (socket) to plain existence, because
+;;     existence is the predicate the BINARY branches on (`Path::exists`) and
+;;     this output claims to describe what the binary did.
+;;
+;; D6  THE INPUT'S OWN EXAMPLE WAS UNPARSEABLE. `cache-backend-config` was
+;;     documented as `{"kind":"s3", …}` / `{"kind":"local", …}`, but
+;;     `sui_castore::BackendConfig` is `#[serde(tag = "type", rename_all =
+;;     "lowercase")]`. REPRODUCED against the real binary:
+;;       {"kind":"local","path":"…"} => `invalid SUI_CACHE_BACKEND_CONFIG:
+;;                                       missing field \`type\`` , exit 1
+;;       {"type":"local","path":"…"} => a CacheMiss receipt, exit 0
+;;     A caller copying the documented example got a hard failure with (per D3)
+;;     no outputs at all. The description is corrected in action.yml and the
+;;     shape is refused here with a message that names the fix.
+;;
+;; ─────────────────────────────────────────────────────────────────────────
+;; NOT CHANGED, deliberately
+;; ─────────────────────────────────────────────────────────────────────────
+;; `outcome` still carries the receipt's RAW `outcome.kind` — `CacheHit` /
+;; `CacheMiss` / `BuildFailed` — because that is what shipped and what
+;; `cache-hit` compares against. The kebab-case `cache-hit | cache-miss |
+;; build-failed` the output described was unreachable for every well-formed
+;; receipt; `build-failed` survives as the no-receipt fallback only (exactly
+;; where jq's `//` promised it), and action.yml now names the real value set.
+;; No consumer exists anywhere in the fleet to break either way (grepped
+;; 2026-08-08: zero references to this action outside its own directory).
+;;
+;; No `actions/checkout@v4` in the loader, unlike branch-protect-sync: this
+;; action reads the CALLER's build context, and a checkout would reset the
+;; workspace the Dockerfile and its context live in.
+
+;; ── constants ────────────────────────────────────────────────────────────
+
+;; `sui_dockerfile_node_cache_daemon::default_socket_path()`, and the Helm
+;; chart's mount contract (asserted by that crate's own unit test).
+(define default-socket-path "/var/run/sui-dockerfile-cache/node-cache.sock")
+
+;; The binary name `sui-dockerfile-wrapper` installs: the workspace member's
+;; default_bin is `gha-entrypoint`, while an explicit `toolName` in the sui
+;; flake keeps the PACKAGE attribute crate-named.
+(define entrypoint-bin "gha-entrypoint")
+
+;; The jq `// "build-failed"` fallback, now reachable (D3/D4).
+(define fallback-outcome "build-failed")
+
+;; ── PATH resolution without a shell ──────────────────────────────────────
+;; `command -v <x>` needs a shell; splitting $PATH and asking the filesystem
+;; does not, and answers the same question.
+
+(define (path-dirs) (string-split (env-get "PATH" "") ":"))
+
+(define (find-in-dirs dirs name)
+  (cond
+    ((null? dirs) "")
+    ((path-exists? (string-append (car dirs) "/" name)) (string-append (car dirs) "/" name))
+    (else (find-in-dirs (cdr dirs) name))))
+
+(define (on-path? name) (not (equal? "" (find-in-dirs (path-dirs) name))))
+
+;; ── binary resolution (D1, D2) ───────────────────────────────────────────
+;; Preferred: a `gha-entrypoint` already baked into the runner image — the
+;; hermetic path, nothing fetched, nothing installed.
+;; Degradation: `nix run` at a ref the CALLER can pin (`sui-ref`), which is
+;; still a job-time fetch but is flake-resolved and leaves the runner's
+;; profile untouched. Same shape bigorna already uses for its sui binary.
+;; Absent both: a loud typed refusal, never a silent install.
+;;
+;; `env` carries the one variable this action must resolve rather than
+;; forward verbatim (D5); tatara-lisp has no builtin that mutates the child
+;; environment, and `env(1)` is POSIX, not a shell.
+(define (entrypoint-argv socket sui-ref)
+  (let ((prefix (list "env" (string-append "SUI_NODE_CACHE_SOCKET_PATH=" socket))))
+    (cond
+      ((not (on-path? "env")) (list))
+      ((on-path? entrypoint-bin) (append prefix (list entrypoint-bin)))
+      ((on-path? "nix")
+        (append
+          prefix
+          (list
+            "nix"
+            "run"
+            (string-append "github:pleme-io/sui/" sui-ref "#sui-dockerfile-wrapper"))))
+      (else (list)))))
+
+;; ── receipt readers ──────────────────────────────────────────────────────
+;; Every reader is total: a receipt that did not parse, or parsed to an
+;; unexpected shape, yields the DOCUMENTED default rather than an empty
+;; string or an abort (D3, D4).
+
+(define (receipt-outcome-kind doc)
+  (let ((o (alist-get doc "outcome" (list))))
+    (cond
+      ((pair? o) (string-format "{}" (alist-get o "kind" fallback-outcome)))
+      (else fallback-outcome))))
+
+(define (bool->flag v) (cond (v "true") (else "false")))
+
+;; ── output emission ──────────────────────────────────────────────────────
+;; `emit-output` keeps key and value apart, so a value carrying a newline is
+;; refused instead of writing attacker-chosen extra outputs. The bash's
+;; `echo "outcome=$outcome"` had nowhere to put that check.
+(define (emit-all daemon-used outcome cache-hit docker-ran duration-ms)
+  (emit-output "daemon-used" daemon-used)
+  (emit-output "outcome" outcome)
+  (emit-output "cache-hit" cache-hit)
+  (emit-output "docker-ran" docker-ran)
+  (emit-output "duration-ms" duration-ms))
+
+;; Every refusal path still writes the full contract before failing, so a
+;; caller with continue-on-error reads five honest values. The bash wrote
+;; nothing at all on any of them (D3).
+(define (refuse daemon-used message)
+  (log-error message)
+  (emit-all (bool->flag daemon-used) fallback-outcome "false" "false" "0")
+  1)
+
+;; ── required inputs ──────────────────────────────────────────────────────
+;; The binary refuses these itself, on stderr, with no receipt — which under
+;; the old bash was D3's silent-death path. Refusing here keeps the outputs.
+(define (missing-required)
+  (cond
+    ((equal? (string-trim (env-get "SUI_DOCKERFILE_PATH" "")) "") "dockerfile-path")
+    ((equal? (string-trim (env-get "SUI_IMAGE_TAG" "")) "") "image-tag")
+    ((equal? (string-trim (env-get "SUI_CACHE_BACKEND_CONFIG" "")) "") "cache-backend-config")
+    (else "")))
+
+;; D6: the tagged-union discriminant is `type`, and it always was. `kind`
+;; belongs to WrapperOutcome (the OUTPUT side), which is where the input's
+;; example borrowed it from.
+(define (backend-config-mistagged? raw)
+  (let ((parsed (erro:attempt (lambda () (json-parse raw)))))
+    (cond
+      ((erro:err? parsed) #f)
+      (else
+        (let ((doc (erro:value parsed)))
+          (and
+            (pair? doc)
+            (equal? (alist-get doc "type" "ABSENT") "ABSENT")
+            (not (equal? (alist-get doc "kind" "ABSENT") "ABSENT"))))))))
+
+;; ── main ─────────────────────────────────────────────────────────────────
+
+(define (main)
+  (let*
+    ((socket-in (string-trim (env-get "SUI_NODE_CACHE_SOCKET_PATH" "")))
+      ;; D5 closed HERE: empty means "the well-known path", once, and the
+      ;; resolved value is what the binary is handed — so the probe below and
+      ;; the binary's own `Path::exists` branch on the same string.
+      (socket (cond ((equal? socket-in "") default-socket-path) (else socket-in)))
+      (sui-ref-in (string-trim (env-get "SUI_REF" "main")))
+      (sui-ref (cond ((equal? sui-ref-in "") "main") (else sui-ref-in)))
+      (daemon-used (path-exists? socket))
+      (missing (missing-required))
+      (backend-raw (env-get "SUI_CACHE_BACKEND_CONFIG" ""))
+      (argv (entrypoint-argv socket sui-ref)))
+
+    (log-info
+      (string-append
+        "sui-dockerfile-node-cache: node-local socket " socket " — "
+        (cond (daemon-used "present, routing through DaemonAwareCacheClient")
+          (else "absent, direct-to-remote-tier (Phase 2 behaviour, unchanged)"))))
+
+    (cond
+      ((not (equal? missing ""))
+        (refuse daemon-used
+          (string-append
+            "sui-dockerfile-node-cache: required input '" missing "' is empty. "
+            "The wrapper refuses it on stderr with no receipt, which under the "
+            "previous shell body killed the step before a single output was "
+            "written.")))
+
+      ((backend-config-mistagged? backend-raw)
+        (refuse daemon-used
+          (string-append
+            "sui-dockerfile-node-cache: cache-backend-config carries a `kind` "
+            "discriminant and no `type`. sui_castore::BackendConfig is "
+            "#[serde(tag = \"type\", rename_all = \"lowercase\")] — rename the "
+            "key: {\"type\":\"local\",\"path\":…} / {\"type\":\"s3\",\"bucket\":…}. "
+            "`kind` is the WrapperOutcome (output-side) discriminant; this "
+            "action's own input description used to document it here, and the "
+            "binary answers `missing field \\`type\\`` and exits 1.")))
+
+      ((null? argv)
+        (refuse daemon-used
+          (string-append
+            "sui-dockerfile-node-cache: no `" entrypoint-bin "` on PATH and no "
+            "`nix` to run it with. Bake sui-dockerfile-wrapper into the runner "
+            "image (the hermetic path this action now requires) or supply nix. "
+            "Refusing rather than reinstating the job-time "
+            "`nix profile install` this port deleted.")))
+
+      (else
+        (let ((r (proc:run argv)))
+          (cond
+            ((erro:err? r)
+              (refuse daemon-used
+                (string-append
+                  "sui-dockerfile-node-cache: could not start the wrapper — "
+                  (erro:message (erro:value r)))))
+            (else
+              (let* ((res (erro:value r))
+                      (status (status-of res))
+                      (receipt (stdout-of res))
+                      (parsed (erro:attempt (lambda () (json-parse receipt)))))
+
+                ;; `echo "$receipt"`, preserved. stderr was streamed live by
+                ;; the shell and is captured here, so re-emit it or the
+                ;; wrapper's own diagnostics vanish.
+                (cond ((not (equal? (string-trim receipt) "")) (print-line receipt)) (else #t))
+                (cond
+                  ((not (equal? (string-trim (stderr-of res)) ""))
+                    (eprint-line (string-trim (stderr-of res))))
+                  (else #t))
+
+                (cond
+                  ;; D3 + D4: an unparseable or absent receipt is now the
+                  ;; documented fallback tuple and the WRAPPER's exit status,
+                  ;; not a jq parse error and five unset outputs.
+                  ((erro:err? parsed)
+                    (log-error
+                      (string-append
+                        "sui-dockerfile-node-cache: the wrapper produced no "
+                        "parseable JSON receipt (exit "
+                        (string-format "{}" status)
+                        "). Reporting outcome=" fallback-outcome
+                        " with the documented defaults."))
+                    (emit-all (bool->flag daemon-used) fallback-outcome "false" "false" "0")
+                    (cond ((= status 0) 1) (else status)))
+
+                  (else
+                    (let* ((doc (erro:value parsed))
+                            (outcome (receipt-outcome-kind doc))
+                            (docker-ran (string-format "{}" (alist-get doc "docker_ran" #f)))
+                            (duration-ms (string-format "{}" (alist-get doc "total_wall_clock_ms" 0))))
+                      (emit-all
+                        (bool->flag daemon-used)
+                        outcome
+                        (bool->flag (equal? outcome "CacheHit"))
+                        docker-ran
+                        duration-ms)
+                      status)))))))))))
+
+;; ── entrypoint / test gate ───────────────────────────────────────────────
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — sui-dockerfile-node-cache helpers loaded; main skipped"))
+  (else (exit (main))))

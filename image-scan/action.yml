@@ -4,6 +4,35 @@ branding:
   icon: 'eye'
   color: 'red'
 
+# ── "Install Trivy" IS GONE (2026-08-08) ────────────────────────────────
+#
+# The 79-line `run: |` body action-shell-lint's baseline named as "the
+# remaining work, not a formality" is now install.tlisp. Six defects came
+# out of that conversion, each named and closed at the line that closes it —
+# read install.tlisp's header.
+#
+# What is left of bash here is the loader (exempt, and now ONE loop instead
+# of two copied blocks) plus the two-line artifact-name sanitizer below,
+# whose own two defects — a live script-injection site and a trailing dash
+# on every artifact ever uploaded — are closed in place.
+#
+# ★ ONE THING THIS MOVE DID NOT FIX, and it must not read as fixed:
+# runtime-install-lint tracks `./image-scan/action.yml` for fetching a tool
+# at job time (★★ HERMETIC SUPPLY CHAIN). The fetch still happens — it just
+# lives in install.tlisp now. That lint scans only `action.yml` and
+# `run.tlisp`, so its entry for this action needs re-pointing, and its
+# argv-blind patterns need extending: in shell the URL and the `curl` sit on
+# one line and match; in tlisp they are separate expressions and match
+# nothing. The deshellify campaign therefore erases that lint's subject set
+# wherever it lands. Baselines are not this action's to edit — flagged here
+# so the owner of runtime-install-lint/baseline.txt can act on it.
+#
+# ★ NO `actions/checkout` HERE, deliberately. The repo's usual loader shape
+# opens with one; this action must not. A checkout inside a composite step
+# resets the CALLER's workspace, which is where `local-archive` (a locally
+# built, not-yet-pushed OCI tarball), `ignore-file` and `vex` all live. It
+# is not needed either: every script is read via `github.action_path`.
+
 inputs:
   image-ref:
     description: "Image to scan (e.g. ghcr.io/pleme-io/foo:latest). When local-archive is set, this is used only as a human-readable label in logs/outputs -- nothing is pulled from a registry."
@@ -51,172 +80,154 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Install Trivy
-      shell: bash
-      run: |
-        # PINNED TWICE, deliberately: the SCRIPT at a tag, and the VERSION it
-        # installs. Both were unpinned -- install.sh came from `main` and, per
-        # its own usage text, "if tag is missing, then the latest will be
-        # used". A scanner resolved that way makes its verdict irreproducible:
-        # "0 CVE" asserted by a trivy nobody can name, from a script that can
-        # change between two runs of the same commit.
-        # Verified 2026-08-01: the tagged script URL is HTTP 200, and v0.72.0
-        # is the current release (it is also the version hardened-images'
-        # cve-gate.nix names as current, so this closes a real staleness gap
-        # against the nixpkgs-pinned 0.52.0 it warns about).
-        #
-        # ── SCRIPT HASH PINNED TOO (added 2026-08-02) ─────────────────────
-        # CORRECTION to an earlier note that called the fetched BINARY
-        # unverified: it is not. install.sh verifies the release tarball's
-        # sha256 against trivy's published checksums file (its own line 61,
-        # `hash_sha256_verify`) -- 16 verification call sites in the script.
-        # The binary was never the gap.
-        #
-        # THE SCRIPT was. `curl | sudo sh` executed it as ROOT with nothing
-        # checking its bytes, and the URL is pinned to a TAG -- which a
-        # publisher can move. So the one genuinely unverified link was the
-        # thing running with the most privilege. install.sh even documents
-        # the hazard itself (line 53: "if a curl|bash cuts off the end of the
-        # script due to ..."), which is a truncation this pipe cannot detect
-        # either: a short read yields a partial script that may still exit 0.
-        #
-        # Now: fetch to disk, verify against a pinned digest, THEN execute.
-        # Measured 2026-08-02 at the pinned tag: 9945 bytes,
-        # sha256 e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
-        # If upstream moves the tag, this fails LOUDLY naming both digests
-        # instead of silently running different code as root.
-        TRIVY_INSTALL_SHA256="e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a"
-        curl -sfL -o /tmp/trivy-install.sh \
-          https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh
-        got="$(sha256sum /tmp/trivy-install.sh | awk '{print $1}')"
-        if [ "$got" != "$TRIVY_INSTALL_SHA256" ]; then
-          echo "::error::trivy install.sh checksum MISMATCH -- refusing to execute as root."
-          echo "::error::  expected: $TRIVY_INSTALL_SHA256"
-          echo "::error::  got:      $got"
-          echo "::error::  The pinned tag may have been moved, or the fetch was truncated."
-          exit 1
-        fi
-        echo "trivy install.sh verified ($got)"
-        # NOTE the argv change: piping used `sh -s -- <args>` because `-s` tells
-        # sh to read the SCRIPT from stdin. Running a FILE, `-s --` would be
-        # passed to the script as arguments instead. Verified by running both
-        # forms against the real installer: `-s -- -b DIR v0.72.0` exits 2 and
-        # installs nothing; `-b DIR v0.72.0` exits 0 and installs the binary.
-        sudo sh /tmp/trivy-install.sh -b /usr/local/bin v0.72.0
-
-    # ── SENSITIVITY CANARY (added 2026-08-02) ──────────────────────────────
-    # This action already reports scanned-targets, the DENOMINATOR: it proves
-    # trivy ANALYSED something. It cannot prove trivy can still FIND anything.
-    # A scan can present real targets to a real database and match nothing --
-    # wrong package-type handling, an ecosystem the DB does not index, a
-    # matcher regression -- and every existing diagnostic stays green. Checking
-    # that a smoke detector has power is not the same as holding a match under
-    # it, and this is the action every hardened image's trivy gate runs through.
-    #
-    # So: before the real scan, run a hand-written SPDX SBOM naming
-    # log4j-core 2.14.1 through the SAME trivy binary and SAME DB just
-    # installed above, and fail the step unless it comes back non-zero.
-    #
-    # An SBOM, not a known-vulnerable image: an image canary would pull a
-    # deliberately-vulnerable third-party artifact into every release path to
-    # test a scanner -- a real exposure and a HERMETIC SUPPLY CHAIN violation.
-    # This is ~25 lines of local heredoc: no network subject, nothing to pin.
-    #
-    # Counts ALL severities, deliberately unfiltered by fail-on-severity. The
-    # canary asks "can this scanner find anything at all", which is a different
-    # question from "does this image breach our threshold". Filtering would make
-    # the canary vacuous for any caller whose threshold excludes the canary's
-    # severities -- a check that disables itself via unrelated configuration.
-    #
-    # Asserts count > 0, NEVER a specific CVE id. Measured 2026-08-01: grype
-    # reports this package's Log4Shell as GHSA-jfh8-c2jp-5v3q, not
-    # CVE-2021-44228, because maven data is GHSA-namespaced. An id-specific
-    # assertion goes red on a CORRECT scanner whenever a namespace differs --
-    # a false red on a security gate is what trains people to disable it.
-    - name: Load stdlib + canary.tlisp
-      # ── The sensitivity canary, converted out of shell (2026-08-01) ────
+    - name: Load stdlib + every tlisp unit this action runs
+      # ── ONE loader for four scripts, not four loaders ──────────────────
+      # This was two near-identical 14-line blocks and a third was about to
+      # be copied for install.tlisp. Duplicating the loader in the one place
+      # the shell lint exempts is how an exempt block grows into a program;
+      # the loop is the same act the rest of this action just performed on
+      # its own bodies.
       #
-      # This was ~81 lines of `run: |` — the NO-SHELL violation
-      # action-shell-lint tracked. The logic now lives in canary.tlisp, its
-      # SPDX fixture is a committed reviewable file
-      # (trivy-canary.spdx.json) instead of a heredoc, and the exit-code
-      # semantics that decide whether a "no findings" verdict may be
-      # believed are a PURE FUNCTION with unit tests (canary.test.tlisp)
-      # rather than an untestable if/elif chain. Read canary.tlisp's header
-      # for the measured trivy exit-code table and the two decisions
-      # (no jq, default severity) carried over from the shell version.
+      # WRITES FILES, PASSES PATHS (migrated 2026-08-02, kept). Emitting the
+      # concatenated source as a step OUTPUT made tatara-script carry it as
+      # the env var TATARA_SCRIPT_SRC, and GitHub echoes every env value into
+      # the step's log group — so each scan dumped ~1700 lines of tlisp into
+      # the job log before running. That is not cosmetic: it makes every grep
+      # for a message find the source line that WOULD print it rather than a
+      # line that DID, and it produced four wrong diagnoses in this stack,
+      # twice on the same fix, where `grep "0 store paths pushed"` matched an
+      # echoed `(cond ((= pushed 0) …` branch and a WORKING change was judged
+      # ineffective.
       #
-      # NOTE ON COMMENT PLACEMENT: this block sits INSIDE the step, after
-      # `- name:`, deliberately. action-shell-lint counts a `run: |` body by
-      # scanning until the next `    - ` line, so a comment block written
-      # BETWEEN two steps at 4-space indent is attributed to the PREVIOUS
-      # step's body — the first version of this change pushed "Install
-      # Trivy" from 79 to 91 reported lines without touching it.
+      # The stdlib is read IN-CHECKOUT, at the SAME ref as each unit below —
+      # never fetched.
       #
-      # Same file-based loader shape as the scan step below, for the same
-      # measured reason: passing a PATH keeps ~1700 lines of tlisp source
-      # out of the job log, where it otherwise makes every grep match the
-      # line that WOULD print a message rather than one that DID.
-      id: canary-src
-      shell: bash
-      run: |
-        set -euo pipefail
-        f="$RUNNER_TEMP/image-scan-canary-$GITHUB_RUN_ID-$RANDOM.tlisp"
-        {
-          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
-          echo
-          cat "${{ github.action_path }}/canary.tlisp"
-        } > "$f"
-        if [ ! -s "$f" ]; then
-          echo "::error::image-scan: assembled canary tlisp is empty" >&2
-          exit 1
-        fi
-        echo "path=$f" >> "$GITHUB_OUTPUT"
-
-    - name: Trivy sensitivity canary (prove the scanner can still find things)
-      uses: pleme-io/actions/tatara-script@main
-      with:
-        script-file: ${{ steps.canary-src.outputs.path }}
-      env:
-        CANARY_FIXTURE: ${{ github.action_path }}/trivy-canary.spdx.json
-
-    # WRITES A FILE, PASSES A PATH (migrated 2026-08-02). This previously
-    # emitted the concatenated stdlib+script as a step OUTPUT, which
-    # tatara-script then carried as the env var TATARA_SCRIPT_SRC -- and GitHub
-    # echoes every env value into the step's log group, so each scan dumped
-    # ~1700 lines of tlisp source into the job log before running.
-    #
-    # THAT IS NOT A COSMETIC PROBLEM. It makes every grep for a message find
-    # the source line that WOULD print it rather than a line that DID. This
-    # action's logs are the ones I have had to read most in this campaign, and
-    # the trap produced four wrong diagnoses -- twice on the same fix, where
-    # `grep "0 store paths pushed"` matched an echoed `(cond ((= pushed 0) ...`
-    # branch and a WORKING change was judged ineffective.
-    #
-    # tatara-script's `script-file` input takes a path instead, and blanks
-    # TATARA_SCRIPT_SRC when it is set, so the env dump carries one short
-    # string. Same bytes executed; the log stops containing its own program.
-    - name: Load stdlib + run.tlisp
+      # The emptiness check is the point of the `-s` test: a script that
+      # parses to nothing exits 0, and a scan that ran no checks would look
+      # exactly like a scan that found none.
       id: src
       shell: bash
       run: |
         set -euo pipefail
-        f="$RUNNER_TEMP/image-scan-$GITHUB_RUN_ID-$RANDOM.tlisp"
-        {
-          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
-          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
-          echo
-          cat "${{ github.action_path }}/run.tlisp"
-        } > "$f"
-        # Refuse an empty script rather than handing tatara-script a file that
-        # parses to nothing and exits 0 -- a scan that ran no checks would look
-        # exactly like a scan that found none.
-        if [ ! -s "$f" ]; then
-          echo "::error::image-scan: assembled tlisp is empty at $f" >&2
-          exit 1
-        fi
-        echo "path=$f" >> "$GITHUB_OUTPUT"
-        echo "assembled $(wc -l < "$f") lines -> $f"
+        for unit in install canary run; do
+          f="$RUNNER_TEMP/image-scan-$unit-$GITHUB_RUN_ID-$RANDOM.tlisp"
+          {
+            cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+            echo
+            cat "${{ github.action_path }}/$unit.tlisp"
+          } > "$f"
+          if [ ! -s "$f" ]; then
+            echo "::error::image-scan: assembled $unit tlisp is empty at $f" >&2
+            exit 1
+          fi
+          echo "$unit-path=$f" >> "$GITHUB_OUTPUT"
+          echo "assembled $unit: $(wc -l < "$f") lines -> $f"
+        done
+
+    - name: Sanitize the image ref into a legal artifact name
+      # Artifact names may only contain alphanumerics, `_`, `-`, `.` — strip
+      # everything else from the image ref (which carries `:` and `/`) so the
+      # upload step below always has a legal, still-human-readable name.
+      #
+      # ── TWO DEFECTS FIXED IN PLACE, both live before today ──────────────
+      #
+      # (1) SCRIPT INJECTION. This read `raw="${{ inputs.image-ref }}"` — the
+      #     runner interpolated a caller-controlled value INTO the bash source
+      #     before bash ever saw it, so a ref containing a quote and a
+      #     semicolon executed as the runner. An image ref is routinely built
+      #     from a matrix entry, a tag or an event payload, so "our callers
+      #     pass literals" was never a property of this primitive. Now it
+      #     arrives via `env:` and is read as DATA: there is no source text
+      #     for it to become part of.
+      #
+      # (2) A TRAILING `-` ON EVERY NAME. `echo` appended a newline, the
+      #     newline is outside the allowed class, and `tr -c` mapped it to
+      #     `-` — so every artifact this action ever uploaded was named
+      #     `…-foo-latest--<attempt>`, with a doubled dash nobody could
+      #     place. Measured: `echo "ghcr.io/pleme-io/foo:latest" | tr -c …`
+      #     -> `ghcr.io-pleme-io-foo-latest-`. `printf '%s'` emits no
+      #     newline, so there is nothing left to map.
+      #
+      # `tr` also maps an embedded newline to `-`, so a ref cannot smuggle a
+      # SECOND key=value line into $GITHUB_OUTPUT either.
+      #
+      # ── WHY THIS IS STILL BASH, and it is not "it is short" ─────────────
+      #
+      # It was converted to a tlisp step (sanitize.tlisp, 5 green unit tests)
+      # and REVERTED, because that wiring is silently broken: a `uses:` step's
+      # outputs resolve only against the called action's DECLARED `outputs:`,
+      # and tatara-script declares 319 of them — `severity`, `image-ref`,
+      # `artifact-path` — but no `name`. `steps.sanitize.outputs.name` would
+      # have come back EMPTY on every run and named every artifact
+      # `trivy-report--1`. That is the same silently-empty-forward class this
+      # file already records against pinning tatara-script at @v1.
+      # Two lines of glue that work beat a typed step that returns "".
+      # Re-convert the day tatara-script declares an `artifact-name` output.
+      if: always()
+      id: sanitize
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+      run: |
+        clean=$(printf '%s' "${IMAGE_REF:-unknown-image}" | tr -c 'a-zA-Z0-9._-' '-')
+        printf 'name=%s\n' "$clean" >> "$GITHUB_OUTPUT"
+
+    - name: Install Trivy (pinned script + pinned version, then verified)
+      # PINNED TWICE, deliberately: the installer SCRIPT (tag + sha256) and
+      # the scanner VERSION it installs. That dual pin is the only reason a
+      # scan verdict from this action is reproducible at all — "0 CVE"
+      # asserted by a trivy nobody can name is not a verdict.
+      #
+      # install.tlisp adds the assertion the shell body never made: that the
+      # trivy the scan step will actually resolve IS the pinned one.
+      # install.sh resolves the tag over the network and installs whatever
+      # that yields, so "we passed v0.72.0" and "v0.72.0 is on PATH" were two
+      # different facts and only the first was established. Read its header.
+      #
+      # COMMENT PLACEMENT IS LOAD-BEARING: this block sits INSIDE the step,
+      # after `- name:`. action-shell-lint counts a `run: |` body until the
+      # next `    - ` line, so a comment written BETWEEN two steps at
+      # 4-space indent is charged to the PREVIOUS step's body — written
+      # above the step, these 11 lines pushed the 2-line sanitizer to a
+      # reported 13 of a 15 threshold. Measured, not theorised.
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.install-path }}
+
+    # ── SENSITIVITY CANARY ─────────────────────────────────────────────────
+    # `scanned-targets` reports the DENOMINATOR: it proves trivy ANALYSED
+    # something. It cannot prove trivy can still FIND anything. A scan can
+    # present real targets to a real database and match nothing — wrong
+    # package-type handling, an ecosystem the DB does not index, a matcher
+    # regression — and every existing diagnostic stays green. Checking that a
+    # smoke detector has power is not the same as holding a match under it,
+    # and this is the action every hardened image's trivy gate runs through.
+    #
+    # So: before the real scan, run a hand-written SPDX SBOM naming
+    # log4j-core 2.14.1 through the SAME trivy binary and SAME DB installed
+    # above, and fail unless it comes back non-zero.
+    #
+    # An SBOM, not a known-vulnerable image: an image canary would pull a
+    # deliberately-vulnerable third-party artifact into every release path to
+    # test a scanner — a real exposure and a HERMETIC SUPPLY CHAIN violation.
+    #
+    # Counts ALL severities, deliberately unfiltered by fail-on-severity. The
+    # canary asks "can this scanner find anything at all", a different
+    # question from "does this image breach our threshold"; filtering would
+    # make it vacuous for any caller whose threshold excludes the canary's
+    # severities — a check that disables itself via unrelated configuration.
+    #
+    # Asserts count > 0, NEVER a specific CVE id. Measured 2026-08-01: grype
+    # reports this package's Log4Shell as GHSA-jfh8-c2jp-5v3q, not
+    # CVE-2021-44228, because maven data is GHSA-namespaced. An id-specific
+    # assertion goes red on a CORRECT scanner whenever a namespace differs —
+    # a false red on a security gate is what trains people to disable it.
+    - name: Trivy sensitivity canary (prove the scanner can still find things)
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.canary-path }}
+      env:
+        CANARY_FIXTURE: ${{ github.action_path }}/trivy-canary.spdx.json
 
       # @main, not @v1 -- this action's own `severity`/`vuln-count`
       # output forwards don't exist on tatara-script/action.yml at the v1
@@ -245,7 +256,7 @@ runs:
     - id: scan
       uses: pleme-io/actions/tatara-script@main
       with:
-        script-file: ${{ steps.src.outputs.path }}
+        script-file: ${{ steps.src.outputs.run-path }}
       env:
         IMAGE_REF: ${{ inputs.image-ref }}
         LOCAL_ARCHIVE: ${{ inputs.local-archive }}
@@ -256,26 +267,21 @@ runs:
         TRIVY_USERNAME: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.actor || '' }}
         TRIVY_PASSWORD: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.token || '' }}
 
-    # Artifact names may only contain alphanumerics, `_`, `-`, `.` — strip
-    # everything else from image-ref (which carries `:`, `/`) so the upload
-    # step below always has a legal, still-human-readable name.
-    - id: sanitize
-      if: always()
-      shell: bash
-      run: |
-        raw="${{ inputs.image-ref }}"
-        clean=$(echo "$raw" | tr -c 'a-zA-Z0-9._-' '-')
-        echo "name=$clean" >> "$GITHUB_OUTPUT"
-
-    # Preserves the full trivy JSON regardless of the gate's verdict — the
-    # scan step above only surfaces a severity + a coarse count; triaging
-    # an actual finding (which package, which CVE) needs the real report.
-    # if: always() so a hard-failed gate (the exact case someone needs to
-    # triage) still uploads. Unique per matrix cell via image-ref (sanitized
-    # for artifact-name legality) + run attempt, since this action runs
-    # inside a matrix across services/archs and artifact names must be
-    # unique within one workflow run.
     - name: Upload trivy report
+      # Preserves the full trivy JSON regardless of the gate's verdict — the
+      # scan step above only surfaces a severity + a coarse count; triaging
+      # an actual finding (which package, which CVE) needs the real report.
+      # if: always() so a hard-failed gate (the exact case someone needs to
+      # triage) still uploads. Unique per matrix cell via image-ref (sanitized
+      # for artifact-name legality) + run attempt, since this action runs
+      # inside a matrix across services/archs and artifact names must be
+      # unique within one workflow run.
+      #
+      # NOTE ON COMMENT PLACEMENT: this block sits INSIDE the step, after
+      # `- name:`, deliberately. action-shell-lint counts a `run: |` body by
+      # scanning until the next `    - ` line, so a comment block written
+      # BETWEEN two steps at 4-space indent is attributed to the PREVIOUS
+      # step's body.
       if: always()
       uses: actions/upload-artifact@v4
       with:

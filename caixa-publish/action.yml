@@ -17,31 +17,78 @@ inputs:
 
 outputs:
   shipped:
-    value: ${{ steps.pub.outputs.shipped }}
+    value: ${{ steps.run.outputs.shipped }}
 
 runs:
   using: composite
   steps:
+    # DELIBERATELY NO `actions/checkout@v4` HERE, unlike the loader template.
+    # This action consumes a directory a PRIOR step in the same job produced
+    # (caixa-render's output), and actions/checkout defaults to clean: true,
+    # which runs `git clean -ffdx` and deletes exactly those untracked
+    # rendered files. The stdlib below does not need it: the runner already
+    # materializes this whole repo at ${{ github.action_path }}/.., so
+    # ../_tlisp-stdlib is present without a checkout.
     - uses: azure/setup-helm@v4
-    - id: pub
+
+    # ONE line of genuine glue, and it stays bash DELIBERATELY — this is the
+    # org rule's own 1-3-line allowance, spent on a security property the
+    # tlisp port cannot currently hold.
+    #
+    # The bash this action replaced piped the token: `echo "$GHCR_TOKEN" |
+    # helm registry login --password-stdin`. The first cut of the port moved
+    # it to `--password <token>` as an argv element, justified in-comment as
+    # "the proven shape in this repo (registry-login/run.tlisp)" and because
+    # "Actions masks registered secret values in logs". That justification is
+    # wrong in a specific way: Actions masks LOGS, not the PROCESS TABLE. An
+    # argv token is world-readable via `ps` / /proc/<pid>/cmdline for the life
+    # of the call, on a runner that may be shared. That is strictly WORSE than
+    # the shell it replaced, so the conversion would have been a security
+    # regression sold as a cleanup.
+    #
+    # `exec-capture` / `proc:run` take argv only — the stdlib has no stdin
+    # channel, so this is not fixable inside the port. The real fix is a
+    # stdin-bearing primitive in tatara-lisp; until it exists, login stays
+    # here where `--password-stdin` works, and the rest of the action is tlisp.
+    # `registry-login/run.tlisp:62-64` carries the SAME defect and is NOT
+    # precedent — it is the second instance of one gap.
+    # pending-stdlib-stdin: helm registry login · docker login · registry-login
+    - id: login
       shell: bash
       env:
-        GHCR_TOKEN: ${{ env.GHCR_TOKEN || env.GITHUB_TOKEN }}
+        GHCR_TOKEN: ${{ env.GHCR_TOKEN || env.GITHUB_TOKEN || github.token }}
+        REGISTRY_HOST: ${{ inputs.registry }}
+        REGISTRY_USER: ${{ github.actor }}
+      run: printf '%s' "$GHCR_TOKEN" | helm registry login "$REGISTRY_HOST" --username "$REGISTRY_USER" --password-stdin
+
+    - id: src
+      shell: bash
       run: |
-        chart_dir="${{ inputs.rendered-dir }}/${{ inputs.chart-subdir }}"
-        if [ ! -d "$chart_dir" ]; then
-          echo "::error::chart dir not found: $chart_dir"
-          echo "shipped=false" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
-        cd "$chart_dir"
-        echo "$GHCR_TOKEN" | helm registry login ghcr.io --username "${GITHUB_ACTOR:-bot}" --password-stdin
-        name=$(yq '.name' Chart.yaml)
-        version=$(yq '.version' Chart.yaml)
-        helm package .
-        if helm push "${name}-${version}.tgz" "oci://${{ inputs.registry }}"; then
-          echo "shipped=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "shipped=false" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        # Inputs cross as ENV, never interpolated into a script body — the
+        # bash this replaced pasted all three into its own source text.
+        RENDERED_DIR: ${{ inputs.rendered-dir }}
+        CHART_SUBDIR: ${{ inputs.chart-subdir }}
+        REGISTRY: ${{ inputs.registry }}
+        # `github.token` is the added last resort. `env.GITHUB_TOKEN` is NOT
+        # auto-populated by Actions -- only `github.token` /
+        # `secrets.GITHUB_TOKEN` are -- so the previous
+        # `env.GHCR_TOKEN || env.GITHUB_TOKEN` resolved to the empty string for
+        # any caller that had not set one by hand, and the action piped that
+        # empty string into `helm registry login --password-stdin`. Priority
+        # order matches registry-login/run.tlisp, the repo's one statement of
+        # it: an explicit token wins, the job token stands in.
+        GHCR_TOKEN: ${{ env.GHCR_TOKEN || env.GITHUB_TOKEN || github.token }}
