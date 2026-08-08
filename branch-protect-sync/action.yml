@@ -36,6 +36,5 @@ runs:
       env:
         SPEC_FILE: ${{ inputs.spec-file }}
         BRANCH: ${{ inputs.branch }}
-        REPO: ${{ inputs. }}
         GH_TOKEN: ${{ github.token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
