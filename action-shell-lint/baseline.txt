@@ -24,7 +24,6 @@
 ./aldrava-resolve/action.yml
 ./sui-dockerfile-node-cache/action.yml
 ./aldrava-lint/action.yml
-./gh-team-sync/action.yml
 ./tatara-script/action.yml
 ./caixa-publish/action.yml
 ./wasm-build/action.yml

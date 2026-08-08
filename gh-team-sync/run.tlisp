@@ -1,0 +1,203 @@
+;; gh-team-sync/run.tlisp — org team membership, declared once and reconciled.
+;;
+;; Replaces ~35 lines of `run: |` bash that were, measured 2026-08-08, the
+;; org's RBAC source of truth. Three defects in that bash were reproduced in
+;; isolation before this port was written; each is named at the line that
+;; closes it. This is a bug fix that happens to also be a translation, so the
+;; failure paths are proven to FAIL rather than assumed to.
+;;
+;; SPEC FORMAT IS JSON, not YAML. The bash read YAML with `yq`, which forced a
+;; job-time `nix profile install github:NixOS/nixpkgs/...#yq-go` (a ★★ HERMETIC
+;; SUPPLY CHAIN violation) plus `DeterminateSystems/nix-installer-action@main`
+;; (an UNPINNED third-party action in the org's most privileged path). JSON is
+;; parsed by tatara-lisp natively, so both dependencies are deleted rather than
+;; hardened. Verified 2026-08-08: ZERO `.github/teams.yaml` exists anywhere in
+;; the org, so nothing is being migrated -- there was no live consumer. The
+;; sibling `branch-protect-sync` already takes a JSON spec, so this also stops
+;; being the odd one out.
+;;
+;; {"teams": {"platform": {"members": ["alice", "bob"]}}}
+
+(define spec (env-get "SPEC_FILE" ".github/teams.json"))
+(define org (env-required "GITHUB_REPOSITORY_OWNER"))
+(define dry-run (equal? (env-get "DRY_RUN" "false") "true"))
+(define allow-empty (equal? (env-get "ALLOW_EMPTY_TEAM" "false") "true"))
+
+;; ── refusals, before any mutation ────────────────────────────────────────
+
+(cond
+  ((or (string-ends-with? spec ".yaml") (string-ends-with? spec ".yml"))
+    (log-error
+      (string-append
+        "spec '" spec "' is YAML; this action takes JSON. The YAML reader was "
+        "`yq`, installed at job time, which this port deletes. Convert the "
+        "spec to {\"teams\":{\"<team>\":{\"members\":[...]}}} and point "
+        "spec-file at it. Refusing rather than parsing YAML as JSON, which "
+        "would yield an empty member set and delete every member."))
+    (exit 1)))
+
+(cond
+  ((not (path-exists? spec))
+    (log-error (string-append "spec file not found: " spec))
+    (exit 1)))
+
+(define doc (json-parse (read-file spec)))
+(define teams (alist-get doc "teams" "ABSENT"))
+
+;; A spec with no `teams` key is a malformed spec, NOT an empty estate. The
+;; bash could not tell those apart and would have swept every team it was
+;; pointed at. Refuse.
+(cond
+  ((equal? teams "ABSENT")
+    (log-error
+      (string-append
+        "spec '" spec "' has no top-level `teams` key. Refusing: an absent "
+        "key and a declared-empty estate are different states, and treating "
+        "the first as the second removes every member of every team."))
+    (exit 1)))
+
+;; ── helpers ──────────────────────────────────────────────────────────────
+
+(define (mem? x xs)
+  (cond ((null? xs) #f) ((equal? (car xs) x) #t) (else (mem? x (cdr xs)))))
+
+;; every element of `xs` that is not in `ys`
+(define (missing-from xs ys)
+  (cond
+    ((null? xs) '())
+    ((mem? (car xs) ys) (missing-from (cdr xs) ys))
+    (else (cons (car xs) (missing-from (cdr xs) ys)))))
+
+(define (non-empty-lines s)
+  (filter (lambda (l) (not (equal? (string-trim l) "")))
+          (string-split s "\n")))
+
+;; DEFECT 3, closed. The bash ran its loop body inside a pipeline
+;; (`yq ... | while read team`), so every `added=$((added+1))` mutated a
+;; SUBSHELL and was discarded at the pipe. `added-count`/`removed-count` were
+;; therefore structurally ALWAYS 0 -- reproduced: `after pipeline: added=0
+;; removed=0`. Any workflow gating on those outputs was gating on a constant.
+;; Here the tallies are threaded through the recursion as a value, so they
+;; cannot be lost.
+(define (tally added removed failed) (list added removed failed))
+(define (t-added t) (car t))
+(define (t-removed t) (car (cdr t)))
+(define (t-failed t) (car (cdr (cdr t))))
+
+;; ── one membership mutation ──────────────────────────────────────────────
+
+;; DEFECT 2, closed. Every `gh api` mutation in the bash ended in `|| true`,
+;; so a failed PUT/DELETE was indistinguishable from a successful one and the
+;; counter advanced regardless. Here the status is the value the caller
+;; branches on.
+(define (apply-one verb team user)
+  (let ((method (if (equal? verb "add") "PUT" "DELETE"))
+        (arrow (if (equal? verb "add") "+ adding " "- removing ")))
+    (log-info (string-append arrow user " " (if (equal? verb "add") "to " "from ") team))
+    (cond
+      (dry-run #t)
+      (else
+        (let ((r (exec-capture "gh" "api" "--method" method
+                   (string-append "orgs/" org "/teams/" team "/memberships/" user))))
+          (cond
+            ((equal? (status-of r) 0) #t)
+            (else
+              (log-error
+                (string-append "gh api " method " failed for " user "@" team ": "
+                               (string-trim (stderr-of r))))
+              #f)))))))
+
+(define (apply-each verb team users t)
+  (cond
+    ((null? users) t)
+    (else
+      (let ((ok (apply-one verb team (car users))))
+        (apply-each verb team (cdr users)
+          (cond
+            ((not ok) (tally (t-added t) (t-removed t) (+ (t-failed t) 1)))
+            ((equal? verb "add") (tally (+ (t-added t) 1) (t-removed t) (t-failed t)))
+            (else (tally (t-added t) (+ (t-removed t) 1) (t-failed t)))))))))
+
+;; ── one team ─────────────────────────────────────────────────────────────
+
+(define (sync-team name body t)
+  (let ((desired (alist-get body "members" "ABSENT")))
+    (cond
+      ;; DEFECT 1, closed -- the destructive one. In the bash, `desired` came
+      ;; from an unchecked `yq` read. A typo'd team key, a schema change or a
+      ;; yq version difference yielded an EMPTY string, and the removal loop
+      ;; then matched nothing with `grep -qx` and deleted EVERY current member.
+      ;; Reproduced: `would REMOVE alice / bob / carol`. An absent `members`
+      ;; key is now a distinguishable state -- the sentinel above -- and is
+      ;; refused rather than read as "remove everyone".
+      ((equal? desired "ABSENT")
+        (log-error
+          (string-append
+            "team '" name "' declares no `members` key. Refusing: absent and "
+            "empty are different states, and reading absent as empty removes "
+            "every current member."))
+        (tally (t-added t) (t-removed t) (+ (t-failed t) 1)))
+      (else
+        (let ((r (exec-capture "gh" "api"
+                   (string-append "orgs/" org "/teams/" name "/members")
+                   "--paginate" "--jq" ".[].login")))
+          (cond
+            ;; The bash wrote `current=$(gh api ... || true)`, so a failed READ
+            ;; became an empty current set -- which then looks like "every
+            ;; desired member is missing" and re-adds the whole team. A read
+            ;; failure is not an empty team; skip and fail the run.
+            ((not (equal? (status-of r) 0))
+              (log-error
+                (string-append "cannot read current members of '" name "': "
+                               (string-trim (stderr-of r))
+                               " -- skipping this team (a failed read is not an empty team)"))
+              (tally (t-added t) (t-removed t) (+ (t-failed t) 1)))
+            (else
+              (let* ((current (non-empty-lines (stdout-of r)))
+                     (adds (missing-from desired current))
+                     (removes (missing-from current desired)))
+                (cond
+                  ;; Blast radius rail: emptying a team is legal but is never
+                  ;; something to do by accident, so it needs to be asked for.
+                  ((and (not (null? current))
+                        (null? (missing-from current removes))
+                        (not allow-empty))
+                    (log-error
+                      (string-append
+                        "refusing to remove ALL " (string-format "{}" (length current))
+                        " members of '" name "'. If that is intended, set "
+                        "allow-empty-team: true."))
+                    (tally (t-added t) (t-removed t) (+ (t-failed t) 1)))
+                  (else
+                    (apply-each "remove" name removes
+                      (apply-each "add" name adds t))))))))))))
+
+(define (sync-all entries t)
+  (cond
+    ((null? entries) t)
+    (else
+      (let* ((e (car entries)) (name (string-format "{}" (car e))) (body (car (cdr e))))
+        (sync-all (cdr entries) (sync-team name body t))))))
+
+;; ── run ──────────────────────────────────────────────────────────────────
+
+(cond (dry-run (log-info "DRY RUN — no membership will be changed")))
+
+(define final (sync-all teams (tally 0 0 0)))
+
+(emit-output "added-count" (string-format "{}" (t-added final)))
+(emit-output "removed-count" (string-format "{}" (t-removed final)))
+(emit-output "failed-count" (string-format "{}" (t-failed final)))
+
+(log-info
+  (string-append "added=" (string-format "{}" (t-added final))
+                 " removed=" (string-format "{}" (t-removed final))
+                 " failed=" (string-format "{}" (t-failed final))))
+
+;; A partial failure is a failure. The bash exited 0 no matter what happened.
+(cond
+  ((> (t-failed final) 0)
+    (log-error
+      (string-append (string-format "{}" (t-failed final))
+                     " membership operation(s) failed — see the log above"))
+    (exit 1)))
