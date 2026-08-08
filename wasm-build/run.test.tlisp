@@ -1,0 +1,80 @@
+;; Tests for the argv construction — the exact surface where the two silent
+;; defects lived. Every assertion below is a defect that shipped, phrased as
+;; the shape that cannot come back.
+;;
+;; The unit is loaded with no PACKAGE / TARGET / RELEASE / WASM_PACK in the
+;; environment, so these exercise the DEFAULT contract: workspace default,
+;; wasm32-unknown-unknown, release, plain cargo.
+
+(deftest
+  "the cargo argv is a LIST, so an input is data and never script text"
+  ;; D1. `${{ inputs.target }}` used to be pasted into a shell body; a value
+  ;; of `wasm32$(touch /tmp/x)` executed. There is no string here to escape.
+  (assert (equal? (car (wasm:cargo-argv)) "cargo") "argv[0] is the program")
+  (assert (member? "build" (wasm:cargo-argv)) "is a build invocation")
+  (assert (member? "--target" (wasm:cargo-argv)) "names the target flag")
+  (assert (member? "wasm32-unknown-unknown" (wasm:cargo-argv)) "and its value, as its own element"))
+
+(deftest
+  "the default profile is release, and it reaches the argv"
+  (assert release? "RELEASE defaults to true")
+  (assert (member? "--release" (wasm:cargo-argv)) "cargo gets --release")
+  (assert (equal? (wasm:profile-dir) "release") "and the path agrees with the flag"))
+
+(deftest
+  "an empty package adds NO --package flag"
+  (assert (equal? package "") "no package by default")
+  (assert (not (member? "--package" (wasm:cargo-argv))) "so no --package rides along"))
+
+(deftest
+  "wasm-pack NEVER receives a --package flag"
+  ;; D2, the load-bearing one. `wasm-pack build` has no --package option
+  ;; (measured against wasm-pack 0.15.0); passing one flips clap into
+  ;; trailing-var-arg capture, so wasm-pack's OWN --target is never parsed and
+  ;; it silently falls back to its default target `bundler`.
+  (assert
+    (not (member? "--package" (wasm:wasm-pack-argv "/w/crates/alpha")))
+    "the crate is named by PATH, never by a flag wasm-pack does not have")
+  (assert
+    (member? "/w/crates/alpha" (wasm:wasm-pack-argv "/w/crates/alpha"))
+    "the crate directory is the positional PATH argument"))
+
+(deftest
+  "every wasm-pack option precedes the positional crate path"
+  ;; Proven by probe: options-before-positional keeps --target parsed
+  ;; (`--target NOPE <path>` is rejected by clap), which is the property the
+  ;; ordering has to preserve.
+  (let ((argv (wasm:wasm-pack-argv "/w/crates/alpha")))
+    (assert (equal? (car argv) "wasm-pack") "argv[0] is the program")
+    (assert
+      (equal? (car (cdr (cdr (cdr (cdr (cdr argv)))))) "/w/crates/alpha")
+      "the path is LAST: wasm-pack build <profile> --target web <path>")))
+
+(deftest
+  "wasm-pack is given exactly one EXPLICIT profile flag"
+  ;; D3. The bash passed none, and wasm-pack's default is release — so
+  ;; `release: false` silently produced an optimized build.
+  (assert (member? "--release" (wasm:wasm-pack-argv "")) "release? true -> --release")
+  (assert (not (member? "--dev" (wasm:wasm-pack-argv ""))) "and never both"))
+
+(deftest
+  "an absent crate dir leaves wasm-pack building the current directory"
+  ;; Contract preserved: no package means the bare `wasm-pack build` the
+  ;; original ran, so `pkg/` stays the artifact path.
+  (assert (equal? (length (wasm:wasm-pack-argv "")) 5) "no trailing positional")
+  (assert (equal? (length (wasm:wasm-pack-argv "/w")) 6) "one when a crate is named"))
+
+(deftest
+  "a package name resolves through the manifest list, or not at all"
+  ;; D2's resolver. A miss returns "" so the caller can refuse; it must never
+  ;; fall through to some other member.
+  (let
+    ((pkgs
+       (list
+         (list (list "name" "alpha") (list "manifest_path" "/w/crates/alpha/Cargo.toml"))
+         (list (list "name" "beta") (list "manifest_path" "/w/crates/beta/Cargo.toml")))))
+    (assert
+      (equal? (wasm:find-manifest pkgs "beta") "/w/crates/beta/Cargo.toml")
+      "finds a member past the first")
+    (assert (equal? (wasm:find-manifest pkgs "ghost") "") "a miss is empty, never a guess")
+    (assert (equal? (wasm:find-manifest (list) "alpha") "") "an empty workspace is a miss")))

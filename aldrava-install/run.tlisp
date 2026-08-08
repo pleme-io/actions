@@ -1,0 +1,491 @@
+;; aldrava-install/run.tlisp — install the aldrava binary at a PINNED tag,
+;; checksum-verified, onto PATH.
+;;
+;; ── WHAT THIS REPLACES ──────────────────────────────────────────────────────
+;; A 71-line `run: |` bash body in this action's own action.yml — the largest
+;; non-loader shell body left in the repo and the last entry on
+;; action-shell-lint's baseline that had no tlisp anywhere. The bash is the
+;; SPEC for everything below; its posture (fail closed, no `latest` code path,
+;; never leave an unverified executable on PATH) is preserved exactly.
+;;
+;; The action.yml header keeps the institutional record of WHY the action
+;; exists — three sibling actions once carried byte-identical copies of an
+;; unpinned, unverified `releases/latest/download/` install. That consolidation
+;; already landed: aldrava-dispatch, aldrava-lint and aldrava-resolve each
+;; `uses: pleme-io/actions/aldrava-install@main` today (verified 2026-08-08).
+;;
+;; ── DEFECTS FOUND IN THE BASH AND CLOSED HERE ───────────────────────────────
+;; Each is marked at the line that closes it with `;; DEFECT n:`.
+;;
+;;   1. UNVALIDATED TAG INTERPOLATED INTO A URL. `$TAG` went straight into
+;;      `https://github.com/pleme-io/aldrava/releases/download/$TAG/…`. A tag
+;;      containing `/` or `..` re-points the download at ANY repo's release
+;;      asset on github.com (curl normalises `..` in the path before sending),
+;;      while the action's name, its `resolved-version` output and its log line
+;;      all still say "aldrava". aldrava is a ChatOps dispatcher, so
+;;      `aldrava-version` is exactly the kind of input that reaches a workflow
+;;      from a comment payload. Closed by a character class that has no `/` and
+;;      no `%` in it, so traversal has no representation.
+;;
+;;   2. OUTPUT INJECTION VIA `echo "k=$V" >> $GITHUB_OUTPUT`. `$TAG` and
+;;      `$BIN_DIR` are both caller-controlled and both were echoed raw. A
+;;      newline in either writes ADDITIONAL, attacker-chosen outputs — the
+;;      exact class `emit-output` exists for. Closed twice over: the shape
+;;      checks refuse a newline first, and `emit-output` refuses it again.
+;;
+;;   3. PATH INJECTION VIA `echo "$BIN_DIR" >> $GITHUB_PATH`. Worse than #2 and
+;;      NOT covered by `emit-output`: a newline in `install-dir` appends an
+;;      arbitrary EXTRA directory to PATH for every subsequent step in the job.
+;;      Closed on BOTH arms — the `install-dir` input, and the value DERIVED
+;;      from RUNNER_TEMP when that input is empty. Guarding only the input
+;;      would have left the default arm open.
+;;
+;;   4. LEADING-DASH ARGUMENT SMUGGLING. `install-dir` reached `mkdir -p "$D"`
+;;      and `mv "$S" "$D/aldrava"` unvalidated; a value beginning with `-` is
+;;      read as an option by both. Closed by refusing a leading `-`, again on
+;;      both arms.
+;;
+;;   5. UNBOUNDED CURL. `curl -fsSL` with no timeout: against a black-holed
+;;      host this hangs the job for the runner's full TCP timeout rather than
+;;      failing. The stdlib documents this same defect at `http-200?`. Closed
+;;      with `--connect-timeout` / `--max-time`, plus `--retry` so a transient
+;;      5xx is not a hard job failure (`-f` means a 404 is never retried).
+;;
+;;   6. "NO HASHING TOOL" REPORTED AS "CHECKSUM MISMATCH". The bash computed
+;;      `GOT` with `sha256sum … || true` then `shasum -a 256 …`; if neither
+;;      existed the empty `GOT` fell into the mismatch branch and the operator
+;;      was told the bytes were tampered with when the truth was that the
+;;      runner has no sha256 tool. Two different facts, one message. Closed by
+;;      giving the missing-tool case its own typed failure.
+;;
+;;   7. A MALFORMED SIDECAR ALSO REPORTED AS "MISMATCH". If the `.sha256` fetch
+;;      returned an HTML error page under a 200, or a truncated file, the
+;;      operator got a mismatch report with garbage in the `published:` field.
+;;      Closed by requiring the published digest to BE a sha256 (64 hex) before
+;;      it is compared to anything.
+;;
+;;   8. CASE-SENSITIVE DIGEST COMPARE. `[ "$WANT" != "$GOT" ]` is byte compare;
+;;      a publisher emitting uppercase hex would fail a correct download. Our
+;;      own release workflow emits lowercase, so this never fired — which is
+;;      precisely why it would have been a baffling failure the first time a
+;;      publisher changed. Closed by comparing hex case-insensitively.
+;;
+;;   9. `uname` EXIT STATUS NEVER CHECKED. `OS="$(uname -s)"` under `set -e`
+;;      aborts with a bare shell error; a `uname` that succeeds but prints
+;;      nothing (a stripped container) yields "unsupported runner -", naming
+;;      nothing. Closed by requiring exit 0 and a non-empty answer, and by
+;;      naming both values in the diagnostic.
+;;
+;;  10. `RUNNER_TEMP` UNSET DIAGNOSED AS A BASH INTERNAL. `${INPUT_INSTALL_DIR:-$RUNNER_TEMP/…}`
+;;      under `set -u` aborts with "RUNNER_TEMP: unbound variable", which names
+;;      neither this action nor the fix. Closed by naming both inputs.
+;;
+;;  11. THE REJECTION MESSAGE WAS ITSELF AN INJECTION POINT. The bash echoed
+;;      the raw input back inside a `::error::` workflow command; a newline in
+;;      that value ends the annotation and lands caller-controlled text at the
+;;      start of a stdout line, which the runner parses as a further workflow
+;;      command. Reachable by exactly the malformed values the guard rejects.
+;;      Closed at `die` — see the note there.
+;;
+;; ── NOT CLOSED, AND WHY ─────────────────────────────────────────────────────
+;; The `.sha256` sidecar is fetched from the SAME origin, over the same
+;; channel, as the binary it attests. Anyone who can serve you the binary can
+;; serve you its digest. This defends against a corrupted transfer, a truncated
+;; asset and a wrong-asset publish — NOT against a compromised release. Saying
+;; so is the point: an attestation whose scope is overstated absorbs the
+;; attention that would find the real gap. Closing it needs a signature with a
+;; trust anchor that is not the download server (cosign/sigstore), which is a
+;; publisher-side change in pleme-io/aldrava, not something this action can do.
+;;
+;; ── READS ───────────────────────────────────────────────────────────────────
+;;   INPUT_VERSION      REQUIRED. The aldrava release tag, e.g. `v0.1.0`.
+;;   INPUT_INSTALL_DIR  Optional. Defaults to $RUNNER_TEMP/aldrava-bin.
+;;   RUNNER_TEMP        The runner's temp dir (used only for that default).
+;;   GITHUB_PATH        Appended so later steps find the binary.
+;;   GITHUB_OUTPUT      bin-dir · resolved-version · sha256
+;;
+;; ── EXITS ───────────────────────────────────────────────────────────────────
+;;   0  a verified binary is installed and on PATH
+;;   1  any refusal — an unusable input, an unsupported runner, a missing
+;;      asset, a missing/malformed digest, or a digest that does not match.
+;;      There is no partial-success path: the binary reaches its final name
+;;      only after its digest matches.
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Diagnostics
+;; ────────────────────────────────────────────────────────────────────────────
+
+;; The bash emitted `::error::` workflow commands so failures surface as
+;; annotations in the GitHub UI, not just as log text. Keep that: dropping it
+;; would be a silent regression in what an operator SEES when this fails.
+;;
+;; DEFECT 11: the bash interpolated the raw input into that annotation —
+;; `echo "::error::aldrava-install: version='$TAG' is a floating ref"`. A
+;; newline in the value ends the annotation and puts the remainder of a
+;; caller-controlled string at the START of a stdout line, where the runner
+;; parses `::`-prefixed lines as workflow commands. So the REJECTION message
+;; was itself an injection point, reachable by precisely the malformed values
+;; this action exists to reject. `%0A` is GitHub's own escape for a newline
+;; inside an annotation, so the message still renders in full — one line out,
+;; one annotation, no second command.
+(define (one-line s)
+  (string-replace (string-replace s "\r" "") "\n" "%0A"))
+
+(define (die lines)
+  (cond
+    ((null? lines) (exit 1))
+    (else
+      (let ((line (one-line (car lines))))
+        (print-line (string-append "::error::" line))
+        (log-error line))
+      (die (cdr lines)))))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Inputs
+;; ────────────────────────────────────────────────────────────────────────────
+
+;; Trimmed, because a YAML-folded or heredoc-fed value can arrive with trailing
+;; whitespace and the bash used it raw — which put that whitespace into a URL
+;; and into $GITHUB_OUTPUT.
+(define input-version (string-trim (env-get "INPUT_VERSION" "")))
+
+(define input-install-dir (string-trim (env-get "INPUT_INSTALL_DIR" "")))
+
+(define runner-temp (string-trim (env-get "RUNNER_TEMP" "")))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Tag: required, pinned, and shaped
+;; ────────────────────────────────────────────────────────────────────────────
+
+(cond
+  ((equal? input-version "")
+    (die
+      (list
+        "aldrava-install: 'version' is required and must name a release tag (e.g. v0.1.0)."
+        "  This action deliberately does NOT fall back to 'latest'. A floating"
+        "  ref changes the executed binary with no version bump in any consumer."))))
+
+;; Reject a caller that tries to smuggle the floating ref back in.
+;;
+;; Now case-insensitive. The bash listed `latest|LATEST|main|HEAD` literally,
+;; so `Latest` walked straight through a guard whose entire job is to refuse
+;; that word.
+(define floating-ref-re "(?i)^(latest|main|master|head)$")
+
+(cond
+  ((re-match? floating-ref-re input-version)
+    (die
+      (list
+        (string-append
+          "aldrava-install: version='" input-version
+          "' is a floating ref, not a pinned release tag.")))))
+
+;; DEFECT 1 + DEFECT 2 (tag half): the shape a release tag may have.
+;;
+;; The class carries no `/` and no `%`, which is what makes a path traversal
+;; out of pleme-io/aldrava's release namespace UNREPRESENTABLE rather than
+;; guarded — there is no character available to build one from. It also has no
+;; newline, so the `resolved-version` output cannot carry a second key. The
+;; first character must be alphanumeric so a tag can never be read as an option
+;; by curl.
+;;
+;; Every real tag shape passes: `v0.1.0`, `v1.2.3-rc.1`, `aldrava-v0.1.0`.
+(define tag-shape-re "^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+
+(cond
+  ((not (re-match? tag-shape-re input-version))
+    (die
+      (list
+        (string-append
+          "aldrava-install: version='" input-version "' is not a release tag.")
+        "  A tag may contain only letters, digits, '.', '_', '+' and '-', and must"
+        "  start with a letter or digit. This is narrower than git allows, on"
+        "  purpose: with no '/' and no '%' available, a value that re-points the"
+        "  download at another repository's release assets cannot be written."))))
+
+(define tag input-version)
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Install directory: shaped, then defaulted
+;; ────────────────────────────────────────────────────────────────────────────
+
+;; DEFECT 3 + DEFECT 4. A newline here is a PATH injection for every later step
+;; in the job, and a leading '-' is an option to `mkdir` and `mv`. Both are
+;; refused before the value reaches a process argv or a runner file.
+(cond
+  ((and (not (equal? input-install-dir "")) (string-contains? input-install-dir "\n"))
+    (die
+      (list
+        "aldrava-install: 'install-dir' contains a newline."
+        "  $GITHUB_PATH is newline-separated, so this would append an extra,"
+        "  caller-chosen directory to PATH for every subsequent step in the job.")))
+  ((and (not (equal? input-install-dir "")) (string-starts-with? input-install-dir "-"))
+    (die
+      (list
+        (string-append
+          "aldrava-install: install-dir='" input-install-dir "' starts with '-'.")
+        "  It is passed as an argument to mkdir and mv, which would read it as an"
+        "  option rather than a path."))))
+
+;; DEFECT 10: name both inputs instead of letting `set -u` report an unbound
+;; shell variable that mentions neither this action nor the fix.
+(cond
+  ((and (equal? input-install-dir "") (equal? runner-temp ""))
+    (die
+      (list
+        "aldrava-install: no install directory available."
+        "  RUNNER_TEMP is unset (so the default cannot be built) and 'install-dir'"
+        "  was not supplied. Pass install-dir, or run this on a GitHub runner."))))
+
+(define bin-dir
+  (if (equal? input-install-dir "")
+    (string-append runner-temp "/aldrava-bin")
+    input-install-dir))
+
+;; The two checks above guard the INPUT; this guards the DERIVED value that
+;; actually reaches argv, $GITHUB_PATH and $GITHUB_OUTPUT. They are not the
+;; same assertion: on the default branch `bin-dir` is built from RUNNER_TEMP,
+;; which no check above ever looked at. Validating the input alone is the shape
+;; that leaves one arm of a two-arm derivation unguarded.
+(cond
+  ((or (string-contains? bin-dir "\n") (string-starts-with? bin-dir "-"))
+    (die
+      (list
+        (string-append
+          "aldrava-install: the resolved install directory is unusable: " bin-dir)
+        "  It must not contain a newline (a $GITHUB_PATH injection) and must not"
+        "  start with '-' (read as an option by mkdir and mv). With install-dir"
+        "  empty this value comes from RUNNER_TEMP."))))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Runner platform → asset suffix
+;; ────────────────────────────────────────────────────────────────────────────
+
+;; DEFECT 9: require exit 0 AND a non-empty answer. `proc:must` cannot yield a
+;; value without the status having been checked, so the `$(uname -s)`-with-an-
+;; unread-status shape has no spelling here.
+(define (uname-field flag)
+  (let ((r (proc:must (list "uname" flag))))
+    (cond
+      ((erro:err? r)
+        (die
+          (list
+            (string-append "aldrava-install: `uname " flag "` failed — cannot identify the runner.")))
+        "")
+      ((equal? (string-trim (erro:value r)) "")
+        ;; Exit 0 with no output is a THIRD state, and the bash collapsed it
+        ;; into the arch table's default arm — which then reported
+        ;; "unsupported runner -", a message naming neither the tool that
+        ;; failed nor the platform. Give it its own answer.
+        (die
+          (list
+            (string-append
+              "aldrava-install: `uname " flag
+              "` exited 0 but printed nothing — cannot identify the runner.")))
+        "")
+      (else (string-trim (erro:value r))))))
+
+(define runner-os (uname-field "-s"))
+
+(define runner-arch (uname-field "-m"))
+
+(define asset-suffix
+  (cond
+    ((and (equal? runner-os "Linux") (equal? runner-arch "x86_64")) "linux-x86_64")
+    ((and (equal? runner-os "Linux") (equal? runner-arch "aarch64")) "linux-aarch64")
+    ((and (equal? runner-os "Darwin") (equal? runner-arch "arm64")) "macos-aarch64")
+    ((and (equal? runner-os "Darwin") (equal? runner-arch "x86_64")) "macos-x86_64")
+    (else "")))
+
+(cond
+  ((equal? asset-suffix "")
+    (die
+      (list
+        (string-append
+          "aldrava-install: unsupported runner " runner-os "-" runner-arch)
+        "  Supported: Linux-x86_64, Linux-aarch64, Darwin-arm64, Darwin-x86_64."))))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Fetch
+;; ────────────────────────────────────────────────────────────────────────────
+
+(define asset-url
+  (string-append
+    "https://github.com/pleme-io/aldrava/releases/download/"
+    tag
+    "/aldrava-"
+    asset-suffix))
+
+(define digest-url (string-append asset-url ".sha256"))
+
+;; The binary only reaches its final path after the digest matches, so a failed
+;; verification cannot leave an executable behind for a later step to pick up
+;; off PATH. (Preserved from the bash — it was right.)
+(define stage-path (string-append bin-dir "/.aldrava.staged"))
+
+(define digest-path (string-append stage-path ".sha256"))
+
+;; DEFECT 5: bounded. An unbounded curl against a black-holed host burns the
+;; job's whole timeout instead of failing. `--retry` rides out a transient 5xx
+;; or connection reset; with `-f` a 404 is never retried, so a genuinely absent
+;; asset still fails on the first attempt.
+(define (curl-to path url)
+  (proc:must
+    (list
+      "curl"
+      "-fsSL"
+      "--connect-timeout" "10"
+      "--max-time" "300"
+      "--retry" "3"
+      "--retry-connrefused"
+      "-o" path
+      url)))
+
+(define (discard path) (proc:run (list "rm" "-f" path)))
+
+(cond
+  ((erro:err? (proc:must (list "mkdir" "-p" bin-dir)))
+    (die
+      (list
+        (string-append "aldrava-install: could not create install directory " bin-dir)))))
+
+(cond
+  ((erro:err? (curl-to stage-path asset-url))
+    (discard stage-path)
+    (die
+      (list
+        (string-append "aldrava-install: no asset at " asset-url)
+        (string-append
+          "  Check that tag '" tag "' exists and its release carries aldrava-"
+          asset-suffix ".")))))
+
+(cond
+  ((erro:err? (curl-to digest-path digest-url))
+    (discard stage-path)
+    (discard digest-path)
+    (die
+      (list
+        (string-append
+          "aldrava-install: no checksum at " digest-url
+          " — refusing to execute unverified bytes.")))))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Verify
+;; ────────────────────────────────────────────────────────────────────────────
+
+;; Published sidecar format is `<hex>  <name>`; take the hex field only, since
+;; the recorded name need not match our staging filename. Tabs are normalised
+;; and empty tokens dropped so a two-space or tab separator both parse.
+(define (first-field text)
+  (let*
+    ((flat (string-replace (string-trim text) "\t" " "))
+      (first-line (car (string-split flat "\n")))
+      (tokens (filter (lambda (t) (not (equal? t ""))) (string-split (string-trim first-line) " "))))
+    (if (null? tokens) "" (string-trim (car tokens)))))
+
+;; DEFECT 6: a missing hashing tool gets its OWN answer. `""` here means "no
+;; sha256 tool on this runner" and nothing else, so it can never be reported as
+;; tampered bytes.
+(define (sha256-of path)
+  (let ((a (proc:must (list "sha256sum" path))))
+    (cond
+      ((erro:ok? a) (first-field (erro:value a)))
+      (else
+        (let ((b (proc:must (list "shasum" "-a" "256" path))))
+          (if (erro:ok? b) (first-field (erro:value b)) ""))))))
+
+(define published (first-field (read-file digest-path)))
+
+(define computed (sha256-of stage-path))
+
+(define sha256-re "^[0-9a-fA-F]{64}$")
+
+;; DEFECT 7: the published digest must BE a sha256 before it is compared to
+;; anything. An HTML error page served under a 200, or a truncated asset, is a
+;; broken publish — not a tampered binary, and the operator should be told
+;; which.
+(cond
+  ((not (re-match? sha256-re published))
+    (discard stage-path)
+    (discard digest-path)
+    (die
+      (list
+        (string-append "aldrava-install: malformed checksum file at " digest-url)
+        (string-append "  first field: " (if (equal? published "") "<empty>" published))
+        "  Expected 64 hex characters. This is a broken publish, not a mismatch —"
+        "  the bytes were never compared."))))
+
+;; DEFECT 6 (the other half): distinguish "cannot hash" from "hash differs".
+(cond
+  ((equal? computed "")
+    (discard stage-path)
+    (discard digest-path)
+    (die
+      (list
+        "aldrava-install: no sha256 tool on this runner (tried sha256sum, shasum)."
+        "  The download is NOT being installed. This is a runner capability gap,"
+        "  not a checksum mismatch — do not read it as tampered bytes."))))
+
+;; DEFECT 8: hex compares case-insensitively. `published` has already been
+;; proven to be 64 hex characters, so it carries no regex metacharacter and is
+;; safe to anchor here.
+(cond
+  ((not (re-match? (string-append "(?i)^" published "$") computed))
+    (discard stage-path)
+    (discard digest-path)
+    (die
+      (list
+        (string-append "aldrava-install: checksum MISMATCH for " asset-url)
+        (string-append "  published: " published)
+        (string-append "  computed:  " computed)))))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Install
+;; ────────────────────────────────────────────────────────────────────────────
+
+(define installed-path (string-append bin-dir "/aldrava"))
+
+(cond
+  ((erro:err? (proc:must (list "mv" stage-path installed-path)))
+    (discard stage-path)
+    (discard digest-path)
+    (die
+      (list
+        (string-append "aldrava-install: could not move the verified binary to " installed-path)))))
+
+(discard digest-path)
+
+(cond
+  ((erro:err? (proc:must (list "chmod" "+x" installed-path)))
+    (die
+      (list
+        (string-append
+          "aldrava-install: the verified binary at " installed-path
+          " could not be made executable.")))))
+
+;; DEFECT 3, closed at the write. `bin-dir` has already been proven newline-free
+;; above, so this appends exactly one directory.
+(define (add-to-runner-path dir)
+  (let ((path-file (env-get "GITHUB_PATH" "")))
+    (cond
+      ((equal? path-file "")
+        (log-info "GITHUB_PATH is unset — not on a runner, so PATH is left alone."))
+      (else
+        (let ((prior (if (path-exists? path-file) (read-file path-file) "")))
+          (write-file path-file (string-append prior dir "\n")))))))
+
+(add-to-runner-path bin-dir)
+
+;; DEFECT 2, closed at the write: `emit-output` keeps the key and the value
+;; separate and refuses a value carrying a newline, so no caller-controlled
+;; value can write a second output key.
+(emit-output "bin-dir" bin-dir)
+
+(emit-output "resolved-version" tag)
+
+(emit-output "sha256" computed)
+
+(log-info
+  (string-append "aldrava " tag " installed, checksum verified (" computed ")"))
+
+(exit 0)

@@ -1,0 +1,363 @@
+;; image-scan/install.tlisp — put the PINNED trivy on PATH, and PROVE it is
+;; the pinned one before anything is allowed to scan with it.
+;;
+;; ── WHAT THIS REPLACES ─────────────────────────────────────────────────
+;;
+;; The "Install Trivy" `run: |` block in action.yml — 79 lines of bash, the
+;; last NO-SHELL violation action-shell-lint tracked against this action
+;; (its baseline.txt says so in as many words: "Install Trivy — STILL HERE,
+;; 79 lines … converting it is the remaining work, not a formality").
+;;
+;; Every claim the old block made is kept, because they were the right
+;; claims: the installer SCRIPT is pinned to a tag AND to a sha256, and the
+;; scanner VERSION is pinned, so a "0 CVE" verdict from this action names a
+;; binary somebody can reproduce. What changes is that the claims are now
+;; checkable — the decision logic is a set of pure functions with unit tests
+;; (install.test.tlisp) instead of an if/elif chain nothing could exercise.
+;;
+;; ── SIX DEFECTS FOUND IN THE SHELL BODY, ALL CLOSED HERE ───────────────
+;;
+;; (1) TOCTOU ON A ROOT-EXECUTED FILE. The script was fetched to the fixed
+;;     path `/tmp/trivy-install.sh` — a shared, world-writable directory —
+;;     verified there, and then executed AS ROOT from that same path. Any
+;;     other process on the runner could swap the bytes between the check
+;;     and the `sudo sh`, which is precisely the window the checksum exists
+;;     to close. On a self-hosted ARC runner (the shape this action's own
+;;     comments name) /tmp is shared across whatever else the node runs.
+;;     Closed by staging into `$RUNNER_TEMP`, which is job-private and
+;;     already what this action's two loader steps use.
+;;
+;; (2) THE VERSION WAS PINNED TWICE, INDEPENDENTLY. `v0.72.0` appeared in
+;;     the URL and again in the installer's argv, with nothing tying them
+;;     together — bump one and you verify the checksum of one release's
+;;     installer while installing a different release. Closed by deriving
+;;     both from `trivy-version` below: the skew has no representation.
+;;
+;; (3) NOTHING CHECKED THAT TRIVY WAS ACTUALLY INSTALLED, OR AT WHICH
+;;     VERSION — the whole reproducibility argument rested on an unverified
+;;     assumption. And it is not a pedantic gap: install.sh does NOT take
+;;     the tag at face value. It resolves it over the network first
+;;     (`github_release` → `https://github.com/aquasecurity/trivy/releases/
+;;     v0.72.0` with `Accept: application/json`, then greps `tag_name` out
+;;     of the reply) and installs whatever VERSION that yields — measured at
+;;     the pinned script, lines 73-86. So "we passed v0.72.0" and "v0.72.0
+;;     is on PATH" are two different facts and only the first was ever
+;;     established. Closed by `verify-installed!`, which asserts the exact
+;;     version and hard-fails otherwise.
+;;
+;; (4) `sha256sum` WAS HARD-CODED. It is coreutils, i.e. Linux; macOS ships
+;;     `shasum` instead. On a macos-* runner the verification line died with
+;;     `command not found` — a security check failing for a reason unrelated
+;;     to security, reported as noise. Closed by `file-sha256`, which uses
+;;     whichever exists and refuses loudly when neither does.
+;;
+;; (5) `sudo` WAS HARD-CODED. A rootful container — the ordinary ARC runner
+;;     shape — frequently has no `sudo` at all, so the install failed on a
+;;     fact about the container rather than about trivy. Closed by
+;;     `elevation`: already-root needs no sudo, non-root without sudo is
+;;     named as such instead of surfacing as `sudo: not found`.
+;;
+;; (6) IT RE-DOWNLOADED AND RE-INSTALLED ON EVERY RUN, even when the pinned
+;;     trivy was already sitting on PATH. Closed by checking first — which
+;;     also makes this a no-op the day trivy ships pre-baked in a
+;;     pleme-io/hardened-images distroless image, the tracked destination
+;;     for runtime-install-lint's entry on this action.
+;;
+;; ── STILL DEBT, NAMED RATHER THAN QUIETLY CARRIED ──────────────────────
+;;
+;; This still FETCHES A TOOL AT JOB TIME, which is the ★★ HERMETIC SUPPLY
+;; CHAIN violation runtime-install-lint tracks. Converting the block does
+;; not fix that and must not be read as fixing it; the real fix is a baked
+;; hardened image, which does not exist for trivy yet (measured in
+;; runtime-install-lint/baseline.txt). See the report in action.yml's header
+;; comment for the one consequence worth acting on: runtime-install-lint
+;; scans only `action.yml` and `run.tlisp`, so its entry for this action
+;; needs re-pointing — the debt did not go away, only the file it lives in.
+
+;; ── the pin: ONE version, everything else derived from it ──────────────
+
+;; The scanner version this action's verdicts are asserted by. Bumping it
+;; means re-measuring `install-script-sha256` below at the new tag.
+(define trivy-version "0.72.0")
+
+(define trivy-tag (string-append "v" trivy-version))
+
+;; Measured 2026-08-08 at the pinned tag: 9945 bytes.
+;;   curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh
+;;   -> e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+;; Unchanged from the shell body's value, re-derived rather than copied.
+(define install-script-sha256 "e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a")
+
+(define install-script-url
+  (string-append
+    "https://raw.githubusercontent.com/aquasecurity/trivy/"
+    trivy-tag
+    "/contrib/install.sh"))
+
+;; Overridable ONLY so the unit test can point it somewhere writable. Not an
+;; action input: the contract is unchanged.
+(define bindir (env-get "TRIVY_BINDIR" "/usr/local/bin"))
+
+;; Job-private on every GitHub runner; the "/tmp" fallback is for a local
+;; invocation outside Actions. Defect (1) above is why this is not /tmp.
+(define workdir (env-get "RUNNER_TEMP" "/tmp"))
+
+(define staged-script (string-append workdir "/image-scan-trivy-install.sh"))
+
+;; ── pure helpers (unit-tested via install.test.tlisp) ──────────────────
+
+;; First whitespace-delimited field of a checksum line. Both `sha256sum
+;; <file>` and `shasum -a 256 <file>` print "<hex>  <path>" — TWO spaces —
+;; so splitting on " " yields ("<hex>" "" "<path>") and the head is the
+;; digest. This is the `awk '{print $1}'` the shell body shelled out for.
+(define (first-field s)
+  (let ((parts (string-split (string-trim s) " ")))
+    (cond
+      ((null? parts) "")
+      (else (car parts)))))
+
+;; The version trivy reports, or "" when the output is not the shape we
+;; know. Measured against the real binary (v0.72.0, 2026-08-08):
+;;
+;;     Version: 0.72.0
+;;     Vulnerability DB:
+;;       Version: 2
+;;       ...
+;;
+;; Note the INDENTED `  Version: 2` two lines down — a substring search for
+;; "Version: " matches the vulnerability-DB schema number as happily as the
+;; scanner version, and would have compared the wrong one. So: the FIRST
+;; line only, and its prefix is checked BEFORE trimming, which is what
+;; excludes the indented rows structurally rather than by luck.
+(define (reported-version out)
+  (let ((lines (string-split out "\n")))
+    (cond
+      ((null? lines) "")
+      ((not (string-prefix? (car lines) "Version: ")) "")
+      (else (string-trim (string-strip-prefix (car lines) "Version: "))))))
+
+;; #t iff `out` is trivy naming exactly `want`. Deliberately exact, not a
+;; substring test: "0.72.0" is a substring of "10.72.05" and a scanner
+;; version is the one string here that must not be approximately right.
+(define (version-matches? out want) (equal? (reported-version out) want))
+
+;; How to reach root, as a closed vocabulary:
+;;   'none    — already uid 0, sudo would be noise
+;;   'sudo    — not root, sudo available
+;;   'blocked — not root, no sudo; the install CANNOT proceed, say so
+(define (elevation uid sudo-present?)
+  (cond
+    ((equal? uid "0") (quote none))
+    (sudo-present? (quote sudo))
+    (else (quote blocked))))
+
+;; The exact argv the shell body ran, with sudo attached only when needed:
+;;   sudo sh <script> -b <bindir> v0.72.0
+;; Order preserved verbatim. The `-s --` form is NOT used and must not be
+;; reintroduced — the old body carries the measurement: `-s` tells sh to
+;; read the script from STDIN, so against a FILE `-s -- -b DIR v0.72.0`
+;; becomes arguments to the script, exits 2 and installs nothing.
+(define (install-argv elev script dir tag)
+  (let ((base (list "sh" script "-b" dir tag)))
+    (cond
+      ((equal? elev (quote sudo)) (cons "sudo" base))
+      (else base))))
+
+;; ── side effects live below this line ──────────────────────────────────
+
+;; sha256 of PATH using whichever tool this runner actually has. "" when the
+;; digest could not be computed for ANY reason — the caller treats that as a
+;; verification failure, never as a pass. Defect (4).
+(define (file-sha256 path)
+  (cond
+    ((hash:cmd-present? "sha256sum")
+      (let ((r (exec-capture "sha256sum" path)))
+        (cond
+          ((= (status-of r) 0) (first-field (stdout-of r)))
+          (else ""))))
+    ((hash:cmd-present? "shasum")
+      (let ((r (exec-capture "shasum" "-a" "256" path)))
+        (cond
+          ((= (status-of r) 0) (first-field (stdout-of r)))
+          (else ""))))
+    (else "")))
+
+;; `trivy --version` stdout, or "" when trivy cannot be started at all.
+;; exec-capture RAISES on a missing binary and RETURNS on a present-but-
+;; unhappy one, so absence and unhappiness stay two different paths.
+(define (trivy-version-output)
+  (cond
+    ((not (hash:cmd-present? "trivy")) "")
+    (else
+      (let ((r (exec-capture "trivy" "--version")))
+        (cond
+          ((= (status-of r) 0) (stdout-of r))
+          (else ""))))))
+
+;; Current uid as a string. `id -u` is the portable spelling; if `id` itself
+;; is missing we assume NOT root, which only ever costs us an attempt at
+;; sudo — the conservative direction.
+(define (current-uid)
+  (cond
+    ((not (hash:cmd-present? "id")) "")
+    (else
+      (let ((r (exec-capture "id" "-u")))
+        (cond
+          ((= (status-of r) 0) (string-trim (stdout-of r)))
+          (else ""))))))
+
+;; Fetch the installer to the job-private staging path. Returns #t/#f;
+;; a failed fetch is reported by the caller, never inferred from the file
+;; existing (curl -f can still leave a partial file behind).
+(define (fetch-install-script)
+  (cond
+    ((not (hash:cmd-present? "curl"))
+      (log-error
+        (string-append
+          "curl is not on PATH, so the pinned trivy installer cannot be "
+          "fetched. This action installs its own scanner; a runner without "
+          "curl needs trivy baked into its image instead."))
+      #f)
+    (else
+      (let ((r (exec-capture "curl" "-sfL" "-o" staged-script install-script-url)))
+        (cond
+          ((= (status-of r) 0) #t)
+          (else
+            (log-error
+              (string-append
+                "fetching the pinned trivy installer failed (curl exit "
+                (string-format "{}" (status-of r))
+                ") from "
+                install-script-url
+                " — stderr: "
+                (stderr-of r)))
+            #f))))))
+
+;; Verify the staged script against the pinned digest. Refuses to execute on
+;; ANY mismatch, including the empty-digest case, and names both sides.
+(define (verify-install-script)
+  (let ((got (file-sha256 staged-script)))
+    (cond
+      ((equal? got "")
+        (log-error
+          (string-append
+            "::error::could not compute a sha256 of the trivy installer at "
+            staged-script
+            " — neither sha256sum nor shasum is usable on this runner. "
+            "REFUSING to execute an unverified script as root."))
+        #f)
+      ((equal? got install-script-sha256)
+        (log-info (string-append "trivy install.sh verified (" got ")"))
+        #t)
+      (else
+        (log-error
+          (string-append
+            "::error::trivy install.sh checksum MISMATCH -- refusing to execute as root."))
+        (log-error (string-append "::error::  expected: " install-script-sha256))
+        (log-error (string-append "::error::  got:      " got))
+        (log-error
+          (string-append
+            "::error::  The pinned tag may have been moved, or the fetch was truncated."))
+        #f))))
+
+;; Run the verified installer, elevating only when that is a real
+;; requirement. Returns #t on a clean exit. Defect (5).
+(define (run-installer)
+  (let* ((uid (current-uid))
+          (elev (elevation uid (hash:cmd-present? "sudo"))))
+    (cond
+      ((equal? elev (quote blocked))
+        (log-error
+          (string-append
+            "::error::running as uid "
+            uid
+            " with no sudo on PATH, so trivy cannot be installed into "
+            bindir
+            ". Run this job as root, provide sudo, or bake trivy into the "
+            "runner image."))
+        #f)
+      (else
+        (let* ((argv (install-argv elev staged-script bindir trivy-tag))
+                (status (apply exec-check argv)))
+          (cond
+            ((= status 0) #t)
+            (else
+              (log-error
+                (string-append
+                  "::error::the pinned trivy installer exited "
+                  (string-format "{}" status)
+                  ". Nothing was installed, so no scan from this job would be "
+                  "trustworthy."))
+              #f)))))))
+
+;; THE assertion the old body never made: the trivy the SCAN STEP will
+;; resolve is the trivy we pinned. Checks the bare name, not an absolute
+;; path, because the bare name is what every later step actually runs.
+;; Defect (3).
+(define (verify-installed!)
+  (let ((out (trivy-version-output)))
+    (cond
+      ((version-matches? out trivy-version)
+        (log-info (string-append "trivy " trivy-version " verified on PATH"))
+        0)
+      ((equal? out "")
+        ;; Distinguish "installed but not reachable" from "not installed" —
+        ;; opposite problems, opposite fixes, and the old body reported
+        ;; neither.
+        (log-error
+          (string-append
+            "::error::trivy is not runnable on PATH after the install step. "
+            (cond
+              ((path-exists? (string-append bindir "/trivy"))
+                (string-append
+                  "The binary IS present at "
+                  bindir
+                  "/trivy, so this is a PATH problem, not a download problem — "
+                  bindir
+                  " is not on this runner's PATH."))
+              (else
+                (string-append
+                  "No binary at "
+                  bindir
+                  "/trivy either, so the install did not place it.")))))
+        1)
+      (else
+        (log-error
+          (string-append
+            "::error::trivy on PATH reports '"
+            (reported-version out)
+            "', not the pinned "
+            trivy-version
+            ". A scan verdict from an unpinned scanner is not reproducible, "
+            "so this is a hard failure rather than a warning. Usually a "
+            "different trivy earlier on PATH than "
+            bindir
+            "."))
+        1))))
+
+(define (main)
+  (cond
+    ;; Already the pinned version — nothing to fetch, nothing to elevate.
+    ;; This is also exactly the shape a pre-baked hardened image takes, so
+    ;; the hermetic destination lands as a no-op here rather than a rewrite.
+    ;; Defect (6).
+    ((version-matches? (trivy-version-output) trivy-version)
+      (log-info
+        (string-append
+          "trivy "
+          trivy-version
+          " already on PATH at the pinned version — skipping the job-time "
+          "install."))
+      0)
+    (else
+      (log-info (string-append "==> installing trivy " trivy-tag " into " bindir))
+      (cond
+        ((not (fetch-install-script)) 1)
+        ((not (verify-install-script)) 1)
+        ((not (run-installer)) 1)
+        (else (verify-installed!))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — image-scan install helpers loaded; main skipped"))
+  (else (exit (main))))

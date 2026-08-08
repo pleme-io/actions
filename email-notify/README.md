@@ -3,7 +3,7 @@
 > Send a plain-text email via SMTP. Sibling of slack-notify / discord-notify for ops contexts where webhooks aren''t available.
 
 **Category**: `comms` — 💬 Notifications across N channels
-**Backend**: shell
+**Backend**: tatara-lisp
 **Auto-published**: pinnable via `@v0.13.x` tags or floating `@v1` / `@main`
 
 ## 30-second quickstart
@@ -22,20 +22,26 @@ steps:
 
 | Name | Required | Default | Description |
 |---|---|---|---|
-| `body` | yes | — |  |
+| `body` | yes | — | The message body, as literal text. A value naming an existing path is refused: swaks would otherwise mail that FILE's contents. |
 | `from` | yes | — |  |
 | `smtp-host` | yes | — |  |
-| `smtp-password` | yes | — |  |
-| `smtp-port` | no | `587` |  |
+| `smtp-password` | yes | — | Passed to swaks through `$SWAKS_OPT_auth_password`, never argv. An unset secret interpolates to `""` here rather than failing the expression, so an empty value is refused instead of dialled. |
+| `smtp-port` | no | `587` | Submission port. 465 selects implicit TLS (swaks `--tlsc`); anything else selects STARTTLS (swaks `--tls`). |
 | `smtp-username` | yes | — |  |
 | `subject` | yes | — |  |
-| `to` | yes | — | Comma-separated recipients |
+| `to` | yes | — | Comma-separated recipients. Whitespace around each address is trimmed. An empty or all-blank value is REFUSED. |
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `sent` |  |
+| `sent` | `"true"` only when EVERY recipient was accepted. |
+| `failed-count` | Recipients that did not receive the message. Written only once delivery was attempted, so it is empty when the action refused on configuration. |
+
+## Requirements
+
+`swaks` must be present in the job's environment. This action no longer
+installs it — see [`run.tlisp`](./run.tlisp) §D4 (★★ HERMETIC SUPPLY CHAIN).
 
 ## Configuration via `.pleme-io-release.toml`
 

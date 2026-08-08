@@ -1,0 +1,244 @@
+;; caixa-render/run.tlisp — render cluster artifacts from a (defcaixa ...) form.
+;;
+;; Replaces the 16-line `run: |` bash body that used to live in action.yml's
+;; `render` step, plus the separate `nix profile install` step above it. Both
+;; are gone: the resolution, the render invocation and the artifact count are
+;; typed here, and the tool is resolved without mutating the runner's global
+;; nix profile.
+;;
+;; ── WHY, beyond the NO-SHELL rule ───────────────────────────────────────────
+;; The bash carried four live defects. Each is named at the line that closes
+;; it below; collected here so a reader sees the shape of the class:
+;;
+;;   D1  An EXPLICIT caixa-path that does not exist fell through to the
+;;       auto-detect probe. A typo therefore rendered a DIFFERENT caixa and
+;;       exited 0. Reproduced:
+;;         $ touch caixa.lisp
+;;         $ CAIXA_PATH=i-typoed-this.tlisp bash -eo pipefail t.sh
+;;         resolved=caixa.lisp   EXIT=0
+;;       Requesting file A and silently getting file B is worse than failing.
+;;
+;;   D2  `count=$(find "$OUTPUT_DIR" -type f | wc -l)` then
+;;       `echo "artifact-count=$count"` — a render that emitted NOTHING
+;;       reported `artifact-count=0` and exited 0. A no-op render is not a
+;;       successful render, and downstream steps keying on this output cannot
+;;       tell "rendered nothing" from "rendered nothing to render".
+;;
+;;   D3  The count and the output dir were written to $GITHUB_OUTPUT by hand
+;;       (`echo "output-dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"`). OUTPUT_DIR is
+;;       caller-controlled, and $GITHUB_OUTPUT is newline-separated, so a value
+;;       carrying a newline writes ADDITIONAL keys of the caller's choosing.
+;;       `emit-output` keeps key and value apart and refuses that by
+;;       construction.
+;;
+;;   D4  `output-dir: ""` passed explicitly produced
+;;       `mkdir: cannot create directory '': No such file or directory` —
+;;       a cryptic exit 1 where the documented default was clearly intended.
+;;       Reproduced: `OUTPUT_DIR="" bash -eo pipefail -c 'mkdir -p "$OUTPUT_DIR"'`
+;;       → EXIT=1.
+;;
+;; ── D7: THE ACTION HAS NEVER WORKED. NOT FIXED HERE — READ THIS FIRST ───────
+;; `feira render --in <file> --out <dir>` is not a command feira has. There is
+;; no `render` subcommand and no `--in` flag ANYWHERE in the binary, so every
+;; invocation this action has ever made died at argument parsing, before
+;; touching a caixa. Measured against the installed feira, which is built from
+;; pleme-io/caixa at HEAD (v0.1.46, e62380c, 2026-08-07) — this is the current
+;; tool, not a stale one:
+;;
+;;   $ feira render --help
+;;   error: unrecognized subcommand 'render'
+;;   $ grep -rn '"render"' caixa-feira/src/       # only `feira tofu render`
+;;   $ grep -rn -- '--in' caixa-feira/src/        # no matches at all
+;;
+;; The three real verbs that render anything, none of which takes a file:
+;;   feira chart --out <dir> --path <caixa-root>   per-program Helm chart only
+;;   feira app deploy …                            every cluster artifact, but
+;;                                                 written into the k8s GitOps
+;;                                                 repo, not an --out dir
+;;   feira tofu render …                           the HCL path
+;;
+;; The argv is carried over VERBATIM rather than repointed, deliberately. This
+;; action promises "Helm chart + Kubernetes manifests + Flux + CI workflows";
+;; `feira chart` delivers the first of those four, and swapping it in would
+;; convert a loud, always-failing step into a quiet one that renders a quarter
+;; of what it claims — the exact downward rot where a shrunken promise reads as
+;; merely modest and is never re-read as wrong. Which verb this action MEANT is
+;; a product decision (its output shape differs per verb), not a deshellify
+;; decision, so it is reported rather than guessed.
+;;
+;; The failure stays legible: `exec-or-die` inherits stdio, so clap's own
+;; "unrecognized subcommand" + the full list of real verbs lands in the job log,
+;; and the exit code propagates. The zero-artifact check below is NOT what
+;; catches this — the render aborts first, which is the correct ordering.
+;;
+;; ── And two supply-chain defects closed in action.yml rather than here ───────
+;; Noted so this file explains its own environment:
+;;
+;;   D5  `nix profile install github:pleme-io/caixa#feira` at job time —
+;;       banned fleet-wide (it MUTATES the runner's global profile) and a
+;;       ★★ HERMETIC SUPPLY CHAIN violation. Replaced by the repo's existing
+;;       baked-else-`nix run` idiom (see `oci:doca-argv` in the stdlib), which
+;;       installs nothing, checks the status of what it runs, and — via the new
+;;       `feira-ref` input, mirroring `doca-ref` on oci-image-push — lets a
+;;       consumer PIN the flake ref it resolves.
+;;       TIER-HONEST: this NARROWS the violation, it does not close it. `nix
+;;       run` still fetches at job time. Closing it means baking feira into the
+;;       runner image so the `baked` branch below is the one taken — a
+;;       runner-image decision, not one this action can make.
+;;
+;;   D6  `DeterminateSystems/nix-installer-action@main` — an unpinned
+;;       third-party action, i.e. arbitrary code from a moving branch running
+;;       with the job's token. Pinned to a commit SHA in action.yml.
+;;
+;; ── NOT FIXED, deliberately ─────────────────────────────────────────────────
+;; The artifact count is a line count over `find -type f` output, so a rendered
+;; FILENAME containing a newline over-counts. That is exactly what `| wc -l`
+;; did, so it is not a regression; fixing it needs `-print0`, which the count
+;; does not currently justify. `-type f` is also kept verbatim: if feira ever
+;; emits symlinks they are not counted, same as before.
+;;
+;; Inputs (env):
+;;   CAIXA_PATH  — explicit path to the .tlisp holding (defcaixa ...); ""
+;;                 means auto-detect.
+;;   OUTPUT_DIR  — destination directory for rendered artifacts.
+;;   FEIRA_REF   — flake ref `nix run` resolves when no feira binary is baked
+;;                 into the runner.
+
+(define explicit-caixa (string-trim (env-get "CAIXA_PATH" "")))
+
+;; D4 CLOSED: an explicitly-empty output-dir resolves to the documented
+;; default instead of reaching `mkdir` as an empty string. The input's own
+;; default is "rendered/", so an empty value can only be a caller passing ""
+;; through — which meant the documented default, not the empty path.
+(define out-dir
+  (let ((raw (string-trim (env-get "OUTPUT_DIR" ""))))
+    (if (equal? raw "") "rendered/" raw)))
+
+;; ── Resolve the caixa source ────────────────────────────────────────────────
+;; The bash probed, in order: $CAIXA_PATH (default caixa.tlisp), then
+;; caixa.lisp, Caixa.tlisp, .caixa/main.tlisp, src/caixa.tlisp. Order preserved
+;; exactly; only the EXPLICIT case changes (D1).
+
+(define caixa-candidates
+  (list "caixa.tlisp" "caixa.lisp" "Caixa.tlisp" ".caixa/main.tlisp" "src/caixa.tlisp"))
+
+(define (first-existing paths)
+  (cond
+    ((null? paths) "")
+    ((path-exists? (car paths)) (car paths))
+    (else (first-existing (cdr paths)))))
+
+;; D1 CLOSED: an explicit caixa-path is a REQUIREMENT, not a hint. When it does
+;; not resolve, the action fails naming the path the caller asked for, rather
+;; than rendering whatever else happens to be lying around.
+(define caixa
+  (cond
+    ((equal? explicit-caixa "")
+      (let ((found (first-existing caixa-candidates)))
+        (cond
+          ((equal? found "")
+            (log-error
+              (string-append
+                "no caixa file found. Looked for: "
+                (string-join ", " caixa-candidates)
+                " — pass `caixa-path` to name one explicitly."))
+            (exit 1))
+          (else found))))
+    ((path-exists? explicit-caixa) explicit-caixa)
+    (else
+      (log-error
+        (string-append
+          "caixa-path '"
+          explicit-caixa
+          "' does not exist. An explicitly-requested caixa is NOT auto-detected "
+          "around: silently rendering a different file would make a typo "
+          "indistinguishable from a correct run. Fix the path, or clear "
+          "`caixa-path` to auto-detect."))
+      (exit 1))))
+
+;; ── Destination ─────────────────────────────────────────────────────────────
+(define mkdir-r (proc:must (list "mkdir" "-p" out-dir)))
+
+(cond
+  ((erro:err? mkdir-r)
+    (log-error
+      (string-append
+        "could not create output directory '" out-dir "': "
+        (erro:message (erro:value mkdir-r))))
+    (exit 1))
+  (else #t))
+
+;; ── Resolve feira ───────────────────────────────────────────────────────────
+;; D5 CLOSED: nothing is installed. Prefer a feira already baked into the
+;; runner image; otherwise `nix run` the (pinnable) flake ref, which fetches
+;; into the store for the life of the job and mutates no profile.
+(define feira-ref (env-get "FEIRA_REF" "github:pleme-io/caixa#feira"))
+
+(define feira-baked (hash:cmd-present? "feira"))
+
+(define feira-argv
+  (if feira-baked
+    (list "feira")
+    (list "nix" "run" feira-ref "--")))
+
+;; Never silently degrade: a job that fell back to `nix run` must say so,
+;; because that path needs a working nix daemon at job time and fails in a way
+;; that reads as a feira error when it is really nix's.
+(log-info
+  (string-append
+    "feira source: "
+    (if feira-baked
+      "baked on PATH"
+      (string-append "nix run " feira-ref " (NOT baked — needs a working nix daemon at job time)"))))
+
+(log-info (string-append "rendering " caixa " -> " out-dir))
+
+;; ── Render ──────────────────────────────────────────────────────────────────
+;; exec-or-die inherits stdio, so feira's own progress and diagnostics reach
+;; the job log unbuffered, and a non-zero exit aborts with feira's own code.
+(exec-or-die (append feira-argv (list "render" "--in" caixa "--out" out-dir)))
+
+;; ── Count what was actually produced ────────────────────────────────────────
+(define find-r (proc:must (list "find" out-dir "-type" "f")))
+
+;; D2 CLOSED, part 1: a failing `find` is UNKNOWN, never 0. The bash pipeline
+;; was protected by `pipefail` here, but the count's failure mode and its
+;; "clean" mode were still the same number everywhere else in this repo — so
+;; the status is answered before the output is reachable at all (`proc:must`
+;; cannot yield stdout without exit 0).
+(cond
+  ((erro:err? find-r)
+    (log-error
+      (string-append
+        "could not enumerate '" out-dir "' after render: "
+        (erro:message (erro:value find-r))
+        " — the artifact count is UNKNOWN, and an unknown count is never "
+        "reported as 0."))
+    (exit 1))
+  (else #t))
+
+(define (nonempty-lines text)
+  (filter (lambda (l) (not (equal? (string-trim l) ""))) (string-split text "\n")))
+
+(define artifact-count (length (nonempty-lines (erro:value find-r))))
+
+;; D2 CLOSED, part 2: zero artifacts is a FAILED render, not a quiet success.
+(cond
+  ((equal? artifact-count 0)
+    (log-error
+      (string-append
+        "feira render produced 0 artifacts in '" out-dir "' from '" caixa
+        "'. A render that emits nothing is a failed render — reporting "
+        "artifact-count=0 and exiting 0 makes it indistinguishable from a "
+        "successful one to every downstream step."))
+    (exit 1))
+  (else #t))
+
+;; D3 CLOSED: key and value stay separate through emit-output, which refuses a
+;; newline-bearing value rather than letting it write extra outputs.
+(emit-output "output-dir" out-dir)
+
+(emit-output "artifact-count" (string-format "{}" artifact-count))
+
+(log-info
+  (string-format "rendered {} artifact(s) into {}" artifact-count out-dir))

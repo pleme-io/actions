@@ -18,15 +18,7 @@
 # than tracking it, and the reason must be specific enough to argue with.
 # "It is long" is not a reason. "It is security-critical and cannot be
 # exercised" is.
-./aldrava-dispatch/action.yml
-./caixa-render/action.yml
-./email-notify/action.yml
-./aldrava-resolve/action.yml
-./sui-dockerfile-node-cache/action.yml
-./aldrava-lint/action.yml
 ./tatara-script/action.yml
-./caixa-publish/action.yml
-./wasm-build/action.yml
 
 # ── Added 2026-08-01, each with its reason ──────────────────────────────
 #
@@ -38,7 +30,6 @@
 # returns 200, so the probe reads GitHub correctly). An unverifiable
 # rewrite of verification code is a worse act than tracking it. Convert
 # when aldrava cuts its first release and the path can actually be run.
-./aldrava-install/action.yml
 #
 # image-scan: ONE body left, down from two (the third flag was its loader,
 # the false positive fixed in run.tlisp today).
@@ -58,4 +49,3 @@
 # Kept as one entry because the baseline is file-granular — which is also
 # why image-scan was NOT baselined earlier today when only its loader was
 # flagged, since that would have hidden both real bodies.
-./image-scan/action.yml

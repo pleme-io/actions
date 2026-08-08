@@ -1,0 +1,300 @@
+;; email-notify/run.tlisp — send a plain-text email over SMTP submission.
+;;
+;; Replaces the 13-line `run: |` bash body that WAS this action, plus the two
+;; steps that fed it (`DeterminateSystems/nix-installer-action@main` and a
+;; job-time `nix profile install`). Every defect named below was REPRODUCED
+;; against the original bash — verbatim, with a stub `swaks` on PATH — before
+;; this port was written, and each is closed at the line that names it.
+;;
+;; ── D1 · IT REPORTED SUCCESS HAVING SENT NOTHING ────────────────────────
+;;   `IFS=',' read -ra recipients <<< "$TO"` on an empty TO produces a
+;;   ZERO-LENGTH array, so the `for` body never runs and control falls
+;;   straight through to `echo "sent=true"`. MEASURED: TO="" -> 0 swaks
+;;   invocations, `sent=true`, exit 0. `to` is declared `required: true`, but
+;;   GitHub does NOT enforce `required` on composite-action inputs (see
+;;   tatara-script/action.yml's own note on its `script` input) — so
+;;   `to: ${{ steps.x.outputs.recipients }}` resolving to "" is an ordinary,
+;;   unremarkable path into it. This is the notifier's worst failure mode:
+;;   nobody was told, and the pipeline says everybody was.
+;;
+;; ── D2 · " b@y.com" WENT INTO RCPT TO WITH THE SPACE STILL ON IT ────────
+;;   The split trimmed nothing. MEASURED: TO="a@x.com, b@y.com" ->
+;;   `--to " b@y.com"`. The comma-space form is what a human writes.
+;;
+;; ── D3 · A PARTIAL SEND WAS REPORTED AS A TOTAL FAILURE ─────────────────
+;;   `|| { echo "sent=false"; exit 1; }` aborts the loop at the FIRST bad
+;;   recipient. MEASURED: TO="a@x.com,bad@y.com,c@z.com" -> a@x.com was
+;;   DELIVERED, c@z.com was NEVER ATTEMPTED, and the only evidence produced
+;;   was `sent=false`. A retry re-mails a@x.com and still never reaches
+;;   c@z.com, because one unroutable address permanently shadows the rest.
+;;
+;; ── D4 · TWO SUPPLY-CHAIN HOLES, AND THE PIN WAS A LIE ──────────────────
+;;   `nix profile install github:NixOS/nixpkgs/nixos-24.05#swaks` fetched a
+;;   third-party artifact at job time (★★ HERMETIC SUPPLY CHAIN), on a step
+;;   that then handles SMTP credentials, and it was reached through an
+;;   UNPINNED `DeterminateSystems/nix-installer-action@main`. The comment
+;;   above it claimed "exact-pinned to nixos-24.05". It was not a pin:
+;;   `git ls-remote NixOS/nixpkgs refs/heads/nixos-24.05` resolves a BRANCH
+;;   head (b134951a…, 2026-08-08) that moves with every backport — a
+;;   different object from the immutable tag `refs/tags/24.05` (5646423b…).
+;;   Both steps are DELETED rather than hardened: swaks is required on PATH
+;;   and its absence is a loud refusal, which is the shape restic-backup and
+;;   api-spec-diff already use in this repo.
+;;
+;; ── D5 · THE SMTP PASSWORD WAS IN ARGV ──────────────────────────────────
+;;   `--auth-password "$SMTP_PASSWORD"` puts the credential on a command line,
+;;   where any process on the runner reads it out of `ps` /
+;;   /proc/<pid>/cmdline. GitHub's log masking redacts logs, not the process
+;;   table. MEASURED from the stub's own log: `auth-password s3cr3t`.
+;;
+;; ── D6 · A SUBJECT CARRYING A NEWLINE INJECTED SMTP HEADERS ─────────────
+;;   `--header "Subject: $SUBJECT"` hands swaks one header LINE. A subject of
+;;   "Deploy failed\nBcc: exfil@evil.example" adds a header nobody wrote.
+;;   Subjects here are routinely built from commit subjects and API text.
+;;
+;; ── D7 · `--body` READS A FILE WHEN THE BODY NAMES ONE ──────────────────
+;;   Upstream, verbatim: "If, after the above processing, the argument
+;;   represents an open-able file, the content of that file is used as the
+;;   body. This is deprecated behavior…". So `body: README.md` silently mails
+;;   the file's CONTENTS instead of the two words asked for — an exfiltration
+;;   primitive reachable from any caller that interpolates a path-shaped
+;;   value. Closed by refusing the ambiguity rather than resolving it, which
+;;   keeps the fix independent of the installed swaks version.
+;;
+;; ── D8 · PORT 465 COULD NEVER HAVE WORKED ───────────────────────────────
+;;   `--tls` is STARTTLS and swaks "Exit[s] if TLS not available". On 465 the
+;;   server speaks TLS from the first byte and never advertises STARTTLS, so
+;;   the documented `smtp-port` knob had exactly one working value. swaks
+;;   documents `--tlsc` ("Initiate a TLS connection immediately on
+;;   connection") for that case; the mode is now derived from the port.
+;;
+;; ── WHAT IS DELIBERATELY NOT CHANGED ────────────────────────────────────
+;;   No `--auth` flag was added. swaks' reference does not promise that
+;;   `--auth-user` alone requests authentication, but `--auth` takes an
+;;   OPTIONAL argument, so `--auth --auth-user u` risks swallowing the next
+;;   token — an unverified flag does not belong on the credential path. The
+;;   original's implicit behaviour is preserved exactly.
+
+;; ── inputs ───────────────────────────────────────────────────────────────
+
+(define smtp-host (string-trim (env-required-unless-test "SMTP_HOST")))
+
+(define smtp-port (string-trim (env-get "SMTP_PORT" "587")))
+
+(define smtp-user (env-required-unless-test "SMTP_USERNAME"))
+
+(define smtp-pass (env-required-unless-test "SMTP_PASSWORD"))
+
+(define mail-from (string-trim (env-required-unless-test "FROM")))
+
+(define to-raw (env-get "TO" ""))
+
+(define subject (env-get "SUBJECT" ""))
+
+(define body (env-get "BODY" ""))
+
+;; ── refusals ─────────────────────────────────────────────────────────────
+;;
+;; Every one of these exits BEFORE a connection is opened, and every one
+;; emits `sent=false` first. The original emitted nothing at all on a
+;; misconfiguration, so a caller running with `continue-on-error` read an
+;; empty `sent` — which `if: steps.mail.outputs.sent != 'true'` and
+;; `== 'false'` disagree about.
+;;
+;; ★ THE CONTRACT HAS ONE HOLE, and it is stated rather than implied
+;; (found by the verification pass, 2026-08-08). "Every one emits
+;; `sent=false` first" holds for every path reachable THROUGH THE COMPOSITE,
+;; because GitHub materialises an absent input as `""` and the explicit
+;; empty-checks below catch that. It does NOT hold on a direct
+;; `tatara-script` run with the variable genuinely UNSET:
+;; `env-required-unless-test` raises at load, before `refuse!` is even
+;; defined, so the process dies with `environment variable SMTP_HOST is not
+;; set` and `$GITHUB_OUTPUT` stays EMPTY — the precise failure this comment
+;; claims to have removed. Measured, not reasoned.
+;; The honest scope is therefore: guaranteed under the composite, absent on
+;; a bare invocation. `caixa-publish/run.tlisp:83-88` reasoned about this
+;; same trap and chose `env-get` + an explicit refusal instead; that is the
+;; shape to converge on.
+;; pending-email-notify: env-get + explicit refusal for the four required vars
+
+(define (refuse! why)
+  (log-error (string-append "email-notify: " why))
+  (emit-output "sent" "false")
+  (exit 1))
+
+;; CR or LF in a value that becomes a header line, an envelope address or a
+;; $GITHUB_OUTPUT value. `emit-output` already refuses the last of those; this
+;; refuses the first two. (Closes D6.)
+(define (multiline? s) (or (string-contains? s "\n") (string-contains? s "\r")))
+
+(when (equal? smtp-host "")
+  (refuse! "smtp-host is empty. Refusing to dial ':<port>' and report the result as a notification."))
+
+(when (multiline? smtp-host) (refuse! "smtp-host contains a newline."))
+
+;; A non-numeric port produced `--server host:` or `host:not-a-port`, which
+;; swaks reports as a connection error several layers from the cause.
+(when (not (re-match? "^[0-9]+$" smtp-port))
+  (refuse! (string-append "smtp-port '" smtp-port "' is not a number.")))
+
+(when (equal? (string-trim smtp-user) "")
+  (refuse! "smtp-username is empty."))
+
+;; An unset `secrets.SMTP_PASSWORD` interpolates to "" — it does not fail the
+;; expression. Submission relays reject an empty AUTH, so this only ever ends
+;; as an opaque swaks error; naming it here is the difference between "the
+;; secret is not wired up" and "the mail server is broken".
+(when (equal? smtp-pass "")
+  (refuse! "smtp-password is empty — an unset secret interpolates to the empty string rather than failing."))
+
+(when (equal? mail-from "") (refuse! "from is empty."))
+
+(when (multiline? mail-from) (refuse! "from contains a newline."))
+
+(when (multiline? subject)
+  (refuse!
+    (string-append
+      "subject contains a newline. `--header \"Subject: <subject>\"` is ONE "
+      "header line, so a newline appends headers of the sender's choosing "
+      "(Bcc:, Reply-To:) to every message. Refusing rather than stripping: a "
+      "silently-altered subject is its own surprise.")))
+
+;; (Closes D7.) `path-exists?` and swaks resolve against the same working
+;; directory, so this asks precisely the question swaks is about to ask.
+(when (and (not (equal? body "")) (path-exists? body))
+  (refuse!
+    (string-append
+      "body '" body "' names an existing path. swaks would read that FILE and "
+      "mail its contents instead of this text — documented upstream and "
+      "deprecated there. Refusing, because a body that is sometimes the "
+      "string and sometimes a file is not a body.")))
+
+;; ── recipients ───────────────────────────────────────────────────────────
+
+;; Trim each element. (Closes D2.)
+(define recipients
+  (filter (lambda (r) (not (equal? r "")))
+          (map (lambda (r) (string-trim r)) (string-split to-raw ","))))
+
+;; (Closes D1.) An empty roster is a configuration failure, never a
+;; successfully-delivered notification to nobody.
+(when (null? recipients)
+  (refuse!
+    (string-append
+      "`to` resolved to no recipients (raw value: '" to-raw "'). The bash this "
+      "replaces reported `sent=true` here, having opened no connection — the "
+      "one outcome a notifier must never produce. `required: true` does not "
+      "prevent this: GitHub does not enforce it on composite-action inputs.")))
+
+(define (bad-recipient r) (or (multiline? r) (string-contains? r " ")))
+
+(when (not (null? (filter bad-recipient recipients)))
+  (refuse!
+    (string-append
+      "a recipient contains whitespace or a newline after trimming: '"
+      (string-join ", " (filter bad-recipient recipients))
+      "'. Envelope addresses do not, and a newline here is SMTP injection.")))
+
+;; ── the client ───────────────────────────────────────────────────────────
+
+;; (Closes D4.) No install. The binary is either provided by the job — a
+;; devShell, a pleme-io hardened image, a runner image — or this action says
+;; so and stops. It never reports a notification it could not have sent.
+(when (not (hash:cmd-present? "swaks"))
+  (refuse!
+    (string-append
+      "swaks is not runnable. This action no longer installs it: the previous "
+      "`nix profile install github:NixOS/nixpkgs/nixos-24.05#swaks` was a "
+      "job-time third-party fetch (★★ HERMETIC SUPPLY CHAIN) whose 'pin' was a "
+      "moving BRANCH head, reached through an unpinned "
+      "DeterminateSystems/nix-installer-action@main. Provide swaks in the "
+      "job's environment instead.")))
+
+;; (Closes D5.) swaks reads every option from `$SWAKS_OPT_<name>` — dashes to
+;; underscores, no leading dashes — and command-line options override the
+;; environment, so the password is supplied HERE and never appears in argv.
+;; Tier-honest: this moves the secret from world-readable argv (`ps`,
+;; /proc/<pid>/cmdline) to the owner-readable process environment. Smaller
+;; blast radius, not zero. If a swaks build ignored the variable it would find
+;; no password and fail — loudly, never by sending unauthenticated.
+(env-set "SWAKS_OPT_auth_password" smtp-pass)
+
+;; (Closes D8.) 465 is implicit TLS; everything else is STARTTLS.
+(define tls-flag (cond ((equal? smtp-port "465") "--tlsc") (else "--tls")))
+
+(define (swaks-argv rcpt)
+  (list
+    "swaks"
+    ;; `--silent 2` is "only print errors" and is LOAD-BEARING, not cosmetic:
+    ;; at level 1 swaks replays the WHOLE transaction once an error occurs,
+    ;; and that transcript carries the base64 AUTH exchange — the password —
+    ;; into the job log. Level 2 is what makes logging swaks' captured output
+    ;; on the failure path below safe to do at all.
+    "--silent" "2"
+    "--server" (string-append smtp-host ":" smtp-port)
+    tls-flag
+    "--auth-user" smtp-user
+    "--from" mail-from
+    "--to" rcpt
+    "--header" (string-append "Subject: " subject)
+    "--body" body))
+
+;; ── delivery ─────────────────────────────────────────────────────────────
+;;
+;; (Closes D3.) Every recipient is attempted, whatever the ones before it
+;; did, and the roster is logged per address. One unroutable address can no
+;; longer shadow the rest of the list, and a retry has a record of who
+;; already received the message.
+;;
+;; argv is a LIST, so nothing here is quoted, split or injectable — the whole
+;; class the original's `--header "Subject: $SUBJECT"` sat inside.
+
+(define (deliver rcpts ok bad)
+  (cond
+    ((null? rcpts) (list ok bad))
+    (else
+      (let ((rcpt (car rcpts)) (r (proc:run (swaks-argv (car rcpts)))))
+        (cond
+          ((erro:err? r)
+            (log-error
+              (string-append "  FAILED " rcpt " — could not run swaks: "
+                             (erro:message (erro:value r))))
+            (deliver (cdr rcpts) ok (+ bad 1)))
+          ((= (status-of (erro:value r)) 0)
+            (log-info (string-append "  sent   " rcpt))
+            (deliver (cdr rcpts) (+ ok 1) bad))
+          (else
+            (log-error
+              (string-format "  FAILED {} — swaks exited {}: {}"
+                             rcpt
+                             (status-of (erro:value r))
+                             (string-trim (stderr-of (erro:value r)))))
+            (deliver (cdr rcpts) ok (+ bad 1))))))))
+
+(log-info
+  (string-format "email-notify: {} recipient(s) via {}:{}"
+                 (length recipients) smtp-host smtp-port))
+
+(define outcome (deliver recipients 0 0))
+
+(define ok-count (car outcome))
+
+(define bad-count (car (cdr outcome)))
+
+;; Emitted from the delivery stage only. A pre-flight refusal above writes
+;; `sent=false` and no count, because "0 failed" is not true of a run that
+;; never addressed anybody.
+(emit-output "failed-count" (string-format "{}" bad-count))
+
+(cond
+  ((= bad-count 0)
+    (log-info (string-format "email-notify: delivered to all {} recipient(s)" ok-count))
+    (emit-output "sent" "true")
+    (exit 0))
+  (else
+    (emit-output "sent" "false")
+    (log-error
+      (string-format
+        "email-notify: {} of {} recipient(s) did not receive the message ({} did)"
+        bad-count (+ ok-count bad-count) ok-count))
+    (exit 1)))
