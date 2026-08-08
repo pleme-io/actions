@@ -9,6 +9,16 @@ inputs:
   system:
     required: false
     default: ""
+  github-token:
+    description: >-
+      Token written to nix.conf as `access-tokens = github.com=<token>`, so
+      nix's OWN GitHub fetcher can read PRIVATE pleme-io flake inputs. Leave
+      unset for a flake with no private inputs — the rendered line is then
+      empty and nix.conf is untouched. Needs a token that can read the OTHER
+      repo: the auto-provided `GITHUB_TOKEN` is scoped to the running repo
+      alone and will still 404, so pass an org-scoped PAT (`BOT_PAT`).
+    required: false
+    default: ""
 
 outputs:
   out-path:
@@ -17,7 +27,44 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/nix-installer-action@main
+    # ── nix.conf, brought in line with the nix-flake-check sibling ────────
+    #
+    # This step used to be a bare `uses:` with no `extra-conf`, which made
+    # nix-build unusable for the two cases its sibling had already solved.
+    # Both failures name the wrong layer, so they are recorded here rather
+    # than rediscovered:
+    #
+    #   PRIVATE INPUTS. Without `access-tokens`, nix's GitHub fetcher is
+    #   anonymous and a private input fails as an ordinary HTTP 404 on
+    #   `api.github.com/repos/<o>/<r>/tarball/<rev>` — which reads like a bad
+    #   rev, not "you are anonymous". Measured on pleme-io/blackmatter
+    #   2026-08-07: 26 of its 29 pleme-io flake inputs are private.
+    #
+    #   `sandbox = relaxed` IS REQUIRED, not a loosening for convenience.
+    #   pleme-io Rust flakes evaluate gen's `cargo-build-spec-ifd`, which
+    #   sets `__noChroot` (it must reach the network to resolve crates during
+    #   import-from-derivation). With the installer's Linux default of
+    #   `sandbox = true`, nix refuses it outright:
+    #
+    #     error: derivation '…-cargo-build-spec-ifd.drv' has '__noChroot'
+    #     set, but that's not allowed when 'sandbox' is 'true'
+    #
+    #   `relaxed` is the narrow fix: normal derivations stay sandboxed
+    #   exactly as before, and ONLY a derivation that explicitly opts in via
+    #   `__noChroot` is exempted. It is not `sandbox = false`. rio, the
+    #   fleet's own x86_64-linux builder, has carried `sandbox = relaxed`
+    #   for exactly this reason.
+    #
+    # Backward compatible by construction for the token half: a caller that
+    # passes nothing renders an empty line. This action had NO consumers at
+    # the time of the change (searched org-wide 2026-08-07), so the sandbox
+    # half could not regress anyone either.
+    - name: Install Nix (DeterminateSystems)
+      uses: DeterminateSystems/nix-installer-action@main
+      with:
+        extra-conf: |
+          sandbox = relaxed
+          ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
     - id: src
       shell: bash
       run: |
