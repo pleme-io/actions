@@ -62,6 +62,14 @@ inputs:
     description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (the default ca-cert-url points at the private pleme-io/akeyless-k8s; an unauthenticated fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
     required: false
     default: ""
+  regctl-ref:
+    description: "The regctl flake ref `nix run` resolves when regctl is NOT baked into the runner image. Same shape and same purpose as zot-push's doca-ref. Default is the exact-pinned nixos-24.05 channel the deleted `nix profile install` step used, so the resolved binary is unchanged -- only the install-vs-run mechanism is."
+    required: false
+    default: "github:NixOS/nixpkgs/nixos-24.05#regctl"
+  doca-ref:
+    description: "The doca (oci-push) flake ref `nix run` resolves for the index-digest readback when doca is NOT baked. Matches zot-push's input of the same name; it was already read by the shared stdlib (oci:doca-argv) but this action never exposed it, so a consumer could not pin or fork it."
+    required: false
+    default: "github:pleme-io/substrate#oci-push"
 
 outputs:
   index-ref:
@@ -83,7 +91,17 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/nix-installer-action@main
+    # PINNED 2026-08-08. This was `@main` -- an unpinned third-party action, so
+    # every run executed whatever that branch happened to hold, in a step that
+    # installs a package manager onto the runner. The SHA below is the same one
+    # caixa-render/action.yml already pins in this repo (v22), so this is
+    # matching an in-repo precedent, not inventing a version.
+    #
+    # Still needed after the regctl-install step below was deleted: BOTH doca
+    # (oci:doca-argv) and regctl (mlj:regctl-argv) fall back to `nix run` when
+    # they are not baked into the runner image. Baking them is what finally
+    # removes this step.
+    - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
     # ── skopeo REMOVED 2026-07-31 (fleet-wide doca conversion) ───────────────
     # This step was the last `nix profile install` of skopeo in this repo, and
@@ -102,19 +120,29 @@ runs:
     # would have been the third copy. Same >=2-consumer rule that already
     # governs oci:split-registry in that file.
 
-    - name: Ensure regctl
-      shell: bash
-      run: |
-        # Nix-installed, not apt (theory/NIX-HARDENING.md §VI) -- exact-pinned
-        # to nixos-24.05, matching the skopeo step above. regctl is `auto`'s
-        # PREFERRED tool (see run.tlisp's TOOL PRIORITY header note): it is
-        # the one manifest tool that accepts per-registry TLS/CA trust
-        # (`regctl registry set --cacert`) without touching a shared daemon's
-        # global config, unlike docker/buildah/podman. Not preinstalled on
-        # the akeylesslabs camelot ARC runner image (stock
-        # ghcr.io/actions/actions-runner:latest + dind) -- confirmed live,
-        # 2026-07-23.
-        command -v regctl >/dev/null 2>&1 || nix profile install github:NixOS/nixpkgs/nixos-24.05#regctl
+    # ── "Ensure regctl" REMOVED 2026-08-08 (deshellify) ─────────────────────
+    # It ran
+    #   command -v regctl >/dev/null 2>&1 || nix profile install …#regctl
+    # which was TWO defects in one line. It was this action's entire remaining
+    # non-loader shell body (11 lines, over action-shell-lint's threshold of
+    # 10 -- and this action was never on that lint's baseline, so it was an
+    # untracked live violation, not accepted debt). And `nix profile install`
+    # is the same ★★ HERMETIC SUPPLY CHAIN violation the skopeo step above was
+    # deleted for six weeks earlier: an imperative, job-time install of a
+    # third-party binary that MUTATES the runner's nix profile. Exact-pinning
+    # the channel makes the fetch reproducible; it does not make it hermetic,
+    # and it does not undo the mutation.
+    #
+    # regctl is now resolved inside run.tlisp by `mlj:regctl-argv`, exactly the
+    # way the stdlib's `oci:doca-argv` resolves doca: a BAKED `regctl` on PATH
+    # wins, `nix run ${REGCTL_REF}` is the fallback, and which one was taken is
+    # LOGGED (`mlj:regctl-source-note`) so the weaker path is never silent.
+    # Baking regctl into the camelot ARC runner image is what closes it fully.
+    #
+    # The fallback also got four times cheaper in the same change: writing
+    # regctl's credential/trust config as a file (REGCTL_CONFIG) collapsed
+    # `registry set --cacert` + `registry set --tls` + `registry login` +
+    # `index create` down to a single `index create`.
 
     - name: Load stdlib + run.tlisp
       id: src
@@ -131,6 +159,11 @@ runs:
       with:
         script-file: ${{ steps.src.outputs.path }}
       env:
+        # `nix run` needs the same feature gate `nix build` does on a
+        # self-hosted runner whose baked nix.conf predates flakes -- matches
+        # zot-push's own doca step, the proven precedent in this repo. Both
+        # the doca and the regctl fallbacks go through `nix run`.
+        NIX_CONFIG: "experimental-features = nix-command flakes"
         REGISTRY: ${{ inputs.registry }}
         REPO: ${{ inputs.repo }}
         IMAGE: ${{ inputs.image }}
@@ -146,3 +179,5 @@ runs:
         CA_CERT_URL: ${{ inputs.ca-cert-url }}
         CA_CERT_PATH: ${{ inputs.ca-cert-path }}
         CA_CERT_TOKEN: ${{ inputs.ca-cert-token }}
+        REGCTL_REF: ${{ inputs.regctl-ref }}
+        DOCA_REF: ${{ inputs.doca-ref }}

@@ -80,6 +80,9 @@ outputs:
   actions-scanned:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: actions-scanned)"
     value: ${{ steps.exec.outputs.actions-scanned }}
+  added-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: added-count)"
+    value: ${{ steps.exec.outputs.added-count }}
   admitted:
     description: "Forwarded (key: admitted) — zot-pull-scan faucet admission flag"
     value: ${{ steps.exec.outputs.admitted }}
@@ -104,6 +107,9 @@ outputs:
   args:
     description: "Forwarded (key: args) — aldrava-dispatch captured args, JSON array"
     value: ${{ steps.exec.outputs.args }}
+  artifact-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: artifact-count)"
+    value: ${{ steps.exec.outputs.artifact-count }}
   artifact-path:
     description: "Forwarded (key: artifact-path) — written by 3 action dir(s): flutter-build, godot-export, unity-build"
     value: ${{ steps.exec.outputs.artifact-path }}
@@ -143,6 +149,9 @@ outputs:
   batch-id:
     description: "Forwarded (key: batch-id) — written by 1 action dir(s): openai-embeddings-batch"
     value: ${{ steps.exec.outputs.batch-id }}
+  bin-dir:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: bin-dir)"
+    value: ${{ steps.exec.outputs.bin-dir }}
   binaries:
     description: "Forwarded (key: binaries) — written by 1 action dir(s): go-build"
     value: ${{ steps.exec.outputs.binaries }}
@@ -254,6 +263,9 @@ outputs:
   commit-count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: commit-count)"
     value: ${{ steps.exec.outputs.commit-count }}
+  commits-scanned:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: commits-scanned)"
+    value: ${{ steps.exec.outputs.commits-scanned }}
   committed:
     description: "Forwarded (key: committed) — written by 1 action dir(s): release-promote"
     value: ${{ steps.exec.outputs.committed }}
@@ -287,6 +299,9 @@ outputs:
   created:
     description: "Forwarded (key: created) — written by 2 action dir(s): gh-release-create, qdrant-collection-create"
     value: ${{ steps.exec.outputs.created }}
+  daemon-used:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: daemon-used)"
+    value: ${{ steps.exec.outputs.daemon-used }}
   decision:
     description: "Forwarded (key: decision) — written by 1 action dir(s): attestation-gate"
     value: ${{ steps.exec.outputs.decision }}
@@ -320,6 +335,9 @@ outputs:
   distributed:
     description: "Forwarded (key: distributed) — written by 1 action dir(s): nx-cloud-distribute"
     value: ${{ steps.exec.outputs.distributed }}
+  docker-ran:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: docker-ran)"
+    value: ${{ steps.exec.outputs.docker-ran }}
   drain-armed:
     description: "Forwarded (key: drain-armed) — breathe-runner retirada drain-armed flag"
     value: ${{ steps.exec.outputs.drain-armed }}
@@ -335,6 +353,9 @@ outputs:
   dry-run:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: dry-run)"
     value: ${{ steps.exec.outputs.dry-run }}
+  duration-ms:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: duration-ms)"
+    value: ${{ steps.exec.outputs.duration-ms }}
   ecosystem:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: ecosystem)"
     value: ${{ steps.exec.outputs.ecosystem }}
@@ -452,6 +473,9 @@ outputs:
   injected:
     description: "Forwarded (key: injected) — written by 1 action dir(s): linkerd-inject"
     value: ${{ steps.exec.outputs.injected }}
+  input-file-id:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: input-file-id)"
+    value: ${{ steps.exec.outputs.input-file-id }}
   inputs-pushed:
     description: "Forwarded (key: inputs-pushed) — written by 1 action dir(s): super-cache-save"
     value: ${{ steps.exec.outputs.inputs-pushed }}
@@ -572,6 +596,9 @@ outputs:
   outcome-chain:
     description: "Forwarded (key: outcome-chain) — tameshi-attest kensa OutcomeChain flag"
     value: ${{ steps.exec.outputs.outcome-chain }}
+  output-dir:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: output-dir)"
+    value: ${{ steps.exec.outputs.output-dir }}
   output-hashes:
     description: "Forwarded (key: output-hashes) — super-cache-build BLAKE3 output hashes"
     value: ${{ steps.exec.outputs.output-hashes }}
@@ -713,6 +740,9 @@ outputs:
   releases-uninstalled:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: releases-uninstalled)"
     value: ${{ steps.exec.outputs.releases-uninstalled }}
+  removed-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: removed-count)"
+    value: ${{ steps.exec.outputs.removed-count }}
   renamed-crates:
     description: "Forwarded (key: renamed-crates) — rust-workspace-publish: crates auto-renamed on a name collision"
     value: ${{ steps.exec.outputs.renamed-crates }}
@@ -725,12 +755,18 @@ outputs:
   report-path:
     description: "Forwarded (key: report-path) — written by 1 action dir(s): adoption-audit"
     value: ${{ steps.exec.outputs.report-path }}
+  request-count:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: request-count)"
+    value: ${{ steps.exec.outputs.request-count }}
   requested:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: requested)"
     value: ${{ steps.exec.outputs.requested }}
   resolved-count:
     description: "Forwarded (key: resolved-count) — written by 1 action dir(s): caixa-deps-resolve"
     value: ${{ steps.exec.outputs.resolved-count }}
+  resolved-version:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: resolved-version)"
+    value: ${{ steps.exec.outputs.resolved-version }}
   response:
     description: "Forwarded (key: response) — written by 1 action dir(s): anthropic-message"
     value: ${{ steps.exec.outputs.response }}
@@ -800,6 +836,9 @@ outputs:
   severity:
     description: "Forwarded (key: severity) — image-scan / zot-pull-scan highest severity"
     value: ${{ steps.exec.outputs.severity }}
+  sha256:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: sha256)"
+    value: ${{ steps.exec.outputs.sha256 }}
   shipped:
     description: "Forwarded (key: shipped) — written by 4 action dir(s): cargo-publish-crate, helm-publish, npm-publish …"
     value: ${{ steps.exec.outputs.shipped }}
@@ -866,6 +905,9 @@ outputs:
   stale-baseline:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: stale-baseline)"
     value: ${{ steps.exec.outputs.stale-baseline }}
+  status:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: status)"
+    value: ${{ steps.exec.outputs.status }}
   steps-failed:
     description: "Forwarded (key: steps-failed) — action-pipeline: how many declared steps failed"
     value: ${{ steps.exec.outputs.steps-failed }}

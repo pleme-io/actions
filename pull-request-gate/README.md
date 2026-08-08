@@ -10,10 +10,16 @@ Runs on `pull_request_target` and routes every PR through one of four branches:
 
 | Branch | Trigger | Action |
 |---|---|---|
+| 0 — unidentifiable | `.pull_request.number`, `.user.login` or `.author_association` absent/null | **exit 1.** A gate that cannot name the PR has not gated it |
 | 1 — allowlist | PR author in `allowlist` input | no-op, pass through |
 | 2 — bot | PR author matches `*[bot]` suffix or `bot-allowlist` | label `bot-pr`, pass through |
-| 3 — drive-by | `FIRST_TIME_CONTRIBUTOR` **and** every file matches `restricted-paths-regex` | per `rejection-action` (default: comment + label `external-drive-by` + close + lock as `spam`) |
+| 3 — drive-by | `FIRST_TIME_CONTRIBUTOR` **and** every file matches `restricted-paths-jq-predicate` | per `rejection-action` (default: comment + label `external-drive-by` + close + lock as `spam`) |
 | 4 — substantive external | `FIRST_TIME_CONTRIBUTOR` with substantive diff | label `external-review-required` |
+| 5 — could not evaluate | the file list could not be fetched, or the predicate returned neither `true` nor `false` | label `external-review-required`, then **exit 1** — never auto-close a PR we failed to evaluate, and never report it as gated |
+
+Every enforcing branch exits on its own verdict: if a label, comment, close or
+lock does not land, the gate goes **red** and names the step that failed. An
+announced intent is not evidence of an effect.
 
 ## Usage
 
@@ -72,18 +78,32 @@ permissions:
 
 ```
 pull_request_target.opened
-  └── author in allowlist?
-      ├── YES → exit 0
-      └── NO  → author looks like bot (* [bot] suffix or in bot-allowlist)?
-                ├── YES → label bot-pr, exit 0
-                └── NO  → author_association == FIRST_TIME_CONTRIBUTOR
-                          AND every file matches restricted-paths-regex?
-                          ├── YES → rejection-action
-                          │         ├── close_and_lock     → comment + label external-drive-by + close + lock(spam)
-                          │         ├── label_only         → label external-drive-by
-                          │         └── request_approval   → label external-review-required
-                          └── NO  → label external-review-required, exit 0
+  └── number + author + author_association all present?
+      ├── NO  → exit 1                     (a gate cannot enforce on a PR it cannot name)
+      └── YES → author in allowlist?       (an EMPTY author matches nothing, ever)
+          ├── YES → exit 0
+          └── NO  → author looks like bot (*[bot] suffix or in bot-allowlist)?
+                    ├── YES → label bot-pr → exit 0 iff the label landed
+                    └── NO  → author_association == FIRST_TIME_CONTRIBUTOR?
+                              ├── NO  → label external-review-required
+                              └── YES → gh api .../files --paginate --slurp --jq
+                                        ├── true    → rejection-action
+                                        │             ├── close_and_lock   → comment + label + close + lock(spam)
+                                        │             ├── label_only       → label external-drive-by
+                                        │             └── request_approval → label external-review-required
+                                        ├── false   → label external-review-required
+                                        └── error   → label external-review-required, exit 1
 ```
+
+`--slurp` is load-bearing: without it `gh api --paginate` emits one JSON
+document per page and `--jq` runs over each separately, so a PR with more than
+30 files answers `true\ntrue` and evades the drive-by branch. The predicate is
+also guarded with `length > 0`, because jq's `all` over an empty array is
+`true` — an unknown file set is not an all-documentation file set.
+
+`restricted-paths-jq-predicate` is passed to `gh` as a single argv element. It
+is never interpolated into a shell command line, so a predicate containing a
+quote is data, not code.
 
 ## Status
 

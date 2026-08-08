@@ -122,3 +122,65 @@
     (assert (string-contains? doc "use_as_default: true") "use_as_default default true")
     (assert (string-contains? doc "nodes:") "nodes key")
     (assert (string-contains? doc "  - name: bigorna-amd64") "the one native node")))
+
+;; ── regression tests for the three defects closed 2026-08-08 ─────────
+;;
+;; Each `assert` below pins a REPRODUCED failure, not a hypothetical. The
+;; refusal paths themselves call `(exit 1)` — which would take the harness
+;; with them — so what is asserted here is the PREDICATE each refusal is
+;; built on, and the end-to-end refusals are proven by driving run.tlisp
+;; with a stub `bigorna` on PATH (see the conversion notes).
+
+(deftest "the shape gate rejects a newline in every value that reaches a renderer"
+  ;; DEFECT: BUILDER_NAME=$'bigorna\nok=true\n…' made $GITHUB_OUTPUT parse
+  ;; as ok=true on a run whose real verdict was ok=false — a forged green
+  ;; on the native-not-QEMU guarantee this action exists to make.
+  (assert (re-match? bigorna:name-shape "bigorna") "a plain builder name passes")
+  (assert (not (re-match? bigorna:name-shape "bigorna\nok=true")) "an embedded newline is refused")
+  (assert (not (re-match? bigorna:name-shape "bigorna\n")) "a TRAILING newline is refused too")
+  (assert (not (re-match? bigorna:name-shape "")) "an empty name is refused")
+  ;; DEFECT: a newline in DRIVER put `use_as_default: false` into the
+  ;; rendered BigornaConfig as a real top-level key.
+  (assert (re-match? bigorna:platform-shape "linux/amd64") "os/arch passes")
+  (assert (re-match? bigorna:platform-shape "linux/arm64/v8") "os/arch/variant passes")
+  (assert (not (re-match? bigorna:platform-shape "a/b/c/d")) "a 4th segment is refused")
+  (assert
+    (not (re-match? bigorna:platform-shape "linux/amd64\nendpoint: tcp://evil:2375"))
+    "a platform token cannot smuggle a config line")
+  (assert (re-match? bigorna:endpoint-shape "tcp://10.0.0.7:2375") "a tcp endpoint passes")
+  (assert (re-match? bigorna:endpoint-shape "arm64-ctx") "a docker context name passes")
+  (assert (not (re-match? bigorna:endpoint-shape "ctx\nevil: 1")) "an endpoint newline is refused")
+  ;; DEFECT: README interpolates cache-from UNQUOTED into a consumer's
+  ;; `run:`, so a ref carrying shell metacharacters is command injection.
+  (assert (re-match? bigorna:ref-shape "ghcr.io/pleme-io/svc:buildcache") "an OCI ref passes")
+  (assert
+    (not (re-match? bigorna:ref-shape "ghcr.io/x:c --push; id"))
+    "a ref carrying shell metacharacters is refused"))
+
+(deftest "require-driver accepts exactly the three documented drivers"
+  (assert (equal? (require-driver "docker-container") "docker-container") "default driver")
+  (assert (equal? (require-driver "kubernetes") "kubernetes") "kubernetes driver")
+  (assert (equal? (require-driver "remote") "remote") "remote driver"))
+
+(deftest "FALLTHROUGH is fail-CLOSED — only `native-subset` permits a partial"
+  ;; DEFECT: the test was (equal? fallthrough "error"), so FALLTHROUGH=Error
+  ;; silently granted native-subset permission and exited 0 with a partial
+  ;; builder where the contract says exit 1. Reproduced before the fix.
+  (assert (permits-partial? "native-subset") "the documented permission")
+  (assert (permits-partial? "  native-subset  ") "surrounding whitespace is tolerated")
+  (assert (not (permits-partial? "error")) "the documented default does not permit")
+  (assert (not (permits-partial? "Error")) "a TYPO does not permit — this is the defect")
+  (assert (not (permits-partial? "NATIVE-SUBSET")) "case matters; unknown lands on the safe side")
+  (assert (not (permits-partial? "")) "an empty value does not permit")
+  (assert (known-fallthrough? "error") "error is a known value")
+  (assert (known-fallthrough? "native-subset") "native-subset is a known value")
+  (assert (not (known-fallthrough? "Error")) "a typo is reported as unrecognized"))
+
+(deftest "coverage-verdict describes the REQUEST, never the create step"
+  ;; DEFECT: the setup-failure path emitted emulation=needs-native-node
+  ;; unconditionally, so a fully-native request whose buildx create failed
+  ;; sent the reader hunting for an endpoint that was never the problem.
+  (assert (equal? (coverage-verdict (list)) "native-for-all") "nothing emulated")
+  (assert
+    (equal? (coverage-verdict (list "linux/s390x")) "needs-native-node")
+    "something emulated"))

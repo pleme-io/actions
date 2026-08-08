@@ -1,6 +1,221 @@
-;; deno-deploy/run.tlisp — typed schema locked, body lands on consumer demand
-(log-info "::warning::deno-deploy not yet implemented")
+;; deno-deploy/run.tlisp — deploy a project to Deno Deploy via `deployctl`.
+;;
+;; ── WHAT THIS REPLACES ──────────────────────────────────────────────────
+;; NOT a shell body. This action never had one: its only bash is the exempt
+;; `src` loader in action.yml. What it carried instead was a STUB —
+;;
+;;     (log-info "::warning::deno-deploy not yet implemented")
+;;     (append-output "deployment-url=stub")
+;;     (exit 0)
+;;
+;; — which is this campaign's headline defect class in its strongest form.
+;; `|| true` on a mutation hides a FAILED mutation behind a green step; here
+;; the mutation is ABSENT ENTIRELY and the step is still green, and the
+;; declared output — a URL — is the literal string `stub`. A consumer wiring
+;; this into a release pipeline gets a passing deploy job, a `deployment-url`
+;; that a downstream smoke test will curl or a notifier will post to Slack,
+;; and a `::warning::` line nobody reads. Nothing distinguishes that from a
+;; real deploy, which is precisely the property that makes the class
+;; expensive.
+;;
+;; So the body lands. Every path below either deploys or FAILS LOUDLY; there
+;; is no path that reports success without one, and no path that emits a
+;; `deployment-url` that was not read out of deployctl's own output.
+;;
+;; ── ★ THE TOKEN NEVER ENTERS ARGV ───────────────────────────────────────
+;; deployctl accepts `--token <t>`, and that flag is world-readable through
+;; `ps` / /proc/<pid>/cmdline for the life of the process, on a runner that
+;; may be shared. GitHub Actions masks LOGS, not the PROCESS TABLE. deployctl
+;; also reads DENO_DEPLOY_TOKEN from the environment, so action.yml forwards
+;; `inputs.token` there and this file only ever asks whether it is NON-EMPTY.
+;; The secret is never bound to a variable, never string-appended, never
+;; handed to proc:run. Nothing here needs a stdin channel, so no step has to
+;; stay in bash for `--password-stdin`-style delivery.
 
-(append-output "deployment-url=stub")
+;; ────────────────────────────────────────────────────────────────
+;; Inputs
+;; ────────────────────────────────────────────────────────────────
+;; `env-get` rather than `env-required`: the stdlib's own note (§
+;; env-required-unless-test) records that a top-level `env-required` is a
+;; landmine under any test file, and validating here buys a message that
+;; names the input and says why the runner did not catch it.
 
-(exit 0)
+(define project (string-trim (env-get "PROJECT" "")))
+
+(define entry-file (string-trim (env-get "ENTRY_FILE" "")))
+
+(define prod? (equal? (string-trim (env-get "PROD" "false")) "true"))
+
+;; Presence only — this binds a BOOLEAN, never the secret.
+(define token-present? (not (equal? (string-trim (env-get "DENO_DEPLOY_TOKEN" "")) "")))
+
+;; ────────────────────────────────────────────────────────────────
+;; Fail-closed validation
+;; ────────────────────────────────────────────────────────────────
+
+(define (die msg)
+  (log-error (string-append "deno-deploy: " msg))
+  (exit 1))
+
+;; A composite action's `required: true` is DECLARATIVE — the runner does not
+;; enforce it — so an unset input arrives here as "", not as a job failure.
+;; Without this check an empty `project` would reach deployctl as
+;; `--project=` and produce a foreign error message about the wrong thing.
+(define (require-input! value label)
+  (cond
+    ((not (equal? value "")) #t)
+    (else
+      (die
+        (string-append
+          "input `"
+          label
+          "` is empty. A composite action's `required: true` is declarative "
+          "— the runner does not enforce it — so an unset input arrives as an "
+          "empty string rather than as a job failure.")))))
+
+(require-input! project "project")
+
+(require-input! entry-file "entry-file")
+
+(cond
+  (token-present? #t)
+  (else
+    (die
+      (string-append
+        "input `token` is empty. deployctl would fall through to an "
+        "unauthenticated request and fail with an auth error that names "
+        "neither the input nor this action."))))
+
+;; Local entrypoint must exist BEFORE the deploy is attempted. A remote
+;; entrypoint (an https:// URL) is passed through untouched — deployctl
+;; accepts one and there is nothing on disk to check.
+(cond
+  ((string-starts-with? entry-file "https://") #t)
+  ((path-exists? entry-file) #t)
+  (else
+    (die
+      (string-append
+        "entry-file '"
+        entry-file
+        "' does not exist in the workspace. This action does NOT run "
+        "actions/checkout (see action.yml) — the caller owns the working "
+        "tree, so build the entrypoint before calling this step."))))
+
+;; ────────────────────────────────────────────────────────────────
+;; deployctl must already be on PATH
+;; ────────────────────────────────────────────────────────────────
+;; Deliberately NOT installed here. `deno install`/`curl | sh` inside a step
+;; that holds a deploy credential is an unpinned network fetch on the
+;; credential path — the exact shape runtime-install-lint exists to refuse.
+
+(define probe (proc:run (list "deployctl" "--version")))
+
+(cond
+  ((erro:err? probe)
+    (die
+      (string-append
+        "`deployctl` is not runnable: "
+        (erro:message (erro:value probe))
+        ". Install it in a PINNED prior step (denoland/setup-deno, then "
+        "`deno install -gArf jsr:@deno/deployctl@<version>`); this action "
+        "will not fetch a binary at job time onto the credential path.")))
+  (else #t))
+
+;; ────────────────────────────────────────────────────────────────
+;; Deploy
+;; ────────────────────────────────────────────────────────────────
+;; argv is a LIST, so `project` and `entry-file` cannot word-split, cannot
+;; break out of quoting, and cannot inject a second command — the property
+;; the old `exec-capture "sh" "-c" <string>` shape could not have.
+
+(define argv
+  (append
+    (list "deployctl" "deploy" (string-append "--project=" project))
+    (if prod? (list "--prod") '())
+    (list entry-file)))
+
+(log-info
+  (string-append "==> deployctl deploy --project=" project (if prod? " --prod" "") " " entry-file))
+
+(define r (proc:run argv))
+
+(cond
+  ((erro:err? r) (die (string-append "could not run deployctl: " (erro:message (erro:value r)))))
+  (else #t))
+
+(define res (erro:value r))
+
+(define out (stdout-of res))
+
+(define err (stderr-of res))
+
+;; The status is READ, always. `proc:run` returns `ok` for ran-but-failed on
+;; purpose, so this branch is what separates a failed deploy from a good one
+;; — the distinction the stub erased.
+(cond
+  ((= (status-of res) 0) #t)
+  (else
+    (log-error
+      (string-append "deno-deploy: deployctl exited " (string-format "{}" (status-of res))))
+    (log-info (string-trim err))
+    (log-info (string-trim out))
+    (exit 1)))
+
+;; ────────────────────────────────────────────────────────────────
+;; Read the deployment URL out of deployctl's own output
+;; ────────────────────────────────────────────────────────────────
+;; deployctl's success text has drifted across versions ("Deployment
+;; complete." with the URL inline; a "View at:" block with a "- <url>" list),
+;; so this scans TOKENS rather than matching one banner line. NO_COLOR is set
+;; in action.yml so the tokens arrive un-escaped.
+
+(define (deno-url? t) (and (string-starts-with? t "https://") (string-contains? t ".deno.dev")))
+
+(define (url-in-tokens toks)
+  (cond
+    ((null? toks) "")
+    ((deno-url? (car toks)) (car toks))
+    (else (url-in-tokens (cdr toks)))))
+
+;; Tabs normalised to spaces first — `string-split` takes one separator, and
+;; a tab-separated URL would otherwise ride inside a single token.
+(define (url-in-lines lines)
+  (cond
+    ((null? lines) "")
+    (else
+      (let ((hit (url-in-tokens (string-split (string-join " " (string-split (car lines) "\t")) " "))))
+        (cond
+          ((not (equal? hit "")) hit)
+          (else (url-in-lines (cdr lines))))))))
+
+(define (scan-for-url text) (url-in-lines (string-split text "\n")))
+
+;; stdout first, then stderr: deployctl writes progress to stderr, so a URL
+;; on stdout is the more deliberate one when both carry it.
+(define url-from-stdout (scan-for-url out))
+
+(define url (if (equal? url-from-stdout "") (scan-for-url err) url-from-stdout))
+
+(cond
+  ((equal? url "")
+    ;; THE DEPLOY SUCCEEDED and only the read failed. Emitting "" here would
+    ;; rebuild the very defect this file closes — `echo "k=$(cmd)"` writes
+    ;; `k=` and exits 0, and no consumer can tell that from a real value.
+    (log-error
+      (string-append
+        "deno-deploy: the deploy SUCCEEDED (deployctl exited 0) but no "
+        "https://….deno.dev URL was found in its output, so `deployment-url` "
+        "has no honest value and the step fails rather than emit an empty "
+        "one. Do NOT blindly re-run — the deployment is already live. Read "
+        "the output below; if deployctl's format has changed, widen the scan "
+        "in run.tlisp."))
+    (log-info (string-trim out))
+    (log-info (string-trim err))
+    (exit 1))
+  (else
+    (log-info (string-append "deployed: " url))
+    ;; `emit-output`, not `append-output`: key and value stay separate, so a
+    ;; newline smuggled through deployctl's output writes a refusal rather
+    ;; than a second, attacker-chosen output key.
+    (emit-output "deployment-url" url)
+    (exit 0)))

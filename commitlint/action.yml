@@ -1,5 +1,5 @@
 name: 'pleme-io · commitlint'
-description: 'Validate commit messages with commitlint.'
+description: 'Validate commit messages against Conventional Commits over a git range.'
 branding: { icon: 'check-circle', color: 'gray-dark' }
 
 inputs:
@@ -9,14 +9,43 @@ inputs:
   to-ref:
     required: false
     default: "HEAD"
+  types:
+    description: 'Comma-separated allowed types. Empty = the config-conventional set.'
+    required: false
+    default: ""
+  scopes:
+    description: 'Comma-separated allowed scopes. Empty = any scope.'
+    required: false
+    default: ""
+  max-subject-length:
+    description: 'header-max-length. Default matches config-conventional.'
+    required: false
+    default: "100"
+  require-commits:
+    description: 'Fail when the range yields zero lintable commits. A gate that examined nothing has not passed.'
+    required: false
+    default: "true"
 
 outputs:
   violations:
+    description: 'Violation count, or "unknown" when the scan itself failed. Never 0 on a broken run.'
     value: ${{ steps.run.outputs.violations }}
+  commits-scanned:
+    description: 'Lintable commits examined (merge/revert subjects excluded).'
+    value: ${{ steps.run.outputs.commits-scanned }}
 
 runs:
   using: composite
   steps:
+    # NO `actions/checkout` step here, deliberately — the template
+    # (branch-protect-sync) has one because it reads a spec FILE, and this
+    # action reads the CALLER'S git history. A composite action that
+    # re-checks-out silently discards the caller's ref, depth, submodules and
+    # token, so the gate would lint a different range than the workflow chose.
+    # The caller owns the checkout and needs `fetch-depth: 0` on it, since the
+    # default depth-1 does not fetch the base branch; run.tlisp refuses an
+    # unresolvable range with that exact diagnostic rather than reporting the
+    # missing base ref as "no commits, clean".
     - id: src
       shell: bash
       run: |
@@ -35,3 +64,7 @@ runs:
       env:
         FROM_REF: ${{ inputs.from-ref }}
         TO_REF: ${{ inputs.to-ref }}
+        TYPES: ${{ inputs.types }}
+        SCOPES: ${{ inputs.scopes }}
+        MAX_SUBJECT_LENGTH: ${{ inputs.max-subject-length }}
+        REQUIRE_COMMITS: ${{ inputs.require-commits }}

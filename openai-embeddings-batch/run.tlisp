@@ -1,6 +1,470 @@
-;; openai-embeddings-batch/run.tlisp — typed schema locked
-(log-info "::warning::openai-embeddings-batch not yet implemented")
+;; openai-embeddings-batch/run.tlisp — submit an embeddings job to the OpenAI
+;; Batch API and return the real batch id.
+;;
+;; ── WHAT THIS REPLACES ───────────────────────────────────────────────────
+;;
+;; This action was ALREADY loader-shaped, so it read as "converted" to every
+;; surface that counts conversions. It was not. The whole body was:
+;;
+;;     (log-info "::warning::openai-embeddings-batch not yet implemented")
+;;     (append-output "batch-id=stub")
+;;     (exit 0)
+;;
+;; That is worse than unconverted bash. It performed no upload, created no
+;; batch, spent no API key — and then emitted `batch-id=stub` and exited 0,
+;; so the step went GREEN and the declared output was populated with a
+;; fabricated value. A consumer polling `/v1/batches/stub` gets a 404 that
+;; looks like OpenAI's fault; a consumer that merely gates on the step's
+;; success sees a batch that was never submitted. "Not implemented" and
+;; "submitted successfully" were the same verdict, which is the exact defect
+;; class this campaign exists to close, in its purest form. Measured
+;; 2026-08-08: 165 run.tlisp in this repo carry the same fabricate-and-exit-0
+;; stub; this closes one and the shape is reusable for the rest.
+;;
+;; ── THE FLOW (OpenAI Batch API, two calls) ───────────────────────────────
+;;
+;;   1. POST {base}/files      multipart, purpose=batch   -> input_file_id
+;;   2. POST {base}/batches    JSON                       -> batch id
+;;
+;; ── ★ THE API KEY NEVER ENTERS ARGV ──────────────────────────────────────
+;;
+;; Step 2 is `http-post-json`, which takes headers as an alist, so the key is
+;; a header VALUE and never touches a command line.
+;;
+;; Step 1 cannot be: OpenAI's /v1/files requires multipart/form-data, and this
+;; interpreter has no multipart primitive (http-get, http-get-json,
+;; http-post-json, http-serve-static is the entire set). So it shells to curl
+;; — and the obvious spelling, `curl -H "Authorization: Bearer $KEY"`, would
+;; put the key in the process table where any process on the runner reads it
+;; from `ps` or /proc/<pid>/cmdline. GitHub masks LOGS, not the process table,
+;; and this fleet runs self-hosted ARC runners where that is not theoretical.
+;;
+;; Instead the request is written to a curl CONFIG FILE and invoked as
+;; `curl --config <path>` — verified argv is those three words and nothing
+;; else. The file lives in a directory created `mkdir -m 700` with 12 hex
+;; chars of randomness in its name, so the mode is set atomically at creation
+;; (no chmod race) and no other user can traverse into it, and it is shredded
+;; on every exit path including the failure ones.
 
-(append-output "batch-id=stub")
+(define api-key (string-trim (env-required-unless-test "API_KEY")))
+(define input-file (env-required-unless-test "INPUT_FILE"))
+(define model (env-get "MODEL" "text-embedding-3-small"))
+(define api-base (string-trim (env-get "API_BASE" "https://api.openai.com/v1")))
 
-(exit 0)
+;; The Batch API accepts exactly one completion window today, so this is a
+;; constant rather than an input: an input whose only legal value is its
+;; default is a knob that cannot be turned.
+(define completion-window "24h")
+
+;; Every line of a batch file must target the same endpoint as the batch, and
+;; this action's contract is embeddings.
+(define batch-endpoint "/v1/embeddings")
+
+(define workdir
+  (string-append (env-get "RUNNER_TEMP" "/tmp") "/oeb-" (random-hex 12)))
+
+(define (shred) (exec-capture "rm" "-rf" workdir))
+
+(define (die msg)
+  (log-error msg)
+  (shred)
+  (exit 1))
+
+;; ── pure helpers ─────────────────────────────────────────────────────────
+;;
+;; Kept at top level and free of side effects so `run.test.tlisp` can load
+;; this file and drive them directly. Everything that touches the network,
+;; the filesystem or $GITHUB_OUTPUT lives in `main`, which the guard at the
+;; bottom does not call under the test harness.
+
+;; Is this line already a Batch-API request object? Total and side-effect
+;; free: a non-JSON line, a JSON scalar, and a JSON object without custom_id
+;; all answer #f rather than raising.
+(define (batch-line? line)
+  (let ((parsed (erro:attempt (lambda () (json-parse line)))))
+    (cond
+      ((erro:err? parsed) #f)
+      (else
+        (let ((v (erro:value parsed)))
+          (cond
+            ((not (pair? v)) #f)
+            (else (not (null? (alist-get v "custom_id"))))))))))
+
+;; ── validate a passthrough file locally, before paying for the upload ─────
+;;
+;; ★ THIS IS THE "PARTIAL FAILURE READS AS SUCCESS" CASE.
+;;
+;; OpenAI validates a batch file ASYNCHRONOUSLY: the upload succeeds, the
+;; batch is created, an id comes back, and the job only turns `failed`
+;; minutes later. So a file with one malformed line still hands this action a
+;; real batch id to emit and a clean exit — the caller learns nothing is
+;; coming only when it polls. Every line is therefore checked here, where the
+;; failure is attributable to a line number instead of arriving detached from
+;; its cause.
+;;
+;; NOT checked here, deliberately, and stated so nobody reads this as total:
+;; custom_id UNIQUENESS. It is an O(n^2) scan over a file that can carry 50k
+;; requests, and it remains a server-side rejection.
+
+(define (missing-field obj)
+  (cond
+    ((null? (alist-get obj "custom_id")) "custom_id")
+    ((null? (alist-get obj "method")) "method")
+    ((null? (alist-get obj "url")) "url")
+    ((null? (alist-get obj "body")) "body")
+    (else "")))
+
+(define (first-invalid remaining idx)
+  (cond
+    ((null? remaining) "")
+    (else
+      (let ((obj (json-parse (car remaining))))
+        (let ((gap (missing-field obj)))
+          (cond
+            ((not (equal? gap ""))
+              (string-append
+                "line " (string-format "{}" idx) " is missing the required "
+                "field `" gap "`"))
+            ((not (equal? (alist-get obj "url") batch-endpoint))
+              (string-append
+                "line " (string-format "{}" idx) " targets `"
+                (string-format "{}" (alist-get obj "url")) "` but this action "
+                "submits the batch against `" batch-endpoint
+                "`. OpenAI requires every line's url to match the batch "
+                "endpoint and rejects the whole job otherwise"))
+            (else (first-invalid (cdr remaining) (+ idx 1)))))))))
+
+;; ── build the payload ─────────────────────────────────────────────────────
+;;
+;; Both dialects end up written to a path THIS script controls. That is not
+;; tidiness: the upload path is interpolated into the same curl config file
+;; as the key, so a caller-supplied `input-file` would be a second injection
+;; vector. Writing to a fixed name inside the random 700 directory removes
+;; it entirely instead of adding a second whitelist.
+
+(define (synth-line text idx)
+  ;; json-stringify does the escaping, so a line containing a quote, a
+  ;; backslash or a brace is data — there is no hand-built JSON here to
+  ;; break out of.
+  (json-stringify
+    (list
+      (list "custom_id" (string-append "req-" (string-format "{}" idx)))
+      (list "method" "POST")
+      (list "url" batch-endpoint)
+      (list "body" (list (list "model" model) (list "input" text))))))
+
+(define (synth remaining idx acc)
+  (cond
+    ((null? remaining) acc)
+    (else
+      (synth (cdr remaining) (+ idx 1)
+        (string-append acc (synth-line (string-trim (car remaining)) idx) "\n")))))
+
+(define (join-lines xs)
+  (cond
+    ((null? xs) "")
+    ((null? (cdr xs)) (car xs))
+    (else (string-append (car xs) "\n" (join-lines (cdr xs))))))
+
+;; ── upload ────────────────────────────────────────────────────────────────
+
+(define (last-of xs)
+  (cond ((null? (cdr xs)) (car xs)) (else (last-of (cdr xs)))))
+
+(define (drop-last xs)
+  (cond ((null? (cdr xs)) '()) (else (cons (car xs) (drop-last (cdr xs))))))
+
+(define (http-ok? code)
+  (and (equal? (string-length code) 3) (string-starts-with? code "2")))
+
+(define (main)
+;; ── refusals, before a single byte crosses the network ────────────────────
+  ;; ★ CURL-CONFIG INJECTION, closed by whitelist rather than guarded.
+  ;;
+  ;; The key is interpolated into a quoted curl-config value. curl's parser
+  ;; honours `\` escapes and ends the value at `"` or end-of-line, so a key
+  ;; containing any of `" \ CR LF` does not merely corrupt the request — it
+  ;; appends attacker-chosen curl directives (`output = ...`, `url = ...`,
+  ;; which would redirect the upload, or exfiltrate to another host).
+  ;;
+  ;; A whitelist makes the bad state unrepresentable rather than enumerating
+  ;; the ways to spell it. The class covers every real OpenAI key (sk-…,
+  ;; base64url), Azure hex keys and JWT-shaped proxy tokens, and excludes
+  ;; quote, backslash, whitespace and newline by construction.
+  (cond
+    ((equal? api-key "")
+      (die
+        (string-append
+          "api-key is empty. Refusing to call the API unauthenticated: OpenAI "
+          "answers 401, which this action would otherwise report as an "
+          "upstream outage rather than a missing input."))))
+
+  (cond
+    ((not (re-match? "^[A-Za-z0-9_.:=+/-]+$" api-key))
+      (die
+        (string-append
+          "api-key contains a character outside [A-Za-z0-9_.:=+/-]. Refusing: "
+          "the key is written into a curl config file, where a quote, a "
+          "backslash or a newline injects additional curl directives. No real "
+          "OpenAI, Azure or JWT-shaped key contains one."))))
+
+  ;; D2 CLOSED (2026-08-08): `api-base` is interpolated into the SAME curl
+  ;; config file as the Bearer token, ~200 lines below — and was only
+  ;; `string-trim`'d. curl's config parser ends a value at a `"` or at
+  ;; end-of-line, so an interior quote, backslash, CR or LF lets `api-base`
+  ;; APPEND attacker-chosen directives (`output = …`, a second `url = …`) to
+  ;; the file that carries the credential. This is the identical class the
+  ;; api-key whitelist above closes; leaving the sibling open is the defect.
+  ;; `api-base` is a new input added by this conversion, so this is a hole the
+  ;; port opened, not one it inherited.
+  ;;
+  ;; A URL origin needs none of those characters. Whitelist rather than escape:
+  ;; escaping a foreign config grammar is how the class comes back.
+  (cond
+    ((not (re-match? "^https://[A-Za-z0-9._-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$" api-base))
+      (die
+        (string-append
+          "api-base must be an https:// origin with an optional port and path, "
+          "matching ^https://[A-Za-z0-9._-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ — got: "
+          api-base
+          ". Refusing: it is written into the same curl config file as the "
+          "Bearer token, where a quote, backslash or newline injects further "
+          "curl directives. http:// is refused too: the credential would cross "
+          "the wire in clear."))))
+
+  (cond
+    ((not (path-exists? input-file))
+      (die (string-append "input-file not found: " input-file))))
+
+  ;; ── read + classify the input ─────────────────────────────────────────────
+
+  (define raw-lines (string-split (read-file input-file) "\n"))
+
+  (define lines
+    (filter (lambda (l) (not (equal? (string-trim l) ""))) raw-lines))
+
+  (define request-count (length lines))
+
+  ;; ★ A VACUOUS BATCH IS NOT A SUCCESSFUL BATCH.
+  ;;
+  ;; An empty or whitespace-only input file would otherwise upload cleanly,
+  ;; create a batch cleanly, and return a real batch id for zero embeddings —
+  ;; a green run that computed nothing, indistinguishable by exit code from one
+  ;; that computed everything. This is the scan-denominator rule applied to a
+  ;; producer instead of a gate.
+  (cond
+    ((equal? request-count 0)
+      (die
+        (string-append
+          "input-file '" input-file "' has no non-blank lines. Refusing to "
+          "submit an empty batch: it would return a real batch id for zero "
+          "embeddings, which reads downstream as a completed job."))))
+
+
+  (define batch-shaped (filter batch-line? lines))
+  (define batch-shaped-count (length batch-shaped))
+
+  ;; ★ A MIXED FILE IS REJECTED, NEVER GUESSED.
+  ;;
+  ;; The two input dialects — ready-made Batch-API JSONL, and plain text (one
+  ;; string to embed per line) — are distinguished structurally. A file that is
+  ;; partly one and partly the other is a malformed file, and silently picking
+  ;; a dialect for it would embed request metadata as prose, or drop the model.
+  ;; All-or-nothing is what makes the detection safe to do implicitly.
+  (cond
+    ((and (> batch-shaped-count 0) (not (equal? batch-shaped-count request-count)))
+      (die
+        (string-append
+          "input-file '" input-file "' mixes dialects: "
+          (string-format "{}" batch-shaped-count) " of "
+          (string-format "{}" request-count)
+          " non-blank lines are Batch-API request objects (a JSON object with "
+          "a `custom_id`) and the rest are not. Refusing to guess. Supply "
+          "EITHER a file where every line is a request object, OR a file where "
+          "every line is one plain string to embed."))))
+
+  (define passthrough (equal? batch-shaped-count request-count))
+
+
+  (cond
+    (passthrough
+      (let ((problem (first-invalid lines 1)))
+        (cond
+          ((not (equal? problem ""))
+            (die
+              (string-append
+                "input-file '" input-file "' is not a valid embeddings batch: "
+                problem
+                ". Rejected here rather than after upload, where OpenAI would "
+                "return a batch id first and fail the job asynchronously.")))))))
+
+
+  (define payload
+    (cond
+      (passthrough (string-append (join-lines lines) "\n"))
+      (else (synth lines 1 ""))))
+
+  (log-info
+    (string-append
+      "openai-embeddings-batch: " (string-format "{}" request-count)
+      " request(s), dialect="
+      (cond (passthrough "batch-jsonl (per-line models govern; the `model` input is not applied)")
+            (else (string-append "plain-text (model=" model ")")))))
+
+  ;; ── stage the payload and the credential in a 700 directory ───────────────
+  ;;
+  ;; No `-p`: a name that already exists is a hard failure rather than a
+  ;; silently-reused directory whose mode we did not set.
+  (define mk (exec-capture "mkdir" "-m" "700" workdir))
+
+  (cond
+    ((not (equal? (status-of mk) 0))
+      (log-error (string-trim (stderr-of mk)))
+      (die (string-append "could not create the private work directory " workdir))))
+
+  (define payload-path (string-append workdir "/batch_input.jsonl"))
+  (define curl-config (string-append workdir "/upload.curlcfg"))
+
+  (write-file payload-path payload)
+
+  ;; `write-out` appends the HTTP status as a final line so the status is
+  ;; CHECKED rather than inferred from curl's exit code — curl exits 0 on a 401
+  ;; and on a 500, which is how "the upload was rejected" and "the upload
+  ;; landed" become the same verdict.
+  (write-file curl-config
+    (string-append
+      "url = \"" api-base "/files\"\n"
+      "header = \"Authorization: Bearer " api-key "\"\n"
+      "form = \"purpose=batch\"\n"
+      "form = \"file=@" payload-path ";filename=batch_input.jsonl;type=application/jsonl\"\n"
+      "silent\n"
+      "show-error\n"
+      "write-out = \"\\n%{http_code}\"\n"))
+
+  ;; Belt and braces over the 700 directory, which is the race-free half.
+  (exec-capture "chmod" "600" curl-config)
+
+
+  (define upload (exec-capture "curl" "--config" curl-config))
+
+  (cond
+    ((not (equal? (status-of upload) 0))
+      (log-error (string-trim (stderr-of upload)))
+      (die
+        (string-append
+          "curl could not reach " api-base
+          "/files (transport failure, exit "
+          (string-format "{}" (status-of upload)) "). No batch was created."))))
+
+  (define upload-parts (string-split (stdout-of upload) "\n"))
+  (define upload-code (string-trim (last-of upload-parts)))
+  (define upload-body (join-lines (drop-last upload-parts)))
+
+  (cond
+    ((not (http-ok? upload-code))
+      (log-error upload-body)
+      (die
+        (string-append
+          "file upload failed with HTTP " upload-code
+          (cond
+            ((equal? upload-code "401") " — the api-key was rejected")
+            ((equal? upload-code "429") " — rate limited or out of quota")
+            ((equal? upload-code "413") " — the input file is over OpenAI's size limit")
+            (else ""))
+          ". No batch was created."))))
+
+  (define upload-doc (erro:attempt (lambda () (json-parse upload-body))))
+
+  (cond
+    ((erro:err? upload-doc)
+      (log-error upload-body)
+      (die
+        (string-append
+          "the file upload returned HTTP " upload-code
+          " but a body that is not JSON. Refusing to continue with an "
+          "unparsed file id."))))
+
+  (define file-id (alist-get (erro:value upload-doc) "id" ""))
+
+  ;; A 2xx with no usable id is the `echo "k=$(cmd)"` failure in another
+  ;; costume: without this the batch call would post input_file_id="" and the
+  ;; real error would surface one call later, attributed to the wrong step.
+  (cond
+    ((equal? (string-trim (string-format "{}" file-id)) "")
+      (log-error upload-body)
+      (die "the file upload returned 2xx but no `id`. Refusing to create a batch against an empty file id.")))
+
+  (log-info (string-append "uploaded input file: " (string-format "{}" file-id)))
+
+  ;; ── create the batch ──────────────────────────────────────────────────────
+  ;;
+  ;; http-post-json sends no Content-Type of its own — measured, not assumed —
+  ;; so it is set explicitly here. The credential is a header VALUE: it never
+  ;; becomes an argv element, which is the whole reason this call does not also
+  ;; go through curl.
+  (define created
+    (erro:attempt
+      (lambda ()
+        (http-post-json
+          (string-append api-base "/batches")
+          (list
+            (list "Content-Type" "application/json")
+            (list "Authorization" (string-append "Bearer " api-key)))
+          (list
+            (list "input_file_id" file-id)
+            (list "endpoint" batch-endpoint)
+            (list "completion_window" completion-window))))))
+
+  ;; http-post-json raises on any non-2xx, so an HTTP error cannot present as a
+  ;; created batch. The raised message carries the status; keep it, because a
+  ;; 401 and a 400 send an operator to completely different places.
+  (cond
+    ((erro:err? created)
+      (die
+        (string-append
+          "batch creation failed: " (erro:message (erro:value created))
+          ". The input file was uploaded (" (string-format "{}" file-id)
+          ") but no batch exists."))))
+
+  (define batch (erro:value created))
+  (define batch-id (alist-get batch "id" ""))
+  (define status (alist-get batch "status" ""))
+
+  (cond
+    ((equal? (string-trim (string-format "{}" batch-id)) "")
+      (die "batch creation returned 2xx with no `id`. Refusing to emit a batch id that does not exist.")))
+
+  ;; A batch can come back already dead. Emitting its id with exit 0 would hand
+  ;; the caller something to poll forever.
+  (cond
+    ((or (equal? status "failed") (equal? status "cancelled") (equal? status "expired"))
+      (log-error (json-stringify (alist-get batch "errors" '())))
+      (die
+        (string-append
+          "batch " (string-format "{}" batch-id) " was created but is already `"
+          (string-format "{}" status) "`."))))
+
+  ;; ── done ──────────────────────────────────────────────────────────────────
+  ;;
+  ;; Shred BEFORE emitting: the config file holds the API key, and an emit that
+  ;; refuses (emit-output exits on a malformed key or an injected newline)
+  ;; would otherwise leave it on disk.
+  (shred)
+
+  (emit-output "batch-id" (string-format "{}" batch-id))
+  (emit-output "input-file-id" (string-format "{}" file-id))
+  (emit-output "request-count" (string-format "{}" request-count))
+  (emit-output "status" (string-format "{}" status))
+
+  (log-info
+    (string-append
+      "batch " (string-format "{}" batch-id) " created ("
+      (string-format "{}" request-count) " requests, status "
+      (string-format "{}" status) ")"))
+
+  (exit 0)
+)
+
+;; A top-level `main` call would run the whole action at LOAD time, so a
+;; test file importing this one would upload a batch instead of testing.
+(if (equal? (env-get "TLISP_TEST" "") "") (main) (log-info "openai-embeddings-batch: main skipped under TLISP_TEST"))

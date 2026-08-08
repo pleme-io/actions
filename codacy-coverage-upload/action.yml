@@ -4,9 +4,19 @@ branding: { icon: 'bar-chart', color: 'green' }
 
 inputs:
   api-token:
+    description: "Codacy PROJECT token. Forwarded as CODACY_PROJECT_TOKEN — never as a command-line argument."
     required: true
   coverage-file:
+    description: "Path to the coverage report to upload (cobertura.xml, coverage.xml, lcov.info, …)."
     required: true
+  reporter-bin:
+    description: >-
+      Program to invoke. Additive; the default resolves codacy-coverage-reporter
+      from PATH. Point this at a nix-store path to keep the job hermetic — this
+      action never fetches and executes an installer at job time
+      (★★ HERMETIC SUPPLY CHAIN).
+    required: false
+    default: "codacy-coverage-reporter"
 
 outputs:
   uploaded:
@@ -15,6 +25,16 @@ outputs:
 runs:
   using: composite
   steps:
+    # ── ★ NO actions/checkout HERE, DELIBERATELY ────────────────────────────
+    # The sibling loader template opens with `actions/checkout@v4` because it
+    # reads a spec file tracked in the repo. This action does the opposite: it
+    # consumes a coverage report that an EARLIER STEP IN THE CALLING JOB just
+    # generated, and that report is an untracked build artifact.
+    # actions/checkout defaults to `clean: true`, which runs
+    # `git clean -ffdx && git reset --hard HEAD` before fetching — that deletes
+    # untracked files. Adding a checkout step here would destroy the very input
+    # this action exists to upload, and the failure would read as "coverage
+    # report not found" rather than as "we deleted it".
     - id: src
       shell: bash
       run: |
@@ -31,5 +51,10 @@ runs:
       with:
         script: ${{ steps.src.outputs.script }}
       env:
-        API_TOKEN: ${{ inputs.api-token }}
+        # ★ The token reaches the reporter through its documented ENVIRONMENT
+        # channel. codacy-coverage-reporter also accepts `--project-token`, and
+        # that flag is deliberately unused: argv is world-readable via `ps` and
+        # /proc/<pid>/cmdline, and GitHub masks logs, not the process table.
+        CODACY_PROJECT_TOKEN: ${{ inputs.api-token }}
         COVERAGE_FILE: ${{ inputs.coverage-file }}
+        REPORTER_BIN: ${{ inputs.reporter-bin }}

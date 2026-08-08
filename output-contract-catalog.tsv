@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                351
-# routing tatara-script  328
-# distinct keys written  311
+# actions                353
+# routing tatara-script  337
+# distinct keys written  325
 # dynamic key expansions 8
-# inner union (generated)319
+# inner union (generated)333
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -32,7 +32,7 @@ akeyless-injector-validate	tatara-script	run.tlisp	2	2
 akeyless-rotate	tatara-script	run.tlisp	1	1
 akeyless-secret-fetch	tatara-script	run.tlisp	1	1
 aldrava-dispatch	tatara-script	run.tlisp	13	13
-aldrava-install	own-runner	-	0	3
+aldrava-install	tatara-script	run.tlisp	3	3
 aldrava-lint	tatara-script	run.tlisp	3	3
 aldrava-resolve	tatara-script	run.tlisp	7	7
 algolia-index-push	tatara-script	run.tlisp	1	1
@@ -69,9 +69,9 @@ bun-publish	tatara-script	run.tlisp	1	1
 caixa-bump	tatara-script	run.tlisp	3	3
 caixa-deps-resolve	tatara-script	run.tlisp	1	1
 caixa-detect	tatara-script	run.tlisp	3	3
-caixa-publish	own-runner	-	0	1
+caixa-publish	tatara-script	run.tlisp	1	1
 caixa-publish-to-git	tatara-script	run.tlisp	2	2
-caixa-render	own-runner	-	0	2
+caixa-render	tatara-script	run.tlisp	2	2
 caixa-render-pr	tatara-script	run.tlisp	3	3
 cargo-bump	tatara-script	run.tlisp	3	3
 cargo-publish-crate	tatara-script	run.tlisp	4	4
@@ -94,11 +94,11 @@ cloudflare-kv-put	tatara-script	run.tlisp	1	1
 cloudflare-pages-deploy	own-runner	-	0	1
 cloudflare-queue-publish	tatara-script	run.tlisp	1	1
 cloudflare-r2-upload	own-runner	-	0	1
-cloudflare-worker-deploy	own-runner	-	0	1
+cloudflare-worker-deploy	tatara-script	run.tlisp	1	1
 codacy-coverage-upload	tatara-script	run.tlisp	1	1
 codeowners-validate	tatara-script	run.tlisp	1	1
 codeql-scan	own-runner	-	0	1
-commitlint	tatara-script	run.tlisp	1	1
+commitlint	tatara-script	run.tlisp	2	2
 confluence-page-create	tatara-script	run.tlisp	1	1
 conftest	tatara-script	run.tlisp	1	1
 container-boot-check	tatara-script	run.tlisp	1	1
@@ -134,7 +134,7 @@ docusaurus-build	tatara-script	run.tlisp	1	1
 dotnet-publish	tatara-script	run.tlisp	1	1
 eas-build	tatara-script	run.tlisp	1	1
 elasticsearch-snapshot	tatara-script	run.tlisp	1	1
-email-notify	own-runner	-	0	1
+email-notify	tatara-script	run.tlisp	2	2
 envoy-config-validate	tatara-script	run.tlisp	1	1
 esp-idf-build	tatara-script	run.tlisp	1	1
 fastlane-deploy	tatara-script	run.tlisp	1	1
@@ -153,7 +153,7 @@ gem-publish	own-runner	-	0	0
 gen-build-spec	tatara-script	run.tlisp	7	7
 gh-release-create	tatara-script	run.tlisp	2	2
 gh-secrets-sync	tatara-script	run.tlisp	1	1
-gh-team-sync	own-runner	-	0	2
+gh-team-sync	tatara-script	run.tlisp	3	3
 ghcr-publish	tatara-script	run.tlisp	4	8
 git-cliff	tatara-script	run.tlisp	1	1
 git-commit-tag	tatara-script	run.tlisp	1	1
@@ -189,7 +189,7 @@ honeycomb-marker	tatara-script	run.tlisp	1	1
 hubspot-contact-upsert	tatara-script	run.tlisp	1	1
 hugo-build	tatara-script	run.tlisp	1	1
 iac-forge	tatara-script	run.tlisp	0	0
-image-scan	tatara-script	canary.tlisp,run.tlisp	3	3
+image-scan	tatara-script	-	0	3
 influxdb-write	tatara-script	run.tlisp	1	1
 infracost-comment	tatara-script	run.tlisp	1	1
 issue-create	tatara-script	run.tlisp	2	2
@@ -241,7 +241,7 @@ notion-page-create	tatara-script	run.tlisp	1	1
 npm-bump	tatara-script	run.tlisp	3	3
 npm-gate	tatara-script	run.tlisp	3	3
 npm-mirror-pull	tatara-script	run.tlisp	1	1
-npm-publish	tatara-script	run.tlisp	1	1
+npm-publish	tatara-script	run.tlisp	2	2
 ntfy-push	tatara-script	run.tlisp	1	1
 nx-affected-test	tatara-script	run.tlisp	1	1
 nx-cloud-distribute	tatara-script	run.tlisp	1	1
@@ -250,7 +250,7 @@ okta-app-sync	tatara-script	run.tlisp	1	1
 ollama-pull	tatara-script	run.tlisp	1	1
 onboard-auto-release	tatara-script	run.tlisp	3	3
 onepassword-fetch	own-runner	-	0	1
-openai-embeddings-batch	tatara-script	run.tlisp	1	1
+openai-embeddings-batch	tatara-script	run.tlisp	4	4
 openai-fine-tune-trigger	tatara-script	run.tlisp	1	1
 opentelemetry-trace-emit	tatara-script	run.tlisp	1	1
 otel-collector-deploy	tatara-script	run.tlisp	1	1
@@ -269,6 +269,7 @@ pre-commit-run	tatara-script	run.tlisp	1	1
 prisma-migrate	tatara-script	run.tlisp	1	1
 prometheus-push	tatara-script	run.tlisp	1	1
 provenance-attest	tatara-script	run.tlisp	2	2
+provide-cc	own-runner	-	0	1
 pull-request-gate	tatara-script	run.tlisp	0	0
 pulumi-up	tatara-script	run.tlisp	1	1
 puppeteer-screenshot	tatara-script	run.tlisp	1	1
@@ -289,6 +290,7 @@ renovate-trigger	tatara-script	run.tlisp	1	1
 replicate-run	tatara-script	run.tlisp	1	1
 restic-backup	tatara-script	run.tlisp	1	1
 retool-workflow-run	tatara-script	run.tlisp	1	1
+runner-policy	tatara-script	-	0	0
 runner-resolve	tatara-script	run.tlisp	2	2
 runtime-install-lint	tatara-script	run.tlisp	3	3
 rust-cross-build	tatara-script	run.tlisp	0	0
@@ -299,7 +301,7 @@ s3-mirror	tatara-script	run.tlisp	1	1
 salesforce-record-create	tatara-script	run.tlisp	1	1
 sbom-generate	tatara-script	run.tlisp	2	2
 secrets-scan	tatara-script	run.tlisp	2	2
-security-audit	tatara-script	run.tlisp	3	3
+security-audit	tatara-script	run.tlisp	4	4
 selenium-grid-test	tatara-script	run.tlisp	1	1
 semantic-release	tatara-script	run.tlisp	1	1
 semgrep-scan	tatara-script	run.tlisp	1	1
@@ -323,7 +325,7 @@ storybook-deploy	tatara-script	run.tlisp	1	1
 stripe-product-sync	tatara-script	run.tlisp	1	1
 stripe-webhook-test	tatara-script	run.tlisp	1	1
 substrate-bump	tatara-script	run.tlisp	2	2
-sui-dockerfile-node-cache	own-runner	-	0	5
+sui-dockerfile-node-cache	tatara-script	run.tlisp	5	5
 sui-remote-build	tatara-script	run.tlisp	9	9
 sui-service-up	tatara-script	run.tlisp	7	7
 sui-warm-hydrate	tatara-script	run.tlisp	5	5
@@ -336,7 +338,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	319
+tatara-script	own-runner	-	0	333
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -358,7 +360,7 @@ velero-backup	tatara-script	run.tlisp	1	1
 vercel-deploy	tatara-script	run.tlisp	1	1
 vex-attest	tatara-script	run.tlisp	1	1
 vitepress-build	tatara-script	run.tlisp	1	1
-wasm-build	own-runner	-	0	1
+wasm-build	tatara-script	run.tlisp	1	1
 wasmer-publish	tatara-script	run.tlisp	1	1
 weaviate-schema-apply	tatara-script	run.tlisp	1	1
 wireguard-up	tatara-script	run.tlisp	1	1
@@ -404,6 +406,9 @@ aldrava-dispatch	pr-author	static	declared	forwarded
 aldrava-dispatch	reason	static	declared	forwarded
 aldrava-dispatch	target-detail	static	declared	forwarded
 aldrava-dispatch	target-kind	static	declared	forwarded
+aldrava-install	bin-dir	static	declared	forwarded
+aldrava-install	resolved-version	static	declared	forwarded
+aldrava-install	sha256	static	declared	forwarded
 aldrava-lint	commands	static	declared	forwarded
 aldrava-lint	error	static	declared	forwarded
 aldrava-lint	ok	static	declared	forwarded
@@ -474,8 +479,11 @@ caixa-deps-resolve	resolved-count	static	declared	forwarded
 caixa-detect	caixa-kind	static	declared	forwarded
 caixa-detect	caixa-name	static	declared	forwarded
 caixa-detect	caixa-path	static	declared	forwarded
+caixa-publish	shipped	static	declared	forwarded
 caixa-publish-to-git	published	static	declared	forwarded
 caixa-publish-to-git	tag	static	declared	forwarded
+caixa-render	artifact-count	static	declared	forwarded
+caixa-render	output-dir	static	declared	forwarded
 caixa-render-pr	drift-detected	static	declared	forwarded
 caixa-render-pr	files-rendered	static	declared	forwarded
 caixa-render-pr	pr-url	static	declared	forwarded
@@ -518,8 +526,10 @@ cloudflare-do-list	count	static	declared	forwarded
 cloudflare-kv-get	value	static	declared	forwarded
 cloudflare-kv-put	put	static	declared	forwarded
 cloudflare-queue-publish	published	static	declared	forwarded
+cloudflare-worker-deploy	url	static	declared	forwarded
 codacy-coverage-upload	uploaded	static	declared	forwarded
 codeowners-validate	unowned-count	static	declared	forwarded
+commitlint	commits-scanned	static	declared	forwarded
 commitlint	violations	static	declared	forwarded
 confluence-page-create	page-id	static	declared	forwarded
 conftest	violations	static	declared	forwarded
@@ -560,6 +570,8 @@ docusaurus-build	site-path	static	declared	forwarded
 dotnet-publish	published	static	declared	forwarded
 eas-build	build-url	static	declared	forwarded
 elasticsearch-snapshot	snapshot-id	static	declared	forwarded
+email-notify	failed-count	static	declared	forwarded
+email-notify	sent	static	declared	forwarded
 envoy-config-validate	valid	static	declared	forwarded
 esp-idf-build	binary-path	static	declared	forwarded
 fastlane-deploy	deployed	static	declared	forwarded
@@ -596,6 +608,9 @@ gen-build-spec	stale	static	declared	forwarded
 gh-release-create	created	static	declared	forwarded
 gh-release-create	release-url	static	declared	forwarded
 gh-secrets-sync	synced-count	static	declared	forwarded
+gh-team-sync	added-count	static	declared	forwarded
+gh-team-sync	failed-count	static	declared	forwarded
+gh-team-sync	removed-count	static	declared	forwarded
 ghcr-publish	pushed	static	declared	forwarded
 ghcr-publish	ref	static	declared	forwarded
 ghcr-publish	ref-aarch64	dynamic:ref-	declared	forwarded
@@ -640,12 +655,9 @@ helmfile-apply	applied	static	declared	forwarded
 heroku-deploy	deployed	static	declared	forwarded
 hex-publish	published	static	declared	forwarded
 hf-hub-upload	uploaded	static	declared	forwarded
-honeycomb-marker	marker-id	static	declared	forwarded
+honeycomb-marker	created	static	declared	MISSING
 hubspot-contact-upsert	contact-id	static	declared	forwarded
 hugo-build	site-path	static	declared	forwarded
-image-scan	scanned-targets	static	declared	forwarded
-image-scan	severity	static	declared	forwarded
-image-scan	vuln-count	static	declared	forwarded
 influxdb-write	written	static	declared	forwarded
 infracost-comment	monthly-diff	static	declared	forwarded
 issue-create	action-taken	static	declared	forwarded
@@ -720,6 +732,7 @@ npm-gate	fmt-passed	static	declared	forwarded
 npm-gate	lint-passed	static	declared	forwarded
 npm-gate	test-passed	static	declared	forwarded
 npm-mirror-pull	fetched	static	declared	forwarded
+npm-publish	dry-run	static	declared	forwarded
 npm-publish	shipped	static	declared	forwarded
 ntfy-push	sent	static	declared	forwarded
 nx-affected-test	passed	static	declared	forwarded
@@ -730,6 +743,9 @@ onboard-auto-release	files-skipped	static	declared	forwarded
 onboard-auto-release	files-written	static	declared	forwarded
 onboard-auto-release	pr-url	static	declared	forwarded
 openai-embeddings-batch	batch-id	static	declared	forwarded
+openai-embeddings-batch	input-file-id	static	declared	forwarded
+openai-embeddings-batch	request-count	static	declared	forwarded
+openai-embeddings-batch	status	static	declared	forwarded
 openai-fine-tune-trigger	job-id	static	declared	forwarded
 opentelemetry-trace-emit	trace-id	static	declared	forwarded
 otel-collector-deploy	deployed	static	declared	forwarded
@@ -815,6 +831,7 @@ sbom-generate	sbom-path	static	declared	forwarded
 secrets-scan	found-count	static	declared	forwarded
 secrets-scan	scan-outcome	static	declared	forwarded
 security-audit	ecosystem	static	declared	forwarded
+security-audit	outcome	static	declared	forwarded
 security-audit	severity	static	declared	forwarded
 security-audit	vuln-count	static	declared	forwarded
 selenium-grid-test	passed	static	declared	forwarded
@@ -844,6 +861,11 @@ stripe-product-sync	synced-count	static	declared	forwarded
 stripe-webhook-test	sent	static	declared	forwarded
 substrate-bump	bumped	static	declared	forwarded
 substrate-bump	new-version	static	declared	forwarded
+sui-dockerfile-node-cache	cache-hit	static	declared	forwarded
+sui-dockerfile-node-cache	daemon-used	static	declared	forwarded
+sui-dockerfile-node-cache	docker-ran	static	declared	forwarded
+sui-dockerfile-node-cache	duration-ms	static	declared	forwarded
+sui-dockerfile-node-cache	outcome	static	declared	forwarded
 sui-remote-build	build-ms	static	declared	forwarded
 sui-remote-build	built	static	declared	forwarded
 sui-remote-build	eval-ms	static	declared	forwarded
@@ -923,6 +945,7 @@ velero-backup	backup-name	static	declared	forwarded
 vercel-deploy	url	static	declared	forwarded
 vex-attest	attested	static	declared	forwarded
 vitepress-build	site-path	static	declared	forwarded
+wasm-build	artifact-path	static	declared	forwarded
 wasmer-publish	published	static	declared	forwarded
 weaviate-schema-apply	applied	static	declared	forwarded
 wireguard-up	interface	static	declared	forwarded

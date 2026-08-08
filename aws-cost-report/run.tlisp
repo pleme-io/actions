@@ -1,6 +1,306 @@
-;; aws-cost-report/run.tlisp — typed schema locked
-(log-info "::warning::aws-cost-report not yet implemented")
+;; aws-cost-report/run.tlisp — last month's AWS spend, from Cost Explorer.
+;;
+;; WHAT THIS REPLACES, and it is NOT a shell body. This action never had one:
+;; it shipped in wave 10 already in the tlisp loader shape, carrying a
+;; generated stub whose entire logic was
+;;
+;;     (log-info "::warning::aws-cost-report not yet implemented")
+;;     (append-output "total-usd=stub")
+;;     (exit 0)
+;;
+;; That is worse than the failure mode the deshellify campaign hunts for. The
+;; usual defect is a failed query reporting $0; this reported the STRING
+;; "stub" as a dollar figure and exited 0, so every consumer gating on cost
+;; saw a green step and a value that was never measured. A `::warning::`
+;; annotation is not a gate — nothing reads it, nothing fails on it.
+;;
+;; So the fix is the implementation, not a better-shaped placeholder. Every
+;; path below that cannot produce a MEASURED number exits non-zero. In
+;; particular an empty result set is an ERROR, never $0 — "Cost Explorer
+;; returned nothing" and "you spent nothing" are different facts, and
+;; collapsing them is how a cost gate goes quietly blind.
+;;
+;; ★ NO SECRET EVER ENTERS ARGV. Nothing here passes a credential to `aws`.
+;; The CLI resolves them the way it always does — AWS_ACCESS_KEY_ID /
+;; AWS_SESSION_TOKEN in the environment (what aws-actions/configure-aws-
+;; credentials exports), the OIDC web-identity token FILE, or an instance
+;; role. `ps` and /proc/<pid>/cmdline are world-readable and GitHub masks
+;; LOGS, not the process table.
 
-(append-output "total-usd=stub")
+;; ────────────────────────────────────────────────────────────────
+;; Inputs
+;; ────────────────────────────────────────────────────────────────
+
+(define granularity (string-trim (env-get "GRANULARITY" "MONTHLY")))
+
+(define known-granularities (list "DAILY" "MONTHLY" "HOURLY"))
+
+(define (list-has? lst x)
+  (cond
+    ((null? lst) #f)
+    ((equal? (car lst) x) #t)
+    (else (list-has? (cdr lst) x))))
+
+;; Rejected HERE rather than by the API, so a typo costs a parse error instead
+;; of an authenticated round trip and a stack of AWS jargon.
+(cond
+  ((not (list-has? known-granularities granularity))
+    (log-error
+      (string-append
+        "granularity '"
+        granularity
+        "' is not one of DAILY, MONTHLY, HOURLY — the only values Cost "
+        "Explorer's get-cost-and-usage accepts."))
+    (exit 1)))
+
+;; ────────────────────────────────────────────────────────────────
+;; The reporting window: [first day of last month, first day of this month)
+;; ────────────────────────────────────────────────────────────────
+;;
+;; `date -u +%Y-%m-01` is plain strftime — byte-identical on GNU coreutils and
+;; on BSD date, so it runs unchanged on ubuntu-* and macos-* runners. Every
+;; other step is integer arithmetic in here, DELIBERATELY: the reflex idiom
+;; `date -u -d "-1 month"` is GNU-only *and* wrong on a 31st (Feb 31
+;; normalizes forward into March, so "last month" silently becomes this one),
+;; while its BSD counterpart `-v1d -v-1m` needs a whole second code path.
+;; One strftime call plus arithmetic has neither problem.
+
+(define now-r (proc:run (list "date" "-u" "+%Y-%m-01")))
+
+(cond
+  ((erro:err? now-r)
+    (log-error
+      (string-append "could not run `date`: " (erro:message (erro:value now-r))))
+    (exit 1)))
+
+(define now-res (erro:value now-r))
+
+;; Status checked at a named place. `$(date ...)` in the shape this action
+;; would otherwise have taken writes an EMPTY value and exits 0 on failure.
+(cond
+  ((not (= (status-of now-res) 0))
+    (log-error
+      (string-append
+        "`date -u +%Y-%m-01` exited "
+        (string-format "{}" (status-of now-res))
+        ": "
+        (string-trim (stderr-of now-res))))
+    (exit 1)))
+
+(define window-end (string-trim (stdout-of now-res)))
+
+(cond
+  ((not (re-match? "^[0-9]{4}-[0-9]{2}-01$" window-end))
+    (log-error
+      (string-append
+        "`date` produced '"
+        window-end
+        "', which is not a YYYY-MM-01 date. Refusing to build a cost query "
+        "window out of it."))
+    (exit 1)))
+
+;; "08" -> "8". num:parse-int routes decimals through json-parse, and JSON
+;; forbids a leading zero, so an unstripped "08" would be rejected as
+;; non-numeric — measured, not assumed.
+(define (unpad s) (string-strip-prefix s "0"))
+
+(define (pad2 n)
+  (cond
+    ((< n 10) (string-append "0" (string-format "{}" n)))
+    (else (string-format "{}" n))))
+
+(define (int-or-die s label)
+  (let ((r (num:parse-int s)))
+    (cond
+      ((erro:err? r)
+        (log-error (string-append label ": " (erro:message (erro:value r))))
+        (exit 1))
+      (else (erro:value r)))))
+
+(define end-parts (string-split window-end "-"))
+
+(define end-year (int-or-die (unpad (car end-parts)) "window-end year"))
+
+(define end-month (int-or-die (unpad (car (cdr end-parts))) "window-end month"))
+
+(define start-year
+  (cond
+    ((= end-month 1) (- end-year 1))
+    (else end-year)))
+
+(define start-month
+  (cond
+    ((= end-month 1) 12)
+    (else (- end-month 1))))
+
+(define window-start
+  (string-append (string-format "{}" start-year) "-" (pad2 start-month) "-01"))
+
+;; ────────────────────────────────────────────────────────────────
+;; The query
+;; ────────────────────────────────────────────────────────────────
+;;
+;; proc:run takes argv as a LIST — the program and each argument stay separate
+;; values, so there is no command string for a granularity or a date to break
+;; out of. Cost Explorer's End is exclusive, which is why the window ends on
+;; the first of THIS month rather than the last of last month.
+
+(define argv
+  (list
+    "aws"
+    "ce"
+    "get-cost-and-usage"
+    "--time-period"
+    (string-append "Start=" window-start ",End=" window-end)
+    "--granularity"
+    granularity
+    "--metrics"
+    "UnblendedCost"
+    "--output"
+    "json"))
+
+(log-info
+  (string-append
+    "==> cost explorer "
+    window-start
+    " .. "
+    window-end
+    " (End exclusive), granularity="
+    granularity))
+
+(define q-r (proc:run argv))
+
+(cond
+  ((erro:err? q-r)
+    (log-error
+      (string-append
+        "could not start the AWS CLI: "
+        (erro:message (erro:value q-r))
+        ". `aws` must be on PATH — this action does not install it."))
+    (exit 1)))
+
+(define q-res (erro:value q-r))
+
+;; The whole point of the rewrite. A non-zero status here — expired
+;; credentials, no ce:GetCostAndUsage permission, no region, a throttle —
+;; FAILS THE STEP. It does not fall through to a zero total.
+(cond
+  ((not (= (status-of q-res) 0))
+    (log-error
+      (string-append
+        "aws ce get-cost-and-usage exited "
+        (string-format "{}" (status-of q-res))
+        ": "
+        (string-trim (stderr-of q-res))))
+    (exit 1)))
+
+(define raw (stdout-of q-res))
+
+(define parse-r (erro:attempt (lambda () (json-parse raw))))
+
+(cond
+  ((erro:err? parse-r)
+    (log-error
+      (string-append
+        "Cost Explorer returned output that is not JSON: "
+        (erro:message (erro:value parse-r))))
+    (exit 1)))
+
+(define parsed (erro:value parse-r))
+
+(cond
+  ((not (pair? parsed))
+    (log-error "Cost Explorer returned a JSON value that is not an object.")
+    (exit 1)))
+
+(define buckets (alist-get parsed "ResultsByTime" '()))
+
+;; ★ AN EMPTY RESULT SET IS AN ERROR, NOT $0. This is the exact class the
+;; campaign flagged: an absent answer read as a zero answer. A month with real
+;; spend and a month Cost Explorer declined to answer for are indistinguishable
+;; downstream once both emit "0", and the second one is the failure a cost gate
+;; exists to catch.
+(cond
+  ((null? buckets)
+    (log-error
+      (string-append
+        "Cost Explorer returned no ResultsByTime rows for "
+        window-start
+        " .. "
+        window-end
+        ". That is an unanswered query, not a zero bill — refusing to emit a "
+        "total. Common causes: Cost Explorer not enabled on this account, or "
+        "the account being too new to have a closed month."))
+    (exit 1)))
+
+;; ────────────────────────────────────────────────────────────────
+;; Sum the buckets
+;; ────────────────────────────────────────────────────────────────
+;;
+;; MONTHLY over one month yields exactly one bucket; DAILY yields ~30. Summing
+;; covers both without a special case. A bucket that cannot be read is fatal
+;; rather than skipped-as-zero — a dropped bucket understates a bill silently,
+;; which is the worst direction for this particular number to be wrong in.
+
+(define (sum-buckets bs idx acc)
+  (cond
+    ((null? bs) acc)
+    (else
+      (let* ((metric
+               (alist-get (alist-get (car bs) "Total" '()) "UnblendedCost" '()))
+             (label (string-append "bucket " (string-format "{}" idx))))
+        (cond
+          ((not (pair? metric))
+            (log-error
+              (string-append
+                label
+                " carries no Total.UnblendedCost. An absent metric and a zero "
+                "bill are different facts; refusing to read this as $0."))
+            (exit 1))
+          (else
+            (let ((unit (alist-get metric "Unit" ""))
+                  (amount (alist-get metric "Amount" "")))
+              (cond
+                ;; The only output is literally named `total-usd`, so a
+                ;; non-USD unit would mislabel money under a key that asserts
+                ;; the currency.
+                ((not (equal? unit "USD"))
+                  (log-error
+                    (string-append
+                      label
+                      " is denominated in '"
+                      unit
+                      "', not USD, but this action's only output is named "
+                      "total-usd."))
+                  (exit 1))
+                ((not (re-match? "^-?[0-9]+([.][0-9]+)?$" amount))
+                  (log-error
+                    (string-append
+                      label
+                      " has a non-numeric Amount '"
+                      amount
+                      "'. Refusing to coerce it."))
+                  (exit 1))
+                (else
+                  (sum-buckets (cdr bs) (+ idx 1) (+ acc (json-parse amount))))))))))))
+
+(define total (sum-buckets buckets 0 0))
+
+(define total-str (string-format "{}" total))
+
+(log-info
+  (string-append
+    "==> total "
+    total-str
+    " USD across "
+    (string-format "{}" (length buckets))
+    " "
+    granularity
+    " bucket(s)"))
+
+;; emit-output, not append-output: key and value stay separate, so a value
+;; carrying a newline is refused instead of writing extra outputs chosen by
+;; whatever the upstream API returned.
+(emit-output "total-usd" total-str)
 
 (exit 0)

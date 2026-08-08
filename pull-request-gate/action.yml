@@ -34,6 +34,12 @@ inputs:
 runs:
   using: composite
   steps:
+    # NOTE: deliberately NO actions/checkout here. The gate reads nothing from
+    # the repository -- the stdlib is loaded from github.action_path, which
+    # already carries this repo at the pinned ref -- and this action runs on
+    # pull_request_target, where a checkout step is the well-known path to
+    # executing a fork's code with a privileged token. Nothing to gain, a
+    # whole vulnerability class to lose.
     - name: Load stdlib + run.tlisp
       id: src
       shell: bash
@@ -57,3 +63,8 @@ runs:
         RESTRICTED_PATHS_JQ_PREDICATE: ${{ inputs.restricted-paths-jq-predicate }}
         REJECTION_ACTION: ${{ inputs.rejection-action }}
         GH_TOKEN: ${{ inputs.github-token }}
+        # Both are GitHub-provided defaults, but the gate hard-requires them and
+        # a missing one must be a startup error, not a mystery. Passed through
+        # explicitly so the contract is readable at the call site.
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}

@@ -11,25 +11,57 @@ inputs:
     description: "wrangler environment (-e flag)"
     required: false
     default: ""
+  # ADDITIVE. The body used to hardcode `npx wrangler@latest` — a floating
+  # third-party artifact resolved at job time on a step holding
+  # CLOUDFLARE_API_TOKEN (★★ HERMETIC SUPPLY CHAIN). The default stays
+  # "latest" so this action's behaviour is byte-identical for every existing
+  # caller; pinning is now a one-line change instead of a fork.
+  wrangler-version:
+    description: "wrangler version to run (npx `wrangler@<this>`). Pin it — the default 'latest' resolves an unpinned artifact at job time."
+    required: false
+    default: "latest"
 
 outputs:
   deployed-url:
-    value: ${{ steps.cf.outputs.url }}
+    value: ${{ steps.run.outputs.url }}
 
 runs:
   using: composite
   steps:
+    # NO actions/checkout here, deliberately: this action deploys the CALLER's
+    # already-built working tree (wrangler.toml plus whatever a prior build
+    # step produced). A checkout inside would reset that tree and ship the
+    # wrong bytes. The stdlib below does not need one — the runner
+    # materialises the whole action repo at ${{ github.action_path }}/.. .
     - uses: actions/setup-node@v4
       with: { node-version: "20" }
-    - id: cf
+    - id: src
       shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+        # This is the `cd "${{ inputs.workdir }}"` replacement. `working-directory`
+        # is a typed YAML field the runner applies to the process; the value is
+        # never parsed as shell source, so the injection the old `cd` carried has
+        # no path here.
+        working-directory: ${{ inputs.workdir }}
       env:
+        WORKDIR: ${{ inputs.workdir }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+        # Credentials stay in the ENVIRONMENT, where wrangler reads them, and
+        # are never placed on argv — `ps` and /proc/<pid>/cmdline are readable
+        # by every process on the runner, and GitHub masks logs, not the
+        # process table.
         CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
         CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-      run: |
-        cd "${{ inputs.workdir }}"
-        env_flag=""
-        [ -n "${{ inputs.environment }}" ] && env_flag="-e ${{ inputs.environment }}"
-        npx wrangler@latest deploy $env_flag | tee /tmp/wrangler.log
-        url=$(grep -Eo 'https://[a-z0-9.-]+\.workers\.dev' /tmp/wrangler.log | head -1)
-        echo "url=$url" >> "$GITHUB_OUTPUT"

@@ -69,7 +69,36 @@
       :name "tool"
       :type (:enum (:options ("auto" "buildah" "podman" "docker" "regctl")))
       :required nil
-      :default "auto"))
+      :default "auto")
+    ;; The ca-cert-* trio existed in action.yml since 2026-07-18 but was never
+    ;; mirrored here -- catalog drift, corrected 2026-08-08 in the same pass
+    ;; that added regctl-ref/doca-ref.
+    (
+      :name "ca-cert-url"
+      :type :string
+      :required nil
+      :default
+      "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt")
+    (
+      :name "ca-cert-path"
+      :type :string
+      :required nil
+      :default "/tmp/manifest-list-join-ca.crt")
+    (
+      :name "ca-cert-token"
+      :type :string
+      :required nil
+      :default "")
+    (
+      :name "regctl-ref"
+      :type :string
+      :required nil
+      :default "github:NixOS/nixpkgs/nixos-24.05#regctl")
+    (
+      :name "doca-ref"
+      :type :string
+      :required nil
+      :default "github:pleme-io/substrate#oci-push"))
   :outputs
   ((:name "index-ref")
     (:name "index-digest")

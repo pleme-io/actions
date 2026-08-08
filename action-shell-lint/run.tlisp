@@ -43,7 +43,7 @@
 ;; 'stdlib.tlisp' (file form) — and counts the run body. Emits
 ;; "<file>\t<lines>" per offender.
 (define awk-prog
-  "BEGIN { in_run=0; lines=0; is_loader=0; offender_file=\"\"; }\n   /shell: bash/ { in_run=1; lines=0; is_loader=0; next; }\n   in_run && /TLISP_EOF|stdlib\\.tlisp/ { is_loader=1; }\n   in_run && /run: \\|/ { in_body=1; next; }\n   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }\n   in_body { lines++; }\n   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
+  "BEGIN { in_run=0; in_body=0; lines=0; is_loader=0; offender_file=\"\"; }\n   FNR==1 { in_run=0; in_body=0; lines=0; is_loader=0; }\n   /shell: bash/ { in_run=1; in_body=0; lines=0; is_loader=0; next; }\n   in_run && /TLISP_EOF|stdlib\\.tlisp/ { is_loader=1; }\n   in_run && /run: \\|/ { in_body=1; next; }\n   in_body && /^    - / { if (!is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; in_run=0; in_body=0; lines=0; is_loader=0; next; }\n   in_body { lines++; }\n   END { if (in_body && !is_loader && lines > THRESHOLD) print FILENAME \"\\t\" lines; }")
 
 (define find-cmd
   (string-append

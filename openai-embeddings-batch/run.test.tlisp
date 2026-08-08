@@ -1,0 +1,118 @@
+;; openai-embeddings-batch/run.test.tlisp — (deftest …) cover for the pure
+;; helpers, run by tlisp-test as <stdlib> + run.tlisp + this file.
+;;
+;; These are the deciders standing between a caller and a batch that costs
+;; money and fails asynchronously, so they are driven directly rather than
+;; only through the end-to-end path:
+;;
+;;   batch-line?    picks the input dialect. A wrong answer either submits
+;;                  request metadata as prose, or drops the model.
+;;   first-invalid  is the local stand-in for OpenAI's ASYNCHRONOUS file
+;;                  validation — the check that stops a malformed line from
+;;                  becoming a real batch id attached to a green step.
+;;   http-ok?       is the only thing separating a rejected upload from a
+;;                  delivered one, because curl exits 0 on a 401.
+;;
+;; run.tlisp's `main` is guarded on TLISP_TEST, which --test sets, so loading
+;; the unit here uploads nothing.
+
+(deftest "batch-line? accepts a real Batch-API request object"
+  (assert
+    (batch-line? "{\"custom_id\":\"a\",\"method\":\"POST\",\"url\":\"/v1/embeddings\",\"body\":{}}")
+    "a request object is batch-shaped"))
+
+(deftest "batch-line? rejects plain prose"
+  (assert (not (batch-line? "the quick brown fox")) "prose is not batch-shaped")
+  (assert (not (batch-line? "")) "an empty line is not batch-shaped"))
+
+;; A plain-text line can be valid JSON without being a request — a bare
+;; number, a quoted string, an array. Answering #t for any of these flips the
+;; whole file into pass-through and submits prose as request metadata.
+(deftest "batch-line? rejects JSON scalars and arrays"
+  (assert (not (batch-line? "42")) "a bare number is not a request")
+  (assert (not (batch-line? "\"just a quoted string\"")) "a JSON string is not a request")
+  (assert (not (batch-line? "[1, 2, 3]")) "a JSON array is not a request"))
+
+(deftest "batch-line? rejects an object with no custom_id"
+  (assert
+    (not (batch-line? "{\"method\":\"POST\",\"url\":\"/v1/embeddings\"}"))
+    "custom_id is what makes an object a batch request"))
+
+(deftest "missing-field names the first absent required field"
+  (assert
+    (equal? "custom_id" (missing-field (json-parse "{\"method\":\"POST\"}")))
+    "custom_id reported first")
+  (assert
+    (equal? "url" (missing-field (json-parse "{\"custom_id\":\"a\",\"method\":\"POST\",\"body\":{}}")))
+    "url reported when it is the gap")
+  (assert
+    (equal? "" (missing-field (json-parse "{\"custom_id\":\"a\",\"method\":\"POST\",\"url\":\"/v1/embeddings\",\"body\":{}}")))
+    "a complete object has no gap"))
+
+(deftest "first-invalid passes a clean file"
+  (assert
+    (equal? ""
+      (first-invalid
+        (list
+          "{\"custom_id\":\"a\",\"method\":\"POST\",\"url\":\"/v1/embeddings\",\"body\":{}}"
+          "{\"custom_id\":\"b\",\"method\":\"POST\",\"url\":\"/v1/embeddings\",\"body\":{}}")
+        1))
+    "two well-formed lines validate"))
+
+;; The line NUMBER is the payload of this check — "something is wrong with
+;; your 40k-line file" is not actionable.
+(deftest "first-invalid reports the offending line number"
+  (assert
+    (string-contains?
+      (first-invalid
+        (list
+          "{\"custom_id\":\"a\",\"method\":\"POST\",\"url\":\"/v1/embeddings\",\"body\":{}}"
+          "{\"custom_id\":\"b\",\"method\":\"POST\",\"body\":{}}")
+        1)
+      "line 2")
+    "the second line is named")
+  (assert
+    (string-contains?
+      (first-invalid (list "{\"custom_id\":\"b\",\"method\":\"POST\",\"body\":{}}") 1)
+      "url")
+    "the missing field is named"))
+
+;; A file aimed at another endpoint is rejected by OpenAI only AFTER the
+;; upload is paid for and a batch id has already been handed back.
+(deftest "first-invalid catches an endpoint mismatch"
+  (assert
+    (string-contains?
+      (first-invalid
+        (list "{\"custom_id\":\"a\",\"method\":\"POST\",\"url\":\"/v1/chat/completions\",\"body\":{}}")
+        1)
+      "/v1/embeddings")
+    "a chat-completions batch is refused by an embeddings action"))
+
+;; The escaping is json-stringify's job, never a hand-built string's. This
+;; pins that a quote in caller text cannot break out of the request body.
+(deftest "synth-line escapes quotes and carries custom_id + endpoint"
+  (let ((out (synth-line "he said \"hi\"" 7)))
+    (assert (string-contains? out "\\\"hi\\\"") "the inner quotes are escaped")
+    (assert (string-contains? out "\"custom_id\":\"req-7\"") "custom_id is 1-based and stable")
+    (assert (string-contains? out "/v1/embeddings") "the request targets the embeddings endpoint")))
+
+(deftest "join-lines round-trips, including the degenerate cases"
+  (assert (equal? "a\nb\nc" (join-lines (list "a" "b" "c"))) "three lines")
+  (assert (equal? "a" (join-lines (list "a"))) "one line adds no separator")
+  (assert (equal? "" (join-lines '())) "no lines is the empty string"))
+
+(deftest "last-of / drop-last split curl's trailing status line"
+  (assert (equal? "200" (last-of (list "{\"id\":\"x\"}" "200"))) "the status is the last line")
+  (assert
+    (equal? (list "{\"id\":\"x\"}") (drop-last (list "{\"id\":\"x\"}" "200")))
+    "the body is everything before it"))
+
+;; curl exits 0 on a 401 and on a 500, so without this predicate a rejected
+;; upload and a delivered one are the same verdict.
+(deftest "http-ok? accepts only a three-digit 2xx"
+  (assert (http-ok? "200") "200 is ok")
+  (assert (http-ok? "201") "201 is ok")
+  (assert (not (http-ok? "401")) "401 is not ok")
+  (assert (not (http-ok? "500")) "500 is not ok")
+  (assert (not (http-ok? "")) "an empty status is not ok")
+  (assert (not (http-ok? "2")) "a truncated status is not ok"))

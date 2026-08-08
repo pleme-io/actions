@@ -9,6 +9,10 @@ inputs:
     required: true
   token:
     required: true
+  # Additive, defaulted to the pre-existing behaviour (preview deploy).
+  prod:
+    required: false
+    default: "false"
 
 outputs:
   deployment-url:
@@ -17,6 +21,12 @@ outputs:
 runs:
   using: composite
   steps:
+    # NO actions/checkout here, deliberately, and unlike the loader template.
+    # The stdlib + run.tlisp are read from ${{ github.action_path }} (the
+    # runner's own _actions copy), so nothing here needs the caller's tree —
+    # while `actions/checkout` defaults to clean:true and would DELETE the
+    # untracked build output this action exists to deploy. Every one of this
+    # repo's deploy-family actions is checkout-free for the same reason.
     - id: src
       shell: bash
       run: |
@@ -35,4 +45,13 @@ runs:
       env:
         PROJECT: ${{ inputs.project }}
         ENTRY_FILE: ${{ inputs.entry-file }}
-        TOKEN: ${{ inputs.token }}
+        PROD: ${{ inputs.prod }}
+        # ★ The token reaches deployctl through the ENVIRONMENT and only the
+        # environment. Under the name deployctl itself reads, so there is one
+        # name for one secret and no second copy to drift. run.tlisp never
+        # binds it — it asks only whether it is non-empty — and never puts it
+        # in argv, where `ps` / /proc/<pid>/cmdline would expose it.
+        DENO_DEPLOY_TOKEN: ${{ inputs.token }}
+        # deployctl colourises its success banner; the URL scan reads tokens
+        # out of that text, so keep the escapes out of it.
+        NO_COLOR: "1"

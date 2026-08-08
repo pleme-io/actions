@@ -1,0 +1,225 @@
+;; ────────────────────────────────────────────────────────────────
+;; cloudflare-worker-deploy/run.tlisp
+;;
+;; Replaces the embedded `run: |` bash body that used to live in this
+;; action's action.yml (★★ PRIME DIRECTIVE + NO SHELL). The bash it
+;; replaces, verbatim:
+;;
+;;   cd "${{ inputs.workdir }}"
+;;   env_flag=""
+;;   [ -n "${{ inputs.environment }}" ] && env_flag="-e ${{ inputs.environment }}"
+;;   npx wrangler@latest deploy $env_flag | tee /tmp/wrangler.log
+;;   url=$(grep -Eo 'https://[a-z0-9.-]+\.workers\.dev' /tmp/wrangler.log | head -1)
+;;   echo "url=$url" >> "$GITHUB_OUTPUT"
+;;
+;; Six lines, five live defects. Each is closed at the line that closes
+;; it; the roots are stated here once.
+;;
+;; ── D1 · SCRIPT INJECTION, on a step holding CLOUDFLARE_API_TOKEN ──
+;; `${{ inputs.workdir }}` and `${{ inputs.environment }}` were pasted
+;; TEXTUALLY into the shell source by the Actions expression evaluator,
+;; before bash ever parsed it — and both landed inside double quotes,
+;; where command substitution still executes. REPRODUCED: rendering the
+;; body with workdir = `.$(touch /tmp/PWNED)` created the file and the
+;; step exited 0. Any consumer that threads a PR title, a branch name, a
+;; matrix value or a repository-variable into either input hands
+;; arbitrary code execution to whoever controls it — with a Cloudflare
+;; deploy credential in the environment. CLOSED by construction: the
+;; values now arrive as `env:` vars and reach wrangler as separate argv
+;; list elements. There is no shell, so there is nothing to quote and
+;; nothing to inject into.
+;;
+;; ── D2 · A SUCCESSFUL DEPLOY REPORTED AS A FAILED ACTION ───────────
+;; Composite `shell: bash` runs `bash --noprofile --norc -eo pipefail`.
+;; `grep` exits 1 when it finds nothing, so `url=$(grep … | head -1)` on
+;; a log with no `*.workers.dev` URL made the ASSIGNMENT exit 1 and
+;; `set -e` killed the step. REPRODUCED: that exact assignment against a
+;; URL-less file exits 1 and the following line never runs. This is not
+;; an edge case — a Worker published to a custom route, or with
+;; `workers_dev = false` in wrangler.toml, NEVER prints a workers.dev
+;; URL. Those deploys succeeded and the action failed, with no
+;; diagnostic at all (grep says nothing on a miss). CLOSED below: the
+;; deploy's own exit status is the verdict; a missing URL is an explicit
+;; empty output plus a `::warning::` naming both causes.
+;;
+;; ── D3 · SIGPIPE, ditto ────────────────────────────────────────────
+;; `grep … | head -1` on a log with many matches lets `head` exit first;
+;; `grep` then dies of SIGPIPE (141) and `pipefail` promotes that to the
+;; pipeline's status, so `set -e` kills the step again. REPRODUCED: exit
+;; 141 against a 200k-line match set, "REACHED" never printed. CLOSED:
+;; the first match is selected in-process, so there is no second process
+;; to signal.
+;;
+;; ── D4 · THE URL WAS READ BACK FROM A FIXED, SHARED /tmp PATH ──────
+;; `tee /tmp/wrangler.log` then `grep … /tmp/wrangler.log` round-trips
+;; the deploy output through a path every job on the machine shares. On
+;; the fleet's ARC runners two concurrent jobs collide there, and job A
+;; can publish job B's URL as its own `deployed-url`. CLOSED: the URL is
+;; extracted from the in-memory capture. The file is still WRITTEN, so
+;; the observable side effect a consumer may be reading survives — only
+;; the trust in it is gone.
+;;
+;; ── D5 · `wrangler@latest`, resolved at job time, holding the token ──
+;; A floating third-party dependency fetched from the npm registry
+;; DURING a credentialed deploy step (★★ HERMETIC SUPPLY CHAIN). This
+;; one is only MITIGATED, not closed: the additive `wrangler-version`
+;; input makes it pinnable, and its default stays `latest` so the
+;; action's contract is byte-identical — but a caller that does not pin
+;; is still resolving an unpinned artifact at job time, and the run now
+;; says so out loud instead of doing it silently. Genuinely closing it
+;; needs wrangler mirrored into a pleme-io registry; that is not this
+;; conversion.
+;;
+;; ── NOT A DEFECT, and deliberately left alone ──────────────────────
+;; CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID stay in the ENVIRONMENT
+;; and are never named here. wrangler reads them from the env itself, so
+;; there is no reason to move a credential onto a command line where
+;; `ps` and /proc/<pid>/cmdline expose it to every process on the
+;; runner. GitHub masks LOGS, not the process table.
+;; ────────────────────────────────────────────────────────────────
+
+;; The chdir is done by the tatara-script action's own `working-directory`
+;; input (see action.yml), which is a typed YAML field the runner applies
+;; to the process — not a `cd` built from an interpolated string. WORKDIR
+;; is threaded here for the log line only; nothing below resolves a path
+;; through it.
+(define workdir (env-get "WORKDIR" "."))
+
+;; Trimmed, unlike `[ -n … ]`: bash treated a whitespace-only environment
+;; as PRESENT, then word-split it away, and wrangler died on a bare `-e`
+;; with no value. Whitespace-only now means "no environment", which is
+;; what the caller meant.
+(define environment (string-trim (env-get "ENVIRONMENT" "")))
+
+(define wrangler-version (string-trim (env-get "WRANGLER_VERSION" "latest")))
+
+;; ── the workers.dev URL scanner — grep's regex, in-process ─────────
+;; Faithful to `grep -Eo 'https://[a-z0-9.-]+\.workers\.dev' | head -1`:
+;; leftmost match wins, the host class is byte-identical, and a `/`, a
+;; space, an uppercase letter or an ANSI escape ends the run exactly as
+;; the character class does.
+
+(define cfw:host-chars "abcdefghijklmnopqrstuvwxyz0123456789.-")
+
+(define (cfw:host-char? c) (string-contains? cfw:host-chars c))
+
+;; The leading run of [a-z0-9.-] in CHARS. Accumulated reversed so the
+;; walk stays linear.
+(define (cfw:take-host chars acc)
+  (cond
+    ((null? chars) (reverse acc))
+    ((cfw:host-char? (car chars)) (cfw:take-host (cdr chars) (cons (car chars) acc)))
+    (else (reverse acc))))
+
+(define (cfw:host-of piece) (string-join "" (cfw:take-host (string-chars piece) '())))
+
+;; The `+` in `[a-z0-9.-]+\.workers\.dev` demands at least one host
+;; character BEFORE the literal suffix, so a bare `https://.workers.dev`
+;; is not a match. Length is how that quantifier is spelled here.
+(define (cfw:workers-dev? host)
+  (and
+    (> (string-length host) (string-length ".workers.dev"))
+    (string-suffix? host ".workers.dev")))
+
+(define (cfw:first-url pieces)
+  (cond
+    ((null? pieces) "")
+    (else
+      (let ((host (cfw:host-of (car pieces))))
+        (cond
+          ((cfw:workers-dev? host) (string-append "https://" host))
+          (else (cfw:first-url (cdr pieces))))))))
+
+;; Splitting on the scheme yields one piece per candidate, in log order;
+;; the head of the split is the text BEFORE the first occurrence and is
+;; dropped. A log with no `https://` yields '(), i.e. an honest "".
+;; D3 closed here: "first match" is a list walk, not a `head -1` that can
+;; SIGPIPE the producer.
+(define (cfw:extract-url log-text) (cfw:first-url (cdr (string-split log-text "https://"))))
+
+;; ── the deploy ────────────────────────────────────────────────────
+
+;; argv as a LIST. D1 closed here: `-e` and its value are separate
+;; elements, so an environment containing a space, a quote or a `$(…)`
+;; is one opaque argument rather than shell source.
+(define (cfw:deploy-argv)
+  (let ((base (list "npx" (string-append "wrangler@" wrangler-version) "deploy")))
+    (if (equal? environment "") base (append base (list "-e" environment)))))
+
+(cond
+  ((equal? wrangler-version "latest")
+    (log-info
+      (string-append
+        "::warning::wrangler is resolving to @latest at job time on a step that "
+        "holds CLOUDFLARE_API_TOKEN — an unpinned third-party artifact fetched "
+        "during a credentialed deploy. Set the `wrangler-version` input to a "
+        "concrete version to pin it."))))
+
+(log-info
+  (string-append
+    "==> wrangler@"
+    wrangler-version
+    " deploy (workdir "
+    workdir
+    (if (equal? environment "") ", no -e" (string-append ", -e " environment))
+    ")"))
+
+(define result (proc:run (cfw:deploy-argv)))
+
+;; `npx` absent (no setup-node in the caller's job, or a runner image
+;; without node) raises inside exec-capture; proc:run turns that into a
+;; typed err so it reports as "could not start npx" rather than an
+;; unhandled interpreter exception.
+(cond
+  ((erro:err? result)
+    (log-error (string-append "wrangler could not be started: " (erro:message (erro:value result))))
+    (exit 1)))
+
+(define deploy (erro:value result))
+
+(define deploy-log (stdout-of deploy))
+
+;; The `tee` half of the original, preserved: a consumer or a later step
+;; reading this path still finds the deploy output. The `grep` half is
+;; NOT preserved — see D4; the URL below comes from the capture, never
+;; from this file, so a colliding job on a shared runner can no longer
+;; supply it.
+(write-file "/tmp/wrangler.log" deploy-log)
+
+(print-line deploy-log)
+
+(cond
+  ((not (equal? (string-trim (stderr-of deploy)) "")) (eprint-line (stderr-of deploy))))
+
+;; The deploy's own exit status is the verdict — D2/D3 closed here.
+;; Previously a URL-scanning accident downstream of a SUCCESSFUL deploy
+;; decided the step's fate.
+(cond
+  ((not (= (status-of deploy) 0))
+    (log-error
+      (string-append
+        "wrangler deploy failed (exit "
+        (string-format "{}" (status-of deploy))
+        ")"))
+    (exit (status-of deploy))))
+
+(define url (cfw:extract-url deploy-log))
+
+(cond
+  ((equal? url "")
+    ;; An empty URL after a SUCCESSFUL deploy is a normal, expected
+    ;; outcome, not a failure — it is what a Worker on a custom route or
+    ;; with `workers_dev = false` looks like. It is announced rather than
+    ;; emitted silently, because an unexplained empty output is exactly
+    ;; the shape a caller cannot tell apart from a broken step.
+    (log-info
+      (string-append
+        "::warning::deploy succeeded but printed no *.workers.dev URL, so "
+        "`deployed-url` is empty. Expected when the Worker is published to a "
+        "custom route or when wrangler.toml sets workers_dev = false."))
+    (emit-output "url" "")
+    (exit 0))
+  (else
+    (log-info (string-append "deployed: " url))
+    (emit-output "url" url)
+    (exit 0)))

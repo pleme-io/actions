@@ -16,32 +16,89 @@
 ;; `webhook:post` removes all three: the body is a lisp value serialised to
 ;; JSON (nothing to quote), the url is an argument rather than argv text, and
 ;; a non-2xx raises instead of being scraped.
+;;
+;; ── TWO FURTHER DEFECTS, found 2026-08-08 by AUDITING the port ────────────
+;;
+;;   4. A BLANK NOTIFICATION REPORTED `sent=true`. Both `title` and `text` are
+;;      declared `required: true`, but GitHub DOES NOT ENFORCE `required` on
+;;      composite-action inputs — it just sets the env var to "". And
+;;      `env-required` only rejects an UNSET variable, never an empty one
+;;      (probed directly: `PROBE_EMPTY='' env-required` → ACCEPTED "").
+;;      So a caller who omitted `title` posted `{"title":"","text":""}` and got
+;;      exit 0 with `sent=true`. Reproduced end-to-end against a stub webhook.
+;;      The partial case is the nastier one: an empty title with a real body is
+;;      accepted by Teams, so the notification lands permanently untitled while
+;;      every surface a human reads says the step succeeded. Closed below —
+;;      the declared contract is now actually enforced, since the runner won't.
+;;
+;;   5. THE HOST DIAGNOSTIC WAS DISCARDED. The failure arm carried the comment
+;;      "The host, never the url" but logged only `erro:message` — the status
+;;      line. `webhook:post` deliberately attaches ("url-host" <host>) to the
+;;      error precisely so an operator can tell WHICH endpoint rejected them,
+;;      and that was dropped on the floor: a job fanning out to several Teams
+;;      channels got N identical "http status: 403" lines naming nothing. The
+;;      comment described a behaviour the code did not have. Closed below.
+;;
+;; ── KNOWN, DELIBERATELY NOT CHANGED ───────────────────────────────────────
+;; action.yml's `description` says "adaptive card"; this posts a legacy
+;; MessageCard, which is what the original bash sent. Reshaping the payload
+;; would be a behaviour change for every existing consumer, so it is reported
+;; rather than done here.
 
-(define webhook (env-required "WEBHOOK_URL"))
+;; Delivery proper. `webhook` is passed rather than re-read so the url appears
+;; in exactly one place.
+(define (deliver webhook title text)
+  ;; The MessageCard, as data. `@type`/`@context` are Teams' own required keys.
+  (let* ((card
+           (list
+             (list "@type" "MessageCard")
+             (list "@context" "http://schema.org/extensions")
+             (list "title" title)
+             (list "text" text)))
+         (r (webhook:post webhook (list) card)))
+    (cond
+      ((erro:err? r)
+        ;; DEFECT 5 CLOSED: name the endpoint. `webhook:host-of` is the
+        ;; stdlib's own for-logs projection — the host of a Teams webhook is
+        ;; the tenant, never the per-channel GUID that is the actual secret.
+        (log-error
+          (string-append "teams-notify: delivery to "
+                         (webhook:host-of webhook)
+                         " failed — "
+                         (erro:message (erro:value r))))
+        (emit-output "sent" "false")
+        (exit 1))
+      (else
+        (log-info (string-append "teams-notify: delivered to " (webhook:host-of webhook)))
+        (emit-output "sent" "true")
+        (exit 0)))))
 
-(define title (env-required "TITLE"))
+;; Reads live in `main`, not at top level, on purpose: a top-level
+;; `(define x (env-required …))` evaluates at LOAD time, so it aborts a future
+;; deftest file before a single case runs and "nothing ran" reads exactly like
+;; "everything passed" (the hazard `env-required-unless-test` documents).
+;; No TLISP_TEST skip-guard is added here — for a NOTIFIER, an env var that
+;; silently suppresses the send is the very defect class this file exists to
+;; close.
+(define (main)
+  (let* ((webhook (env-required "WEBHOOK_URL"))
+         (title (env-required "TITLE"))
+         (text (env-required "TEXT")))
+    (cond
+      ;; DEFECT 4 CLOSED: `required: true` is unenforceable at the runner, so
+      ;; enforce it here. Refusing beats delivering a blank card and calling it
+      ;; sent — a notification nobody can read is a failed notification.
+      ;; string-trim so an all-whitespace title is not "present".
+      ((equal? (string-trim text) "")
+        (log-error
+          "teams-notify: `text` is required and resolved empty — refusing to post a bodiless card. GitHub does not enforce `required:` on composite inputs, so an omitted input arrives as \"\".")
+        (emit-output "sent" "false")
+        (exit 1))
+      ((equal? (string-trim title) "")
+        (log-error
+          "teams-notify: `title` is required and resolved empty — refusing to post an untitled card. GitHub does not enforce `required:` on composite inputs, so an omitted input arrives as \"\".")
+        (emit-output "sent" "false")
+        (exit 1))
+      (else (deliver webhook title text)))))
 
-(define text (env-required "TEXT"))
-
-;; The MessageCard, as data. `@type`/`@context` are Teams' own required keys.
-(define card
-  (list
-    (list "@type" "MessageCard")
-    (list "@context" "http://schema.org/extensions")
-    (list "title" title)
-    (list "text" text)))
-
-(define r (webhook:post webhook (list) card))
-
-(cond
-  ((erro:err? r)
-    ;; The host, never the url — the url is the secret.
-    (log-error
-      (string-append "teams-notify: delivery failed — "
-                     (erro:message (erro:value r))))
-    (append-output "sent=false")
-    (exit 1))
-  (else
-    (log-info "teams-notify: delivered")
-    (append-output "sent=true")
-    (exit 0)))
+(main)

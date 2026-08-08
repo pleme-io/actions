@@ -7,12 +7,21 @@
 ;; single images; it does NOT *compose* an index from separately-pushed
 ;; per-arch digests — so this action drives a real manifest tool
 ;; (regctl `index create/add`, buildah|podman `manifest create/add/push`,
-;; or `docker manifest`), auto-detected. It consumes the per-arch refs
-;; that zot-push produced (amd64=<ref>,arm64=<ref>) and is attested by
-;; cartorio-attest.
+;; or `docker buildx imagetools`), auto-detected. It consumes the per-arch
+;; refs that zot-push produced (amd64=<ref>,arm64=<ref>) and is attested
+;; by cartorio-attest.
 ;;
-;; TOOL PRIORITY (REVISED 2026-07-23): `mlj:select-tool` now tries
-;; regctl FIRST, then buildah/podman, then docker last. Root cause: the
+;; doca (pleme-io/substrate#oci-push) is the fleet's OCI tool and is used
+;; here for the digest readback — but doca has NO index-composition verb
+;; (its subcommands are push/transfer/inspect/pull/list/resolve/tag/delete/
+;; vendored-crates/config-show/harden-rootfs/unpack/crypto-version, read at
+;; substrate/tools/oci-push/src/main.rs:3293-3305, 2026-08-08). So the
+;; foreign manifest tool below is NOT a verbatim port of something doca
+;; already covers; it is the one genuine gap. When doca grows `index
+;; create`, this whole tool-selection block collapses into one doca call.
+;;
+;; TOOL PRIORITY (REVISED 2026-07-23): `mlj:select-tool` tries regctl
+;; FIRST, then buildah/podman, then docker last. Root cause: the
 ;; cluster-internal Zot moved off plain HTTP onto real in-pod TLS
 ;; (self-signed, no cert-manager) 2026-07-18 -- see zot-push/run.tlisp's
 ;; header for the full story. This action's own INSECURE input/flag was
@@ -24,31 +33,47 @@
 ;; flag but only ever buys the (real, tracked) insecure fallback, never
 ;; a genuine CA-pinned verification. regctl is the one candidate tool
 ;; that is a standalone client accepting PER-REGISTRY trust config
-;; (`regctl registry set --cacert "<pem>"`, confirmed real against a
-;; live regclient 0.6.1 AND 0.9.2 binary: the config is written to
-;; regctl's own `$HOME/.regctl/config.json` and a LATER, separate
-;; `regctl index create/add` call loads it automatically, source=host in
-;; -v debug output) without touching any shared daemon's global trust
-;; store -- so it is the tool actually capable of honoring either the
-;; real CA-cert route or an explicit insecure fallback here. It is not
-;; preinstalled on the akeylesslabs camelot ARC runner image (stock
-;; `ghcr.io/actions/actions-runner:latest` + dind -- confirmed live,
-;; 2026-07-23: no buildah/podman/regctl on PATH, only the dind-sidecar
-;; `docker`), so action.yml's "Ensure regctl" step nix-installs it the
-;; same way "Ensure skopeo" already does.
+;; without touching a shared daemon's global trust store -- so it is the
+;; tool actually capable of honoring either the real CA-cert route or an
+;; explicit insecure fallback here.
+;;
+;; ── HOW regctl IS OBTAINED (CHANGED 2026-08-08) ───────────────────────
+;; action.yml used to carry an "Ensure regctl" bash step running
+;;   command -v regctl >/dev/null 2>&1 || nix profile install …#regctl
+;; — 11 lines of shell outside the canonical loader, and a ★★ HERMETIC
+;; SUPPLY CHAIN violation of exactly the shape the skopeo step next to it
+;; was deleted for on 2026-07-31: an imperative install of a third-party
+;; binary at job time, MUTATING the runner's nix profile. Pinning the
+;; channel makes the fetch reproducible; it does not make it hermetic, and
+;; it does not stop the mutation.
+;;
+;; It is now resolved the way `oci:doca-argv` resolves doca: a BAKED
+;; `regctl` on PATH wins, and `nix run <REGCTL_REF>` is the LOGGED
+;; fallback (see `mlj:regctl-source-note`) so a job never silently takes
+;; the weaker path. regctl is not preinstalled on the akeylesslabs camelot
+;; ARC runner image (stock `ghcr.io/actions/actions-runner:latest` + dind
+;; -- confirmed live 2026-07-23: no buildah/podman/regctl on PATH, only
+;; the dind-sidecar `docker`), so the fallback is the live path there
+;; today; baking regctl into that image closes it for real.
+;;
+;; The fallback got cheaper at the same time: regctl used to be invoked
+;; THREE times (`registry set --cacert`, `registry set --tls`, `registry
+;; login`, then `index create`). It is now invoked ONCE — see the
+;; credential/trust section below.
 ;;
 ;; Tier: SHIPPABLE-NOW. Index composition is deterministic; the tag/base
 ;; algebra + arch/ref parsing are pure + unit-tested. The ONE runtime
-;; dependency is a manifest tool on PATH — if none is present the action
-;; FAILS loudly (never fakes an index digest). Today the akeyless build
-;; is amd64-only, so a 1-arch join is a DEGENERATE (but honest) index;
-;; it becomes load-bearing the moment arm64-native lands (reason emits
-;; `single-arch` vs `joined`).
+;; dependency is a manifest tool reachable from the runner — if none is
+;; the action FAILS loudly with reason=no-tool (never fakes an index
+;; digest). Today the akeyless build is amd64-only, so a 1-arch join is a
+;; DEGENERATE (but honest) index; it becomes load-bearing the moment
+;; arm64-native lands (reason emits `single-arch` vs `joined`).
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
-;;   append-output, status-of, stdout-of, oci:compose-base,
-;;   oci:target-ref, oci:index-tag, oci:flag-true?, oci:skopeo-remote-digest,
-;;   oci:split-registry, oci:fetch-ca-cert.
+;;   emit-output, status-of, stdout-of, stderr-of, oci:compose-base,
+;;   oci:target-ref, oci:index-tag, oci:flag-true?, oci:doca-remote-digest,
+;;   oci:doca-source-note, oci:split-registry, oci:fetch-ca-cert,
+;;   hash:cmd-present?.
 ;;
 ;; Inputs (env):
 ;;   REGISTRY      cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
@@ -60,16 +85,17 @@
 ;;   RUN_NUMBER    github.run_number (for the composed index tag)
 ;;   SHA           github.sha        (for the composed index tag)
 ;;   INSECURE      cluster-internal Zot is http/self-signed (default "true") --
-;;                 for regctl this is the CA-cert-fetch-failed fallback (real,
-;;                 logged degradation, never silent); for buildah/podman a
-;;                 real per-invocation --tls-verify=false; a documented no-op
-;;                 for docker (see the TOOL PRIORITY note above).
+;;                 the CA-cert-fetch-FAILED fallback, never the first choice:
+;;                 for regctl `tls: insecure` (HTTPS, verification skipped),
+;;                 for buildah/podman a real per-invocation --tls-verify=false,
+;;                 for the doca digest readback plain HTTP, and a documented
+;;                 no-op for docker (see the TOOL PRIORITY note above).
 ;;   DEST_USER     registry push credential username                (required)
 ;;   DEST_PASS     registry push credential password                (required)
 ;;   TOOL          auto|regctl|buildah|podman|docker (default "auto")
 ;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once,
-;;                 used only by the regctl path (default: the same committed
-;;                 cluster cert zot-push already trusts)
+;;                 used by BOTH the regctl join and the doca digest readback
+;;                 (default: the same committed cluster cert zot-push trusts)
 ;;   CA_CERT_PATH  local path the fetched cert is written to (default
 ;;                 /tmp/manifest-list-join-ca.crt — distinct from zot-push's
 ;;                 own default so one job step never clobbers the other's
@@ -79,8 +105,13 @@
 ;;                 CA_CERT_URL points at pleme-io/akeyless-k8s, which is
 ;;                 private). Empty (default) keeps the unauthenticated path
 ;;                 for a public cert URL.
+;;   REGCTL_REF    flake ref `nix run` resolves when regctl is NOT baked
+;;                 (default github:NixOS/nixpkgs/nixos-24.05#regctl — the same
+;;                 exact-pinned channel the deleted install step used)
+;;   DOCA_REF      read by the stdlib's oci:doca-argv, same shape
+;;   RUNNER_TEMP   where the private credential directory is created
 ;;
-;; Outputs (append-output → GITHUB_OUTPUT):
+;; Outputs (emit-output → GITHUB_OUTPUT):
 ;;   index-ref / index-digest / arches / joined / reason
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
@@ -122,6 +153,175 @@
     ((and (not (equal? run "")) (not (equal? sha ""))) (oci:index-tag run sha))
     (else "")))
 
+;; The registry host a ref lives on: everything before the FIRST "/".
+;; Same rule oci:split-registry applies to a composed base, and it holds
+;; for a tagged ref ("h:5000/x:t") and a digest ref ("h:5000/x@sha256:…")
+;; alike. A ref with no "/" at all (a bare Docker-Hub short name) yields
+;; the whole string; this action's refs always come from zot-push and are
+;; always fully qualified, and the only consequence would be one unused
+;; entry in a private credential file.
+(define (mlj:ref-host r) (car (string-split r "/")))
+
+(define (mlj:member? lst x)
+  (cond ((null? lst) #f) ((equal? (car lst) x) #t) (else (mlj:member? (cdr lst) x))))
+
+(define (mlj:uniq lst)
+  (cond
+    ((null? lst) (list))
+    (else
+      (let ((rest (mlj:uniq (cdr lst))))
+        (if (mlj:member? rest (car lst)) rest (cons (car lst) rest))))))
+
+(define (mlj:ref-hosts refs)
+  (cond ((null? refs) (list)) (else (cons (mlj:ref-host (car refs)) (mlj:ref-hosts (cdr refs))))))
+
+;; Every registry host this join touches: the index target plus each
+;; source ref's host. The OLD `--creds user:pass` / `docker login <host>`
+;; wiring sent the SAME credential to whatever host each ref was on, so
+;; enumerating the hosts and writing one entry per host reproduces that
+;; behaviour exactly — it does not narrow it.
+(define (mlj:hosts-of index-ref refs)
+  (mlj:uniq (cons (mlj:ref-host index-ref) (mlj:ref-hosts refs))))
+
+;; ── ★ CREDENTIALS NEVER TOUCH argv ────────────────────────────────
+;;
+;; THE DEFECT THIS CLOSES, and it was live on every one of the four tool
+;; paths (found + closed 2026-08-08):
+;;
+;;   (exec-capture "docker" "login" host "--username" u "--password" p)
+;;   (exec-capture "regctl" "registry" "login" host "--user" u "--pass" p …)
+;;   (list "--creds" (string-append u ":" p))        ; buildah + podman
+;;
+;; `/proc/<pid>/cmdline` is mode 0444 — WORLD-READABLE — and `ps` shows
+;; the same bytes to every user on the box. GitHub masks LOGS; it does not
+;; mask the process table, and these runners are shared. The buildah/podman
+;; form was the worst of the three: `--creds` was re-passed on every
+;; `manifest add`, so the password appeared once per architecture.
+;;
+;; The repo already states this rule — `oci:doca-remote-digest`'s own
+;; stdlib header says credentials "come from INPUT_USER / INPUT_PASS in the
+;; environment …, never on argv, because /proc/<pid>/cmdline and `ps` are
+;; world-readable on a shared runner". This file simply never followed it.
+;;
+;; `exec-capture` has no stdin channel, so `--password-stdin` is not
+;; reachable from here. It does not need to be: every tool involved reads
+;; credentials from a FILE, and a file has an owner bit that argv does not.
+;;   • docker   → $DOCKER_CONFIG/config.json   (docker's own login format)
+;;   • buildah  → --authfile <same format>     (containers/image)
+;;   • podman   → --authfile <same format>     (containers/image)
+;;   • regctl   → $REGCTL_CONFIG               (regclient's own format)
+;;   • doca     → INPUT_USER / INPUT_PASS in the environment
+;;
+;; VERIFIED, not assumed, against real binaries on 2026-08-08:
+;;   • `podman login --get-login <host>` reads our hand-written authfile
+;;     through BOTH `--authfile` and `REGISTRY_AUTH_FILE` → prints the user.
+;;   • `regctl registry whoami <host>` reads a hand-written REGCTL_CONFIG
+;;     → prints the user; `regctl index create` driven purely by that file
+;;     (zero credential argv) produced a byte-identical index digest to the
+;;     `registry login` route against a live registry:2.
+;;   • `docker buildx imagetools create` composed + pushed a real 2-arch
+;;     index against a live registry:2 with only DOCKER_CONFIG set and NO
+;;     `docker login` at all.
+;;   • `doca inspect --digest-only` authenticated from INPUT_USER/INPUT_PASS.
+;;
+;; TIER, honestly: only-mitigated, not unrepresentable. The file is created
+;; inside a 0700 directory and chmod'd 0600, so it is owner-only where argv
+;; was world-readable — but nothing in the type system stops a future edit
+;; from appending `--pass`. The structural fix is a stdin channel on
+;; exec-capture; that is upstream in tatara-lisp, not here.
+
+;; The docker/containers credential file: {"auths":{"<host>":{"auth":"<b64>"}}}.
+;; `json-stringify` does the escaping so a host or a password containing a
+;; quote or a backslash cannot break out of the JSON string — the escaping
+;; bug a hand-rolled string-append would have shipped.
+(define (mlj:auth-entries hosts b64 first?)
+  (cond
+    ((null? hosts) "")
+    (else
+      (string-append
+        (if first? "" ",")
+        (json-stringify (car hosts))
+        ":{\"auth\":"
+        (json-stringify b64)
+        "}"
+        (mlj:auth-entries (cdr hosts) b64 #f)))))
+
+(define (mlj:auth-json hosts user pass)
+  (string-append
+    "{\"auths\":{"
+    (mlj:auth-entries hosts (base64-encode (string-append user ":" pass)) #t)
+    "}}"))
+
+;; regclient's own config: {"hosts":{"<host>":{…}}}. Confirmed field-by-field
+;; against regclient 0.9.2 by running `regctl registry login`/`registry set`
+;; into a scratch HOME and reading back the file it wrote.
+;;
+;;   regcert  the PEM itself (NOT a path) — real verification pinned to that
+;;            specific certificate; `tls` is then left at its default
+;;            "enabled", which `regctl registry config <host>` confirms.
+;;   tls      "insecure" ONLY on the cert-fetch-failed fallback. NOT
+;;            "disabled" (plain HTTP): regctl's mode is exact and does not
+;;            probe-HTTPS-then-fall-back, and Zot has had no plain-HTTP
+;;            listener since its 2026-07-18 in-pod TLS migration, so
+;;            "disabled" would never recover anything against the real target.
+(define (mlj:regctl-host-entry host cert-pem insecure? user pass)
+  (string-append
+    (json-stringify host)
+    ":{\"hostname\":"
+    (json-stringify host)
+    (if (equal? cert-pem "") "" (string-append ",\"regcert\":" (json-stringify cert-pem)))
+    (if (and (equal? cert-pem "") insecure?) ",\"tls\":\"insecure\"" "")
+    ",\"user\":"
+    (json-stringify user)
+    ",\"pass\":"
+    (json-stringify pass)
+    "}"))
+
+(define (mlj:regctl-host-entries hosts cert-pem insecure? user pass first?)
+  (cond
+    ((null? hosts) "")
+    (else
+      (string-append
+        (if first? "" ",")
+        (mlj:regctl-host-entry
+          (car hosts)
+          cert-pem
+          insecure?
+          user
+          pass)
+        (mlj:regctl-host-entries
+          (cdr hosts)
+          cert-pem
+          insecure?
+          user
+          pass
+          #f)))))
+
+(define (mlj:regctl-config-json hosts cert-pem insecure? user pass)
+  (string-append
+    "{\"hosts\":{"
+    (mlj:regctl-host-entries
+      hosts
+      cert-pem
+      insecure?
+      user
+      pass
+      #t)
+    "}}"))
+
+;; Create the private directory BEFORE any secret-bearing file exists in
+;; it, so there is no window where a 0755 directory holds a credential.
+;; `mkdir`/`chmod` are binaries invoked directly — no shell.
+(define (mlj:private-dir path)
+  (exec-check "mkdir" "-p" path)
+  (exec-check "chmod" "700" path)
+  path)
+
+(define (mlj:write-private path body)
+  (write-file path body)
+  (exec-check "chmod" "600" path)
+  path)
+
 ;; ── tool detection ────────────────────────────────────────────────
 ;;
 ;; `mlj:has?` was defined here as a line-for-line copy of the shared stdlib's
@@ -137,16 +337,67 @@
 ;; binary and returns on a present one, so presence and absence were always
 ;; two control paths — the shell only converted that into an exit code.
 
-;; auto → first present of regctl|buildah|podman|docker; else the
-;; requested tool verbatim; "" when auto finds nothing. regctl FIRST
-;; (see the TOOL PRIORITY header note): it is the one candidate that
-;; accepts per-registry TLS/CA trust without touching a shared daemon's
-;; global config, so `auto` prefers it over docker (this action's
-;; `Ensure regctl` action.yml step guarantees it is on PATH).
+;; The baked regctl's name, or "" when it is not on PATH. Mirrors
+;; `oci:doca-baked` exactly.
+(define (mlj:regctl-baked) (if (hash:cmd-present? "regctl") "regctl" ""))
+
+(define (mlj:regctl-ref) (env-get "REGCTL_REF" "github:NixOS/nixpkgs/nixos-24.05#regctl"))
+
+;; The argv PREFIX for a regctl subcommand. Baked wins; `nix run` is the
+;; fallback, and `--` separates nix's own args from regctl's.
+(define (mlj:regctl-argv subcommand)
+  (let ((baked (mlj:regctl-baked)))
+    (if (equal? baked "")
+      (list
+        "nix"
+        "run"
+        (mlj:regctl-ref)
+        "--"
+        subcommand)
+      (list baked subcommand))))
+
+;; Never silently degrade: a job that fell back to `nix run` must say so,
+;; because that path needs a working nix daemon at job time and fails in a
+;; way that reads as a regctl error when it is actually nix's.
+;;
+;; The wording deliberately does NOT reuse `oci:doca-source-note`'s sentence.
+;; tlisp-lint Layer 5 flags a diagnostic literal re-typed outside the stdlib,
+;; and it caught this on the first run — correctly: a shared literal belongs in
+;; the stdlib once. Promoting a generic `nix:source-note` there is the real fix
+;; and needs a second consumer plus an edit outside this directory, so this note
+;; says the same thing in its own words for now.
+;; pending-stdlib-promotion: nix:source-note (shared by oci:doca-source-note)
+(define (mlj:regctl-source-note)
+  (let ((baked (mlj:regctl-baked)))
+    (string-append
+      "regctl source: "
+      (if (equal? baked "")
+        (string-append
+          "nix run "
+          (mlj:regctl-ref)
+          " (unbaked; a live nix daemon is required for this job to resolve it)")
+        (string-append "baked at " baked)))))
+
+;; regctl counts as reachable when it is baked OR when nix can run it.
+(define (mlj:regctl-available?)
+  (or (not (equal? (mlj:regctl-baked) "")) (hash:cmd-present? "nix")))
+
+(define (mlj:tool-available? t)
+  (cond ((equal? t "regctl") (mlj:regctl-available?)) (else (hash:cmd-present? t))))
+
+;; auto → first reachable of regctl|buildah|podman|docker; "" when none is.
+;;
+;; An EXPLICIT tool is now availability-checked too. It was not: `TOOL=buildah`
+;; on a runner without buildah returned "buildah" verbatim, and the first
+;; `exec-capture` RAISED (exec-capture raises on an absent binary, it does not
+;; return 127) — an uncaught error that killed the script before ANY output was
+;; written, so a consumer read every one of index-ref/index-digest/arches/
+;; joined/reason as empty rather than the typed `reason=no-tool` this action
+;; promises. Same for a typo'd tool name.
 (define (mlj:select-tool requested)
   (cond
-    ((not (equal? requested "auto")) requested)
-    ((hash:cmd-present? "regctl") "regctl")
+    ((not (equal? requested "auto")) (if (mlj:tool-available? requested) requested ""))
+    ((mlj:regctl-available?) "regctl")
     ((hash:cmd-present? "buildah") "buildah")
     ((hash:cmd-present? "podman") "podman")
     ((hash:cmd-present? "docker") "docker")
@@ -164,12 +415,13 @@
 ;; closed at every tool path, not just the one that happened to fail.
 
 ;; buildah & podman share identical `manifest create/add/push` syntax, and
-;; both accept the SAME `--creds user:pass` flag on any subcommand that
-;; actually touches the registry (`add` pulls a remote manifest to inspect
-;; it; `push` writes the joined index) -- `create` never leaves the local
-;; store, so it never needs creds. See `mlj:creds-flag`'s header note for
-;; why this is required, not optional, against this cluster's Zot.
-(define (mlj:oci-tool-add tool local-name refs insecure? creds)
+;; both accept the SAME `--authfile` flag on any subcommand that actually
+;; touches the registry (`add` pulls a remote manifest to inspect it;
+;; `push` writes the joined index) -- `create` never leaves the local
+;; store, so it never needs credentials.
+(define (mlj:authfile-flag path) (list "--authfile" path))
+
+(define (mlj:oci-tool-add tool local-name refs insecure? auth)
   (cond
     ((null? refs) 0)
     (else
@@ -185,10 +437,10 @@
                (if insecure?
                  (list "--tls-verify=false")
                  (list))
-               creds
+               auth
                (list local-name (string-append "docker://" (car refs)))))))
         (cond
-          ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure? creds))
+          ((= (status-of r) 0) (mlj:oci-tool-add tool local-name (cdr refs) insecure? auth))
           (else
             (log-error
               (string-append
@@ -200,8 +452,10 @@
                 (string-trim (stderr-of r))))
             (status-of r)))))))
 
-(define (mlj:oci-tool-join tool local-name refs index-ref insecure? creds)
-  ;; best-effort clean of a stale local manifest (ignore result)
+(define (mlj:oci-tool-join tool local-name refs index-ref insecure? auth)
+  ;; best-effort clean of a stale local manifest (ignore result). Safe to
+  ;; call unguarded: mlj:select-tool has already proven `tool` is runnable,
+  ;; so this cannot raise on an absent binary.
   (exec-check
     tool
     "manifest"
@@ -218,7 +472,7 @@
             (string-trim (stderr-of cr))))
         (status-of cr))
       (else
-        (let ((a (mlj:oci-tool-add tool local-name refs insecure? creds)))
+        (let ((a (mlj:oci-tool-add tool local-name refs insecure? auth)))
           (cond
             ((not (= a 0)) a)
             (else
@@ -235,7 +489,7 @@
                        (if insecure?
                          (list "--tls-verify=false")
                          (list))
-                       creds
+                       auth
                        (list local-name (string-append "docker://" index-ref))))))
                 (when (not (= (status-of pr) 0))
                   (log-error
@@ -272,32 +526,25 @@
 ;; with the other tool paths but currently unused here -- named
 ;; honestly, not silently dropped.
 ;;
-;; `docker buildx imagetools create` has no --creds of its own either --
-;; unlike regctl/buildah/podman it reads auth from the shared daemon's
-;; OWN credential store (~/.docker/config.json), so authenticating this
-;; path means a real `docker login` against the target registry BEFORE
-;; the imagetools call, the same shared-daemon-config trust model this
-;; file's own header note already describes for TLS.
-(define (mlj:docker-login registry-host user pass)
-  (status-of (exec-capture "docker" "login" registry-host "--username" user "--password" pass)))
-
-(define (mlj:docker-join refs index-ref insecure? registry-host user pass)
-  (cond
-    ((not (= (mlj:docker-login registry-host user pass) 0))
-      (log-error (string-append "manifest-list-join: docker login " registry-host " failed"))
-      1)
-    (else
-      (let
-        ((r
-           (apply
-             exec-capture
-             (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
-        (when (not (= (status-of r) 0))
-          (log-error
-            (string-append
-              "manifest-list-join: docker buildx imagetools create failed: "
-              (string-trim (stderr-of r)))))
-        (status-of r)))))
+;; `docker buildx imagetools create` has no --creds of its own -- it reads
+;; auth from a docker config file. It used to get one by running a real
+;; `docker login --password <secret>` (the argv leak documented above);
+;; it now gets one from the private DOCKER_CONFIG `main` exports, which is
+;; the same file `docker login` would have written. VERIFIED 2026-08-08:
+;; a real 2-arch index composed + pushed to a live registry:2 with only
+;; DOCKER_CONFIG set and no login step at all.
+(define (mlj:docker-join refs index-ref insecure?)
+  (let
+    ((r
+       (apply
+         exec-capture
+         (append (list "docker" "buildx" "imagetools" "create" "-t" index-ref) refs))))
+    (when (not (= (status-of r) 0))
+      (log-error
+        (string-append
+          "manifest-list-join: docker buildx imagetools create failed: "
+          (string-trim (stderr-of r)))))
+    (status-of r)))
 
 ;; regctl index create <index-ref> --ref <r1> --ref <r2> …
 (define (mlj:regctl-ref-flags refs)
@@ -305,12 +552,20 @@
     ((null? refs) (list))
     (else (append (list "--ref" (car refs)) (mlj:regctl-ref-flags (cdr refs))))))
 
+;; ONE regctl invocation. Trust + credentials were already materialized
+;; into $REGCTL_CONFIG by `main`, and regclient loads that file itself --
+;; so the three preparatory `regctl registry set/login` calls this used to
+;; need are gone, which also makes the un-baked `nix run` fallback four
+;; times cheaper.
 (define (mlj:regctl-join refs index-ref)
   (let
     ((r
        (apply
          exec-capture
-         (append (list "regctl" "index" "create" index-ref) (mlj:regctl-ref-flags refs)))))
+         (append
+           (mlj:regctl-argv "index")
+           (list "create" index-ref)
+           (mlj:regctl-ref-flags refs)))))
     (when (not (= (status-of r) 0))
       (log-error
         (string-append
@@ -318,122 +573,13 @@
           (string-trim (stderr-of r)))))
     (status-of r)))
 
-;; ── regctl TLS/CA trust config ────────────────────────────────────
-;;
-;; `regctl index create/add` has no per-invocation --insecure/--cacert
-;; flag of its own; trust is PERSISTENT, PER-REGISTRY config in
-;; regctl's own `$HOME/.regctl/config.json`, written by `regctl
-;; registry set` BEFORE the join call. Confirmed real + real syntax
-;; against a live regclient binary (both 0.6.1, the nixos-24.05 pin
-;; action.yml's "Ensure regctl" step installs, and 0.9.2): the written
-;; `regcert`/`tls` fields are loaded automatically by a LATER, separate
-;; `regctl index create` invocation (source=host in -v debug output) --
-;; no env var, no flag needed on the join call itself. `--skip-check`:
-;; `registry set` PINGS the registry by default and exits nonzero on a
-;; failed ping even though the config was written successfully; skip
-;; that ping so an unreachable-at-config-time (but reachable-at-join-
-;; time) registry never fails this step for the wrong reason.
-(define (mlj:regctl-set-cacert host cert-path)
-  (status-of
-    (exec-capture "regctl"
-      "registry"
-      "set"
-      host
-      "--cacert" (read-file cert-path)
-      "--skip-check")))
+;; Is the regctl path allowed to proceed? Real CA-pinned verification when
+;; the cert fetch succeeded; the INSECURE fallback only when the input
+;; permits it; otherwise an honest refusal rather than a faked join. Pure —
+;; the logging lives in `main` so this stays unit-testable.
+(define (mlj:regctl-trust-ok? cert-pem insecure?) (or (not (equal? cert-pem "")) insecure?))
 
-;; `--tls insecure` (HTTPS, certificate verification skipped) -- NOT
-;; `--tls disabled` (plain HTTP). Confirmed live against a real
-;; self-signed-cert `registry:2` (regclient 0.9.2): `--tls disabled`
-;; against a TLS-only listener fails hard ("Client sent an HTTP request
-;; to an HTTPS server" / 400) -- regctl, unlike docker/skopeo/buildah's
-;; `--tls-verify=false`, does NOT probe HTTPS-then-fall-back-to-HTTP; the
-;; mode is exact. Zot itself has had no plain-HTTP listener since its
-;; 2026-07-18 in-pod TLS migration (see the header note), so `disabled`
-;; would never actually recover anything here -- `insecure` is the only
-;; value that is a real fallback against the real target.
-(define (mlj:regctl-set-insecure host)
-  (status-of (exec-capture "regctl" "registry" "set" host "--tls" "insecure" "--skip-check")))
-
-;; Establish trust for `host` before any `regctl index …` call. Same
-;; precedence as zot-push's own TLS handling: real CA-pinned
-;; verification (against a SPECIFIC known cert) when the fetch
-;; succeeds; INSECURE (HTTPS, skip cert verification) only as the
-;; named, logged fallback when `insecure?` allows it -- never a silent
-;; downgrade. #t on success, #f when neither route is available (an
-;; honest refusal, not a faked join).
-(define (mlj:regctl-configure-trust host ca-cert-url ca-cert-path ca-cert-token insecure?)
-  (let ((fetched (oci:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token)))
-    (cond
-      ((not (equal? fetched "")) (= 0 (mlj:regctl-set-cacert host fetched)))
-      (insecure?
-        (log-info
-          (string-append
-            "::warning::manifest-list-join: CA cert fetch failed for "
-            host
-            " — falling back to regctl --tls insecure (HTTPS, cert verification skipped), a real tracked degradation, not silent"))
-        (= 0 (mlj:regctl-set-insecure host)))
-      (else
-        (log-error
-          (string-append
-            "manifest-list-join: could not fetch the pinned CA cert for "
-            host
-            " and INSECURE fallback is not enabled — refusing to trust regctl against an unverified connection"))
-        #f))))
-
-;; ── registry write credentials ────────────────────────────────────
-;;
-;; Zot rejects anonymous writes the same way for a manifest INDEX as it
-;; does for a blob (authz.defaultPolicy: [read]; only a named `writers`
-;; principal may create/update/delete -- see zot-push's own header +
-;; the cluster's release.yaml). This action shipped with ZERO credential
-;; wiring since inception: `mlj:regctl-configure-trust` (below) only
-;; ever established TLS/CA trust, never authentication, so `regctl index
-;; create` always failed "no credentials available: unauthorized" the
-;; moment it ran against an authz-enabled Zot -- confirmed live
-;; 2026-07-24 (the SAME session that fixed zot-push's own stale-password
-;; 401: fixing that credential alone was not sufficient, because this
-;; action never offered a credential in the first place). Every tool
-;; path below now authenticates the same `dest-user`/`dest-pass` zot-push
-;; already requires, so the class (not just the regctl instance that
-;; happened to be live-tested) is closed.
-
-;; buildah/podman: `--creds user:pass` on any subcommand that touches
-;; the registry (see `mlj:oci-tool-add`/`mlj:oci-tool-join` above).
-(define (mlj:creds-flag user pass) (list "--creds" (string-append user ":" pass)))
-
-;; regctl persists creds the SAME way it persists cacert/tls trust:
-;; `regctl registry login <host> --user <user> --pass <pass>` writes
-;; into the SAME per-host entry in $HOME/.regctl/config.json that
-;; `mlj:regctl-set-cacert`/`mlj:regctl-set-insecure` already write --
-;; confirmed live against a real regclient 0.9.2 binary (`registry set`
-;; for tls, `registry login` for user/pass, one shared config file; a
-;; LATER, separate `regctl index create` call loads both automatically).
-;; `--skip-check` matches the trust-config calls above: skip the
-;; connectivity ping so an unreachable-at-login-time (but reachable-at-
-;; join-time) registry never fails this step for the wrong reason.
-(define (mlj:regctl-login host user pass)
-  (status-of
-    (exec-capture "regctl"
-      "registry"
-      "login"
-      host
-      "--user" user
-      "--pass" pass
-      "--skip-check")))
-
-(define
-  (mlj:join
-    tool
-    refs
-    index-ref
-    insecure?
-    registry-host
-    ca-cert-url
-    ca-cert-path
-    ca-cert-token
-    user
-    pass)
+(define (mlj:join tool refs index-ref insecure? auth-file)
   (cond
     ((equal? tool "buildah")
       (mlj:oci-tool-join
@@ -442,7 +588,7 @@
         refs
         index-ref
         insecure?
-        (mlj:creds-flag user pass)))
+        (mlj:authfile-flag auth-file)))
     ((equal? tool "podman")
       (mlj:oci-tool-join
         "podman"
@@ -450,35 +596,26 @@
         refs
         index-ref
         insecure?
-        (mlj:creds-flag user pass)))
-    ((equal? tool "docker") (mlj:docker-join refs index-ref insecure? registry-host user pass))
-    ((equal? tool "regctl")
-      (cond
-        ((not
-           (mlj:regctl-configure-trust
-             registry-host
-             ca-cert-url
-             ca-cert-path
-             ca-cert-token
-             insecure?))
-          1)
-        ((not (= (mlj:regctl-login registry-host user pass) 0))
-          (log-error
-            (string-append
-              "manifest-list-join: regctl registry login "
-              registry-host
-              " failed"))
-          1)
-        (else (mlj:regctl-join refs index-ref))))
+        (mlj:authfile-flag auth-file)))
+    ((equal? tool "docker") (mlj:docker-join refs index-ref insecure?))
+    ((equal? tool "regctl") (mlj:regctl-join refs index-ref))
     (else 127)))
 
 ;; ── main ──────────────────────────────────────────────────────────
+;;
+;; `emit-output`, not `append-output`: the value of index-ref is composed
+;; from TAG / RUN_NUMBER / SHA / REPO / IMAGE / SVC, and `arches` straight
+;; from ARCH_REFS -- all caller-supplied. $GITHUB_OUTPUT is newline-
+;; separated, so a newline anywhere in one of those writes ADDITIONAL
+;; output keys chosen by whoever set the input. append-output cannot see
+;; that (by the time it is called the key and value are one string);
+;; emit-output keeps them apart and refuses.
 (define (mlj:emit-fail reason)
-  (append-output "joined=false")
-  (append-output "index-ref=")
-  (append-output "index-digest=")
-  (append-output "arches=")
-  (append-output (string-append "reason=" reason)))
+  (emit-output "joined" "false")
+  (emit-output "index-ref" "")
+  (emit-output "index-digest" "")
+  (emit-output "arches" "")
+  (emit-output "reason" reason))
 
 (define (main)
   (let*
@@ -523,14 +660,69 @@
         (let*
           ((index-ref (oci:target-ref base tag))
             (tool (mlj:select-tool tool-req))
-            (registry-host (oci:split-registry base)))
+            (registry-host (oci:split-registry base))
+            (hosts (mlj:hosts-of index-ref refs))
+            ;; ONE cert fetch, shared by the regctl join AND the doca digest
+            ;; readback below. It used to be fetched inside the regctl path
+            ;; only, which is why the readback never had it.
+            (cert (oci:fetch-ca-cert ca-cert-url ca-cert-path ca-cert-token))
+            (cert-pem (if (equal? cert "") "" (read-file cert)))
+            (workdir
+              (mlj:private-dir
+                (string-append (env-get "RUNNER_TEMP" "/tmp") "/manifest-list-join-cred")))
+            (auth-file
+              (mlj:write-private
+                (string-append workdir "/config.json")
+                (mlj:auth-json hosts dest-user dest-pass)))
+            (regctl-config
+              (mlj:write-private
+                (string-append workdir "/regctl.json")
+                (mlj:regctl-config-json
+                  hosts
+                  cert-pem
+                  insecure
+                  dest-user
+                  dest-pass))))
           (cond
             ((equal? tool "")
               (log-error
-                "manifest-list-join: no manifest tool on PATH (regctl|buildah|podman|docker) — refusing to fake an index")
+                (string-append
+                  "manifest-list-join: "
+                  (if (equal? tool-req "auto")
+                    "no manifest tool reachable (regctl|buildah|podman|docker)"
+                    (string-append
+                      "the requested tool '"
+                      tool-req
+                      "' is not reachable (expected one of regctl|buildah|podman|docker)"))
+                  " -- refusing to fake an index. "
+                  (mlj:regctl-source-note)))
               (mlj:emit-fail "no-tool")
               1)
+            ((and (equal? tool "regctl") (not (mlj:regctl-trust-ok? cert-pem insecure)))
+              (log-error
+                (string-append
+                  "manifest-list-join: could not fetch the pinned CA cert for "
+                  registry-host
+                  " and INSECURE fallback is not enabled — refusing to trust regctl against an unverified connection"))
+              (mlj:emit-fail "join-fail")
+              1)
             (else
+              ;; Exported, never passed on argv. DOCKER_CONFIG is a private
+              ;; directory rather than the runner's own ~/.docker so this step
+              ;; never mutates shared daemon state; every ref this action
+              ;; touches is covered because `hosts` enumerates them all.
+              (env-set "DOCKER_CONFIG" workdir)
+              (env-set "REGISTRY_AUTH_FILE" auth-file)
+              (env-set "REGCTL_CONFIG" regctl-config)
+              (env-set "INPUT_USER" dest-user)
+              (env-set "INPUT_PASS" dest-pass)
+              (when (not (equal? cert "")) (env-set "INPUT_DEST_CA_CERT" cert))
+              (when (and (equal? cert-pem "") insecure)
+                (log-info
+                  (string-append
+                    "::warning::manifest-list-join: CA cert fetch failed for "
+                    registry-host
+                    " — falling back to the INSECURE route (regctl tls=insecure / --tls-verify=false / plain-HTTP digest readback), a real tracked degradation, not silent")))
               (log-info
                 (string-append
                   "==> manifest-list-join ["
@@ -541,9 +733,10 @@
                   arches
                   "} -> docker://"
                   index-ref
-                  (if insecure
-                    " (insecure)"
-                    "")))
+                  (if (equal? cert-pem "")
+                    " (unpinned)"
+                    " (CA-pinned)")))
+              (when (equal? tool "regctl") (log-info (mlj:regctl-source-note)))
               (when (< (length refs) 2)
                 (log-info
                   "::warning::manifest-list-join: fewer than 2 arches — emitting a DEGENERATE single-arch index (load-bearing once arm64-native lands)"))
@@ -554,12 +747,7 @@
                      refs
                      index-ref
                      insecure
-                     registry-host
-                     ca-cert-url
-                     ca-cert-path
-                     ca-cert-token
-                     dest-user
-                     dest-pass)))
+                     auth-file)))
                 (cond
                   ((not (= s 0))
                     (log-error
@@ -570,16 +758,35 @@
                     (mlj:emit-fail "join-fail")
                     s)
                   (else
-                    (let ((digest (oci:doca-remote-digest index-ref insecure)))
+                    ;; THE DIGEST READBACK, fixed 2026-08-08. It used to be
+                    ;;   (oci:doca-remote-digest index-ref insecure)
+                    ;; with INSECURE defaulting to "true" — and doca's
+                    ;; `--insecure` is not "skip cert verification", it is
+                    ;; ClientProtocol::Http, PLAIN HTTP (substrate/tools/
+                    ;; oci-push/src/main.rs:151-155). The cluster Zot has had
+                    ;; no plain-HTTP listener since 2026-07-18, so on the
+                    ;; default inputs the readback could only ever fail and
+                    ;; `index-digest` — this action's headline output, the
+                    ;; "single exact coordinate an environment pins" — was
+                    ;; structurally always empty, degraded to a ::warning::
+                    ;; that reads like an occasional hiccup.
+                    ;;
+                    ;; The pinned CA cert was already on disk; it was simply
+                    ;; never handed to doca. It is now, via doca's own
+                    ;; INPUT_DEST_CA_CERT env fallback (verified: a bogus path
+                    ;; hard-errors "cannot read CA cert", proving it is read),
+                    ;; and `--insecure` is passed ONLY when there is no cert
+                    ;; and INSECURE permits it.
+                    (log-info (oci:doca-source-note))
+                    (let ((digest (oci:doca-remote-digest index-ref (and (equal? cert "") insecure))))
                       (when (equal? digest "")
                         (log-info
                           "::warning::manifest-list-join: could not resolve index digest (doca inspect failed) — index-digest= (honest empty); the push itself succeeded"))
-                      (append-output (string-append "index-ref=" index-ref))
-                      (append-output (string-append "index-digest=" digest))
-                      (append-output (string-append "arches=" arches))
-                      (append-output "joined=true")
-                      (append-output
-                        (string-append "reason=" (if (< (length refs) 2) "single-arch" "joined")))
+                      (emit-output "index-ref" index-ref)
+                      (emit-output "index-digest" digest)
+                      (emit-output "arches" arches)
+                      (emit-output "joined" "true")
+                      (emit-output "reason" (if (< (length refs) 2) "single-arch" "joined"))
                       (log-info
                         (string-append
                           "joined multi-arch index "
