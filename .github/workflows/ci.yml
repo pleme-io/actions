@@ -136,7 +136,16 @@ jobs:
   enforce-output-contract:
     name: Enforce the two-boundary output contract (generated == committed)
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # `continue-on-error: true` REMOVED here and on the step below, 2026-08-08.
+    # It was set in both places, in a job whose own comment says "A failure here
+    # is fixed by regenerating, never by relaxing the check" -- so the check was
+    # relaxed twice, by the job that forbids relaxing it. The gate was RED at
+    # HEAD (outer boundary: honeycomb-marker's `created`) and reported nothing,
+    # and it is the gate that would have caught four permanently-empty outputs
+    # added in the same week. A gate wired to continue-on-error is not a gate;
+    # it is a log line. Flipped only AFTER making it green -- enabling a red
+    # gate would just have moved the non-signal from "always passes" to "always
+    # fails", which is the same vacuity wearing the other hat.
     steps:
       - uses: actions/checkout@v7
       # Self-hosted from its own path so a PR is gated by its own version of the
@@ -157,7 +166,6 @@ jobs:
         with:
           mode: check
           fail-on-drift: "true"
-        continue-on-error: true
 
   regenerate-catalog:
     name: Regenerate catalog + per-action docs via pleme-doc-gen (Rust)

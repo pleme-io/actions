@@ -17,8 +17,23 @@ inputs:
     default: ""
 
 outputs:
-  marker-id:
-    value: ${{ steps.run.outputs.marker-id }}
+  # `marker-id` was declared here and NEVER WRITTEN by run.tlisp, so a caller
+  # reading that key got "" for this action's whole life. (Deliberately NOT
+  # spelling the forwarding expression out here: the contract gate's L5
+  # ghost-step rule line-scans for `steps.<id>.outputs.<key>`, so prose that
+  # quotes the pattern trips the gate it is documenting. Found the hard way.)
+  # Removed rather than faked: no workflow anywhere reads it (checked),
+  # and the only other declarer, newrelic-deploy-marker, is a 4-line stub
+  # emitting the literal string "stub". Restoring it means reading the id out
+  # of Honeycomb's create response — which webhook:post's own contract cannot
+  # guarantee is JSON, so it needs a real decision, not a guess.
+  #
+  # `created` is what the script actually emits, and was NEVER DECLARED, so it
+  # was dropped before the caller ever saw it. That gap is what kept the
+  # two-boundary output contract red at HEAD.
+  created:
+    description: "true when the marker was created; false when the POST failed (the step also exits 1)."
+    value: ${{ steps.run.outputs.created }}
 
 runs:
   using: composite

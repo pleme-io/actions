@@ -655,7 +655,7 @@ helmfile-apply	applied	static	declared	forwarded
 heroku-deploy	deployed	static	declared	forwarded
 hex-publish	published	static	declared	forwarded
 hf-hub-upload	uploaded	static	declared	forwarded
-honeycomb-marker	created	static	declared	MISSING
+honeycomb-marker	created	static	declared	forwarded
 hubspot-contact-upsert	contact-id	static	declared	forwarded
 hugo-build	site-path	static	declared	forwarded
 influxdb-write	written	static	declared	forwarded
