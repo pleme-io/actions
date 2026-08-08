@@ -19,6 +19,38 @@ inputs:
       alone and will still 404, so pass an org-scoped PAT (`BOT_PAT`).
     required: false
     default: ""
+  extra-conf:
+    description: >-
+      Extra nix.conf lines, appended after the two this action always writes.
+      Empty by default, so every existing caller gets byte-identical config.
+
+      WHY IT EXISTS — a MEASURED failure, not a hypothetical. Building
+      pleme-io/frostmourne (`.#frostmourne`: frost + seki + blx + skim-tab
+      from source, ~4.1 GiB runtime closure) on a GitHub-hosted `ubuntu-24.04`
+      killed the runner outright at 64 minutes. GitHub's own annotation:
+
+        The hosted runner lost communication with the server. Anything in your
+        workflow that terminates the runner process, starves it for
+        CPU/Memory, or blocks its network access can cause this error.
+
+      No step log was uploaded and the step is still reported `in_progress` on
+      a `failure` job — the signature of the agent being killed rather than a
+      build failing. A hosted runner is 4 cores / 16 GB / a modest disk, and
+      nix's defaults (`max-jobs = auto`, `cores = 0`) are sized for a build
+      machine, so it fills both.
+
+      Two knobs address the two named causes, and a caller passes whichever
+      apply:
+
+        max-jobs / cores        bound concurrent rustc processes (memory)
+        min-free / max-free     let the daemon GC mid-build (disk), instead
+                                of failing when the volume fills
+
+      Deliberately a passthrough rather than typed `max-jobs:`/`cores:`
+      inputs: nix.conf is the real vocabulary, and enumerating a subset here
+      would mean a new input every time a caller needs the next setting.
+    required: false
+    default: ""
 
 outputs:
   out-path:
@@ -65,6 +97,7 @@ runs:
         extra-conf: |
           sandbox = relaxed
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+          ${{ inputs.extra-conf }}
     - id: src
       shell: bash
       run: |
