@@ -154,6 +154,48 @@
   ;; exercises the not-delta short-circuit — no exec, no regen.
   (assert (ensure-gen-lock-fresh) "absent Cargo.gen.lock means the gate is a no-op"))
 
+;; ── THE regression this gate exists for ───────────────────────────────
+;; A version-only bump rewrites Cargo.toml and leaves Cargo.lock alone, so
+;; the LOCK half of the D2 tie still matches while the MANIFEST half rots.
+;; The old implementation short-circuited on the lock half and skipped the
+;; regen in exactly that case — i.e. on every release the pipeline performs.
+;; Measured live 2026-08-09: hikki 11f937e, 7 repos drifted the same way.
+;;
+;; These drive `ensure-gen-lock-fresh-with`, the injected-effect seam, so the
+;; policy is exercised with no subprocess, no nix and no filesystem.
+(deftest "ensure-gen-lock-fresh: the verdict comes from AFTER the regen"
+  ;; The regression, stated functionally. tlisp has no mutation primitive, so
+  ;; the regen cannot be call-counted; asserting the verdict is the stronger
+  ;; test anyway. Under the old implementation a delta repo whose lock half
+  ;; matched short-circuited to #t WITHOUT consulting anything downstream, so
+  ;; a still-broken manifest half sailed through. Here the only path to a
+  ;; verdict runs `verify` after `regen`, and a failing verify is #f.
+  (assert
+    (not (ensure-gen-lock-fresh-with (lambda () #t) (lambda () 0) (lambda () #f)))
+    "a delta repo must be judged on the POST-regen state, never on a pre-check")
+  (assert
+    (ensure-gen-lock-fresh-with (lambda () #t) (lambda () 0) (lambda () #t))
+    "and a restored tie still passes"))
+
+(deftest "ensure-gen-lock-fresh: a delta repo whose regen cannot restore the tie FAILS"
+  ;; The other half of the contract: a regen that runs but leaves the tie
+  ;; broken must return #f so the caller can treat it as fatal. Pushing a
+  ;; still-stale gen.lock bricks every downstream eval.
+  (assert
+    (not (ensure-gen-lock-fresh-with
+           (lambda () #t)
+           (lambda () 0)
+           (lambda () #f)))
+    "an unrestorable tie must not report success"))
+
+(deftest "ensure-gen-lock-fresh-with: a non-delta repo never calls the regen"
+  ;; A non-delta repo must short-circuit BEFORE the regen. Proven by the
+  ;; verify: if the regen path were taken, this failing verify would make the
+  ;; whole call #f. It returns #t, so neither ran.
+  (assert
+    (ensure-gen-lock-fresh-with (lambda () #f) (lambda () 0) (lambda () #f))
+    "a repo with no Cargo.gen.lock passes without paying for a regen"))
+
 ;; ── intra-workspace caret pins ────────────────────────────────────────
 ;; `rewrite-workspace-dep-pins` is pure (text in, text out) with the
 ;; membership predicate injected, so these run with no filesystem and no
