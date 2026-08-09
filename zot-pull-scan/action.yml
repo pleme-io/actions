@@ -165,6 +165,55 @@ runs:
     # "matches the known-working sibling", not a proven fix. If the mirror still
     # fails, read the installer's self-test lines FIRST: they were present and
     # ignored last time.
+    #
+    # ── VERDICT, 2026-08-09: THE FIX ABOVE DID NOT WORK, AND THE DIAGNOSIS
+    # ── UNDERNEATH IT WAS WRONG. Read this before trying a third installer
+    # ── configuration.
+    #
+    # Re-measured on hardened-images runs 31326824566 / 31326830694 /
+    # 31326836780 (the three keda-core images). All three BUILT and PUSHED to
+    # ghcr successfully and then failed at this action, identically:
+    #
+    #   WARN SelfTest([ShellFailed { shell: Sh, ...}, ShellFailed { shell: Bash, ...}])
+    #   stderr: Stack size hard limit is 10485760,
+    #           which is less than the desired 62914560, e.g. with 'ulimit -Hs 61440'
+    #   ##[error]An error occurred trying to start process '/usr/bin/bash'
+    #   ##[error]vendor-image-mirror: … was NOT admitted (result=, severity=, vuln-count=)
+    #
+    # THE STACK-SIZE LINE IS NOT A DETERMINATE-NIX MESSAGE. The comment above
+    # asserts that it is, and that assertion is what made `determinate: false`
+    # look like the fix. It fires with determinate: false set — visible in the
+    # run log directly beneath `determinate: false` being echoed as an input.
+    #
+    # ROOT CAUSE, measured at the source rather than inferred from the log:
+    #   kubectl exec <runner pod> -c runner -- sh -c 'ulimit -Ss; ulimit -Hs'
+    #   -> soft 10240, hard 10240        (KB; i.e. 10 MiB)
+    # nix wants 61440 KB. Because HARD == SOFT, nothing inside the container can
+    # raise it — confirmed:
+    #   ulimit -Hs 61440 -> "error setting limit (Operation not permitted)"
+    # and the runner container has privileged: null and capabilities: null, so
+    # it has no CAP_SYS_RESOURCE either.
+    #
+    # THEREFORE THIS IS NOT AN ACTION BUG AND MUST NOT BE FIXED HERE. No
+    # installer input can raise a hard rlimit the kernel refuses to the process.
+    # It is also NOT specific to this action: actions/doca carries the identical
+    # installer configuration, no action in this repo touches ulimit at all, and
+    # any `nix` invocation on this runner pool hits the same wall. The empty
+    # `result=`/`severity=` in the verdict line is the tell that the scan never
+    # ran — do not read it as an image being refused on CVE grounds.
+    #
+    # THE FIX BELONGS ON THE RUNNER POD, in akeylesslabs/k8s
+    # clusters/camelot-eks/infrastructure/ci/runner-scale-set-pleme.yaml.
+    # Kubernetes has no ulimit field, so the options are, in order of preference:
+    #   1. raise the limit in the runner IMAGE's entrypoint (it is
+    #      ghcr.io/actions/actions-runner:latest today — a pleme-io-built runner
+    #      image is already the documented destination), or
+    #   2. add CAP_SYS_RESOURCE to the runner container's securityContext so a
+    #      job can raise its own hard limit, or
+    #   3. set it on the node via the containerd/kubelet default rlimits so
+    #      every pod inherits it.
+    # Option 1 is the least privileged and matches HERMETIC SUPPLY CHAIN's
+    # bake-don't-install rule. `pending-runner-stack-rlimit`.
     - uses: DeterminateSystems/nix-installer-action@main
       with:
         determinate: false
