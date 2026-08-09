@@ -606,8 +606,11 @@
 ;; install, identical on every runner regardless of what it ships with.
 ;; Every consumer of this helper (rust-workspace-bump, cargo-bump) is
 ;; fixed by this one change.
+;; Returns the EXIT STATUS so callers can tell a failed regen from a
+;; successful one — `ensure-gen-lock-fresh-with` depends on this.
 (define (regen-gen-lock)
-  (exec-capture "nix"
+  (status-of
+    (exec-capture "nix"
     "shell"
     "nixpkgs#cargo"
     ;; rustc, NOT optional padding: `cargo metadata` shells out to
@@ -623,7 +626,7 @@
     "run"
     "github:pleme-io/gen"
     "--" "build"
-    "."))
+    ".")))
 
 ;; ALWAYS regen when the repo has a Cargo.gen.lock. There used to be a
 ;; `((gen-lock-fresh?) #t)` fast path here, and it was the fleet's recurring D2
@@ -653,13 +656,30 @@
   (cond
     ((not (delta-present?)) #t)
     (else
-      (regen)
-      ;; Post-regen smoke test only. Both halves are consistent by construction
-      ;; once `gen build` has written them; this catches a regen that failed
-      ;; silently, and is NOT the freshness decision.
-      (cond
-        ((verify) (log-info "Cargo.gen.lock regenerated (D2 tie restored)") #t)
-        (else #f)))))
+      ;; ★ The regen's own EXIT STATUS is the gate, not `verify`.
+      ;;
+      ;; Measured 2026-08-09 — this is the first fix's residual hole, and it is
+      ;; the very class the fix was for. `verify` is the lock half, and on a
+      ;; version-only bump the lock half ALREADY MATCHES. So a regen that failed
+      ;; (no nix, no network, a `gen` error) fell straight through to a verify
+      ;; that could not see the failure, returned #t, and the release committed
+      ;; Cargo.toml alone. Confirmed live on kekkai 01285a4, which ran 37
+      ;; minutes AFTER the first fix landed and still shipped a stale manifest
+      ;; half.
+      ;;
+      ;; A check that cannot observe the thing it guards is not a check. Treat a
+      ;; non-zero regen as fatal, and keep `verify` as the second, weaker signal.
+      (let ((rc (regen)))
+        (cond
+          ((not (equal? rc 0))
+            (log-error
+              (string-append
+                "`gen build` FAILED — refusing to report the "
+                "D2 tie restored. The lock half can match while the manifest half is "
+                "stale, so a green verify here would be a lie."))
+            #f)
+          ((verify) (log-info "Cargo.gen.lock regenerated (D2 tie restored)") #t)
+          (else #f))))))
 
 (define (ensure-gen-lock-fresh)
   (ensure-gen-lock-fresh-with

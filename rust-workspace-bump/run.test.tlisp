@@ -177,6 +177,21 @@
     (ensure-gen-lock-fresh-with (lambda () #t) (lambda () 0) (lambda () #t))
     "and a restored tie still passes"))
 
+(deftest "ensure-gen-lock-fresh: a FAILED regen is fatal even when verify passes"
+  ;; The first fix's residual hole, and the reason kekkai 01285a4 shipped a
+  ;; stale manifest half 37 minutes AFTER that fix landed.
+  ;;
+  ;; `verify` is the LOCK half, and on a version-only bump the lock half already
+  ;; matches. So a regen that failed fell through to a verify that could not see
+  ;; the failure and reported success. The regen's own exit status must gate the
+  ;; result — a check that cannot observe what it guards is not a check.
+  (assert
+    (not (ensure-gen-lock-fresh-with
+           (lambda () #t)
+           (lambda () 1)     ; the regen FAILED
+           (lambda () #t)))  ; ...and the lock half still matches, as it does in reality
+    "a non-zero regen must be fatal, whatever the lock half says"))
+
 (deftest "ensure-gen-lock-fresh: a delta repo whose regen cannot restore the tie FAILS"
   ;; The other half of the contract: a regen that runs but leaves the tie
   ;; broken must return #f so the caller can treat it as fatal. Pushing a
