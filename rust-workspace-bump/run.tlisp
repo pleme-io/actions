@@ -364,12 +364,18 @@
 
 (define (refresh-lock) (exec-capture "cargo" "update" "--workspace"))
 
-;; Cargo.gen.lock D2 freshness gate — `ensure-gen-lock-fresh` lives in
-;; the stdlib (shared with cargo-bump): freshness-driven, regen via
-;; `nix run github:pleme-io/gen -- build .` only when the bump broke
-;; the Cargo.lock↔Cargo.gen.lock sha256 tie; FATAL (caller-side) when
-;; the regen can't restore it. 2026-06-03: 11 fleet repos' mains went
-;; stale exactly this way and bricked every consumer flake eval.
+;; Cargo.gen.lock D2 gate — `ensure-gen-lock-fresh` lives in the stdlib
+;; (shared with cargo-bump): regen via `nix run github:pleme-io/gen -- build .`
+;; on EVERY bump of a delta repo; FATAL (caller-side) when the regen can't
+;; restore the tie. 2026-06-03: 11 fleet repos' mains went stale exactly this
+;; way and bricked every consumer flake eval.
+;;
+;; This comment used to say the regen ran "only when the bump broke the
+;; Cargo.lock↔Cargo.gen.lock sha256 tie". That was the BUG, written down as
+;; if it were the design: D2 also ties `manifest_sha256`, and a version-only
+;; bump rewrites Cargo.toml WITHOUT touching Cargo.lock — so the sha256 tie
+;; still matched, the regen was skipped, and the manifest half went stale on
+;; every single release. Measured 2026-08-09: 7 repos in exactly that state.
 
 (define (emit-skip msg old-v)
   (log-info msg)

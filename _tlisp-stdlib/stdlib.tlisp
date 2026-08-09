@@ -578,7 +578,21 @@
       (car (string-split (string-trim (stdout-of r)) " "))
       "")))
 
-(define (gen-lock-fresh?) (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
+;; ⚠ CHECKS ONE HALF OF A TWO-HALF TIE. D2 compares BOTH `cargo_lock_sha256`
+;; (against Cargo.lock) and `manifest_sha256` (against each Cargo.toml). This
+;; predicate only ever answered the first, so it is a post-regen smoke test —
+;; NEVER a standalone freshness gate. `ensure-gen-lock-fresh` below no longer
+;; short-circuits on it, and that is why.
+;;
+;; The manifest half is not merely unchecked here, it is currently
+;; UNADDRESSABLE from tlisp: `json-path-parts` splits a field on ".", so
+;; `.manifest_sha256.Cargo.toml` walks to a key named "Cargo" and returns "",
+;; which is indistinguishable from an absent field. Adding a quoted-key path
+;; accessor is the clean way to restore a fast path here.
+(define (gen-lock-lock-half-fresh?) (equal? (gen-lock-committed-sha) (cargo-lock-sha)))
+
+;; Retained under its old name for callers/tests that only mean the lock half.
+(define (gen-lock-fresh?) (gen-lock-lock-half-fresh?))
 
 ;; `gen build` shells out to the literal `cargo metadata` binary (not a
 ;; Nix-mediated call) to read the workspace graph. GitHub-hosted runners
@@ -611,15 +625,47 @@
     "--" "build"
     "."))
 
-(define (ensure-gen-lock-fresh)
+;; ALWAYS regen when the repo has a Cargo.gen.lock. There used to be a
+;; `((gen-lock-fresh?) #t)` fast path here, and it was the fleet's recurring D2
+;; killer.
+;;
+;; MEASURED 2026-08-09, live: a version-only bump rewrites Cargo.toml and does
+;; NOT touch Cargo.lock, so the lock half still matched, the fast path returned
+;; "fresh", no regen ran — and `manifest_sha256` stayed pointing at the
+;; pre-bump manifest. Confirmed on hikki at release commit 11f937e ("release:
+;; workspace v0.1.3", which contains Cargo.toml and nothing else): lock half
+;; MATCH, manifest half DRIFT. `gen fleet-check` found 7 repos in exactly that
+;; state, all freshly re-broken by their own release runs, minutes after being
+;; hand-repaired.
+;;
+;; So the guard was skipping the regen precisely in the case the release
+;; pipeline creates every single time it runs. A gate that checks half of what
+;; it guards reports green while the other half rots.
+;;
+;; The asymmetry decides the design: a false "fresh" bricks `nix eval` for
+;; EVERY consumer of the workspace, while a false "stale" costs one extra
+;; `gen build`. Err toward regenerating. The fast path can come back once the
+;; manifest half is addressable from tlisp (see gen-lock-lock-half-fresh?).
+;; The seam: every effect is a parameter, so the policy above is testable
+;; without shelling out to nix or touching the filesystem. `ensure-gen-lock-fresh`
+;; is the production wiring; tests call this directly with fakes.
+(define (ensure-gen-lock-fresh-with delta-present? regen verify)
   (cond
-    ((not (path-exists? "Cargo.gen.lock")) #t)
-    ((gen-lock-fresh?) #t)
+    ((not (delta-present?)) #t)
     (else
-      (regen-gen-lock)
+      (regen)
+      ;; Post-regen smoke test only. Both halves are consistent by construction
+      ;; once `gen build` has written them; this catches a regen that failed
+      ;; silently, and is NOT the freshness decision.
       (cond
-        ((gen-lock-fresh?) (log-info "Cargo.gen.lock regenerated (D2 tie restored)") #t)
+        ((verify) (log-info "Cargo.gen.lock regenerated (D2 tie restored)") #t)
         (else #f)))))
+
+(define (ensure-gen-lock-fresh)
+  (ensure-gen-lock-fresh-with
+    (lambda () (path-exists? "Cargo.gen.lock"))
+    regen-gen-lock
+    gen-lock-lock-half-fresh?))
 
 ;; ────────────────────────────────────────────────────────────────
 ;; Cargo publish failure-mode detection — typed predicates
