@@ -92,19 +92,27 @@ runs:
       id: src
       shell: bash
       run: |
+        # Concatenated to a FILE, not a step output. A step output becomes an
+        # action input, which becomes an env var, which lands in the exec arg
+        # space -- and Linux caps a single argv/env string at MAX_ARG_STRLEN =
+        # 131072. stdlib.tlisp alone is ~118KB, so this pair exceeded it and
+        # exec failed with "Argument list too long" before bash ever started,
+        # logging nothing tlisp-related. `script-file` is tatara-script's own
+        # documented alternative and removes size from the question entirely.
+        set -euo pipefail
+        out="${RUNNER_TEMP}/aldrava-install.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
     - name: Install aldrava (pinned + checksum-verified)
       id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_INSTALL_DIR: ${{ inputs.install-dir }}
