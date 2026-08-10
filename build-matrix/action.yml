@@ -48,24 +48,45 @@ outputs:
 runs:
   using: composite
   steps:
+    # Concatenated to a FILE, not to a step output.
+    #
+    # A step output becomes an action INPUT, which becomes an environment
+    # variable, which lands in the exec arg space -- and Linux caps a single
+    # argv/env string at MAX_ARG_STRLEN = 131072 bytes. stdlib.tlisp is 118414
+    # bytes, leaving 12657 for run.tlisp; this one is 14705, so the pair is
+    # 133120 and exec fails by 2048 bytes.
+    #
+    # The failure gives no hint of any of that. bash never starts, so nothing
+    # tlisp-related is logged and the run dies with
+    #   An error occurred trying to start process '/usr/bin/bash' ...
+    #   Argument list too long
+    # attributed to the action rather than to its size. Observed 2026-08-10:
+    # this action's `graph` job failed that way and skipped every downstream
+    # job in the camelot image pipeline.
+    #
+    # `script-file` is tatara-script's own documented alternative, takes
+    # precedence over `script`, and is already what 13 other actions here use.
+    # It passes a PATH, so the script's size stops being an exec-limit concern
+    # entirely rather than buying headroom that the next stdlib commit spends.
     - name: Load stdlib + run.tlisp
       id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/build-matrix.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
-          cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
     - name: Run build-matrix
       id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         FLAKE_REF: ${{ inputs.flake-ref }}
         EVAL_SYSTEM: ${{ inputs.eval-system }}
