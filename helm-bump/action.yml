@@ -14,9 +14,37 @@ inputs:
     required: false
     default: "true"
   source-paths:
-    description: "Space-separated globs the skip-detector inspects"
+    description: >-
+      Space-separated git pathspecs the skip-detector inspects, resolved
+      RELATIVE TO `chart-path` (git resolves a pathspec from the process CWD).
+      With the default `chart-path: "."` that is the repo root, exactly as
+      before. With `chart-path: charts/<name>` the default below is already
+      correct and a caller should NOT repeat the prefix — `charts/x/templates`
+      passed alongside `chart-path: charts/x` resolves to
+      `charts/x/charts/x/templates`, matches nothing, and would report "no
+      changes" for a chart that did change. The guard in run.tlisp fails the
+      action when NONE of these paths exists, so that misconfiguration is loud
+      instead of a green no-op.
     required: false
     default: "templates values.yaml Chart.yaml"
+
+  chart-path:
+    description: >-
+      Directory holding the chart's Chart.yaml, relative to the repo root.
+
+      WHY IT EXISTS (measured 2026-08-10 in pleme-io/ensaio): this action read
+      `Chart.yaml` from the process CWD unconditionally, i.e. it assumed the
+      chart sat at the REPO ROOT. Across the 18 pleme-io repos that ship Helm
+      charts, the number with a root `Chart.yaml` is ZERO — every one of them
+      uses `charts/<name>/`. So the single-chart auto-release path could not
+      serve any of them: ensaio's brand-new release shim failed on its first
+      run with `helm-bump: no Chart.yaml at repo root`, and the chart stayed
+      two versions behind its source with nothing red.
+
+      Default "." preserves the previous behaviour byte-for-byte for any
+      caller that does not set it.
+    required: false
+    default: "."
 
 outputs:
   bumped:
@@ -56,6 +84,11 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
+        # The chart directory IS the working directory: run.tlisp reads and
+        # rewrites `Chart.yaml` by that bare relative name, and the
+        # skip-detector's `git diff -- <source-paths>` resolves its pathspecs
+        # from the same CWD. One knob moves both, so they cannot disagree.
+        working-directory: ${{ inputs.chart-path }}
       env:
         BUMP_TYPE: ${{ inputs.bump-type }}
         SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}

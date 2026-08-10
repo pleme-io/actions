@@ -91,6 +91,36 @@
 (define (should-bump?)
   (cond ((not (equal? skip-flag "true")) #t) (else (has-changes-since? (last-tag) source-paths))))
 
+;; ── THE SKIP-DETECTOR CARRIES ITS OWN DENOMINATOR ───────────────────────
+;;
+;; `should-bump?` asks `git diff --quiet <tag> HEAD -- <source-paths>`. Git
+;; resolves those pathspecs from the process CWD, and exits 0 — "no changes" —
+;; for a pathspec that matches NOTHING just as readily as for one that matches
+;; an unchanged file. The two are indistinguishable downstream: both emit
+;; `bumped=false`, the ship job is skipped by `if: bumped == 'true'`, and the
+;; run is GREEN while the chart ships nowhere.
+;;
+;; That is not hypothetical — it is the exact failure mode this whole release
+;; path exists to end, and adding `chart-path` created a fresh way to reach it:
+;; a caller that sets `chart-path: charts/ensaio` AND leaves the old
+;; repo-root-relative `source-paths: charts/ensaio/templates ...` produces
+;; `charts/ensaio/charts/ensaio/templates`, which matches nothing, forever.
+;;
+;; So the set being inspected must state its own size. If NOT ONE declared
+;; source path exists relative to the CWD, discovery is broken and the action
+;; fails loudly rather than reporting a verdict over an empty set. The
+;; threshold is "none of them" rather than "all of them" deliberately: a chart
+;; legitimately without a `values.yaml` still has `templates` and `Chart.yaml`,
+;; so this cannot produce a false red.
+(define (existing-path-count paths)
+  (cond
+    ((null? paths) 0)
+    ((path-exists? (car paths)) (+ 1 (existing-path-count (cdr paths))))
+    (else (existing-path-count (cdr paths)))))
+
+(define (source-paths-discoverable?)
+  (> (existing-path-count (string-split source-paths " ")) 0))
+
 (define (emit-skip msg old-v)
   (log-info msg)
   (append-output (string-append "old-version=" old-v))
@@ -124,6 +154,19 @@
     (emit-failure "helm-bump: no Chart.yaml at repo root" "")
     (exit 1))
   ((equal? old-version "") (emit-failure "helm-bump: .version not found in Chart.yaml" "") (exit 1))
+  ((not (source-paths-discoverable?))
+    (emit-failure
+      (string-append
+        "helm-bump: NONE of SOURCE_PATHS ('"
+        source-paths
+        "') exists in the working directory. The skip-detector would run "
+        "`git diff` over an EMPTY set, exit 0, and report 'no changes' — a "
+        "green run that ships nothing. SOURCE_PATHS is relative to the "
+        "chart directory (`chart-path`), so do not repeat that prefix: with "
+        "`chart-path: charts/foo` the correct value is "
+        "'templates values.yaml Chart.yaml', not 'charts/foo/templates ...'.")
+      old-version)
+    (exit 1))
   ((not (should-bump?))
     (emit-skip
       (string-append

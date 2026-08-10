@@ -17,6 +17,16 @@ inputs:
     description: "Package the chart but don't push"
     required: false
     default: "false"
+  chart-path:
+    description: >-
+      Directory holding the chart's Chart.yaml, relative to the repo root.
+      Sibling of helm-bump's input of the same name and for the same measured
+      reason: this action read `Chart.yaml` from the process CWD, i.e. it
+      assumed the chart sat at the REPO ROOT, and ZERO of the 18 pleme-io
+      chart repos are shaped that way — every one uses `charts/<name>/`.
+      Default "." preserves the previous behaviour byte-for-byte.
+    required: false
+    default: "."
 
 outputs:
   shipped:
@@ -67,6 +77,10 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
+        # The chart directory IS the working directory — run.tlisp reads
+        # `Chart.yaml`, runs `helm dependency update .`, `helm package .` and
+        # pushes `./<name>-<version>.tgz`, all by bare relative name.
+        working-directory: ${{ inputs.chart-path }}
       env:
         REGISTRY: ${{ inputs.registry }}
         DRY_RUN: ${{ inputs.dry-run }}
