@@ -37,3 +37,40 @@
     (let ((r (exec-capture "yq" ".version" (string-append d "/Chart.yaml"))))
       (assert (chart-version-ok? (string-trim (stdout-of r)))
         "a real version passes the guard"))))
+
+;; ── the empty-source-set skip ───────────────────────────────────────────
+;;
+;; `should-bump?` runs `git diff --quiet <tag> HEAD -- <source-paths>`, which
+;; exits 0 — "no changes" — for a pathspec matching NOTHING exactly as it does
+;; for one matching an unchanged file. Downstream the two are the same string:
+;; `bumped=false`, ship skipped by `if`, run green, chart shipped nowhere.
+;;
+;; Measured 2026-08-10 against the pre-guard script, in the repo shape that
+;; `chart-path` introduces (CWD = charts/ensaio, SOURCE_PATHS still carrying
+;; the repo-root prefix): `INFO no changes since last tag — skipping (at
+;; 0.1.4)`, exit 0, `bumped=false` — for a chart whose templates HAD changed
+;; in that very commit range.
+;;
+;; So the inspected set states its own size. "None of them exist" is the
+;; threshold rather than "all of them", so a chart legitimately without a
+;; values.yaml cannot produce a false red.
+
+(deftest "existing-path-count counts only paths that are really there"
+  (let ((d (string-append "/tmp/hb-paths-" (random-hex 8))))
+    (exec-capture "mkdir" "-p" (string-append d "/templates"))
+    (write-file (string-append d "/Chart.yaml") "apiVersion: v2\nname: demo\nversion: 1.2.3\n")
+    (assert (= (existing-path-count (list (string-append d "/Chart.yaml"))) 1)
+      "a file that exists counts once")
+    (assert (= (existing-path-count (list (string-append d "/templates"))) 1)
+      "a directory counts too — `templates` is the common case")
+    (assert (= (existing-path-count (list (string-append d "/nope"))) 0)
+      "an absent path contributes nothing, which is the whole failure mode")
+    (assert
+      (= (existing-path-count
+           (list (string-append d "/Chart.yaml")
+                 (string-append d "/values.yaml")
+                 (string-append d "/templates")))
+         2)
+      "a chart with no values.yaml still has a NON-ZERO denominator, so the guard cannot false-red it")
+    (assert (= (existing-path-count (list)) 0)
+      "and an empty declaration is itself the zero case")))

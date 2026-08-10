@@ -36,7 +36,62 @@
          version)))
     (http-200? url)))
 
-(define (do-package) (status-of (exec-capture "helm" "package" ".")))
+;; ── A CHART WITH DEPENDENCIES CANNOT BE PACKAGED FROM A CLEAN CHECKOUT ───
+;;
+;; `helm package` refuses a chart whose `dependencies:` are not present in its
+;; `charts/` directory:
+;;
+;;   Error: found in Chart.yaml, but missing in charts/ directory: pleme-lib
+;;
+;; The subchart .tgz is a FETCHED artifact, never authored, and every pleme-io
+;; chart repo gitignores it (`charts/*/charts/`, `*.tgz` — the convention
+;; helmworks-akeyless set and ensaio copied). So it is present on the machine
+;; of whoever last ran `helm dependency update` by hand, and absent in CI on
+;; every single run. This action never resolved them, which means it could
+;; only ever have published DEPENDENCY-FREE charts — a limit nothing stated
+;; and nothing tested, because its one consumer had no dependencies.
+;;
+;; `update` rather than `build`: `build` requires a Chart.lock and fails when
+;; the lock disagrees with Chart.yaml, which turns a routine dependency range
+;; bump into a red publish. `update` re-resolves the range and writes the lock.
+;; This mirrors what `forge helm release-all` already does for the monorepo
+;; path (cli/src/commands/helm.rs::helm_dependency_update), so the two release
+;; paths agree instead of each having their own answer.
+;;
+;; Skipped entirely for a chart that declares no dependencies, so a dependency-
+;; free chart's publish is unchanged — no new network call, no new failure mode.
+(define (dependency-count)
+  (let ((r (exec-capture "sh" "-c" "yq '.dependencies | length' Chart.yaml 2>/dev/null")))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "0")))
+
+(define (has-dependencies?)
+  (let ((n (dependency-count)))
+    (and (not (equal? n "0")) (not (equal? n "null")) (not (equal? n "")))))
+
+(define (do-dependency-update)
+  (log-info
+    (string-append
+      "chart declares "
+      (dependency-count)
+      " dependency/dependencies — resolving before package"))
+  (status-of (exec-capture "helm" "dependency" "update" ".")))
+
+(define (do-package)
+  (cond
+    ((not (has-dependencies?)) (status-of (exec-capture "helm" "package" ".")))
+    (else
+      (let ((dep (do-dependency-update)))
+        (cond
+          ((not (= dep 0))
+            (log-error
+              (string-append
+                "helm dependency update failed. The chart declares "
+                (dependency-count)
+                " dependency/dependencies and cannot be packaged without them; "
+                "if the repository is an OCI registry, check that the login step "
+                "before this one used a token with read access to it."))
+            dep)
+          (else (status-of (exec-capture "helm" "package" "."))))))))
 
 (define (do-push name version)
   ;; The packaged chart lands at ./<name>-<version>.tgz.
