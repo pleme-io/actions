@@ -120,6 +120,36 @@
     (hip:stage-for-event ev)
     (string-trim stage)))
 
+;; ── the stage CAP ────────────────────────────────────────────────
+;;
+;; A ceiling, never a floor. The delivery phases are ordered
+;;   build < publish < mirror < all
+;; and `max-stage` clamps the RESOLVED stage down to it. It can only ever
+;; reduce: asking for `build` under a cap of `all` still yields `build`.
+;;
+;; This exists because the last phase is the only irreversible one. build,
+;; publish and mirror all act on artifacts we own; `all` writes a COMMIT into
+;; another team's environment repo, and that commit is the deploy. A caller who
+;; wants everything short of shipping should not have to know that `mirror` is
+;; the magic word, and — more importantly — should not be able to ship by
+;; leaving `stage` empty, since an empty stage on a dispatch resolves to `all`.
+;;
+;; `rescan` ranks 0 deliberately: it neither builds nor pushes nor writes
+;; downstream, so no cap should ever exclude it.
+(define (hip:stage-rank s)
+  (cond
+    ((equal? s "rescan") 0)
+    ((equal? s "build") 1)
+    ((equal? s "publish") 2)
+    ((equal? s "mirror") 3)
+    ((equal? s "all") 4)
+    (else 99)))
+
+(define (hip:clamp-stage stage max-stage)
+  (if (> (hip:stage-rank stage) (hip:stage-rank max-stage))
+    max-stage
+    stage))
+
 (define (hip:valid-stage? s)
   (or (equal? s "build")
     (equal? s "publish")
@@ -431,7 +461,9 @@
       (event (env-get "EVENT" ""))
       (only (string-trim (env-get "ONLY" "")))
       (lane (string-trim (env-get "LANE" "")))
-      (stage (hip:resolve-stage (env-get "STAGE" "") event))
+      (requested-stage (hip:resolve-stage (env-get "STAGE" "") event))
+      (max-stage (string-trim (env-get "MAX_STAGE" "all")))
+      (stage (hip:clamp-stage requested-stage max-stage))
       (held-file (env-get "HELD_FILE" "tools/pipeline-registration-baseline.txt"))
       (runner (env-get "PLAN_RUNNER" ""))
       (require-ne (env-get "REQUIRE_NONEMPTY" "true"))
@@ -459,6 +491,13 @@
             "hardened-image-plan: the release mint (" release-file
             ") is missing or empty — refusing to plan a delivery that would push an untagged alias"))
         (hip:empty-emit "no-release-mint")
+        1)
+      ((not (hip:valid-stage? max-stage))
+        (log-error
+          (string-append
+            "hardened-image-plan: max-stage `" max-stage
+            "` is not one of build|publish|mirror|all|rescan — refusing to guess a ceiling"))
+        (hip:empty-emit "empty-plan")
         1)
       ((not (hip:valid-stage? stage))
         (log-error
@@ -491,6 +530,12 @@
             (malformed-r (hip:jq hip:malformed-jq catalog-file only lane stage held-str runner system release))
             (malformed-raw (if (hip:ok? malformed-r) (string-trim (hip:payload malformed-r)) ""))
             (malformed (if (hip:jq-empty? malformed-raw) "" malformed-raw)))
+          (if (not (equal? stage requested-stage))
+            (log-info
+              (string-append
+                "hardened-image-plan: stage CAPPED " requested-stage " -> " stage
+                " by max-stage — nothing will be promoted downstream in this run"))
+            #t)
           (log-info
             (string-append
               "hardened-image-plan: " scanned " catalog rows in " flake-ref "#" catalog-attr
