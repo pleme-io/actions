@@ -626,6 +626,12 @@ outputs:
   pending-crates:
     description: "Forwarded (key: pending-crates) — rust-workspace-publish: crates left for the next capacity window (rate-limited / dep-deferred); empty when the bootstrap is complete"
     value: ${{ steps.exec.outputs.pending-crates }}
+  pipeline-count:
+    description: "Forwarded (key: pipeline-count) — hardened-image-plan's delivery-matrix row count — the number gating whether any pipeline job runs at all"
+    value: ${{ steps.exec.outputs.pipeline-count }}
+  pipeline-matrix:
+    description: "Forwarded (key: pipeline-matrix) — hardened-image-plan's resolved delivery matrix (one row per selected catalog component, phases already reduced to booleans)"
+    value: ${{ steps.exec.outputs.pipeline-matrix }}
   plan-path:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: plan-path)"
     value: ${{ steps.exec.outputs.plan-path }}
@@ -662,6 +668,9 @@ outputs:
   promoted:
     description: "Forwarded (key: promoted) — written by 1 action dir(s): release-promote"
     value: ${{ steps.exec.outputs.promoted }}
+  promoting:
+    description: "Forwarded (key: promoting) — hardened-image-plan — space-separated component slugs that promote to the downstream environment in THIS run"
+    value: ${{ steps.exec.outputs.promoting }}
   provenance:
     description: "Forwarded (key: provenance) — runner-resolve's winning tier (override|file|default)"
     value: ${{ steps.exec.outputs.provenance }}
@@ -761,6 +770,12 @@ outputs:
   requested:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: requested)"
     value: ${{ steps.exec.outputs.requested }}
+  rescan-count:
+    description: "Forwarded (key: rescan-count) — hardened-image-plan's rescan-matrix row count"
+    value: ${{ steps.exec.outputs.rescan-count }}
+  rescan-matrix:
+    description: "Forwarded (key: rescan-matrix) — hardened-image-plan's rescan matrix — the already-published set, derived from the same catalog as the pipeline"
+    value: ${{ steps.exec.outputs.rescan-matrix }}
   resolved-count:
     description: "Forwarded (key: resolved-count) — written by 1 action dir(s): caixa-deps-resolve"
     value: ${{ steps.exec.outputs.resolved-count }}
@@ -821,6 +836,9 @@ outputs:
   scan-outcome:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: scan-outcome)"
     value: ${{ steps.exec.outputs.scan-outcome }}
+  scanned:
+    description: "Forwarded (key: scanned) — hardened-image-plan — catalog rows read BEFORE any filter. The anti-vacuity denominator: discovery that finds nothing reports 0 here instead of an empty plan that reads as clean"
+    value: ${{ steps.exec.outputs.scanned }}
   scanned-targets:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: scanned-targets)"
     value: ${{ steps.exec.outputs.scanned-targets }}
