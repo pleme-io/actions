@@ -182,6 +182,15 @@
 ;; a decimal string and the only question asked of it is whether it is zero, so
 ;; it is compared AS a string — a parse would add a failure mode (what does a
 ;; non-numeric count mean?) to answer a question that never needed one.
+;; `hip:jq` runs jq with -c, so a STRING result comes back JSON-quoted: an
+;; empty join is the two-character text "" and NOT the empty string. Comparing
+;; it to "" therefore reports every clean catalog as malformed — caught by the
+;; first live run against the real repo, where a 40-row catalog with zero bad
+;; rows failed strict naming a row called "".
+(define (hip:jq-empty? v)
+  (let ((t (string-trim v)))
+    (or (equal? t "") (equal? t "\"\""))))
+
 (define (hip:zero-count? c)
   (let ((t (string-trim c)))
     (or (equal? t "0") (equal? t ""))))
@@ -211,13 +220,41 @@
     "   else (($r.lanes // []) | index($lane)) != null end); "
     "{ include: [ "
     "  ($cat | to_entries[]) "
+    "  | .key as $ckey "
     "  | .value as $r "
     "  | ($r.service // $empty) as $svc "
     "  | select(sel($svc; $r)) "
     "  | ((heldset | index($svc)) != null) as $isheld "
     "  | ($r.zot // false) as $zot "
     "  | ($r.harbor // false) as $harbor "
+    ;; The per-component app names are DERIVED, not carried. Measured against
+    ;; the workflow being replaced: `release-app` is release:<service>,
+    ;; `grype-scan-app` is grype-scan:<service>, and `image-attr` is
+    ;; <catalogKey>Image — where catalogKey is the attrset key (camelCase) and
+    ;; service is its hyphenated slug. Both spellings of the same component are
+    ;; load-bearing and they are NOT interchangeable: `resolve-drop-off.tlisp`
+    ;; reads the camelCase key while every scan/release app uses the slug.
+    ;; Deriving both from one row is what lets `spec` be a single input.
     "  | { component: $svc, "
+    "      catalogKey: $ckey, "
+    "      releaseApp: ($releasepfx + $svc), "
+    "      grypeScanApp: ($grypepfx + $svc), "
+    "      vulnixScanApp: ($vulnixpfx + $svc), "
+    "      imageAttr: ($ckey + $imagesfx), "
+    ;; THE MINT, NOT THE ALIAS — and this closes a live drift by construction.
+    ;; `publishTag` is a static per-row alias (every row says 1.0.0); the tag
+    ;; that actually ships is the repo-wide `release-version` file, which is the
+    ;; SAME file flake.nix reads for the image's org.opencontainers.image.version
+    ;; label, so the bytes and the tag cannot disagree. The workflow being
+    ;; replaced pins `scan-image-ref: …:1.0.0` in eight jobs while the lane
+    ;; publishes :1.0.53 — measured and recorded as `pending-cve: repoint the
+    ;; eight OLAP scan-image-refs`, i.e. the nightly gate scanning a STALE
+    ;; artifact. Deriving both from one value removes the possibility rather
+    ;; than repointing eight copies of it.
+    "      release: $release, "
+    "      scanRef: (($r.publishName // $empty) + $colon + $release), "
+    "      aliasRef: (($r.publishName // $empty) + $colon + ($r.publishTag // $empty)), "
+    "      zotRepo: (($r.publishName // $empty) | split($slash) | last), "
     "      publishName: ($r.publishName // $empty), "
     "      tag: ($r.publishTag // $empty), "
     "      pushTag: ($r.pushTag // $r.publishTag // $empty), "
@@ -261,7 +298,7 @@
     "  | select((heldset | index($svc)) == null) "
     "  | select(($r.publishName // $empty) != $empty) "
     "  | { component: $svc, "
-    "      ref: (($r.publishName // $empty) + $colon + ($r.publishTag // $empty)), "
+    "      ref: (($r.publishName // $empty) + $colon + $release), "
     "      runner: $runner } ] }"))
 
 ;; Rows missing a field the projection READS are the malformed class. Only two
@@ -302,7 +339,7 @@
 ;; string literal the programs above need is bound here; adding a literal to a
 ;; program means adding it here, which is the trade that keeps the programs
 ;; quote-free.
-(define (hip:jq program catalog-file only lane stage held-str runner system)
+(define (hip:jq program catalog-file only lane stage held-str runner system release)
   (let*
     ((r (exec-capture
           "jq" "-c" "-n"
@@ -323,6 +360,12 @@
           "--arg" "sall" "all"
           "--arg" "srescan" "rescan"
           "--arg" "nosystem" " is not a system key in this catalog"
+          "--arg" "slash" "/"
+          "--arg" "releasepfx" "release:"
+          "--arg" "grypepfx" "grype-scan:"
+          "--arg" "vulnixpfx" "vulnix-scan:"
+          "--arg" "imagesfx" "Image"
+          "--arg" "release" release
           ;; Index the system BEFORE the projection, and fail loudly if that
           ;; key is absent. `// {}` here would turn an unknown system into an
           ;; empty component set — a clean-looking plan for a system the
@@ -352,6 +395,15 @@
     (let ((r (exec-capture "jq" "-r" "--arg" "sp" " "
                "[.include[] | select(.doPromote) | .component] | join($sp)" f)))
       (if (= (status-of r) 0) (string-trim (stdout-of r)) ""))))
+
+;; The release mint. `resolve-drop-off.tlisp` dies on a missing or empty
+;; release-version rather than pushing an untagged alias, and this must hold
+;; the same line for the same reason: an empty tag does not fail the push, it
+;; overwrites a floating alias with bytes nobody can name afterwards.
+(define (hip:read-release release-file)
+  (if (path-exists? release-file)
+    (string-trim (read-file release-file))
+    ""))
 
 (define (hip:read-held held-file)
   (if (path-exists? held-file)
@@ -385,6 +437,8 @@
       (require-ne (env-get "REQUIRE_NONEMPTY" "true"))
       (strict (env-get "STRICT" "true"))
       (system (env-get "EVAL_SYSTEM" "x86_64-linux"))
+      (release-file (env-get "RELEASE_FILE" "release-version"))
+      (release (hip:read-release release-file))
       (tmp-dir (env-get "RUNNER_TEMP" "/tmp")))
     (cond
       ((not (hip:on-path? "nix"))
@@ -395,6 +449,17 @@
         (log-error "hardened-image-plan: `jq` not on PATH — cannot serialize the plan (the runner must bake jq)")
         (hip:empty-emit "jq-absent")
         1)
+      ;; An empty mint is refused for the reason resolve-drop-off.tlisp already
+      ;; states: it does not fail the push, it pushes an UNTAGGED alias — bytes
+      ;; that land on a floating tag nobody can name afterwards. Refusing here
+      ;; kills it for all 40 rows at once instead of per job.
+      ((equal? (string-trim release) "")
+        (log-error
+          (string-append
+            "hardened-image-plan: the release mint (" release-file
+            ") is missing or empty — refusing to plan a delivery that would push an untagged alias"))
+        (hip:empty-emit "no-release-mint")
+        1)
       ((not (hip:valid-stage? stage))
         (log-error
           (string-append
@@ -402,9 +467,9 @@
             "` is not one of build|publish|mirror|all|rescan — refusing to guess"))
         (hip:empty-emit "empty-plan")
         1)
-      (else (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system tmp-dir)))))
+      (else (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system release tmp-dir)))))
 
-(define (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system tmp-dir)
+(define (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system release tmp-dir)
   (let ((ev (hip:eval-catalog flake-ref catalog-attr tmp-dir)))
     (cond
       ((not (hip:ok? ev))
@@ -421,10 +486,11 @@
             ;; The denominator, read BEFORE any filter. Emitted even on the
             ;; failure paths below so an empty plan can never be mistaken for
             ;; a clean one.
-            (scanned-r (hip:jq "($cat | to_entries | length)" catalog-file only lane stage held-str runner system))
+            (scanned-r (hip:jq "($cat | to_entries | length)" catalog-file only lane stage held-str runner system release))
             (scanned (if (hip:ok? scanned-r) (hip:payload scanned-r) "0"))
-            (malformed-r (hip:jq hip:malformed-jq catalog-file only lane stage held-str runner system))
-            (malformed (if (hip:ok? malformed-r) (string-trim (hip:payload malformed-r)) "")))
+            (malformed-r (hip:jq hip:malformed-jq catalog-file only lane stage held-str runner system release))
+            (malformed-raw (if (hip:ok? malformed-r) (string-trim (hip:payload malformed-r)) ""))
+            (malformed (if (hip:jq-empty? malformed-raw) "" malformed-raw)))
           (log-info
             (string-append
               "hardened-image-plan: " scanned " catalog rows in " flake-ref "#" catalog-attr
@@ -445,12 +511,12 @@
               (hip:emit "" "0" "" "0" "" scanned "malformed-row")
               1)
             (else
-              (hip:plan catalog-file only lane stage held-str held runner require-ne scanned system tmp-dir))))))))
+              (hip:plan catalog-file only lane stage held-str held runner require-ne scanned system release tmp-dir))))))))
 
-(define (hip:plan catalog-file only lane stage held-str held runner require-ne scanned system tmp-dir)
+(define (hip:plan catalog-file only lane stage held-str held runner require-ne scanned system release tmp-dir)
   (let*
-    ((pr (hip:jq hip:pipeline-jq catalog-file only lane stage held-str runner system))
-      (rr (hip:jq hip:rescan-jq catalog-file only lane stage held-str runner system)))
+    ((pr (hip:jq hip:pipeline-jq catalog-file only lane stage held-str runner system release))
+      (rr (hip:jq hip:rescan-jq catalog-file only lane stage held-str runner system release)))
     (cond
       ((not (hip:ok? pr))
         (log-error "hardened-image-plan: jq failed to serialize the pipeline matrix")
