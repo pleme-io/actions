@@ -244,3 +244,24 @@ jobs:
           CHANGED: ${{ steps.second.outputs.changed }}
         run: |
           [ "$CHANGED" = "false" ] || { echo "expected changed=false got $CHANGED"; exit 1; }
+
+  exec-arg-budget:
+    name: No action inlines more tlisp than exec can carry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Self-hosted from this repo's own path, like tlisp-lint above, so a PR is
+      # tested against its own changes without tagging a release first.
+      #
+      # This gate exists because the ceiling is SHARED and SHRINKING: stdlib.tlisp
+      # is 118414 bytes of the 131072 an exec arg may hold, so every action that
+      # inlines has 12657 left and every byte added to the stdlib takes from all
+      # 300 of them at once. When one goes over, bash never starts, nothing
+      # tlisp-related is logged, and "Argument list too long" is attributed to the
+      # action rather than to the commit that moved the ceiling.
+      #
+      # Measured live 2026-08-12 (hardened-images run 31602346297): zot-pull-scan
+      # was 4002 bytes over, its mirror leg died, and the admission step then
+      # reported result=/severity=/vuln-count= all EMPTY — fail-closed, but the
+      # stated reason was a scan that never ran.
+      - uses: ./exec-arg-budget-lint

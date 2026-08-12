@@ -1,0 +1,72 @@
+name: 'pleme-io · exec-arg-budget-lint'
+description: 'Fail when a composite action inlines more tlisp than the kernel can exec, and report how close every other action is. An action that concatenates the shared stdlib and passes it as `script:` sends it step output -> action input -> environment variable -> exec arg space, where Linux caps ONE argv/env string at MAX_ARG_STRLEN = 131072 bytes. Over that, bash never starts, nothing tlisp-related is logged, and the run dies with "Argument list too long" attributed to the action rather than to its size. The ceiling is SHARED and SHRINKING: every byte added to the stdlib comes out of every inlining action`s budget at once, so this reports min-headroom as well as violations. TIER: CI-caught, not unrepresentable — the destination is converting every action to `script-file:` (a path has no size), and `inlining` counts that sweep down to zero.'
+branding:
+  icon: 'alert-triangle'
+  color: 'red'
+
+inputs:
+  stdlib-path:
+    description: "The shared prelude every inlining action concatenates. Its size is the fixed cost every one of them pays, so this is the number that moves the whole fleet's budget at once."
+    required: false
+    default: "_tlisp-stdlib/stdlib.tlisp"
+  limit:
+    description: "MAX_ARG_STRLEN in BYTES. 131072 on Linux. Overridable so a test can drive a small ceiling without a 118KB fixture — not so a repo can buy headroom it does not have."
+    required: false
+    default: "131072"
+  warn-margin:
+    description: "Report any action whose headroom is below this many bytes. These are not failures; they are the countdown. An action with 292 bytes left is broken by the next paragraph added to the stdlib, and the error will point at the action rather than at that commit."
+    required: false
+    default: "8000"
+  fail-on-violation:
+    description: "When true (default), an over-budget action is exit 1."
+    required: false
+    default: "true"
+
+outputs:
+  scanned:
+    description: "action.yml files found. The denominator — a discovery change that finds nothing reports 0 here rather than 0 violations that read as clean."
+    value: ${{ steps.run.outputs.scanned }}
+  inlining:
+    description: "How many actions still use the `script:` form. This is the sweep's progress counter: at 0 the class is unrepresentable and this action has no subjects left."
+    value: ${{ steps.run.outputs.inlining }}
+  violations:
+    description: "How many exceed the ceiling today."
+    value: ${{ steps.run.outputs.violations }}
+  near-limit:
+    description: "How many sit within warn-margin of the ceiling."
+    value: ${{ steps.run.outputs.near-limit }}
+  min-headroom:
+    description: "The tightest surviving margin in bytes — the size of the stdlib commit that breaks the fleet next."
+    value: ${{ steps.run.outputs.min-headroom }}
+  reason:
+    description: "ok | over-budget | no-actions | no-stdlib."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    # This action reads the repo it lints, so it takes its own advice: the
+    # script goes to a FILE, never through the arg space it exists to police.
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/exec-arg-budget-lint.tlisp"
+        {
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - name: Check the exec-arg budget
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        STDLIB_PATH: ${{ inputs.stdlib-path }}
+        LIMIT: ${{ inputs.limit }}
+        WARN_MARGIN: ${{ inputs.warn-margin }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}

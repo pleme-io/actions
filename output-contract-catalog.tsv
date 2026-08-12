@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                354
-# routing tatara-script  338
-# distinct keys written  331
+# actions                355
+# routing tatara-script  339
+# distinct keys written  334
 # dynamic key expansions 8
-# inner union (generated)339
+# inner union (generated)342
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -137,6 +137,7 @@ elasticsearch-snapshot	tatara-script	run.tlisp	1	1
 email-notify	tatara-script	run.tlisp	2	2
 envoy-config-validate	tatara-script	run.tlisp	1	1
 esp-idf-build	tatara-script	run.tlisp	1	1
+exec-arg-budget-lint	tatara-script	run.tlisp	6	6
 fastlane-deploy	tatara-script	run.tlisp	1	1
 fastly-cache-purge	tatara-script	run.tlisp	1	1
 ferrite-check	tatara-script	run.tlisp	11	11
@@ -339,7 +340,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	339
+tatara-script	own-runner	-	0	342
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -575,6 +576,12 @@ email-notify	failed-count	static	declared	forwarded
 email-notify	sent	static	declared	forwarded
 envoy-config-validate	valid	static	declared	forwarded
 esp-idf-build	binary-path	static	declared	forwarded
+exec-arg-budget-lint	inlining	static	declared	forwarded
+exec-arg-budget-lint	min-headroom	static	declared	forwarded
+exec-arg-budget-lint	near-limit	static	declared	forwarded
+exec-arg-budget-lint	reason	static	declared	forwarded
+exec-arg-budget-lint	scanned	static	declared	forwarded
+exec-arg-budget-lint	violations	static	declared	forwarded
 fastlane-deploy	deployed	static	declared	forwarded
 fastly-cache-purge	purged	static	declared	forwarded
 ferrite-check	attr	static	declared	forwarded
