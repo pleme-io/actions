@@ -506,7 +506,18 @@
             "` is not one of build|publish|mirror|all|rescan — refusing to guess"))
         (hip:empty-emit "empty-plan")
         1)
-      (else (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system release tmp-dir)))))
+      (else
+        ;; Announce a clamp that actually bit, here in main where
+        ;; `requested-stage` is in scope. A run that silently does LESS than it
+        ;; was asked to is the same defect class as one that silently does more,
+        ;; so the reduction is stated rather than inferred from an absent job.
+        (if (not (equal? stage requested-stage))
+          (log-info
+            (string-append
+              "hardened-image-plan: stage CAPPED " requested-stage " -> " stage
+              " by max-stage — nothing will be promoted downstream in this run"))
+          #t)
+        (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system release tmp-dir)))))
 
 (define (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system release tmp-dir)
   (let ((ev (hip:eval-catalog flake-ref catalog-attr tmp-dir)))
@@ -530,12 +541,6 @@
             (malformed-r (hip:jq hip:malformed-jq catalog-file only lane stage held-str runner system release))
             (malformed-raw (if (hip:ok? malformed-r) (string-trim (hip:payload malformed-r)) ""))
             (malformed (if (hip:jq-empty? malformed-raw) "" malformed-raw)))
-          (if (not (equal? stage requested-stage))
-            (log-info
-              (string-append
-                "hardened-image-plan: stage CAPPED " requested-stage " -> " stage
-                " by max-stage — nothing will be promoted downstream in this run"))
-            #t)
           (log-info
             (string-append
               "hardened-image-plan: " scanned " catalog rows in " flake-ref "#" catalog-attr
