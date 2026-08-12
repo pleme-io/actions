@@ -13,6 +13,14 @@ inputs:
     description: "Top-level flake attribute holding the catalog attrset. Each of its keys is one component; each value must carry at least `service` and `publishName`."
     required: false
     default: "hardenedImageCatalog"
+  eval-system:
+    description: "Which system key to read components from. The catalog is keyed BY SYSTEM first, so this is not optional plumbing — read as a flat map it yields rows named after the systems. An absent key is a hard error, never an empty component set."
+    required: false
+    default: "x86_64-linux"
+  release-file:
+    description: "The release MINT. Every row's publishTag is a static alias; the tag that actually ships is this file's contents, which is also what flake.nix reads for the image's org.opencontainers.image.version label — so bytes and tag cannot disagree. An empty mint is refused rather than pushing an untagged alias."
+    required: false
+    default: "release-version"
   event:
     description: "The triggering event name, forwarded verbatim from github.event_name. Selects the default stage when `stage` is empty: push -> publish, workflow_dispatch -> all, pull_request -> build, schedule -> rescan."
     required: true
@@ -45,7 +53,7 @@ inputs:
     required: false
     default: "true"
   summary:
-    description: "When true, write the resolved plan to the job summary — which components build, mirror, promote, and which would deliver to 2F for the FIRST time."
+    description: "When true, write the resolved plan to the job summary — which components build, mirror and promote in this run."
     required: false
     default: "true"
 
@@ -62,9 +70,9 @@ outputs:
   rescan-count:
     description: "Number of rows in the rescan matrix (integer)."
     value: ${{ steps.run.outputs.rescan-count }}
-  newly-delivering:
-    description: "Space-separated slugs that would reach 2F for the FIRST time in this run (harbor = true and not held, with no prior promotion pointer). Empty when the run changes no delivery frontier."
-    value: ${{ steps.run.outputs.newly-delivering }}
+  promoting:
+    description: "Space-separated component slugs that promote to the downstream environment in THIS run. Named `promoting` and not `newly-delivering` deliberately: this action reads the catalog and never the downstream pointer repo, so it cannot know whether a promotion is a component's first. Claiming FIRST would be an inference dressed as a measurement."
+    value: ${{ steps.run.outputs.promoting }}
   scanned:
     description: "How many catalog rows were read before any filter. The anti-vacuity denominator: a discovery change that finds nothing reports scanned=0 here while every other output is empty, instead of an empty plan reading as a clean one."
     value: ${{ steps.run.outputs.scanned }}
@@ -107,6 +115,8 @@ runs:
       env:
         FLAKE_REF: ${{ inputs.flake-ref }}
         CATALOG_ATTR: ${{ inputs.catalog-attr }}
+        EVAL_SYSTEM: ${{ inputs.eval-system }}
+        RELEASE_FILE: ${{ inputs.release-file }}
         EVENT: ${{ inputs.event }}
         ONLY: ${{ inputs.only }}
         LANE: ${{ inputs.lane }}
