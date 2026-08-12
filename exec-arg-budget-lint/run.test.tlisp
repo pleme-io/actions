@@ -1,0 +1,64 @@
+;; exec-arg-budget-lint/run.test.tlisp — the verification matrix for the budget
+;; arithmetic and the subject predicate. Both are pure and both are the parts
+;; that would silently under-report.
+
+;; ── the budget arithmetic ────────────────────────────────────────
+
+;; The exec'd string is stdlib + ONE newline + the unit. The separator byte is
+;; counted, because an off-by-one in a gate whose whole job is exactness would
+;; under-report by exactly the margin that matters.
+(deftest "pair-size counts the separator byte"
+  (assert (equal? (eab:pair-size 100 10) 111) "100 + 10 + 1")
+  (assert (equal? (eab:pair-size 0 0) 1) "empty pair is still one newline"))
+
+;; The real numbers from the failure this gate exists to stop
+;; (hardened-images run 31602346297).
+(deftest "the measured zot-pull-scan overflow is reproduced exactly"
+  (assert (equal? (eab:pair-size 118414 16659) 135074) "stdlib + pull.tlisp")
+  (assert (eab:over? 118414 16659 131072) "pull.tlisp was over")
+  (assert (equal? (eab:headroom 118414 16659 131072) -4002) "over by 4002 bytes"))
+
+;; verdict.tlisp squeaked UNDER at the same moment, which is why only one of the
+;; two steps died — and why a gate that only looked at the failing one would
+;; have left a 2459-byte countdown in place.
+(deftest "a unit that fits reports positive headroom, not a pass/fail bit"
+  (assert (not (eab:over? 118414 10198 131072)) "verdict.tlisp fit")
+  (assert (equal? (eab:headroom 118414 10198 131072) 2459) "with 2459 bytes left"))
+
+;; The boundary is exact: equal to the limit is NOT over.
+(deftest "the ceiling is inclusive"
+  (assert (not (eab:over? 131071 0 131072)) "exactly at the limit fits")
+  (assert (eab:over? 131072 0 131072) "one byte past does not")
+  (assert (equal? (eab:headroom 131071 0 131072) 0) "zero headroom is still legal"))
+
+;; ── who is a subject ─────────────────────────────────────────────
+
+;; An action already on `script-file:` passes a PATH, so its size can never
+;; reach the arg space. Exempting it is the gate recognising its own
+;; destination, not a hole in it.
+(deftest "only inlining actions are subjects"
+  (assert
+    (eab:inlines? "cat stdlib.tlisp\n  script: ${{ steps.src.outputs.script }}")
+    "concatenates stdlib and inlines")
+  (assert
+    (not (eab:inlines? "cat stdlib.tlisp\n  script-file: ${{ steps.src.outputs.script-file }}"))
+    "already converted — exempt")
+  (assert
+    (not (eab:inlines? "  script: echo hi"))
+    "inlines something, but not the stdlib")
+  (assert
+    (not (eab:inlines? "name: something with no tlisp at all"))
+    "not a tlisp action"))
+
+;; A .test.tlisp is run separately by `tatara-script --test` and is never
+;; concatenated into an action's exec'd script. Counting it would invent
+;; violations that cannot occur.
+(deftest "test files are not part of any exec'd pair"
+  (assert (eab:unit-file? "./foo/run.tlisp") "run.tlisp counts")
+  (assert (eab:unit-file? "./foo/pull.tlisp") "any non-test unit counts")
+  (assert (not (eab:unit-file? "./foo/run.test.tlisp")) "test files do not")
+  (assert (not (eab:unit-file? "./foo/action.yml")) "non-tlisp does not"))
+
+(deftest "dir-of extracts the action name from a globbed manifest path"
+  (assert (equal? (eab:dir-of "./zot-pull-scan/action.yml") "zot-pull-scan") "leading ./")
+  (assert (equal? (eab:dir-of "wasm-build/action.yml") "wasm-build") "no leading ./"))

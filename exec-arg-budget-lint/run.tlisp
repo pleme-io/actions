@@ -1,0 +1,275 @@
+;; exec-arg-budget-lint/run.tlisp — fail when an action's inlined tlisp exceeds
+;; the kernel's exec argument ceiling, and report how close the rest are.
+;;
+;; THE FAILURE THIS EXISTS TO STOP, measured rather than imagined. On
+;; hardened-images run 31602346297 the mirror leg died with:
+;;
+;;   An error occurred trying to start process '/usr/bin/bash' with working
+;;   directory '...'. Argument list too long
+;;
+;; A composite action that inlines its tlisp does:
+;;   step output -> action input -> environment variable -> exec arg space
+;; and Linux caps ONE argv/env string at MAX_ARG_STRLEN = 131072 bytes. At the
+;; time stdlib.tlisp was 118414 bytes, leaving 12657 for a script;
+;; zot-pull-scan/pull.tlisp is 16659, so the pair was 135073 — over by 4002.
+;;
+;; THE ERROR NAMES NONE OF THAT. bash never starts, so nothing tlisp-related is
+;; logged and the failure is attributed to the ACTION rather than to its size.
+;; Worse downstream: the next step reported result=/severity=/vuln-count= all
+;; EMPTY and the admission guard refused to mirror — fail-closed, correctly, but
+;; the stated reason was a scan that never ran.
+;;
+;; WHY A GATE AND NOT A ONE-LINE FIX. The ceiling is SHARED and it SHRINKS: every
+;; byte added to stdlib.tlisp comes out of every inlining action's budget at
+;; once. Measured across this repo on 2026-08-12: 301 actions still inline,
+;; exactly 1 was already over, and 49 sat within 8KB of the ceiling — the
+;; tightest, wasm-build/run.tlisp, with 292 bytes left. A ~300-byte stdlib commit
+;; breaks that one silently, in whatever repo calls it next, and the error points
+;; at the action rather than at the commit that moved the ceiling.
+;;
+;; TIER: CI-caught, not unrepresentable. The truly-unrepresentable form is
+;; converting every action to `script-file:` (which passes a PATH, so size stops
+;; being an exec concern at all) — then the budget cannot be exceeded because
+;; nothing inlines. That sweep is the destination; this gate is what stops the
+;; class regressing while it happens, and it makes the sweep's progress
+;; measurable: `inlining` counts down to zero, and when it reaches zero this
+;; action has no subjects left and can be deleted.
+;;
+;; ANTI-VACUITY. `scanned` and `inlining` are outputs. A discovery change that
+;; stops finding action.yml files would otherwise report zero violations and
+;; read as clean — identical to a repo where every action is safe. The gate
+;; therefore also FAILS when it finds no actions at all, because a linter with
+;; no subjects is not a passing linter.
+;;
+;; Uses stdlib helpers (prepended by action.yml's loader step):
+;;   env-get, append-output, log-info, log-error, log-warn, glob, read-file,
+;;   path-exists?, string-*, string-format
+;;
+;; Inputs (env):
+;;   STDLIB_PATH   the shared prelude every inlining action concatenates
+;;   LIMIT         MAX_ARG_STRLEN in bytes (131072 on Linux; overridable so the
+;;                 tests can drive a small ceiling without a 118KB fixture)
+;;   WARN_MARGIN   report any action whose headroom is below this
+;;   FAIL_ON_VIOLATION  "true" (default) => over-budget is exit 1
+;;
+;; Outputs:
+;;   scanned      action.yml files found (the denominator)
+;;   inlining     how many still use the `script:` form — counts down to 0
+;;   violations   how many exceed the ceiling today
+;;   near-limit   how many are within WARN_MARGIN of it
+;;   min-headroom the tightest surviving margin, in bytes
+;;   reason       ok | over-budget | no-actions | no-stdlib
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; An action is a SUBJECT of this gate only if it inlines: it concatenates the
+;; stdlib AND passes the result as `script:`. An action already on `script-file:`
+;; passes a path and is exempt by construction — which is exactly the fix, so
+;; exempting it is the gate recognising its own destination rather than a hole.
+(define (eab:inlines? manifest-text)
+  (and
+    (string-contains? manifest-text "stdlib.tlisp")
+    (string-contains? manifest-text "script:")
+    (not (string-contains? manifest-text "script-file:"))))
+
+;; The exec'd string is stdlib + a newline + the unit. One byte of separator,
+;; and it is counted — an off-by-one here would under-report a budget whose
+;; whole purpose is to be exact.
+(define (eab:pair-size stdlib-bytes unit-bytes)
+  (+ stdlib-bytes (+ unit-bytes 1)))
+
+(define (eab:over? stdlib-bytes unit-bytes limit)
+  (> (eab:pair-size stdlib-bytes unit-bytes) limit))
+
+(define (eab:headroom stdlib-bytes unit-bytes limit)
+  (- limit (eab:pair-size stdlib-bytes unit-bytes)))
+
+;; A `.test.tlisp` is never concatenated into the exec'd script by an action's
+;; loader — it is run separately by `tatara-script --test`. Counting it would
+;; invent violations that cannot happen.
+(define (eab:unit-file? name)
+  (and
+    (string-ends-with? name ".tlisp")
+    (not (string-ends-with? name ".test.tlisp"))))
+
+;; "./name/action.yml" -> "name". Mirrors tlisp-lint's `action-dirs`.
+(define (eab:dir-of path)
+  (let ((parts (string-split path "/")))
+    (cond
+      ((>= (length parts) 3) (car (cdr parts)))
+      ((>= (length parts) 2) (car parts))
+      (else ""))))
+
+;; ── side-effecting ───────────────────────────────────────────────
+
+;; BYTES, NOT CHARACTERS — and this gate found the distinction in itself on its
+;; first live run.
+;;
+;; MAX_ARG_STRLEN is a byte limit. `string-length` on a read file returns
+;; CHARACTERS, and stdlib.tlisp is prose-heavy: measured 2026-08-12 it is 118414
+;; bytes but 108969 characters — 9445 bytes of multi-byte UTF-8 (em-dashes and
+;; arrows in the comments). Measuring characters under-reports every size by ~8%
+;; and would clear an action that exec cannot actually start, which is the exact
+;; vacuity this gate exists to prevent, reproduced inside the gate.
+;;
+;; `wc -c` is the byte count and there is no byte-length primitive in the
+;; stdlib. This is the one subprocess here and it is load-bearing; the
+;; alternative is a wrong number that reads as a right one.
+(define (eab:size-of path)
+  (cond
+    ((not (path-exists? path)) 0)
+    (else
+      (let ((r (exec-capture "sh" "-c" (string-append "wc -c < '" path "'"))))
+        (if (= (status-of r) 0)
+          (eab:parse-int (string-trim (stdout-of r)) 0)
+          0)))))
+
+(define (eab:emit scanned inlining violations near min-headroom reason)
+  (append-output (string-append "scanned=" scanned))
+  (append-output (string-append "inlining=" inlining))
+  (append-output (string-append "violations=" violations))
+  (append-output (string-append "near-limit=" near))
+  (append-output (string-append "min-headroom=" min-headroom))
+  (append-output (string-append "reason=" reason)))
+
+(define (main)
+  (let*
+    ((stdlib-path (env-get "STDLIB_PATH" "_tlisp-stdlib/stdlib.tlisp"))
+      (limit-s (env-get "LIMIT" "131072"))
+      (limit (eab:to-int limit-s 131072))
+      (warn-margin (eab:to-int (env-get "WARN_MARGIN" "8000") 8000))
+      (fail-on (env-get "FAIL_ON_VIOLATION" "true"))
+      (manifests (glob "./*/action.yml")))
+    (cond
+      ((not (path-exists? stdlib-path))
+        (log-error
+          (string-append
+            "exec-arg-budget-lint: no stdlib at " stdlib-path
+            " — refusing to report a budget computed against a zero-byte prelude"))
+        (eab:emit "0" "0" "0" "0" "0" "no-stdlib")
+        1)
+      ;; A linter with no subjects is not a passing linter. Without this, a
+      ;; broken glob reports 0 violations and is indistinguishable from a clean
+      ;; repo — the exact vacuity this gate's own outputs exist to prevent.
+      ((null? manifests)
+        (log-error
+          "exec-arg-budget-lint: found NO action.yml files — a linter with no subjects is not a pass")
+        (eab:emit "0" "0" "0" "0" "0" "no-actions")
+        1)
+      (else
+        (eab:run manifests (eab:size-of stdlib-path) limit warn-margin fail-on)))))
+
+(define (eab:to-int s fallback)
+  (let ((r (exec-capture "sh" "-c" (string-append "printf %d " s " 2>/dev/null || printf %d " (string-format "{}" fallback)))))
+    (if (= (status-of r) 0)
+      (eab:parse-int (string-trim (stdout-of r)) fallback)
+      fallback)))
+
+(define (eab:parse-int s fallback)
+  (let ((n (json-parse s)))
+    (if (equal? n '()) fallback n)))
+
+(define (eab:run manifests stdlib-bytes limit warn-margin fail-on)
+  (log-info
+    (string-append
+      "exec-arg-budget-lint: stdlib is "
+      (string-format "{}" stdlib-bytes)
+      " bytes; a script may add at most "
+      (string-format "{}" (- limit (+ stdlib-bytes 1)))
+      " before exec fails"))
+  (let* ((rows (eab:rows manifests stdlib-bytes limit)))
+    (eab:report rows manifests stdlib-bytes limit warn-margin fail-on)))
+
+;; One row per (inlining action, unit file): (dir file bytes headroom).
+(define (eab:rows manifests stdlib-bytes limit)
+  (cond
+    ((null? manifests) (list))
+    (else
+      (let* ((rest (eab:rows (cdr manifests) stdlib-bytes limit))
+              (m (car manifests))
+              (dir (eab:dir-of m)))
+        (if (eab:inlines? (read-file m))
+          (concat (eab:unit-rows dir (glob (string-append "./" dir "/*.tlisp")) stdlib-bytes limit) rest)
+          rest)))))
+
+(define (eab:unit-rows dir units stdlib-bytes limit)
+  (cond
+    ((null? units) (list))
+    (else
+      (let* ((rest (eab:unit-rows dir (cdr units) stdlib-bytes limit))
+              (u (car units)))
+        (if (eab:unit-file? u)
+          (cons (list dir u (eab:size-of u) (eab:headroom stdlib-bytes (eab:size-of u) limit)) rest)
+          rest)))))
+
+(define (eab:headroom-of row) (car (cdr (cdr (cdr row)))))
+(define (eab:path-of row) (car (cdr row)))
+
+(define (eab:over-rows rows)
+  (filter (fn (r) (< (eab:headroom-of r) 0)) rows))
+
+(define (eab:near-rows rows margin)
+  (filter (fn (r) (and (>= (eab:headroom-of r) 0) (< (eab:headroom-of r) margin))) rows))
+
+(define (eab:min-headroom rows)
+  (cond
+    ((null? rows) 0)
+    ((null? (cdr rows)) (eab:headroom-of (car rows)))
+    (else
+      (let ((rest (eab:min-headroom (cdr rows))) (h (eab:headroom-of (car rows))))
+        (if (< h rest) h rest)))))
+
+(define (eab:report rows manifests stdlib-bytes limit warn-margin fail-on)
+  (let*
+    ((over (eab:over-rows rows))
+      (near (eab:near-rows rows warn-margin))
+      (scanned (string-format "{}" (length manifests)))
+      (inlining (string-format "{}" (eab:distinct-dirs rows)))
+      (nover (length over))
+      (minh (string-format "{}" (eab:min-headroom rows))))
+    (log-info
+      (string-append
+        "exec-arg-budget-lint: " scanned " action(s) scanned, " inlining
+        " still inlining, " (string-format "{}" nover) " over budget, "
+        (string-format "{}" (length near)) " within "
+        (string-format "{}" warn-margin) " bytes of the ceiling"))
+    (eab:log-rows over "OVER BUDGET — exec will fail with `Argument list too long`" stdlib-bytes limit)
+    (eab:log-rows near "close to the ceiling — a stdlib growth of that many bytes breaks it" stdlib-bytes limit)
+    (eab:emit scanned inlining (string-format "{}" nover) (string-format "{}" (length near)) minh
+      (if (> nover 0) "over-budget" "ok"))
+    (cond
+      ((and (> nover 0) (equal? fail-on "true")) 1)
+      (else 0))))
+
+(define (eab:log-rows rows label stdlib-bytes limit)
+  (cond
+    ((null? rows) #t)
+    (else
+      (let ((r (car rows)))
+        (log-info
+          (string-append
+            "  " (eab:path-of r) ": "
+            (string-format "{}" (car (cdr (cdr r)))) " bytes, headroom "
+            (string-format "{}" (eab:headroom-of r)) " — " label))
+        (eab:log-rows (cdr rows) label stdlib-bytes limit)))))
+
+(define (eab:distinct-dirs rows)
+  (length (eab:uniq (map (fn (r) (car r)) rows))))
+
+(define (eab:uniq lst)
+  (cond
+    ((null? lst) (list))
+    (else
+      (let ((rest (eab:uniq (cdr lst))))
+        (if (eab:has? (car lst) rest) rest (cons (car lst) rest))))))
+
+(define (eab:has? x lst)
+  (cond
+    ((null? lst) #f)
+    ((equal? x (car lst)) #t)
+    (else (eab:has? x (cdr lst)))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — exec-arg-budget-lint helpers loaded; main skipped"))
+  (else (exit (main))))

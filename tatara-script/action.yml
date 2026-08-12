@@ -473,6 +473,9 @@ outputs:
   injected:
     description: "Forwarded (key: injected) — written by 1 action dir(s): linkerd-inject"
     value: ${{ steps.exec.outputs.injected }}
+  inlining:
+    description: "Forwarded (key: inlining) — exec-arg-budget-lint — how many actions still inline their tlisp through the arg space; the sweep's progress counter, which reaches 0 when the class is unrepresentable"
+    value: ${{ steps.exec.outputs.inlining }}
   input-file-id:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: input-file-id)"
     value: ${{ steps.exec.outputs.input-file-id }}
@@ -545,6 +548,9 @@ outputs:
   message-id:
     description: "Forwarded (key: message-id) — written by 1 action dir(s): ses-email-send"
     value: ${{ steps.exec.outputs.message-id }}
+  min-headroom:
+    description: "Forwarded (key: min-headroom) — exec-arg-budget-lint — the tightest surviving exec-arg margin in bytes, i.e. the size of the stdlib commit that breaks the fleet next"
+    value: ${{ steps.exec.outputs.min-headroom }}
   missing-count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: missing-count)"
     value: ${{ steps.exec.outputs.missing-count }}
@@ -566,6 +572,9 @@ outputs:
   native-platforms:
     description: "Forwarded (key: native-platforms) — bigorna comma-joined platforms covered by a native node"
     value: ${{ steps.exec.outputs.native-platforms }}
+  near-limit:
+    description: "Forwarded (key: near-limit) — exec-arg-budget-lint — how many actions sit within the warn margin of MAX_ARG_STRLEN"
+    value: ${{ steps.exec.outputs.near-limit }}
   never-touch-disk:
     description: "Forwarded (key: never-touch-disk) — computed postgres∧redis∧tmpfs predicate"
     value: ${{ steps.exec.outputs.never-touch-disk }}
