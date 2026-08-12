@@ -1,0 +1,118 @@
+name: 'pleme-io · hardened-image-plan'
+description: 'Read a hardened-image CATALOG attrset out of a flake and emit the resolved GitHub Actions delivery matrices. The single-responsibility sibling of build-matrix: build-matrix fans a flake''s colon-triple image attrs across (service, arch); this verb reads a RICH per-component catalog (zot / harbor / publishName / base / scan posture) and resolves the delivery conditions — lane, only, stage, event, and tracked mirror-debt — into plain booleans on each row, so the calling workflow contains no per-component `if:` expression at all. A component is one catalog row; there is no per-component job. TIER: SHIPPABLE-NOW — deterministic `nix eval` over the real catalog, jq as the typed serializer (never hand-concatenated JSON), and a denominator carried INSIDE every output so a catalog that stops being discovered reports scanned=0 rather than a silently clean empty plan.'
+branding:
+  icon: 'layers'
+  color: 'green'
+
+inputs:
+  flake-ref:
+    description: "Flake ref holding the catalog (e.g. `.` or github:pleme-io/hardened-images)."
+    required: false
+    default: "."
+  catalog-attr:
+    description: "Top-level flake attribute holding the catalog attrset. Each of its keys is one component; each value must carry at least `service` and `publishName`."
+    required: false
+    default: "hardenedImageCatalog"
+  event:
+    description: "The triggering event name, forwarded verbatim from github.event_name. Selects the default stage when `stage` is empty: push -> publish, workflow_dispatch -> all, pull_request -> build, schedule -> rescan."
+    required: true
+  only:
+    description: "One component slug (matched against a row's `service`). Empty = every component the lane selects. Covers ALL of that component's phases — it is not an arch or job filter."
+    required: false
+    default: ""
+  lane:
+    description: "Empty or `none` = the default arm. Any other value selects the components whose `lanes` list contains it. A lane naming no component is a hard failure, never a silent empty plan — a typo in a dispatch input must not read as `nothing to do`."
+    required: false
+    default: ""
+  stage:
+    description: "How far down the delivery chain to go: build (build+scan, no push) | publish (through the registry) | mirror (through Zot admission) | all (through the 2F pointer commit) | rescan (scan what is already published, no build). Empty = derived from `event`."
+    required: false
+    default: ""
+  held-file:
+    description: "Path to the tracked mirror-debt ledger. Every line's leading `<slug>:` names a component whose typed catalog flag has no job to honour it yet; a held component builds and publishes but never mirrors or promotes. This is the ROLLOUT BRAKE — a component starts delivering by being DELETED from this file, so the debt ledger's done-predicate is a deletion rather than a new flag. A missing file is an honest empty hold-set, not an error."
+    required: false
+    default: "tools/pipeline-registration-baseline.txt"
+  runner:
+    description: "The runs-on label to stamp on every emitted row, so the called workflow never re-derives it. Resolve it once with pleme-io/actions/runner-resolve in its own job and forward that output here."
+    required: false
+    default: ""
+  require-nonempty:
+    description: "When true (default), a 0-row pipeline matrix is a hard exit 1. A surprise-empty plan is a mis-config — an empty `include` silently skips the whole delivery rather than failing it."
+    required: false
+    default: "true"
+  strict:
+    description: "When true (default), a catalog row missing a field the projection reads is a hard failure naming the row and the field. Turning this off lets a malformed row inherit another component's defaults, which is how a component silently ships the wrong scan posture."
+    required: false
+    default: "true"
+  summary:
+    description: "When true, write the resolved plan to the job summary — which components build, mirror, promote, and which would deliver to 2F for the FIRST time."
+    required: false
+    default: "true"
+
+outputs:
+  pipeline-matrix:
+    description: "GHA matrix JSON: {\"include\":[{component,publishName,tag,base,runner,doBuild,doPush,doMirror,doPromote,held,...},...]}. Consume as strategy.matrix fromJSON of this output."
+    value: ${{ steps.run.outputs.pipeline-matrix }}
+  pipeline-count:
+    description: "Number of rows in the pipeline matrix (integer). The denominator — gate downstream jobs on this being non-zero rather than on the matrix being truthy."
+    value: ${{ steps.run.outputs.pipeline-count }}
+  rescan-matrix:
+    description: "GHA matrix JSON of the ALREADY-PUBLISHED components to re-scan. Derived from the same catalog as the pipeline, so the set rescanned is the set published by construction, never a second hand-list."
+    value: ${{ steps.run.outputs.rescan-matrix }}
+  rescan-count:
+    description: "Number of rows in the rescan matrix (integer)."
+    value: ${{ steps.run.outputs.rescan-count }}
+  newly-delivering:
+    description: "Space-separated slugs that would reach 2F for the FIRST time in this run (harbor = true and not held, with no prior promotion pointer). Empty when the run changes no delivery frontier."
+    value: ${{ steps.run.outputs.newly-delivering }}
+  scanned:
+    description: "How many catalog rows were read before any filter. The anti-vacuity denominator: a discovery change that finds nothing reports scanned=0 here while every other output is empty, instead of an empty plan reading as a clean one."
+    value: ${{ steps.run.outputs.scanned }}
+  reason:
+    description: "ok | empty-plan | empty-lane | nix-absent | jq-absent | nix-eval-failed | jq-failed | malformed-row."
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    # Concatenated to a FILE, not to a step output — the same 128KiB exec-arg
+    # ceiling build-matrix documents. A step output becomes an action input,
+    # becomes an env var, lands in the exec arg space, and Linux caps a single
+    # argv/env string at MAX_ARG_STRLEN = 131072 bytes. stdlib.tlisp alone is
+    # ~118KiB, so `script:` has only ~12KiB of headroom and the failure gives
+    # no hint of any of that -- bash never starts, nothing tlisp-related is
+    # logged, and the run dies with "Argument list too long" attributed to the
+    # action rather than to its size. `script-file` passes a PATH, so the
+    # script's size stops being an exec-limit concern rather than buying
+    # headroom the next stdlib commit spends.
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/hardened-image-plan.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve the delivery plan
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        FLAKE_REF: ${{ inputs.flake-ref }}
+        CATALOG_ATTR: ${{ inputs.catalog-attr }}
+        EVENT: ${{ inputs.event }}
+        ONLY: ${{ inputs.only }}
+        LANE: ${{ inputs.lane }}
+        STAGE: ${{ inputs.stage }}
+        HELD_FILE: ${{ inputs.held-file }}
+        PLAN_RUNNER: ${{ inputs.runner }}
+        REQUIRE_NONEMPTY: ${{ inputs.require-nonempty }}
+        STRICT: ${{ inputs.strict }}
+        SUMMARY: ${{ inputs.summary }}

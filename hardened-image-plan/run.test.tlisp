@@ -1,0 +1,121 @@
+;; hardened-image-plan/run.test.tlisp — (deftest …) verification matrix for the
+;; pure helpers, run via tatara-script --test by the tlisp-test action
+;; (TLISP_TEST=1 gates the unit's main so no `nix eval` runs here).
+;;
+;; This IS the CLOSED-LOOP MASS-SYNTHESIS verification matrix for the delivery
+;; planner. It covers the two things that are pure and therefore testable
+;; without a flake: the event→stage table (every event, plus the unknown-event
+;; fallback) and the mirror-debt ledger parser (comments, blanks, duplicate
+;; slugs, and the real file's exact line shape).
+;;
+;; The PROJECTION itself is jq and is verified differently — against the live
+;; catalog, by parity with the workflow it replaces. Measured 2026-08-12 on
+;; pleme-io/hardened-images: 40 rows in, 22 doMirror, 13 doPromote, 18 held —
+;; matching one-for-one the 22 `mirror-*-to-zot` and 13 `promote-trigger-*-to-2f`
+;; jobs that physically exist in the 7027-line workflow. That parity is the real
+;; acceptance gate for this action; these tests guard the helpers parity cannot
+;; see into.
+
+;; ── the event → stage table ──────────────────────────────────────
+
+(deftest "stage-for-event covers every real trigger"
+  (assert (equal? (hip:stage-for-event "workflow_dispatch") "all") "dispatch => all")
+  (assert (equal? (hip:stage-for-event "push") "publish") "push => publish")
+  (assert (equal? (hip:stage-for-event "pull_request") "build") "PR => build")
+  (assert (equal? (hip:stage-for-event "schedule") "rescan") "schedule => rescan"))
+
+;; An unrecognised event must land on the LEAST destructive stage, not the most.
+;; `build` neither pushes nor writes to the downstream pointer repo, so a
+;; trigger nobody anticipated cannot deploy.
+(deftest "an unknown event falls back to build, never to all"
+  (assert (equal? (hip:stage-for-event "release") "build") "unknown => build")
+  (assert (equal? (hip:stage-for-event "") "build") "empty => build"))
+
+(deftest "an explicit stage wins over the event default"
+  (assert (equal? (hip:resolve-stage "mirror" "push") "mirror") "explicit mirror")
+  (assert (equal? (hip:resolve-stage "build" "workflow_dispatch") "build") "explicit build"))
+
+(deftest "an empty or whitespace stage falls through to the event"
+  (assert (equal? (hip:resolve-stage "" "push") "publish") "empty => event default")
+  (assert (equal? (hip:resolve-stage "   " "workflow_dispatch") "all") "blank => event default"))
+
+;; A stage the caller invented must be REJECTED rather than silently coerced — a
+;; typo'd `promote` (not a real stage) coerced to `build` would report a green
+;; run that delivered nothing.
+(deftest "valid-stage? admits exactly the five stages"
+  (assert (hip:valid-stage? "build") "build")
+  (assert (hip:valid-stage? "publish") "publish")
+  (assert (hip:valid-stage? "mirror") "mirror")
+  (assert (hip:valid-stage? "all") "all")
+  (assert (hip:valid-stage? "rescan") "rescan")
+  (assert (not (hip:valid-stage? "promote")) "promote is not a stage")
+  (assert (not (hip:valid-stage? "")) "empty is not a stage"))
+
+;; ── the default-lane spelling ────────────────────────────────────
+
+;; Both spellings reach this from real dispatch inputs — an omitted field ("")
+;; and an explicitly-chosen "none". Treating only one as the default selects
+;; zero components for the other, which then reads as an empty plan.
+(deftest "both spellings of the default lane are the default lane"
+  (assert (hip:default-lane? "") "omitted")
+  (assert (hip:default-lane? "none") "explicit none")
+  (assert (hip:default-lane? "  none  ") "padded none")
+  (assert (not (hip:default-lane? "clickhouse-stack")) "a real lane is not the default"))
+
+;; ── the mirror-debt ledger parser ────────────────────────────────
+
+;; The real file's exact shape, including its comment header and the
+;; two-findings-per-component pattern that must collapse to one slug.
+(define hip:test-ledger
+  (string-append
+    "# pipeline-registration-baseline.txt — TRACKED DEBT\n"
+    "#\n"
+    "# Every line here is a typed catalog flag with no job to honour it.\n"
+    "\n"
+    "mysql: has release-mysql but NO resolve-mysql-drop-off\n"
+    "mysql: zot = true but NO mirror-hardened-mysql-to-zot\n"
+    "cnpg-operator: has release-cnpg-operator but NO resolve-cnpg-operator-drop-off\n"
+    "cnpg-operator: zot = true but NO mirror-hardened-cnpg-operator-to-zot\n"
+    "cnpg-postgresql: zot = true but NO mirror-hardened-cnpg-postgresql-to-zot\n"))
+
+(deftest "the ledger parser collapses repeat findings to one slug each"
+  (assert (equal? (length (hip:held-from-text hip:test-ledger)) 3) "3 distinct slugs from 5 findings")
+  (assert (hip:member? "mysql" (hip:held-from-text hip:test-ledger)) "mysql held")
+  (assert (hip:member? "cnpg-operator" (hip:held-from-text hip:test-ledger)) "cnpg-operator held")
+  (assert (hip:member? "cnpg-postgresql" (hip:held-from-text hip:test-ledger)) "cnpg-postgresql held"))
+
+;; A comment line must never become a held slug — the real file's header is
+;; prose, and prose contains colons.
+(deftest "comments and blanks never become held slugs"
+  (assert (not (hip:member? "#" (hip:held-from-text hip:test-ledger))) "bare hash")
+  (assert (not (hip:member? "" (hip:held-from-text hip:test-ledger))) "empty slug")
+  (assert
+    (not (hip:member? "# pipeline-registration-baseline.txt — TRACKED DEBT"
+           (hip:held-from-text hip:test-ledger)))
+    "header line"))
+
+;; The rollout brake's done-predicate is a DELETION: a component starts
+;; delivering by leaving this file. This is the test that a removed line
+;; actually frees the slug.
+(deftest "deleting a component's lines releases it from the hold set"
+  (assert
+    (hip:member? "mysql"
+      (hip:held-from-text "# header\nmysql: zot = true but NO mirror-hardened-mysql-to-zot\n"))
+    "still held while listed")
+  (assert
+    (not (hip:member? "cnpg-operator"
+           (hip:held-from-text "# header\nmysql: zot = true but NO mirror-hardened-mysql-to-zot\n")))
+    "released once its lines are gone"))
+
+;; An absent ledger is an honest EMPTY hold set, not an error — but note what
+;; that means: with no ledger nothing is held, and every zot=true component
+;; mirrors at once. That is why the action defaults the path rather than
+;; leaving it unset.
+(deftest "an empty ledger yields an empty hold set"
+  (assert (equal? (length (hip:held-from-text "")) 0) "empty text")
+  (assert (equal? (length (hip:held-from-text "# only a comment\n\n")) 0) "comments only"))
+
+(deftest "slug-before-colon takes only the leading token"
+  (assert (equal? (hip:slug-before-colon "mysql: zot = true but NO mirror") "mysql") "leading slug")
+  (assert (equal? (hip:slug-before-colon "a: b: c") "a") "first of several colons")
+  (assert (equal? (hip:slug-before-colon "noColon") "noColon") "no colon at all"))
