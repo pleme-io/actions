@@ -36,6 +36,18 @@ inputs:
     description: "How far down the delivery chain to go: build (build+scan, no push) | publish (through the registry) | mirror (through Zot admission) | all (through the 2F pointer commit) | rescan (scan what is already published, no build). Empty = derived from `event`."
     required: false
     default: ""
+  max-stage:
+    description: >-
+      A CEILING on the resolved stage, never a floor — it can only reduce what
+      `stage`/`event` resolved to, so capping at `mirror` cannot cause a
+      build-only run to publish. Set it to `mirror` to run the entire chain
+      except the downstream promotion. That last phase is the only irreversible
+      one: build, publish and mirror act on artifacts we own, while `all` writes
+      a commit into another team's environment repo, and that commit IS the
+      deploy. Without this a caller ships by simply leaving `stage` empty, since
+      an empty stage on a dispatch resolves to `all`.
+    required: false
+    default: "all"
   held-file:
     description: "Path to the tracked mirror-debt ledger. Every line's leading `<slug>:` names a component whose typed catalog flag has no job to honour it yet; a held component builds and publishes but never mirrors or promotes. This is the ROLLOUT BRAKE — a component starts delivering by being DELETED from this file, so the debt ledger's done-predicate is a deletion rather than a new flag. A missing file is an honest empty hold-set, not an error."
     required: false
@@ -121,6 +133,7 @@ runs:
         ONLY: ${{ inputs.only }}
         LANE: ${{ inputs.lane }}
         STAGE: ${{ inputs.stage }}
+        MAX_STAGE: ${{ inputs.max-stage }}
         HELD_FILE: ${{ inputs.held-file }}
         PLAN_RUNNER: ${{ inputs.runner }}
         REQUIRE_NONEMPTY: ${{ inputs.require-nonempty }}

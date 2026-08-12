@@ -47,6 +47,11 @@
       :required nil
       :default "")
     (
+      :name "max-stage"
+      :type :string
+      :required nil
+      :default "all")
+    (
       :name "held-file"
       :type :string
       :required nil

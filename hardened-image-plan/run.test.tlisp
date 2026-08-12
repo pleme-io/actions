@@ -119,3 +119,35 @@
   (assert (equal? (hip:slug-before-colon "mysql: zot = true but NO mirror") "mysql") "leading slug")
   (assert (equal? (hip:slug-before-colon "a: b: c") "a") "first of several colons")
   (assert (equal? (hip:slug-before-colon "noColon") "noColon") "no colon at all"))
+
+;; ── the stage cap ────────────────────────────────────────────────
+
+;; A CEILING, never a floor. This is the property that makes the cap safe to
+;; leave on by default: it can only ever reduce what was asked for, so a caller
+;; capping at `mirror` cannot accidentally cause a build-only run to publish.
+(deftest "clamp-stage only ever reduces, never raises"
+  (assert (equal? (hip:clamp-stage "all" "mirror") "mirror") "all capped to mirror")
+  (assert (equal? (hip:clamp-stage "build" "mirror") "build") "build stays build under a mirror cap")
+  (assert (equal? (hip:clamp-stage "publish" "mirror") "publish") "publish stays publish")
+  (assert (equal? (hip:clamp-stage "mirror" "mirror") "mirror") "mirror is its own cap")
+  (assert (equal? (hip:clamp-stage "build" "all") "build") "an all cap changes nothing"))
+
+;; The whole reason the cap exists: an EMPTY stage on a dispatch resolves to
+;; `all`, which writes a commit into another team's environment repo. A caller
+;; who simply omits the field must not ship by default.
+(deftest "an omitted stage on a dispatch is capped, not shipped"
+  (assert
+    (equal? (hip:clamp-stage (hip:resolve-stage "" "workflow_dispatch") "mirror") "mirror")
+    "empty stage + dispatch + mirror cap => mirror, not all"))
+
+;; rescan ranks 0 on purpose -- it neither builds nor pushes nor writes
+;; downstream, so no ceiling should ever exclude it.
+(deftest "rescan is never excluded by any cap"
+  (assert (equal? (hip:clamp-stage "rescan" "build") "rescan") "under a build cap")
+  (assert (equal? (hip:clamp-stage "rescan" "mirror") "rescan") "under a mirror cap"))
+
+(deftest "the phase order is build < publish < mirror < all"
+  (assert (< (hip:stage-rank "build") (hip:stage-rank "publish")) "build < publish")
+  (assert (< (hip:stage-rank "publish") (hip:stage-rank "mirror")) "publish < mirror")
+  (assert (< (hip:stage-rank "mirror") (hip:stage-rank "all")) "mirror < all")
+  (assert (equal? (hip:stage-rank "rescan") 0) "rescan is orthogonal"))
