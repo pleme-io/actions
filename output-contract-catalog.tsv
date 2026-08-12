@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                353
-# routing tatara-script  337
-# distinct keys written  325
+# actions                354
+# routing tatara-script  338
+# distinct keys written  331
 # dynamic key expansions 8
-# inner union (generated)333
+# inner union (generated)339
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -171,6 +171,7 @@ goreleaser	tatara-script	run.tlisp	1	1
 gosec	tatara-script	run.tlisp	1	1
 gradle-build	tatara-script	run.tlisp	1	1
 grafana-annotation	tatara-script	run.tlisp	1	1
+hardened-image-plan	tatara-script	run.tlisp	7	7
 hardhat-deploy	tatara-script	run.tlisp	1	1
 helm-bump	tatara-script	run.tlisp	3	3
 helm-ct-list-changed	tatara-script	run.tlisp	2	2
@@ -338,7 +339,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	333
+tatara-script	own-runner	-	0	339
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -634,6 +635,13 @@ goreleaser	released	static	declared	forwarded
 gosec	findings-count	static	declared	forwarded
 gradle-build	built	static	declared	forwarded
 grafana-annotation	annotation-id	static	declared	forwarded
+hardened-image-plan	pipeline-count	static	declared	forwarded
+hardened-image-plan	pipeline-matrix	static	declared	forwarded
+hardened-image-plan	promoting	static	declared	forwarded
+hardened-image-plan	reason	static	declared	forwarded
+hardened-image-plan	rescan-count	static	declared	forwarded
+hardened-image-plan	rescan-matrix	static	declared	forwarded
+hardened-image-plan	scanned	static	declared	forwarded
 hardhat-deploy	deployed-address	static	declared	forwarded
 helm-bump	bumped	static	declared	forwarded
 helm-bump	new-version	static	declared	forwarded
