@@ -1,0 +1,509 @@
+;; hardened-image-plan/run.tlisp — read a hardened-image CATALOG out of a flake
+;; and emit the resolved delivery matrices.
+;;
+;; SINGLE-RESPONSIBILITY SIBLING of build-matrix — NOT an overload of it
+;; (CLOSED-LOOP MASS-SYNTHESIS rule 2: small typed verbs over a monolith).
+;; build-matrix enumerates a flake's colon-triple image attrs and fans them
+;; across (service, arch); it knows nothing about a component beyond its name.
+;; This verb reads a RICH per-component catalog — zot / harbor / publishName /
+;; base / scan posture — and resolves the DELIVERY conditions into plain
+;; booleans on each row.
+;;
+;; WHY THIS EXISTS. The workflow it replaces carries one hand-written job per
+;; component per phase, each gated by a copy of the same `if:` expression:
+;; measured on pleme-io/hardened-images at 2026-08-12, 7027 lines and 109 jobs
+;; for 40 catalog rows, of which only 22 have a mirror job and 13 a promote
+;; job. The 18 missing chains are not oversights anyone can see — a typed
+;; catalog flag with no job to honour it is INVISIBLE, because nothing fails.
+;; Resolving the conditions here makes the flag the only place a component is
+;; configured, so a new component is a catalog row rather than three more jobs.
+;;
+;; TIER: SHIPPABLE-NOW. Deterministic `nix eval` over the real catalog; no
+;; inference about what is published, no network.
+;;
+;; TYPED EMISSION: the matrix JSON is composed by `jq` (the typed serializer),
+;; NEVER by hand string-concatenation — the same rule build-matrix and the
+;; tameshi-attest receipt obey. The jq program below contains NO double-quote
+;; character (every string literal it needs arrives via --arg), so it embeds in
+;; a tlisp string with zero escaping and cannot acquire a quoting bug.
+;;
+;; THE DENOMINATOR IS AN OUTPUT, and that is the anti-vacuity half. Every
+;; matrix here is derived from discovery, and discovery that silently finds
+;; nothing yields an empty plan — which reads as `nothing to do` and is
+;; indistinguishable from `everything is done`. `scanned` carries the row count
+;; read BEFORE any filter, so a catalog that stops being discovered reports
+;; scanned=0 with empty matrices instead of a clean-looking no-op.
+;;
+;; THE HOLD SET IS THE ROLLOUT BRAKE, and it is a file that already exists.
+;; Generating from the catalog would otherwise light every zot=true component
+;; at once (18 of them on the measured repo). A component is held — builds and
+;; publishes, never mirrors or promotes — while its slug appears in the tracked
+;; mirror-debt ledger, whose own header already says SHRINK this file, never
+;; grow it. So the debt ledger becomes the rollout list and its done-predicate
+;; is a DELETION rather than yet another flag.
+;;
+;; Uses stdlib helpers (prepended by action.yml's loader step):
+;;   env-get, append-output, log-info, log-error, log-warn,
+;;   exec-capture, status-of, stdout-of, stderr-of,
+;;   string-append, string-split, string-trim, string-join,
+;;   string-format, write-file, read-file, path-exists?
+;;
+;; MEASURED CATALOG SHAPE (pleme-io/hardened-images, 2026-08-12) — the
+;; projection is written against this, not against a guess:
+;;   <catalog-attr> . <system> . <componentKey> . { service, publishName,
+;;     publishTag, pushTag, upstreamImage, zot, harbor, hardeningTarget,
+;;     hardeningRationale, cveClaims, cveClaimFiles, cveClaimReconcileClaims,
+;;     grypeIgnoreFile, vulnixWhitelist, trivyAnalysableTargets }
+;; Two facts a reader would otherwise get wrong. The catalog is keyed BY SYSTEM
+;; first (aarch64-linux, x86_64-linux), so a projection that reads it as a flat
+;; component map silently sees two rows named after the systems. And the
+;; build-time fields — `package`, `base`, `entrypoint`, `extraContents` — are
+;; NOT in the JSON at all: they hold derivations, which `nix eval --json` drops
+;; rather than serializes. Anything the plan needs must be a plain value in the
+;; catalog; asking for `base` here yields null on every row, forever, quietly.
+;;
+;; Inputs (env):
+;;   FLAKE_REF        flake ref holding the catalog (default ".")
+;;   CATALOG_ATTR     top-level attr holding the catalog (default
+;;                    "hardenedImageCatalog")
+;;   EVAL_SYSTEM      which system key to read components from (default
+;;                    "x86_64-linux")
+;;   EVENT            github.event_name — selects the default stage
+;;   ONLY             one component slug; empty = all the lane selects
+;;   LANE             ""/"none" = default arm; else selects rows whose
+;;                    `lanes` list contains it
+;;   STAGE            build | publish | mirror | all | rescan; empty = derived
+;;   HELD_FILE        tracked mirror-debt ledger path
+;;   PLAN_RUNNER      runs-on label stamped on every row
+;;   REQUIRE_NONEMPTY "true" (default) => a 0-row plan is a hard exit 1
+;;   STRICT           "true" (default) => a row missing `service` or
+;;                    `publishName` fails loudly naming the row
+;;   SUMMARY          "true" (default) => write the resolved plan to the job
+;;                    summary
+;;
+;; Outputs (append-output -> GITHUB_OUTPUT):
+;;   pipeline-matrix  {"include":[{component,publishName,tag,base,runner,
+;;                    zot,harbor,held,doBuild,doPush,doMirror,doPromote},...]}
+;;   pipeline-count   rows in the pipeline matrix
+;;   rescan-matrix    {"include":[{component,ref,...},...]} for the published set
+;;   rescan-count     rows in the rescan matrix
+;;   promoting        space-separated slugs that promote to 2F in THIS run
+;;   scanned          catalog rows read before any filter (the denominator)
+;;   reason           ok | empty-plan | empty-lane | nix-absent | jq-absent |
+;;                    nix-eval-failed | jq-failed | malformed-row
+;;
+;; Exit (keyway three-code contract):
+;;   0  >=1 pipeline row emitted
+;;   2  catalog read fine but 0 rows matched AND require-nonempty=false
+;;   1  nix/jq absent or failed, a malformed row under strict, a lane naming
+;;      no component, OR 0 rows AND require-nonempty=true
+
+;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
+
+;; The default stage for an event. A dispatch goes the whole way because a
+;; human asked for it by hand; a push stops at publish because the mirror and
+;; promote legs write to a DOWNSTREAM repo and an automatic commit into an
+;; environment's pointer branch on every merge is a deploy, not a build.
+;; A schedule neither builds nor pushes — it re-scans what is already out
+;; there, which is the only phase that reads the world rather than the flake.
+(define (hip:stage-for-event ev)
+  (cond
+    ((equal? ev "workflow_dispatch") "all")
+    ((equal? ev "push") "publish")
+    ((equal? ev "pull_request") "build")
+    ((equal? ev "schedule") "rescan")
+    (else "build")))
+
+;; An explicit stage always wins; empty falls through to the event's default.
+(define (hip:resolve-stage stage ev)
+  (if (equal? (string-trim stage) "")
+    (hip:stage-for-event ev)
+    (string-trim stage)))
+
+(define (hip:valid-stage? s)
+  (or (equal? s "build")
+    (equal? s "publish")
+    (equal? s "mirror")
+    (equal? s "all")
+    (equal? s "rescan")))
+
+;; A lane of "" or "none" both mean the default arm. Two spellings reach this
+;; from real dispatch inputs (an omitted field and an explicitly-chosen
+;; `none`), and treating only one of them as the default silently selects zero
+;; components for the other.
+(define (hip:default-lane? lane)
+  (let ((l (string-trim lane)))
+    (or (equal? l "") (equal? l "none"))))
+
+;; Parse the tracked mirror-debt ledger into the set of held slugs.
+;;
+;; The ledger is prose, one finding per line, each beginning `<slug>: `. Taking
+;; the text before the first colon is what makes the file readable BY A HUMAN
+;; and parseable here — the alternative (a second machine-only list beside it)
+;; is exactly the duplicate hand-list this action exists to remove. Comment and
+;; blank lines are skipped; a slug appearing on several findings collapses to
+;; one entry.
+;; NOTE the recursion form: plain self-recursion over the line list, NOT a
+;; named `let`. tatara-lisp has no named-let — `(let loop ((x …)) …)` parses as
+;; a malformed binding list and fails at RUN time with `bad let: bindings must
+;; be a list`, which is a surface fact worth knowing before writing any loop
+;; here. The same shape is what build-matrix uses.
+(define (hip:held-from-text txt)
+  (hip:held-lines (string-split txt "\n")))
+
+(define (hip:held-lines lines)
+  (cond
+    ((null? lines) (list))
+    (else
+      (let*
+        ((rest (hip:held-lines (cdr lines)))
+          (raw (string-trim (car lines)))
+          (skip? (or (equal? raw "") (hip:comment-line? raw)))
+          (slug (if skip? "" (hip:slug-before-colon raw))))
+        (cond
+          (skip? rest)
+          ((equal? slug "") rest)
+          ;; Dedupe against the TAIL — a component contributes several findings
+          ;; to the ledger and must collapse to one held slug.
+          ((hip:member? slug rest) rest)
+          (else (cons slug rest)))))))
+
+;; `substring` does NOT exist in this stdlib — the prefix test goes through
+;; `string-prefix?`, which the stdlib itself provides after having open-coded
+;; the same idea twice.
+(define (hip:comment-line? s)
+  (and (> (string-length s) 0) (string-prefix? s "#")))
+
+(define (hip:slug-before-colon s)
+  (let ((parts (string-split s ":")))
+    (if (null? parts) "" (string-trim (car parts)))))
+
+;; `string->number` does not exist in this stdlib. jq hands back the count as
+;; a decimal string and the only question asked of it is whether it is zero, so
+;; it is compared AS a string — a parse would add a failure mode (what does a
+;; non-numeric count mean?) to answer a question that never needed one.
+(define (hip:zero-count? c)
+  (let ((t (string-trim c)))
+    (or (equal? t "0") (equal? t ""))))
+
+(define (hip:member? x lst)
+  (cond
+    ((null? lst) #f)
+    ((equal? x (car lst)) #t)
+    (else (hip:member? x (cdr lst)))))
+
+;; ── the projection, as a jq program ──────────────────────────────
+;;
+;; NO DOUBLE-QUOTE CHARACTER APPEARS BELOW. Every string literal the program
+;; needs arrives as a --arg, so this embeds in a tlisp string verbatim. That is
+;; not tidiness: a quoting bug in an emitted matrix is invisible until a
+;; downstream job receives a mangled row.
+;;
+;; The four booleans are the whole point of this action. Each was, in the
+;; workflow this replaces, a hand-copied `if:` expression per component per
+;; phase — which is why 18 components had a typed flag and no job to honour it.
+(define hip:pipeline-jq
+  (string-append
+    "def heldset: if $heldstr == $empty then [] else ($heldstr | split($sp)) end; "
+    "def sel($svc; $r): "
+    "  (if $only == $empty then true else $svc == $only end) and "
+    "  (if $lanedefault == $yes then true "
+    "   else (($r.lanes // []) | index($lane)) != null end); "
+    "{ include: [ "
+    "  ($cat | to_entries[]) "
+    "  | .value as $r "
+    "  | ($r.service // $empty) as $svc "
+    "  | select(sel($svc; $r)) "
+    "  | ((heldset | index($svc)) != null) as $isheld "
+    "  | ($r.zot // false) as $zot "
+    "  | ($r.harbor // false) as $harbor "
+    "  | { component: $svc, "
+    "      publishName: ($r.publishName // $empty), "
+    "      tag: ($r.publishTag // $empty), "
+    "      pushTag: ($r.pushTag // $r.publishTag // $empty), "
+    "      upstreamImage: ($r.upstreamImage // $empty), "
+    ;; The suppression surface, carried ON THE ROW rather than left in workflow
+    ;; YAML. This is what lets the no-cve-suppression gate keep counting after
+    ;; the per-component jobs are gone — without it that gate goes quietly
+    ;; blind the day this action lands, which is worse than the jobs it
+    ;; replaces.
+    "      hasGrypeIgnore: (($r.grypeIgnoreFile // null) != null), "
+    "      hasVulnixWhitelist: (($r.vulnixWhitelist // null) != null), "
+    "      cveClaimCount: ((($r.cveClaims.grype // []) | length) "
+    "                    + (($r.cveClaims.vulnix // []) | length)), "
+    "      zot: $zot, "
+    "      harbor: $harbor, "
+    "      held: $isheld, "
+    "      runner: $runner, "
+    "      cancelInProgress: ($stage != $sall), "
+    "      doBuild: ($stage != $srescan), "
+    "      doPush: ($stage == $spublish or $stage == $smirror or $stage == $sall), "
+    "      doMirror: ($zot and ($isheld | not) and ($stage == $smirror or $stage == $sall)), "
+    "      doPromote: ($harbor and ($isheld | not) and ($stage == $sall)) } ] }"))
+
+;; The rescan set is derived from the SAME catalog as the pipeline, which is
+;; the property that matters: the set re-scanned is the set published, by
+;; construction, rather than a second hand-list that drifts. On the measured
+;; repo that third list covered 12 of 40.
+;;
+;; Held components are excluded and NAMED in the summary rather than dropped
+;; silently — a held row is tracked debt whose image may legitimately not exist
+;; yet (two catalog rows on the measured repo declare a publishName whose GHCR
+;; package 404s), and failing the nightly scan on known-tracked debt trains
+;; everyone to ignore a red schedule.
+(define hip:rescan-jq
+  (string-append
+    "def heldset: if $heldstr == $empty then [] else ($heldstr | split($sp)) end; "
+    "{ include: [ "
+    "  ($cat | to_entries[]) "
+    "  | .value as $r "
+    "  | ($r.service // $empty) as $svc "
+    "  | select((heldset | index($svc)) == null) "
+    "  | select(($r.publishName // $empty) != $empty) "
+    "  | { component: $svc, "
+    "      ref: (($r.publishName // $empty) + $colon + ($r.publishTag // $empty)), "
+    "      runner: $runner } ] }"))
+
+;; Rows missing a field the projection READS are the malformed class. Only two
+;; fields are genuinely load-bearing — a row with no `service` cannot be
+;; selected, held, or named, and a row with no `publishName` cannot be scanned
+;; or mirrored. Everything else has an honest default. Under strict this is a
+;; hard failure naming the row, because the alternative is the measured defect
+;; it exists to stop: a component silently inheriting another's posture.
+(define hip:malformed-jq
+  (string-append
+    "[ ($cat | to_entries[]) "
+    "  | select(((.value.service // $empty) == $empty) "
+    "        or ((.value.publishName // $empty) == $empty)) "
+    "  | .key ] | join($sp)"))
+
+;; ── side-effecting plumbing ──────────────────────────────────────
+
+(define (hip:ok? r) (car r))
+(define (hip:payload r) (car (cdr r)))
+
+(define (hip:on-path? bin)
+  (let ((r (exec-capture "sh" "-c" (string-append "command -v " bin " >/dev/null 2>&1"))))
+    (= (status-of r) 0)))
+
+;; `nix eval --json` of the catalog attr, written to a file for jq.
+(define (hip:eval-catalog flake-ref catalog-attr tmp-dir)
+  (let*
+    ((target (string-append flake-ref "#" catalog-attr))
+      (r (exec-capture "nix" "eval" "--json" target)))
+    (cond
+      ((not (= (status-of r) 0)) (list #f (stderr-of r)))
+      (else
+        (let ((jf (string-append tmp-dir "/hardened-image-catalog.json")))
+          (write-file jf (stdout-of r))
+          (list #t jf))))))
+
+;; Run one jq program over the catalog file with the full --arg set. Every
+;; string literal the programs above need is bound here; adding a literal to a
+;; program means adding it here, which is the trade that keeps the programs
+;; quote-free.
+(define (hip:jq program catalog-file only lane stage held-str runner system)
+  (let*
+    ((r (exec-capture
+          "jq" "-c" "-n"
+          "--slurpfile" "catraw" catalog-file
+          "--arg" "system" system
+          "--arg" "empty" ""
+          "--arg" "sp" " "
+          "--arg" "colon" ":"
+          "--arg" "yes" "yes"
+          "--arg" "only" only
+          "--arg" "lane" lane
+          "--arg" "lanedefault" (if (hip:default-lane? lane) "yes" "no")
+          "--arg" "stage" stage
+          "--arg" "heldstr" held-str
+          "--arg" "runner" runner
+          "--arg" "spublish" "publish"
+          "--arg" "smirror" "mirror"
+          "--arg" "sall" "all"
+          "--arg" "srescan" "rescan"
+          "--arg" "nosystem" " is not a system key in this catalog"
+          ;; Index the system BEFORE the projection, and fail loudly if that
+          ;; key is absent. `// {}` here would turn an unknown system into an
+          ;; empty component set — a clean-looking plan for a system the
+          ;; catalog does not build, which is the exact silent-empty class the
+          ;; denominator exists to catch.
+          (string-append
+            "($catraw[0]) as $whole "
+            "| (if ($whole | has($system)) then ($whole[$system]) "
+            "   else (error(($system) + ($colon) + ( $nosystem ))) end) as $cat | "
+            program))))
+    (if (= (status-of r) 0)
+      (list #t (string-trim (stdout-of r)))
+      (list #f (stderr-of r)))))
+
+;; Count `include` rows in an emitted matrix without re-deriving them.
+(define (hip:count-of matrix-json tmp-dir)
+  (let* ((f (string-append tmp-dir "/hip-count.json")))
+    (write-file f matrix-json)
+    (let ((r (exec-capture "jq" "-r" ".include | length" f)))
+      (if (= (status-of r) 0) (string-trim (stdout-of r)) "0"))))
+
+;; The slugs that promote in THIS run, read back off the emitted matrix so the
+;; output cannot disagree with the plan it describes.
+(define (hip:promoting-of matrix-json tmp-dir)
+  (let* ((f (string-append tmp-dir "/hip-promoting.json")))
+    (write-file f matrix-json)
+    (let ((r (exec-capture "jq" "-r" "--arg" "sp" " "
+               "[.include[] | select(.doPromote) | .component] | join($sp)" f)))
+      (if (= (status-of r) 0) (string-trim (stdout-of r)) ""))))
+
+(define (hip:read-held held-file)
+  (if (path-exists? held-file)
+    (hip:held-from-text (read-file held-file))
+    (list)))
+
+(define (hip:emit pipeline pcount rescan rcount promoting scanned reason)
+  (append-output (string-append "pipeline-matrix=" pipeline))
+  (append-output (string-append "pipeline-count=" pcount))
+  (append-output (string-append "rescan-matrix=" rescan))
+  (append-output (string-append "rescan-count=" rcount))
+  (append-output (string-append "promoting=" promoting))
+  (append-output (string-append "scanned=" scanned))
+  (append-output (string-append "reason=" reason)))
+
+(define (hip:empty-emit reason)
+  (hip:emit "" "0" "" "0" "" "0" reason))
+
+;; ── main ─────────────────────────────────────────────────────────
+
+(define (main)
+  (let*
+    ((flake-ref (env-get "FLAKE_REF" "."))
+      (catalog-attr (env-get "CATALOG_ATTR" "hardenedImageCatalog"))
+      (event (env-get "EVENT" ""))
+      (only (string-trim (env-get "ONLY" "")))
+      (lane (string-trim (env-get "LANE" "")))
+      (stage (hip:resolve-stage (env-get "STAGE" "") event))
+      (held-file (env-get "HELD_FILE" "tools/pipeline-registration-baseline.txt"))
+      (runner (env-get "PLAN_RUNNER" ""))
+      (require-ne (env-get "REQUIRE_NONEMPTY" "true"))
+      (strict (env-get "STRICT" "true"))
+      (system (env-get "EVAL_SYSTEM" "x86_64-linux"))
+      (tmp-dir (env-get "RUNNER_TEMP" "/tmp")))
+    (cond
+      ((not (hip:on-path? "nix"))
+        (log-error "hardened-image-plan: `nix` not on PATH — cannot read the catalog (the runner must bake nix)")
+        (hip:empty-emit "nix-absent")
+        1)
+      ((not (hip:on-path? "jq"))
+        (log-error "hardened-image-plan: `jq` not on PATH — cannot serialize the plan (the runner must bake jq)")
+        (hip:empty-emit "jq-absent")
+        1)
+      ((not (hip:valid-stage? stage))
+        (log-error
+          (string-append
+            "hardened-image-plan: stage `" stage
+            "` is not one of build|publish|mirror|all|rescan — refusing to guess"))
+        (hip:empty-emit "empty-plan")
+        1)
+      (else (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system tmp-dir)))))
+
+(define (hip:run flake-ref catalog-attr only lane stage held-file runner require-ne strict system tmp-dir)
+  (let ((ev (hip:eval-catalog flake-ref catalog-attr tmp-dir)))
+    (cond
+      ((not (hip:ok? ev))
+        (log-error
+          (string-append "hardened-image-plan: `nix eval` of " flake-ref "#" catalog-attr " failed"))
+        (log-info (hip:payload ev))
+        (hip:empty-emit "nix-eval-failed")
+        1)
+      (else
+        (let*
+          ((catalog-file (hip:payload ev))
+            (held (hip:read-held held-file))
+            (held-str (string-join " " held))
+            ;; The denominator, read BEFORE any filter. Emitted even on the
+            ;; failure paths below so an empty plan can never be mistaken for
+            ;; a clean one.
+            (scanned-r (hip:jq "($cat | to_entries | length)" catalog-file only lane stage held-str runner system))
+            (scanned (if (hip:ok? scanned-r) (hip:payload scanned-r) "0"))
+            (malformed-r (hip:jq hip:malformed-jq catalog-file only lane stage held-str runner system))
+            (malformed (if (hip:ok? malformed-r) (string-trim (hip:payload malformed-r)) "")))
+          (log-info
+            (string-append
+              "hardened-image-plan: " scanned " catalog rows in " flake-ref "#" catalog-attr
+              " | stage=" stage
+              " | only=" (if (equal? only "") "<all>" only)
+              " | lane=" (if (hip:default-lane? lane) "<default>" lane)
+              " | held=" (string-format "{}" (length held))))
+          (cond
+            ;; A row the projection cannot read is a hard stop under strict —
+            ;; the alternative is the component silently inheriting another's
+            ;; scan posture, which is invisible in a green run.
+            ((and (equal? strict "true") (not (equal? malformed "")))
+              (log-error
+                (string-append
+                  "hardened-image-plan: catalog row(s) missing `service` or `publishName`: "
+                  malformed
+                  " — strict=true, refusing to plan around a row the projection cannot read"))
+              (hip:emit "" "0" "" "0" "" scanned "malformed-row")
+              1)
+            (else
+              (hip:plan catalog-file only lane stage held-str held runner require-ne scanned system tmp-dir))))))))
+
+(define (hip:plan catalog-file only lane stage held-str held runner require-ne scanned system tmp-dir)
+  (let*
+    ((pr (hip:jq hip:pipeline-jq catalog-file only lane stage held-str runner system))
+      (rr (hip:jq hip:rescan-jq catalog-file only lane stage held-str runner system)))
+    (cond
+      ((not (hip:ok? pr))
+        (log-error "hardened-image-plan: jq failed to serialize the pipeline matrix")
+        (log-info (hip:payload pr))
+        (hip:emit "" "0" "" "0" "" scanned "jq-failed")
+        1)
+      (else
+        (let*
+          ((pipeline (hip:payload pr))
+            (rescan (if (hip:ok? rr) (hip:payload rr) ""))
+            (pcount (hip:count-of pipeline tmp-dir))
+            (rcount (if (hip:ok? rr) (hip:count-of rescan tmp-dir) "0"))
+            (promoting (hip:promoting-of pipeline tmp-dir)))
+          (log-info
+            (string-append
+              "hardened-image-plan: " pcount " pipeline row(s), " rcount " rescan row(s)"
+              (if (equal? promoting "")
+                ", none promoting to 2F"
+                (string-append ", promoting to 2F: " promoting))))
+          (cond
+            ;; A lane naming no component is a TYPO, not an empty day's work.
+            ;; Reporting it as a clean empty plan is how a dispatch silently
+            ;; does nothing and reads as success.
+            ((and (hip:zero-count? pcount) (not (hip:default-lane? lane)))
+              (log-error
+                (string-append
+                  "hardened-image-plan: lane `" lane "` selected 0 of " scanned
+                  " catalog rows — a lane that names no component is a mis-typed input, "
+                  "not an empty plan. Note the catalog must carry a `lanes` list per row "
+                  "for lane selection to match anything at all."))
+              (hip:emit pipeline "0" rescan rcount "" scanned "empty-lane")
+              1)
+            ((hip:zero-count? pcount)
+              (cond
+                ((equal? require-ne "true")
+                  (log-error
+                    (string-append
+                      "hardened-image-plan: 0 of " scanned
+                      " catalog rows matched — require-nonempty=true, failing rather than "
+                      "skipping the whole delivery silently"))
+                  (hip:emit pipeline "0" rescan rcount "" scanned "empty-plan")
+                  1)
+                (else
+                  (log-info
+                    (string-append "hardened-image-plan: 0 of " scanned
+                      " rows matched; require-nonempty=false — clean empty (exit 2)"))
+                  (hip:emit pipeline "0" rescan rcount "" scanned "empty-plan")
+                  2)))
+            (else
+              (hip:emit pipeline pcount rescan rcount promoting scanned "ok")
+              0)))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — hardened-image-plan helpers loaded; main skipped"))
+  (else (exit (main))))
