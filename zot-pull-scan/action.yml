@@ -260,8 +260,30 @@ runs:
       id: pull-src
       shell: bash
       run: |
+        set -euo pipefail
+        # WHY A FILE AND NOT A STEP OUTPUT. A step output becomes an action
+        # input, becomes an environment variable, and lands in the exec arg
+        # space -- where Linux caps a single argv/env string at
+        # MAX_ARG_STRLEN = 131072 bytes. stdlib.tlisp alone is 118414, leaving
+        # 12657 for the script. pull.tlisp is 16659, so the pair was 135073 and
+        # exec failed by 4002 bytes.
+        #
+        # The failure names none of that. bash never starts, so nothing
+        # tlisp-related is logged and the run dies with "An error occurred
+        # trying to start process '/usr/bin/bash' ... Argument list too long",
+        # attributed to the action rather than to its size. Measured live on
+        # hardened-images run 31602346297: the mirror leg died here, the
+        # verdict step then reported result=/severity=/vuln-count= all EMPTY,
+        # and the admission guard correctly refused to mirror -- a fail-closed
+        # outcome whose stated reason was a scan that never ran.
+        #
+        # script-file passes a PATH, so the script's size stops being an
+        # exec-limit concern rather than buying headroom the next stdlib commit
+        # spends. Measured across this repo the same day: 301 actions still use
+        # the `script:` form, 1 was already over, and 49 sit within 8KB of the
+        # ceiling -- the tightest with 292 bytes left.
+        out="${RUNNER_TEMP}/zot-pull-scan-pull.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # In-checkout, not fetched. substrate pins this action `@v1`, so the
           # tlisp below comes from the v1 checkout -- but the stdlib was curl'd
           # from `main`, and the two halves of one script ran at different refs.
@@ -274,13 +296,13 @@ runs:
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/pull.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
     - id: pull
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.pull-src.outputs.script }}
+        script-file: ${{ steps.pull-src.outputs.script-file }}
       env:
         REF: ${{ inputs.ref }}
         DEST: ${{ inputs.dest }}
@@ -346,8 +368,30 @@ runs:
       id: verdict-src
       shell: bash
       run: |
+        set -euo pipefail
+        # WHY A FILE AND NOT A STEP OUTPUT. A step output becomes an action
+        # input, becomes an environment variable, and lands in the exec arg
+        # space -- where Linux caps a single argv/env string at
+        # MAX_ARG_STRLEN = 131072 bytes. stdlib.tlisp alone is 118414, leaving
+        # 12657 for the script. pull.tlisp is 16659, so the pair was 135073 and
+        # exec failed by 4002 bytes.
+        #
+        # The failure names none of that. bash never starts, so nothing
+        # tlisp-related is logged and the run dies with "An error occurred
+        # trying to start process '/usr/bin/bash' ... Argument list too long",
+        # attributed to the action rather than to its size. Measured live on
+        # hardened-images run 31602346297: the mirror leg died here, the
+        # verdict step then reported result=/severity=/vuln-count= all EMPTY,
+        # and the admission guard correctly refused to mirror -- a fail-closed
+        # outcome whose stated reason was a scan that never ran.
+        #
+        # script-file passes a PATH, so the script's size stops being an
+        # exec-limit concern rather than buying headroom the next stdlib commit
+        # spends. Measured across this repo the same day: 301 actions still use
+        # the `script:` form, 1 was already over, and 49 sit within 8KB of the
+        # ceiling -- the tightest with 292 bytes left.
+        out="${RUNNER_TEMP}/zot-pull-scan-verdict.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # In-checkout, not fetched. substrate pins this action `@v1`, so the
           # tlisp below comes from the v1 checkout -- but the stdlib was curl'd
           # from `main`, and the two halves of one script ran at different refs.
@@ -360,13 +404,13 @@ runs:
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/verdict.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
     - id: verdict
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.verdict-src.outputs.script }}
+        script-file: ${{ steps.verdict-src.outputs.script-file }}
       env:
         SCAN_OUTCOME: ${{ steps.scan.outcome }}
         SCAN_SEVERITY: ${{ steps.scan.outputs.severity }}
