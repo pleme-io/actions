@@ -25,10 +25,57 @@
   (define prior (if (path-exists? gh-output) (read-file gh-output) ""))
   (write-file gh-output (string-append prior line "\n")))
 
+;; `expect` — assert the detected type, inside the action.
+;;
+;; Empty (the default) keeps the historical detect-and-report behaviour
+;; byte for byte, so every existing consumer is untouched.
+;;
+;; Non-empty turns this into a PRECONDITION. A reusable workflow that only
+;; works on one repo shape can now state that shape as a value in its call
+;; instead of trusting each consumer's shim to have picked the right
+;; workflow — which is the failure this input exists for. Measured
+;; 2026-08-14: seven repos ran cargo-auto-release.yml (single-crate) against
+;; a [workspace] root, and every release died at
+;;
+;;     ERROR cargo-publish-crate: package.name not found in Cargo.toml
+;;
+;; A workspace root has no [package] BY DEFINITION, so that message is a true
+;; statement about the manifest and tells the reader nothing about the actual
+;; mistake. The routing rule was written down — cargo-auto-release.yml's own
+;; header says "For workspace repos use rust-auto-release.yml instead" — and
+;; a header cannot fail a build.
+(define expect (string-trim (env-get "EXPECT" "")))
+
 (define (emit type manifest)
   (log-info (string-append "detected: " type " (manifest: " manifest ")"))
   (append-output (string-append "repo-type=" type))
   (append-output (string-append "manifest-path=" manifest))
+  (cond
+    ((and (not (equal? expect "")) (not (equal? expect type)))
+      (log-error
+        (string-append
+          "repo-type mismatch: this workflow expects a '"
+          expect
+          "' repo and "
+          manifest
+          " says this is '"
+          type
+          "'"))
+      ;; The routing rule goes IN the message, not behind a link. The
+      ;; operator reading this is looking at a CI log in a repo that is not
+      ;; this one, and the fix is one line in a shim; making them go find a
+      ;; table first is the whole difference between a diagnosis and a
+      ;; complaint. (README.md is also `pleme-doc-gen` OUTPUT — "do not
+      ;; hand-edit" — so a table added there would be erased by the next
+      ;; regen, and the link would rot pointing at nothing.)
+      (log-error "  the shim calling this workflow names the wrong one. Rust routing:")
+      (log-error "    [package] root                        -> cargo-auto-release.yml")
+      (log-error "    [workspace] + [workspace.package]     -> rust-auto-release.yml")
+      (log-error
+        (string-append
+          "    [workspace] without it                -> "
+          "cargo-publish-each-member-auto-release.yml"))
+      (exit 1)))
   (exit 0))
 
 ;; -------------------------------------------------------------- ;;

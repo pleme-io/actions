@@ -4,8 +4,20 @@ branding:
   icon: 'eye'
   color: 'blue'
 
-# No inputs — detection is purely from file presence at repo root.
+# Detection is purely from file presence at repo root.
 # All logic lives in run.tlisp; the runner just provides the FS view.
+
+inputs:
+  expect:
+    description: >-
+      Optional PRECONDITION. When set to a repo-type identifier, the action
+      fails if the repo is not that type, naming both the expectation and
+      what the manifest actually says. Empty (the default) keeps the
+      detect-and-report behaviour unchanged for every existing consumer.
+      Use it from a reusable workflow that only works on one repo shape, so
+      the shape is asserted here rather than assumed of each consumer's shim.
+    required: false
+    default: ""
 
 outputs:
   repo-type:
@@ -36,3 +48,5 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script: ${{ steps.src.outputs.script }}
+      env:
+        EXPECT: ${{ inputs.expect }}
