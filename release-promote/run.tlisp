@@ -107,7 +107,7 @@
 ;; Simple same-token push (default OFF). The robust token-rearmed,
 ;; rebase-safe, downstream-firing path is `git-push-with-token` — chain
 ;; it (push=false here) rather than re-forking its logic.
-(define (promote:git-push branch) (status-of (exec-capture "git" "push" "origin" branch)))
+(define (promote:git-push branch) (checked-status "git push" (exec-capture "git" "push" "origin" branch)))
 
 (define (promote:emit-fail reason)
   (append-output "promoted=false")
