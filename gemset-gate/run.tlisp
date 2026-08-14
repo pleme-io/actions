@@ -1,0 +1,251 @@
+;; gemset-gate/run.tlisp — tie gemset.nix to Gemfile.lock, the way
+;; Cargo.gen.lock is tied to Cargo.lock.
+;;
+;; Rationale, receipts and the rejected alternatives:
+;; theory/CONSTRUCTIVE-ACTIONS.md §0.3e. In brief:
+;;
+;; Measured 2026-08-14: no action in the catalog referenced `gemset.nix` or
+;; `Gemfile.lock`, so a Ruby repo could release with a gemset.nix naming a gem
+;; set its Gemfile.lock no longer names and nix would build the STALE half.
+;;
+;; Compares the (name, version) SET in each file. Pure text — no bundix, no
+;; network, no subprocess — so it runs anywhere the repo is checked out and is
+;; unit-testable from fixtures. A "run .#regen and diff" gate was rejected: a
+;; regen that fails for an unrelated reason is indistinguishable from a clean
+;; tree, the false-green that cost `ensure-gen-lock-fresh` a second fix.
+;;
+;; DOES NOT CLAIM digest agreement. gemset.nix carries a sha256 per gem and
+;; this does not check those, so a gem republished at the same version with
+;; different bytes passes. Real limit, not a rounding — the claim is only "the
+;; two lockfiles name the same gem set".
+;;
+;; TIER: CI-caught, only-mitigated. A repo can still commit a mismatched pair;
+;; this makes it fail loudly instead of building from the stale half.
+;;
+;; KEEP THIS FILE LEAN. It is inlined into exec argv against a 131072-byte
+;; ceiling shared with the stdlib; see exec-arg-budget-lint.
+
+(define gh-output (env-get "GITHUB_OUTPUT" ""))
+
+(define (append-output line)
+  (cond
+    ((not (equal? gh-output ""))
+      (let ((prior (if (path-exists? gh-output) (read-file gh-output) "")))
+        (write-file gh-output (string-append prior line "\n"))))))
+
+(define fail-on-violation? (equal? (env-get "FAIL_ON_VIOLATION" "true") "true"))
+(define lock-path (env-get "GEMFILE_LOCK" "Gemfile.lock"))
+(define gemset-path (env-get "GEMSET_NIX" "gemset.nix"))
+
+;; Membership. `list-contains?` is NOT in the stdlib — action-shell-lint and
+;; breathe-band-lint each define their own copy, which is a third duplication
+;; waiting to happen. Building it from stdlib's `any?` instead of adding a
+;; fourth: the stdlib is 293 bytes from breaking two actions on the exec-arg
+;; ceiling (see exec-arg-budget-lint), so nothing new lands there today.
+(define (has-entry? entries e) (any? (lambda (x) (equal? x e)) entries))
+
+;; ── Gemfile.lock ──────────────────────────────────────────────────────────
+;;
+;; Only GEM's `specs:` block lists resolved gems, and only its TOP-level
+;; entries are gems — a line indented further is a DEPENDENCY of the entry
+;; above it. Counting those makes every transitive requirement a phantom gem
+;; that gemset.nix is then blamed for missing.
+;;
+;; Depths MEASURED against a real Gemfile.lock (pangea-aws, 2026-08-14), not
+;; assumed — the first draft used 6/8 and parsed every real file as EMPTY,
+;; which the null-check below would have reported as `unparseable` rather than
+;; as agreement. That guard is why the wrong guess was loud instead of green.
+;;
+;;   GEM
+;;     specs:
+;;       rspec (3.13.2)          <- 4 spaces: a gem
+;;         rspec-core (~> 3.13)  <- 6 spaces: a dependency, NOT a gem
+(define (lock-spec-line? line)
+  (and (string-starts-with? line "    ")
+    (not (string-starts-with? line "      "))
+    (string-contains? line " (")
+    (string-contains? line ")")))
+
+;; "  rspec (3.13.0)" -> "rspec 3.13.0". Returns "" for anything that does not
+;; split cleanly, and the caller drops those rather than guessing.
+(define (lock-entry line)
+  (let ((parts (string-split (string-trim line) " (")))
+    (cond
+      ((< (length parts) 2) "")
+      (else (string-append (nth 0 parts) " " (nth 0 (string-split (nth 1 parts) ")")))))))
+
+(define (lock-entries src)
+  (filter
+    (lambda (e) (not (equal? e "")))
+    (map lock-entry (filter lock-spec-line? (string-split src "\n")))))
+
+;; ── gemset.nix ────────────────────────────────────────────────────────────
+;;
+;; A top-level `  name = {` opens a gem and a later `version = "x";` closes the
+;; pair. Two passes over the same line list rather than a stateful walk, since
+;; this dialect has no named `let` loop: collect the gem names, collect the
+;; versions, and zip. bundix emits exactly one `version =` per top-level gem
+;; and emits them in the same order as the names, which is what makes the zip
+;; sound; `entries-agree?` below is the assertion that it held.
+(define (gemset-name-line? line)
+  (and (string-starts-with? line "  ")
+    (not (string-starts-with? line "    "))
+    (string-contains? line " = {")))
+
+(define (gemset-version-line? line) (string-contains? (string-trim line) "version = \""))
+
+(define (gemset-name-of line) (string-trim (nth 0 (string-split line " = {"))))
+
+(define (gemset-version-of line) (nth 1 (string-split (string-trim line) "\"")))
+
+(define (zip-entries names versions)
+  (cond
+    ((or (null? names) (null? versions)) (list))
+    (else
+      (cons
+        (string-append (car names) " " (car versions))
+        (zip-entries (cdr names) (cdr versions))))))
+
+(define (gemset-entries src)
+  (let ((lines (string-split src "\n")))
+    (zip-entries
+      (map gemset-name-of (filter gemset-name-line? lines))
+      (map gemset-version-of (filter gemset-version-line? lines)))))
+
+;; The zip is only sound if bundix emitted one version per gem. If the counts
+;; differ the pairing is silently wrong — every entry after the mismatch would
+;; carry someone else's version — so the counts are checked rather than
+;; assumed, and a mismatch is reported as unparseable, never as drift.
+(define (counts-agree? src)
+  (let ((lines (string-split src "\n")))
+    (= (length (filter gemset-name-line? lines)) (length (filter gemset-version-line? lines)))))
+
+;; ── Compare ───────────────────────────────────────────────────────────────
+
+(define (missing-from reference candidates)
+  (filter (lambda (e) (not (has-entry? candidates e))) reference))
+
+(define (report label entries)
+  (cond
+    ((not (null? entries))
+      (log-error (string-append "gemset-gate: " label ": " (string-join ", " entries))))))
+
+(define (fail-with verdict)
+  (append-output (string-append "verdict=" verdict))
+  (if fail-on-violation? (exit 1) (exit 0)))
+
+(define (compare)
+  (let ((lock (lock-entries (read-file lock-path))) (gems (gemset-entries (read-file gemset-path))))
+    (append-output (string-append "lock-gems=" (string-format "{}" (length lock))))
+    (append-output (string-append "gemset-gems=" (string-format "{}" (length gems))))
+    (cond
+      ;; A parse that finds nothing is not a pass. Both files exist and a Ruby
+      ;; repo has gems, so a zero means the format moved under the parser —
+      ;; reporting that as agreement is the silent-zero this gate exists to
+      ;; avoid.
+      ((or (null? lock) (null? gems))
+        (log-error
+          (string-append
+            "gemset-gate: parsed "
+            (string-format "{}" (length lock))
+            " gem(s) from "
+            lock-path
+            " and "
+            (string-format "{}" (length gems))
+            " from "
+            gemset-path
+            " — a zero here means the file format changed, not that they agree"))
+        (fail-with "unparseable"))
+      ((not (counts-agree? (read-file gemset-path)))
+        (log-error
+          (string-append
+            "gemset-gate: "
+            gemset-path
+            " has a different number of gem blocks than version fields — the "
+            "name/version pairing cannot be trusted, so this is reported as "
+            "unparseable rather than as drift"))
+        (fail-with "unparseable"))
+      (else
+        (let ((only-lock (missing-from lock gems)) (only-gemset (missing-from gems lock)))
+          (append-output
+            (string-append
+              "drift="
+              (string-format "{}" (+ (length only-lock) (length only-gemset)))))
+          (cond
+            ((and (null? only-lock) (null? only-gemset))
+              (log-info
+                (string-append
+                  "gemset-gate: ok — "
+                  (string-format "{}" (length lock))
+                  " gems, "
+                  lock-path
+                  " and "
+                  gemset-path
+                  " name the same set"))
+              (append-output "verdict=ok")
+              (exit 0))
+            (else
+              (report (string-append "in " lock-path " but not " gemset-path) only-lock)
+              (report (string-append "in " gemset-path " but not " lock-path) only-gemset)
+              (log-error
+                "gemset-gate: the two lockfiles disagree. Run `nix run .#regen` and commit both.")
+              (fail-with "drift"))))))))
+
+(define (main)
+  (cond
+    ;; Neither half: not a bundix repo. Success — a gate that fires on every
+    ;; non-Ruby repo is a gate people delete.
+    ;;
+    ;; A Gemfile with neither half is NOTED, not failed, and the distinction is
+    ;; deliberate. It is a real smell — pangea-helm is in that state — but "a
+    ;; Gemfile exists" does not prove the repo is nix-built from a gem set; a
+    ;; Gemfile carried for dev tooling alone owes no gemset.nix. Failing on it
+    ;; would make this gate assert something it has not checked. Bundler
+    ;; hygiene is a different question from the lockfile TIE, which is this
+    ;; gate's whole job.
+    ((and (not (path-exists? lock-path)) (not (path-exists? gemset-path)))
+      (cond
+        ((path-exists? "Gemfile")
+          (log-info
+            (string-append
+              "gemset-gate: Gemfile present but neither "
+              lock-path
+              " nor "
+              gemset-path
+              " — noted, not failed; this gate checks the TIE between the two "
+              "halves and cannot tell a dev-tooling Gemfile from a missing lock"))
+          (append-output "verdict=gemfile-only"))
+        (else
+          (log-info
+            "gemset-gate: no Gemfile.lock and no gemset.nix — not a bundix repo, skipping")
+          (append-output "verdict=not-applicable")))
+      (exit 0))
+    ;; One half without the other IS the defect, and it is real: the same sweep
+    ;; found pangea-helm carrying a Gemfile with neither file, which nothing
+    ;; objected to.
+    ((not (path-exists? lock-path))
+      (log-error
+        (string-append
+          "gemset-gate: "
+          gemset-path
+          " exists but "
+          lock-path
+          " does not — the generated half has no source. Run `nix run .#regen`."))
+      (fail-with "missing-lock"))
+    ((not (path-exists? gemset-path))
+      (log-error
+        (string-append
+          "gemset-gate: "
+          lock-path
+          " exists but "
+          gemset-path
+          " does not — nix has no gem set to build. Run `nix run .#regen`."))
+      (fail-with "missing-gemset"))
+    (else (compare))))
+
+;; TLISP_TEST=1 loads the definitions without running the scan, so
+;; run.test.tlisp can drive the parsers from fixtures. Same convention as
+;; every other action here.
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))

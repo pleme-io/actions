@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                355
-# routing tatara-script  339
-# distinct keys written  334
+# actions                356
+# routing tatara-script  340
+# distinct keys written  337
 # dynamic key expansions 8
-# inner union (generated)342
+# inner union (generated)345
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -151,6 +151,7 @@ foundry-test	tatara-script	run.tlisp	1	1
 gcp-auth	own-runner	-	0	1
 gcs-sync	tatara-script	run.tlisp	1	1
 gem-publish	own-runner	-	0	0
+gemset-gate	tatara-script	run.tlisp	4	4
 gen-build-spec	tatara-script	run.tlisp	7	7
 gh-release-create	tatara-script	run.tlisp	2	2
 gh-secrets-sync	tatara-script	run.tlisp	1	1
@@ -340,7 +341,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	342
+tatara-script	own-runner	-	0	345
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -606,6 +607,10 @@ fly-deploy	deployed	static	declared	forwarded
 flyway-migrate	applied	static	declared	forwarded
 foundry-test	passed	static	declared	forwarded
 gcs-sync	synced	static	declared	forwarded
+gemset-gate	drift	static	declared	forwarded
+gemset-gate	gemset-gems	static	declared	forwarded
+gemset-gate	lock-gems	static	declared	forwarded
+gemset-gate	verdict	static	declared	forwarded
 gen-build-spec	changed	static	declared	forwarded
 gen-build-spec	lang	static	declared	forwarded
 gen-build-spec	reason	static	declared	forwarded
