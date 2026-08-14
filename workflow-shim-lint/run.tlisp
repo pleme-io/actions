@@ -137,13 +137,9 @@
 ;; TLISP_TEST=1 loads the definitions without running the scan, so the
 ;; `run.test.tlisp` harness can drive the predicates directly. Same convention
 ;; as every other action in this repo.
-(if (equal? (env-get "TLISP_TEST" "") "")
-  (main)
-  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
-
-;; TLISP_TEST=1 loads the definitions without running the scan, so the
-;; `run.test.tlisp` harness can drive the predicates directly. Same convention
-;; as every other action in this repo.
+;; (This block was pasted TWICE until 2026-08-14. `main` exits on every path,
+;; so the second copy was unreachable rather than a double scan — harmless,
+;; and it read as deliberate, which is why it is removed rather than left.)
 (if (equal? (env-get "TLISP_TEST" "") "")
   (main)
   (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
