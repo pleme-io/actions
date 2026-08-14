@@ -74,11 +74,11 @@
       "chart declares "
       (dependency-count)
       " dependency/dependencies — resolving before package"))
-  (checked-status "helm dependency update" (exec-capture "helm" "dependency" "update" ".")))
+  (status-of (exec-capture "helm" "dependency" "update" ".")))
 
 (define (do-package)
   (cond
-    ((not (has-dependencies?)) (checked-status "helm package" (exec-capture "helm" "package" ".")))
+    ((not (has-dependencies?)) (status-of (exec-capture "helm" "package" ".")))
     (else
       (let ((dep (do-dependency-update)))
         (cond
@@ -91,7 +91,7 @@
                 "if the repository is an OCI registry, check that the login step "
                 "before this one used a token with read access to it."))
             dep)
-          (else (checked-status "helm package" (exec-capture "helm" "package" "."))))))))
+          (else (status-of (exec-capture "helm" "package" "."))))))))
 
 (define (do-push name version)
   ;; The packaged chart lands at ./<name>-<version>.tgz.

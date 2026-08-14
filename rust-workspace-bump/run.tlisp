@@ -360,7 +360,7 @@
             #t))))))
 
 (define (do-regen)
-  (checked-status "crate2nix generate" (exec-capture "nix" "run" "github:nix-community/crate2nix" "--" "generate")))
+  (status-of (exec-capture "nix" "run" "github:nix-community/crate2nix" "--" "generate")))
 
 (define (refresh-lock) (exec-capture "cargo" "update" "--workspace"))
 
