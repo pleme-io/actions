@@ -42,8 +42,31 @@ runs:
       if: hashFiles('Cargo.toml') != ''
       shell: bash
       # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
-      # exact-pinned to nixos-24.05.
-      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-audit || true
+      # exact-pinned to nixos-26.05 (cargo-audit 0.22.1).
+      #
+      # WAS nixos-24.05 (cargo-audit 0.20.0) until 2026-08-14, and that pin
+      # was reddening 164 security-gate runs org-wide. The advisory database
+      # is fetched FRESH on every run while the auditor was two years old, so
+      # the moment RustSec published an advisory using newer TOML the parser
+      # gave up on the whole database:
+      #
+      #   error: error loading advisory database: parse error:
+      #     crates/lz4_flex/RUSTSEC-2026-0041.md: TOML parse error at line 8
+      #
+      # Exit 3, which run.tlisp correctly reports as "the gate did not run"
+      # rather than "vulnerabilities found" -- so the classification was
+      # right and every caixa-* gate was red for two years' worth of drift.
+      #
+      # Verified rather than assumed: 0.20.0 reproduces the parse error
+      # locally (on libcrux-poly1305/RUSTSEC-2026-0073.md, same shape) and
+      # 0.22.1 audits the same tree clean.
+      #
+      # NOTE for whoever bumps the other pins: `nixos-24.05` appears 24 times
+      # across 19 actions and is the only channel in the catalog, but they are
+      # NOT uniformly safe to move. cargo-bump pins cargo-edit to 24.05
+      # DELIBERATELY, to avoid a manifest-parse regression in 0.13.10 -- which
+      # is exactly what 26.05 ships. Each pin needs its own judgement.
+      run: nix profile install github:NixOS/nixpkgs/nixos-26.05#cargo-audit || true
 
     - name: Install Node (if needed)
       if: hashFiles('package.json') != ''
