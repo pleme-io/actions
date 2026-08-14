@@ -258,6 +258,13 @@
 
 ;; `status-of`, but a FAILURE says what the child said.
 ;;
+;; ONLY for `exec-capture`. `exec-check` runs with INHERITED stdio, so the
+;; child already writes to the runner log and needs nothing from this — it is
+;; `exec-capture` that redirects the output away, which is what makes the
+;; discard invisible. (Measured 2026-08-14: a heuristic sweep for "actions
+;; that never reference stderr-of" flagged 13, of which most use `exec-check`
+;; and were never blind. The defect is capture-then-drop, not silence.)
+;;
 ;; Use this wherever a non-zero exit is a defect to diagnose. Keep plain
 ;; `status-of` where the exit code IS the answer — `release-exists?`,
 ;; `any-changes?`, `command -v`, a `jq -e` validity probe. A predicate that

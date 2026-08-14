@@ -164,11 +164,14 @@
   ;; first, then extracted the moment a fleet sweep found nine more actions
   ;; discarding a subprocess diagnosis the same way.
   ;;
-  ;; The exit code is deliberately not interpolated into the message below:
-  ;; tatara-lisp has no `number->string` (only the keyword/symbol/string
-  ;; conversions), so the obvious spelling throws at runtime — on the error
-  ;; path, where a test is least likely to reach it. The runner already prints
-  ;; `##[error]Process completed with exit code N`.
+  ;; The exit code is not interpolated into the message below because the
+  ;; runner already prints `##[error]Process completed with exit code N`.
+  ;;
+  ;; If you DO need a number in a string here, the idiom is
+  ;; `(string-format "{}" n)` — as `exec-or-die` uses. It is NOT
+  ;; `number->string`, which this dialect does not have; reaching for that
+  ;; spelling throws at runtime, and on an error path, where a test is least
+  ;; likely to reach it.
   (let ((bump-status
           (checked-status
             "cargo set-version"
