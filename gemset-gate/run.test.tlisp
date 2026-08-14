@@ -1,0 +1,104 @@
+;; gemset-gate/run.test.tlisp — the parsers, driven from fixtures.
+;;
+;; Every case here is a shape taken from a real pleme-io Ruby repo rather than
+;; invented, because the whole risk in this gate is a parser that reads a real
+;; file as empty and calls that agreement.
+
+(define LOCK
+  (string-join
+    "\n"
+    (list
+      "GEM"
+      "  remote: https://rubygems.org/"
+      "  specs:"
+      "    abstract-synthesizer (0.0.15)"
+      "    base64 (0.3.0)"
+      "    rspec (3.13.0)"
+      "      rspec-core (~> 3.13.0)"
+      "      rspec-expectations (~> 3.13.0)"
+      ""
+      "PLATFORMS"
+      "  ruby"
+      ""
+      "DEPENDENCIES"
+      "  rspec (~> 3.13)")))
+
+(define GEMSET
+  (string-join
+    "\n"
+    (list
+      "{"
+      "  abstract-synthesizer = {"
+      "    groups = [\"default\"];"
+      "    source = {"
+      "      sha256 = \"1724yzbklcmiiahb7s3y1ir1i0n03b9c3arlib35g85d8hf0h75d\";"
+      "      type = \"gem\";"
+      "    };"
+      "    version = \"0.0.15\";"
+      "  };"
+      "  base64 = {"
+      "    groups = [\"default\"];"
+      "    version = \"0.3.0\";"
+      "  };"
+      "  rspec = {"
+      "    groups = [\"default\"];"
+      "    version = \"3.13.0\";"
+      "  };"
+      "}")))
+
+(deftest "Gemfile.lock: only TOP-level specs are gems, never their dependencies"
+  ;; The defect this prevents: counting `      rspec-core (~> 3.13.0)` as a gem
+  ;; makes gemset.nix look like it is missing two gems it was never supposed
+  ;; to carry, and every repo reports drift forever.
+  (let ((e (lock-entries LOCK)))
+    (assert (= (length e) 3) "3 gems, not the 5 lines that contain parentheses")
+    (assert (has-entry? e "abstract-synthesizer 0.0.15") "name and version joined")
+    (assert (has-entry? e "rspec 3.13.0") "rspec itself")
+    (assert (not (has-entry? e "rspec-core ~> 3.13.0")) "a DEPENDENCY line is not a gem")))
+
+(deftest "gemset.nix: top-level blocks pair with their version fields"
+  (let ((e (gemset-entries GEMSET)))
+    (assert (= (length e) 3) "3 gems")
+    (assert (has-entry? e "abstract-synthesizer 0.0.15") "first")
+    (assert (has-entry? e "base64 0.3.0") "second")
+    (assert (has-entry? e "rspec 3.13.0") "third")))
+
+(deftest "the two halves of a HEALTHY repo agree — no drift either way"
+  (let ((l (lock-entries LOCK)) (g (gemset-entries GEMSET)))
+    (assert (null? (missing-from l g)) "nothing in the lock is absent from the gemset")
+    (assert (null? (missing-from g l)) "nothing in the gemset is absent from the lock")))
+
+(deftest "a VERSION drift is caught in both directions"
+  ;; The realistic failure: someone edits Gemfile.lock (or bundler does) and
+  ;; forgets `nix run .#regen`, so nix keeps building the old gem.
+  (let*
+    ((stale (string-replace GEMSET "version = \"0.3.0\";" "version = \"0.2.9\";"))
+      (l (lock-entries LOCK))
+      (g (gemset-entries stale)))
+    (assert (has-entry? (missing-from l g) "base64 0.3.0") "the lock's version is missing from the gemset")
+    (assert (has-entry? (missing-from g l) "base64 0.2.9") "and the gemset's stale one is missing from the lock")))
+
+(deftest "a gem present in only one half is caught"
+  (let*
+    ((l (lock-entries LOCK))
+      (g (gemset-entries (string-replace GEMSET "  rspec = {" "  rspec-renamed = {"))))
+    (assert (has-entry? (missing-from l g) "rspec 3.13.0") "dropped from the gemset")))
+
+(deftest "counts-agree? rejects a gemset whose pairing cannot be trusted"
+  ;; If bundix ever emits a block without a version, the positional zip would
+  ;; hand every later gem someone else's version. That must read as
+  ;; unparseable, never as drift.
+  (assert (counts-agree? GEMSET) "the healthy fixture pairs 1:1")
+  (assert
+    (not (counts-agree? (string-replace GEMSET "    version = \"0.3.0\";" "")))
+    "a block with no version field breaks the pairing and is detected"))
+
+(deftest "an empty or foreign file parses to NOTHING, so the gate can refuse it"
+  ;; This is the silent-zero guard. A parser that returns 0 entries must not be
+  ;; read as 'the two files agree' — main() checks for null and fails.
+  (assert (null? (lock-entries "")) "empty lock")
+  (assert (null? (gemset-entries "")) "empty gemset")
+  (assert (null? (lock-entries "just some prose\nwith no specs block")) "foreign text")
+  ;; …and two empties would otherwise "agree", which is exactly the trap.
+  (assert (null? (missing-from (lock-entries "") (gemset-entries "")))
+    "two empties compare equal — which is why null-ness is checked BEFORE drift"))

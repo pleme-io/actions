@@ -434,6 +434,9 @@ outputs:
   gate-receipt-path:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: gate-receipt-path)"
     value: ${{ steps.exec.outputs.gate-receipt-path }}
+  gemset-gems:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: gemset-gems)"
+    value: ${{ steps.exec.outputs.gemset-gems }}
   generated:
     description: "Forwarded (key: generated) — written by 1 action dir(s): git-cliff"
     value: ${{ steps.exec.outputs.generated }}
@@ -524,6 +527,9 @@ outputs:
   local-archive:
     description: "Forwarded (key: local-archive) — zot-pull-scan pulled archive path"
     value: ${{ steps.exec.outputs.local-archive }}
+  lock-gems:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: lock-gems)"
+    value: ${{ steps.exec.outputs.lock-gems }}
   logged-in:
     description: "Forwarded (key: logged-in) — written by 1 action dir(s): skopeo-login"
     value: ${{ steps.exec.outputs.logged-in }}
@@ -1049,6 +1055,9 @@ outputs:
   values-file:
     description: "Forwarded (key: values-file) — written by 1 action dir(s): release-promote"
     value: ${{ steps.exec.outputs.values-file }}
+  verdict:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: verdict)"
+    value: ${{ steps.exec.outputs.verdict }}
   verified:
     description: "Forwarded (key: verified) — written by 1 action dir(s): cosign-verify"
     value: ${{ steps.exec.outputs.verified }}

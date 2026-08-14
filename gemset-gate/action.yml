@@ -1,0 +1,58 @@
+name: 'pleme-io · gemset-gate'
+description: 'Tie gemset.nix to Gemfile.lock for a bundix-built Ruby repo — fails when the two lockfiles no longer name the same (gem, version) set, when one half exists without the other, or when either parses to nothing. Pure text comparison: no bundix, no network, no subprocess. The Ruby counterpart of the Cargo.gen.lock <-> Cargo.lock tie that ensure-gen-lock-fresh enforces for Rust.'
+branding:
+  icon: 'link'
+  color: 'red'
+
+inputs:
+  gemfile-lock:
+    description: "Path to bundler's lockfile. Default Gemfile.lock at the repo root."
+    required: false
+    default: "Gemfile.lock"
+  gemset-nix:
+    description: "Path to bundix's generated gem set. Default gemset.nix at the repo root."
+    required: false
+    default: "gemset.nix"
+  fail-on-violation:
+    description: "Fail the job on drift, a missing half, or an unparseable file. Set false to adopt report-only first — the same rollout shape action-shell-lint and workflow-shim-lint use."
+    required: false
+    default: "true"
+
+outputs:
+  verdict:
+    description: "ok | drift | missing-lock | missing-gemset | unparseable | gemfile-only | not-applicable"
+    value: ${{ steps.gate.outputs.verdict }}
+  lock-gems:
+    description: "Count of gems parsed from Gemfile.lock."
+    value: ${{ steps.gate.outputs.lock-gems }}
+  gemset-gems:
+    description: "Count of gems parsed from gemset.nix."
+    value: ${{ steps.gate.outputs.gemset-gems }}
+  drift:
+    description: "Count of (gem, version) entries present in one file and not the other."
+    value: ${{ steps.gate.outputs.drift }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never
+          # fetched. Same loader shape as every other action here.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: gate
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        GEMFILE_LOCK: ${{ inputs.gemfile-lock }}
+        GEMSET_NIX: ${{ inputs.gemset-nix }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
