@@ -498,7 +498,23 @@
       ((not (path-exists? "Cargo.toml"))
         (emit-failure "rust-workspace-bump: no Cargo.toml at repo root" "")
         (exit 1))
+      ;; A missing workspace version is almost never a broken manifest — it is
+      ;; a workspace that versions PER MEMBER, called by the wrong reusable.
+      ;; Measured 2026-08-14: 9 repos red on exactly this, every one of them a
+      ;; valid workspace whose members each carry a [package].version.
+      ;;
+      ;; So the message names the fix, not just the absence. Naming only the
+      ;; missing key invites the wrong repair — inventing a workspace version
+      ;; and making N members inherit it, which is a release-semantics change
+      ;; made to satisfy a CI error.
       ((equal? old-version "")
+        (log-error "rust-workspace-bump: no [workspace.package].version in Cargo.toml")
+        (log-error "  If members each carry their own [package].version, this")
+        (log-error "  workspace versions PER MEMBER and the shim is calling the")
+        (log-error "  wrong reusable. Use:")
+        (log-error "    cargo-publish-each-member-auto-release.yml")
+        (log-error "  Only add a [workspace.package].version if you intend every")
+        (log-error "  member to share one — that is a release decision, not a fix.")
         (emit-failure "rust-workspace-bump: workspace.package.version not found" "")
         (exit 1))
       ((not (should-bump?))
