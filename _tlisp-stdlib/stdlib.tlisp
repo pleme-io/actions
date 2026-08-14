@@ -256,6 +256,35 @@
 
 (define (stderr-of result) (alist-get result "stderr" ""))
 
+;; `status-of`, but a FAILURE says what the child said.
+;;
+;; Use this wherever a non-zero exit is a defect to diagnose. Keep plain
+;; `status-of` where the exit code IS the answer — `release-exists?`,
+;; `any-changes?`, `command -v`, a `jq -e` validity probe. A predicate that
+;; printed stderr on every negative would turn "no, and that's fine" into
+;; noise; an OPERATION that prints nothing turns a fixable failure into an
+;; unanswerable one.
+;;
+;; Measured 2026-08-14: `cargo-bump` reported `ERROR cargo set-version failed`
+;; across 77 repos with cargo's own message nowhere in the log — captured by
+;; `exec-capture`, dropped one line later by `status-of`. Every one of those
+;; runs was undiagnosable without re-running the command by hand. This is that
+;; fix, extracted on its second occurrence rather than copied to a tenth.
+;;
+;; Returns the status unchanged, so `(= (checked-status …) 0)` reads exactly
+;; like the `(= (status-of …) 0)` it replaces.
+(define (checked-status label result)
+  (cond
+    ((= (status-of result) 0) 0)
+    (else
+      (cond
+        ((not (equal? (stderr-of result) ""))
+          (log-error (string-append label " stderr: " (stderr-of result)))))
+      (cond
+        ((not (equal? (stdout-of result) ""))
+          (log-error (string-append label " stdout: " (stdout-of result)))))
+      (status-of result))))
+
 ;; ────────────────────────────────────────────────────────────────
 ;; TOML line walker — extract a field's quoted value from a
 ;; specific section. No full TOML parser yet; stop at the next

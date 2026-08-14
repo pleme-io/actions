@@ -18,10 +18,10 @@
 
 (define (do-update kind)
   (cond
-    ((equal? kind "rust") (status-of (exec-capture "cargo" "update")))
-    ((equal? kind "npm") (status-of (exec-capture "npm" "update")))
-    ((equal? kind "python") (status-of (exec-capture "uv" "lock" "--upgrade")))
-    ((equal? kind "nix") (status-of (exec-capture "nix" "flake" "update")))
+    ((equal? kind "rust") (checked-status "cargo update" (exec-capture "cargo" "update")))
+    ((equal? kind "npm") (checked-status "npm update" (exec-capture "npm" "update")))
+    ((equal? kind "python") (checked-status "uv lock" (exec-capture "uv" "lock" "--upgrade")))
+    ((equal? kind "nix") (checked-status "nix flake update" (exec-capture "nix" "flake" "update")))
     (else 1)))
 
 (define (any-changes?) (not (= (status-of (exec-capture "git" "diff" "--quiet")) 0)))

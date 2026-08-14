@@ -13,7 +13,7 @@
 
 (define (run-rust)
   (log-info "==> cargo check --workspace --all-targets")
-  (= (status-of (exec-capture "cargo" "check" "--workspace" "--all-targets")) 0))
+  (= (checked-status "cargo check" (exec-capture "cargo" "check" "--workspace" "--all-targets")) 0))
 
 (define (run-ts)
   (log-info "==> npx tsc --noEmit")

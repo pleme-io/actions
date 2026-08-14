@@ -21,7 +21,7 @@
 (define (do-bump)
   ;; --no-git-tag-version: we own commit + tag via git-commit-tag.
   ;; npm version writes back the bumped value to package.json + lockfile.
-  (status-of (exec-capture "npm" "version" "--no-git-tag-version" bump-type)))
+  (checked-status "npm version" (exec-capture "npm" "version" "--no-git-tag-version" bump-type)))
 
 (define (emit-skip msg old-v)
   (log-info msg)
