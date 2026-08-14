@@ -58,16 +58,25 @@
     ;; "" = use --bump
     (else (semver:bump (semver:bump-seed old-v max-v) type))))
 
+;; Returns the WHOLE exec result, not `status-of` it.
+;;
+;; It returned only the exit code until 2026-08-14, and the cost was measured:
+;; a fleet CI sweep found 74 repos red on `ERROR cargo set-version failed`
+;; with cargo's own message nowhere in the log — captured by `exec-capture`
+;; and dropped one line later. Every one of those runs was undiagnosable
+;; without re-running the command by hand, which is the same defect class the
+;; kotae doctrine names: a failure that says THAT it failed and not WHICH
+;; thing failed.
 (define (do-bump target)
   (cond
-    ((equal? target "") (status-of (exec-capture "cargo" "set-version" "--bump" bump-type)))
+    ((equal? target "") (exec-capture "cargo" "set-version" "--bump" bump-type))
     (else
       (log-info
         (string-append
           "manifest lags the tags — setting the version explicitly to "
           target
           " instead of bumping from the manifest"))
-      (status-of (exec-capture "cargo" "set-version" target)))))
+      (exec-capture "cargo" "set-version" target))))
 
 ;; PINNED, not master: the regenerated Cargo.nix's embedded runtime template
 ;; must match what the fleet's builders consume. An unpinned regen silently
@@ -150,9 +159,28 @@
 
 (define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
-  (let ((bump-status (do-bump (bump-target old-v (git:max-released-version "v") bump-type))))
+  (let* ((bump-result (do-bump (bump-target old-v (git:max-released-version "v") bump-type)))
+         (bump-status (status-of bump-result)))
     (cond
-      ((not (= bump-status 0)) (emit-failure "cargo set-version failed" old-v) bump-status)
+      ((not (= bump-status 0))
+        ;; Say WHICH failure this was. cargo writes its diagnosis to stderr
+        ;; (and occasionally stdout); both are already in hand, and the run
+        ;; is over — there is no cost to printing them and a measured cost to
+        ;; not. Guarded so an empty capture does not print a bare label.
+        (cond
+          ((not (equal? (stderr-of bump-result) ""))
+            (log-error (string-append "cargo set-version stderr: " (stderr-of bump-result)))))
+        (cond
+          ((not (equal? (stdout-of bump-result) ""))
+            (log-error (string-append "cargo set-version stdout: " (stdout-of bump-result)))))
+        ;; The exit code is NOT interpolated here: tatara-lisp has no
+        ;; `number->string` (only the keyword/symbol/string conversions), so
+        ;; the obvious spelling would have thrown at runtime — on the error
+        ;; path, which is exactly where a test is least likely to reach it.
+        ;; The code is already on the runner's own `##[error]Process completed
+        ;; with exit code N` line; the stderr above is what was missing.
+        (emit-failure "cargo set-version failed — see stderr above" old-v)
+        bump-status)
       ((not (equal? regenerate-cargo-nix "true"))
         (log-info "regenerate-cargo-nix=false — skipping crate2nix step")
         (post-bump-checks old-v))
