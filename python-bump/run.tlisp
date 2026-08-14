@@ -20,7 +20,7 @@
 (define (do-bump)
   ;; uv 0.5+ ships `uv version --bump <patch|minor|major>` which
   ;; edits pyproject.toml + refreshes uv.lock in one shot.
-  (checked-status "uv version" (exec-capture "uv" "version" "--bump" bump-type)))
+  (status-of (exec-capture "uv" "version" "--bump" bump-type)))
 
 (define (emit-skip msg old-v)
   (log-info msg)

@@ -159,25 +159,26 @@
 
 (define (run-bump-pipeline old-v)
   (log-info (string-append "bumping " bump-type " from " old-v))
-  ;; `checked-status` (stdlib) prints the child's stderr/stdout on failure.
-  ;; This site is where that helper came from — it was written inline here
-  ;; first, then extracted the moment a fleet sweep found nine more actions
-  ;; discarding a subprocess diagnosis the same way.
-  ;;
-  ;; The exit code is not interpolated into the message below because the
-  ;; runner already prints `##[error]Process completed with exit code N`.
-  ;;
-  ;; If you DO need a number in a string here, the idiom is
-  ;; `(string-format "{}" n)` — as `exec-or-die` uses. It is NOT
-  ;; `number->string`, which this dialect does not have; reaching for that
-  ;; spelling throws at runtime, and on an error path, where a test is least
-  ;; likely to reach it.
-  (let ((bump-status
-          (checked-status
-            "cargo set-version"
-            (do-bump (bump-target old-v (git:max-released-version "v") bump-type)))))
+  (let* ((bump-result (do-bump (bump-target old-v (git:max-released-version "v") bump-type)))
+         (bump-status (status-of bump-result)))
     (cond
       ((not (= bump-status 0))
+        ;; Say WHICH failure this was. cargo writes its diagnosis to stderr
+        ;; (and occasionally stdout); both are already in hand, and the run
+        ;; is over — there is no cost to printing them and a measured cost to
+        ;; not. Guarded so an empty capture does not print a bare label.
+        (cond
+          ((not (equal? (stderr-of bump-result) ""))
+            (log-error (string-append "cargo set-version stderr: " (stderr-of bump-result)))))
+        (cond
+          ((not (equal? (stdout-of bump-result) ""))
+            (log-error (string-append "cargo set-version stdout: " (stdout-of bump-result)))))
+        ;; The exit code is NOT interpolated here: tatara-lisp has no
+        ;; `number->string` (only the keyword/symbol/string conversions), so
+        ;; the obvious spelling would have thrown at runtime — on the error
+        ;; path, which is exactly where a test is least likely to reach it.
+        ;; The code is already on the runner's own `##[error]Process completed
+        ;; with exit code N` line; the stderr above is what was missing.
         (emit-failure "cargo set-version failed — see stderr above" old-v)
         bump-status)
       ((not (equal? regenerate-cargo-nix "true"))
