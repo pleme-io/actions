@@ -1,0 +1,43 @@
+name: 'pleme-io · ci-triage'
+description: 'Classify a CI failure log against the typed fleet failure-signature catalog. Matches on the LOG SIGNATURE, never the step name; an unmatched log reports `unclassified` rather than being folded into the nearest row.'
+branding:
+  icon: 'search'
+  color: 'orange'
+
+inputs:
+  log-file:
+    description: >-
+      Path to a file containing the failing job's log text. Required: the script
+      REFUSES (exit 2) rather than emitting a verdict about a log it never read.
+    required: true
+
+outputs:
+  class:
+    description: >-
+      Catalog row id, or the literal `unclassified`. Empty only when the action
+      refused. `unclassified` is a FINDING to turn into a catalog row, not an
+      error — the step still exits 0.
+    value: ${{ steps.triage.outputs.class }}
+
+runs:
+  using: composite
+  steps:
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        {
+          echo 'script<<TLISP_EOF'
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+          echo 'TLISP_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - id: triage
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script: ${{ steps.src.outputs.script }}
+      env:
+        LOG_FILE: ${{ inputs.log-file }}

@@ -1,0 +1,102 @@
+;; ci-triage/run.test.tlisp — (deftest …) for `classify`.
+;;
+;; Every assertion below uses a REAL log line, copied from the failing run named
+;; in the comment. That is the point: the shell version of this triage could not
+;; be tested at all, so each class was re-derived by hand every time.
+
+(deftest "classify: each :log-read catalog row is matched by its real log line"
+  ;; caixa-tempfile run 32004168602 — the largest class in the sweep.
+  (assert
+    (equal?
+      (classify "install: cannot create regular file '/usr/local/bin/syft': Permission denied")
+      "syft-install-not-writable")
+    "syft install to a non-writable prefix")
+  ;; caixa-bevy-window run 32004219404.
+  (assert
+    (equal?
+      (classify "error inheriting `lints` from workspace root manifest's `workspace.lints`")
+      "caixa-workspace-member-not-cargoable")
+    "workspace-member absorbed as a standalone crate")
+  ;; pleme-hotswap-derive run 32010482554 — the misdiagnosed one.
+  (assert
+    (equal?
+      (classify "error: Dependency is not of a valid type: element 6 of buildInputs for nix-shell")
+      "devshell-invalid-buildinput")
+    "devShell could not be entered")
+  ;; nix run 32003817370.
+  (assert
+    (equal?
+      (classify "error: Could not parse '/home/runner/_work/nix/nix/flake.lock': [json.exception.parse_error.101] parse error at line 1497")
+      "conflict-markers-in-lockfile")
+    "conflict markers committed into flake.lock")
+  ;; pangea-architectures run 31972777153.
+  (assert
+    (equal?
+      (classify "error: flake 'git+file:///home/runner/_work/x/x' does not provide attribute 'apps.x86_64-linux.gem:bump'")
+      "gem-bump-app-absent")
+    "substrate-bump ran an app the flake does not expose")
+  ;; pleme-hotswap-derive run 32012041418.
+  (assert
+    (equal? (classify "error: attribute 'rootCrate' missing") "flake-exposes-no-rootcrate")
+    "flake check against a crate2nix Cargo.nix")
+  ;; ensaio run 31772948270.
+  (assert
+    (equal? (classify "/bin/sh: 1: xz: not found") "magic-nix-cache-unusable-on-runner")
+    "third-party nix cache action on an ARC runner")
+  ;; mado, the genuine case.
+  (assert
+    (equal? (classify "Diff in /home/runner/work/mado/src/terminal.rs:10430:")
+            "genuine-rustfmt-drift")
+    "real formatting drift"))
+
+(deftest "classify: ORDER is priority — the devShell cause beats fmt drift"
+  ;; The regression guard for the actual mistake this catalog exists to prevent.
+  ;; A log carrying BOTH must classify as the devShell failure, because that is
+  ;; the one that explains why the step failed; reporting drift here is what
+  ;; sends the next reader to run `cargo fmt` for nothing.
+  (assert
+    (equal?
+      (classify
+        (string-append
+          "Diff in /w/src/lib.rs:12:\n"
+          "error: Dependency is not of a valid type: element 6 of buildInputs for nix-shell"))
+      "devshell-invalid-buildinput")
+    "devShell row wins over the drift row regardless of line order")
+  (assert
+    (equal?
+      (classify
+        (string-append
+          "error: Dependency is not of a valid type: element 6 of buildInputs for nix-shell\n"
+          "Diff in /w/src/lib.rs:12:"))
+      "devshell-invalid-buildinput")
+    "…and in the other order too, so it is priority and not first-line-wins"))
+
+(deftest "classify: an unknown signature is `unclassified`, never a near neighbour"
+  ;; The anti-fold guard. If this ever returns a row id, the classifier has
+  ;; started guessing, which is the failure mode the catalog is designed around.
+  (assert
+    (equal? (classify "error: something nobody has catalogued yet") "unclassified")
+    "unknown text does not get folded into a row")
+  (assert (equal? (classify "") "unclassified") "empty log is unclassified, not a match")
+  ;; Near-misses: text that MENTIONS a class without being it.
+  (assert
+    (equal? (classify "note: see docs about buildInputs and rustfmt drift") "unclassified")
+    "prose naming two classes matches neither")
+  (assert
+    (equal? (classify "Diff in README.md:3:") "unclassified")
+    "the fmt row requires a .rs path, so a markdown diff is not drift"))
+
+(deftest "classify: multi-line real logs, not just single lines"
+  ;; Logs are thousands of lines with the signature buried; a classifier that
+  ;; only works on an isolated line works on nothing real.
+  (assert
+    (equal?
+      (classify
+        (string-append
+          "2026-08-17T07:04:06Z   fail-on-severity: high\n"
+          "2026-08-17T07:04:07Z shell: /usr/bin/bash --noprofile --norc -e\n"
+          "2026-08-17T07:04:08Z install: cannot create regular file '/usr/local/bin/syft': Permission denied\n"
+          "2026-08-17T07:04:08Z [error] failed to install syft\n"
+          "2026-08-17T07:04:08Z ##[error]Process completed with exit code 1."))
+      "syft-install-not-writable")
+    "signature found mid-log with timestamps around it"))

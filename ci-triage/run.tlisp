@@ -1,0 +1,81 @@
+;; ci-triage/run.tlisp — classify a CI failure log against catalog.lisp.
+;;
+;; Replaces the bash-and-python triage this was being done with by hand. The
+;; whole decision is `classify`, which is PURE: text in, a catalog row id out.
+;; No gh, no filesystem, no network — so `deftest` can pin every row against a
+;; real log line, which is exactly what shell could not do.
+;;
+;; MATCHES ON THE LOG SIGNATURE, NEVER THE STEP NAME. See catalog.lisp's header
+;; for the receipt; the short version is that a step named
+;; `cargo fmt --check (inside .#default)` failed because a devShell could not be
+;; ENTERED, and reading the name instead of the log cost two wrong fix sweeps.
+;;
+;; ORDER IS PRIORITY, most specific first. Two rows can match one log; the
+;; earlier row wins. `:devshell-invalid-buildinput` therefore sits ABOVE
+;; `:genuine-rustfmt-drift`, because both arrive from the same step and only the
+;; former explains a log where rustfmt never ran.
+;;
+;; An unmatched log is `unclassified` — a FINDING, reported as its own distinct
+;; string, never folded into the nearest-looking row. Folding is how the
+;; misdiagnosis above was manufactured (cf. kotae's four non-identical answers).
+
+;; Each entry is (id pattern). A plist/list-of-lists rather than a map: the
+;; tatara-lisp surface has no map and no vector (theory/TATARA-LISP-SURFACE.md).
+(define signatures
+  (list
+    (list "syft-install-not-writable"
+          "cannot create regular file.*syft")
+    (list "devshell-invalid-buildinput"
+          "Dependency is not of a valid type: element [0-9]+ of buildInputs")
+    (list "caixa-workspace-member-not-cargoable"
+          "error inheriting .lints. from workspace root manifest")
+    (list "conflict-markers-in-lockfile"
+          "Could not parse .*flake.lock.*json.exception.parse_error")
+    (list "gem-bump-app-absent"
+          "does not provide attribute .apps..*gem:bump")
+    (list "flake-exposes-no-rootcrate"
+          "attribute .rootCrate. missing")
+    (list "flake-exposes-no-packages"
+          "attribute .packages. missing")
+    ;; Deliberately generic and therefore LAST of the specific rows: this string
+    ;; is the magic-nix-cache class's tell, but `xz: not found` could plausibly
+    ;; appear in an unrelated log.
+    (list "magic-nix-cache-unusable-on-runner"
+          "xz: not found")
+    ;; Genuine formatting drift is the LEAST specific fmt cause and must lose to
+    ;; the devShell row above.
+    (list "genuine-rustfmt-drift"
+          "^Diff in .*[.]rs:[0-9]+")))
+
+;; Fixed arity throughout: variadic `define` is absent from the surface.
+(define (any-line-matches? lines pattern)
+  (not (null? (filter (lambda (l) (re-match? pattern l)) lines))))
+
+(define (classify-in lines pats)
+  (cond
+    ((null? pats) "unclassified")
+    ((any-line-matches? lines (car (cdr (car pats)))) (car (car pats)))
+    (else (classify-in lines (cdr pats)))))
+
+;; log text -> catalog row id, or the literal "unclassified".
+(define (classify log)
+  (classify-in (string-split log "\n") signatures))
+
+(define (main)
+  (define path (env-get "LOG_FILE" ""))
+  (cond
+    ((equal? path "")
+      ;; REFUSED, not "unclassified": a verdict about a log we never read would
+      ;; be a fabricated one, and the two must not render as the same bytes.
+      (log-error "ci-triage: LOG_FILE not supplied — refusing to classify a log it never read")
+      (append-output "class=")
+      (exit 2)))
+  (let ((verdict (classify (read-file path))))
+    (log-info (string-append "ci-triage: " verdict))
+    (append-output (string-append "class=" verdict))
+    ;; Exit 0 even when unclassified: this REPORTS, it does not gate. An
+    ;; unknown signature is a finding for a human to turn into a catalog row,
+    ;; not a build failure.
+    (exit 0)))
+
+(cond ((equal? (env-get "TLISP_TEST" "") "") (main)))
