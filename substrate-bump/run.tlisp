@@ -87,7 +87,33 @@
       ""
       (first-version-line (string-split (read-file path) "\n")))))
 
-(define (gem-bump) (exec-check "nix" "run" ".#gem:bump" "--" bump-type))
+;; `exec-capture`, not `exec-check`: the status alone cannot tell "the bump ran
+;; and failed" from "the app this action assumes does not exist here", and those
+;; need different messages to different people. Measured 2026-08-17: 20 of the
+;; last 7 days' failures are the SECOND case, reported only as nix's
+;; `does not provide attribute 'apps.x86_64-linux.gem:bump'`.
+(define (gem-bump) (exec-capture "nix" "run" ".#gem:bump" "--" bump-type))
+
+;; Pure, so it is testable: does this stderr say the app is ABSENT rather than
+;; that the bump failed?
+;;
+;; WHY THIS IS A PRECONDITION AND NOT A BUG IN THE REPO. `find-gemspec` decides
+;; "this is a gem" from a root `*.gemspec` and nothing else, but `.#gem:bump` is
+;; provided only by substrate's ruby-gem builder (`lib/build/ruby/build.nix`).
+;; A repo that is genuinely a gem AND hand-rolls its own flake `outputs`
+;; therefore satisfies the detector and cannot satisfy the call — it fails 100%
+;; of the time, by construction, and no retry or version arithmetic can help.
+;; pangea-architectures is exactly this: `pangea-architectures.gemspec` at root,
+;; a hand-written `outputs`, no `gem:bump` anywhere.
+;;
+;; NOTE the near-miss that makes this worth naming precisely: substrate ALSO
+;; carries a `gem-bump` (hyphen) app in `lib/workspace/managed-flake.nix`, with
+;; a different arity (`<gem-name> <new-version>` positionally, not
+;; `-- <bump-type>`). It is NOT this app and cannot serve this call. Confirming
+;; that took reading both builders; do not "fix" a repo by wiring that one.
+(define (gem-app-absent? stderr-text)
+  (and (string-contains? stderr-text "does not provide attribute")
+       (string-contains? stderr-text "gem:bump")))
 
 ;; ---------------------------------------------------------------- ;;
 ;; Release monotonicity                                             ;;
@@ -179,7 +205,8 @@
       ;; Ruby gem path
       ((not (equal? gem-name ""))
         (define before (read-gem-version gem-name))
-        (define status (gem-bump))
+        (define result (gem-bump))
+        (define status (status-of result))
         (cond
           ((= status 0)
             (let ((after (read-gem-version gem-name)))
@@ -198,11 +225,46 @@
                   (append-output "bumped=false")
                   (append-output "new-version=")
                   (log-info (string-append "no version change detected (gem " gem-name ")"))))))
+          ;; The app is ABSENT — name the precondition, not nix's attribute
+          ;; error, and say who has to change what. Left as a failure
+          ;; deliberately: it IS misconfigured, and reporting bumped=false with
+          ;; exit 0 would let a release proceed having bumped nothing.
+          ((gem-app-absent? (stderr-of result))
+            (append-output "bumped=false")
+            (append-output "new-version=")
+            (log-error
+              (string-append
+                "substrate-bump: this repo has " gem-name ".gemspec, so it was "
+                "detected as a Ruby gem, but its flake exposes no `.#gem:bump` "
+                "app — so there is nothing here for this action to delegate to."))
+            (log-error
+              (string-append
+                "  `.#gem:bump` comes from substrate's ruby-gem builder "
+                "(lib/build/ruby/build.nix). A gem that hand-rolls its own "
+                "flake `outputs` satisfies the gemspec detector and can never "
+                "satisfy this call: it fails 100% of the time, by construction."))
+            (log-error
+              (string-append
+                "  Fix at the REPO: build the flake with substrate's ruby-gem "
+                "builder so `.#gem:bump` exists. Do NOT wire "
+                "lib/workspace/managed-flake.nix's `gem-bump` (hyphen) — a "
+                "different app with a different arity, and it is unwired."))
+            (exit status))
           (else
             (append-output "bumped=false")
             (append-output "new-version=")
             (log-error
               (string-append "nix run .#gem:bump failed with status " (string-format "{}" status)))
+            ;; Relay the child's own output. Without this the message above is
+            ;; the ONLY thing a reader gets, which is the same swallowing that
+            ;; left `ERROR cargo set-version failed` undiagnosable across 74
+            ;; repos until cargo-bump started relaying stderr.
+            (cond
+              ((not (equal? (stderr-of result) ""))
+                (log-error (string-append "nix run .#gem:bump stderr: " (stderr-of result)))))
+            (cond
+              ((not (equal? (stdout-of result) ""))
+                (log-info (string-append "nix run .#gem:bump stdout: " (stdout-of result)))))
             (exit status))))
 
       ;; Unknown repo type — fail loudly so misconfiguration surfaces
