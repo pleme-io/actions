@@ -1,0 +1,51 @@
+;; trivy-fs-scan/run.test.tlisp — (deftest …) over the pure verdict.
+;;
+;; The action was a STUB until 2026-08-17: a ::warning, `findings=stub`, exit 0
+;; — a vulnerability scan reporting success having scanned nothing, wired into a
+;; live build. These tests exist so it cannot quietly become that again, and so
+;; the one distinction that matters is pinned: "scanned and found nothing" and
+;; "did not scan" are different states, and no exit code can tell them apart.
+
+(deftest "no report means the scan did not run — never clean"
+  (let ((o (trivy:outcome #f #f 0)))
+    (assert (equal? o 'scan-error) "absent report is scan-error")
+    (assert (equal? (trivy:unknown? o) #t) "and it is an unknown, so it fails the build")
+    (assert (string-contains? (trivy:message o) "NOT a clean result") "the message says so")))
+
+(deftest "an unparseable report is not clean either"
+  (let ((o (trivy:outcome #t #f 0)))
+    (assert (equal? o 'report-unparseable) "present but unreadable")
+    (assert (equal? (trivy:unknown? o) #t) "also fails the build")))
+
+(deftest "a readable report with zero findings is clean"
+  (let ((o (trivy:outcome #t #t 0)))
+    (assert (equal? o 'clean) "clean")
+    (assert (equal? (trivy:unknown? o) #f) "and is a known result")))
+
+(deftest "a readable report with findings is findings, not an error"
+  (let ((o (trivy:outcome #t #t 3)))
+    (assert (equal? o 'findings) "findings")
+    (assert (equal? (trivy:unknown? o) #f) "findings are a KNOWN result — we scanned")))
+
+;; ── counting ───────────────────────────────────────────────────────────────
+
+(deftest "counts vulnerabilities across every result"
+  (let
+    ((rs (alist-get
+           (json-parse "{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"a\"},{\"VulnerabilityID\":\"b\"}]},{\"Vulnerabilities\":[{\"VulnerabilityID\":\"c\"}]}]}")
+           "Results")))
+    (assert (= (trivy:count-in rs) 3) "2 + 1")))
+
+(deftest "a result with NO Vulnerabilities key counts zero, not an error"
+  ;; trivy omits the key entirely for a clean target rather than emitting an
+  ;; empty array. Treating a missing key as unparseable would turn every clean
+  ;; scan into a build failure, and treating an unparseable report as zero
+  ;; would turn a broken scan into a pass. Both directions matter.
+  (let
+    ((rs (alist-get
+           (json-parse "{\"Results\":[{\"Target\":\"clean-one\"},{\"Vulnerabilities\":[{\"VulnerabilityID\":\"a\"}]}]}")
+           "Results")))
+    (assert (= (trivy:count-in rs) 1) "missing key contributes 0")))
+
+(deftest "an empty results list is zero"
+  (assert (= (trivy:count-in (list)) 0) "nothing scanned in range is not a crash"))

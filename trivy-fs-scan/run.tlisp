@@ -1,6 +1,154 @@
-;; trivy-fs-scan/run.tlisp — typed schema locked, body lands on consumer demand
-(log-info "::warning::trivy-fs-scan not yet implemented")
+;; trivy-fs-scan — trivy filesystem vulnerability scan over the repo source.
+;;
+;; IMPLEMENTED 2026-08-17. Until today the body was three lines:
+;;
+;;   (log-info "::warning::trivy-fs-scan not yet implemented")
+;;   (append-output "findings=stub")
+;;   (exit 0)
+;;
+;; A VULNERABILITY SCAN that reported success having scanned nothing, called
+;; from substrate/.github/workflows/super-cache-ci-build.yml — a live pipeline.
+;; Every run of that build carried a green shield step and no scan behind it.
+;; Found in a sweep for this shape: 158 of pleme-io/actions' actions are stubs
+;; that exit 0, and 13 of those are actually called. A telemetry emitter that
+;; no-ops is a gap; a scanner that no-ops is a false assurance, which is why
+;; this one was implemented first rather than filed.
+;;
+;; THE LOAD-BEARING DISTINCTION, taken from secrets-scan (which learned it the
+;; hard way): "scanned and found nothing" and "did not scan" are DIFFERENT
+;; STATES and an exit code cannot tell them apart. trivy exits non-zero for
+;; operational failure — an unreadable path, a bad severity string, a DB
+;; download failure — exactly as it may for findings. The discriminator is the
+;; REPORT FILE: a trivy that ran leaves parseable JSON; a trivy that died
+;; leaves nothing. This is the same trap recorded fleet-wide as "trivy '-' =
+;; NOT SCANNED and exits 0"; here it is our own action rather than the vendor's
+;; CLI.
+;;
+;; So a broken scan FAILS THE BUILD even when fail-on-found is false. Findings
+;; are a finding; not knowing is not a clean result.
 
-(append-output "findings=stub")
+(define report-path "/tmp/trivy-fs.json")
 
-(exit 0)
+;; ── the pure verdict, split out so it is provable ───────────────────────────
+;; Closed outcome vocabulary:
+;;   'clean              — a report we could read, zero vulnerabilities in it
+;;   'findings           — a report we could read, one or more
+;;   'scan-error         — NO report: trivy never really ran
+;;   'report-unparseable — a report exists but no count could be read from it
+(define (trivy:outcome report-exists? count-readable? count)
+  (cond
+    ((not report-exists?) 'scan-error)
+    ((not count-readable?) 'report-unparseable)
+    ((> count 0) 'findings)
+    (else 'clean)))
+
+;; #t iff the outcome means "we do not know whether this tree is clean".
+;; These fail the build regardless of fail-on-found.
+(define (trivy:unknown? outcome)
+  (or (equal? outcome 'scan-error) (equal? outcome 'report-unparseable)))
+
+;; Sum of Vulnerabilities across every Result. A Result with no findings omits
+;; the key entirely rather than carrying an empty array, so a missing key is 0
+;; and NOT an error — conflating those would turn a clean target into an
+;; unparseable report.
+(define (trivy:count-in results)
+  (cond
+    ((null? results) 0)
+    (else
+      (let ((v (alist-get (car results) "Vulnerabilities")))
+        (+
+          (cond ((equal? (string-format "{}" v) "nil") 0) (else (length v)))
+          (trivy:count-in (cdr results)))))))
+
+(define (trivy:message outcome)
+  (cond
+    ((equal? outcome 'scan-error)
+      (string-append
+        "trivy wrote NO report to " report-path
+        " — the scan did not run. This is NOT a clean result. Likely causes: an "
+        "unreadable workdir, an invalid --severity value, or a vulnerability-DB "
+        "download failure."))
+    ((equal? outcome 'report-unparseable)
+      (string-append
+        report-path " exists but no vulnerability count could be read from it — "
+        "the report is truncated or is not the JSON object trivy emits. This is "
+        "NOT a clean result."))
+    (else "")))
+
+;; ── main ────────────────────────────────────────────────────────────────────
+
+(define (trivy:main)
+  (let
+    ((workdir (env-get "WORKDIR" "."))
+      (severity (env-get "SEVERITY" "HIGH,CRITICAL"))
+      (fail-on-found (env-get "FAIL_ON_FOUND" "false")))
+
+    ;; A STALE report from an earlier step, or from a previous job on a warm
+    ;; self-hosted runner, would be read as THIS run's result — the same
+    ;; silent-failure class one layer down. Remove it and require our own run
+    ;; to recreate it.
+    (exec-check "rm" "-f" report-path)
+
+    ;; Nix-installed, not runtime-curled: runtime-install-lint bans curl|sh and
+    ;; curl|tar, and a hash-verified store fetch cannot silently download a 404
+    ;; page in place of a binary. Exact-pinned to nixos-24.05 like secrets-scan
+    ;; rather than a floating `nixpkgs#trivy`.
+    (log-info "==> installing trivy (nix profile install, nixos-24.05)")
+    (exec-check "nix" "profile" "install" "github:NixOS/nixpkgs/nixos-24.05#trivy")
+
+    (log-info (string-append "==> trivy fs " workdir " (severity " severity ")"))
+    ;; --exit-code 0 deliberately: we judge by the REPORT, never by the exit
+    ;; status, because trivy uses non-zero for both findings and operational
+    ;; failure and we must be able to tell those apart.
+    (try
+      (exec-capture
+        "trivy" "fs"
+        "--quiet"
+        "--format" "json"
+        "--output" report-path
+        "--severity" severity
+        "--exit-code" "0"
+        workdir)
+      (catch (e) (log-warn (string-append "trivy invocation error: " (string-format "{}" e)))))
+
+    (let*
+      ((exists? (path-exists? report-path))
+        (parsed
+          (cond
+            (exists? (try (json-parse (read-file report-path)) (catch (e) #f)))
+            (else #f)))
+        (results (cond (parsed (alist-get parsed "Results")) (else #f)))
+        ;; A report with no Results key at all is still a valid clean scan —
+        ;; trivy omits it when nothing was scannable in range.
+        (readable? (and parsed (not (equal? (string-format "{}" results) "nil"))))
+        (count (cond (readable? (trivy:count-in results)) (else 0)))
+        (outcome (trivy:outcome exists? (and parsed #t) count)))
+
+      (append-output (string-append "findings=" (string-format "{}" count)))
+      (append-output (string-append "outcome=" (string-format "{}" outcome)))
+      (append-output (string-append "scanned=" (cond ((trivy:unknown? outcome) "false") (else "true"))))
+
+      (cond
+        ((trivy:unknown? outcome)
+          (log-error (trivy:message outcome))
+          (exit 1))
+        ((equal? outcome 'findings)
+          (log-warn (string-append "trivy: " (string-format "{}" count)
+                      " vulnerability finding(s) at severity " severity))
+          (cond
+            ((equal? fail-on-found "true") (exit 1))
+            (else
+              ;; Report-only by default. The action was a stub until today, so
+              ;; nothing downstream has ever seen a real result — failing the
+              ;; first honest run on a pre-existing backlog would get the step
+              ;; disabled, which is how it became a stub's problem in the first
+              ;; place. Flip fail-on-found once the backlog is known.
+              (exit 0))))
+        (else
+          (log-info (string-append "trivy: clean at severity " severity))
+          (exit 0))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — trivy-fs-scan helpers loaded; main skipped"))
+  (else (trivy:main)))
