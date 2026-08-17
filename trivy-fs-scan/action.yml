@@ -1,5 +1,11 @@
 name: 'pleme-io · trivy-fs-scan'
-description: 'Run trivy fs scan on the repo source tree.'
+description: >-
+  Run a trivy filesystem vulnerability scan over the repo source. Judges the
+  result by the REPORT FILE, never by trivy's exit code: trivy exits non-zero
+  for operational failure exactly as it may for findings, so "scanned and found
+  nothing" and "did not scan" are otherwise indistinguishable. A scan that did
+  not run FAILS THE BUILD even when fail-on-found is false — findings are a
+  finding, but not knowing is not a clean result.
 branding: { icon: 'shield', color: 'red' }
 
 inputs:
@@ -7,12 +13,31 @@ inputs:
     required: false
     default: "."
   severity:
+    description: "Comma-separated severities to report, e.g. HIGH,CRITICAL."
     required: false
     default: "HIGH,CRITICAL"
+  fail-on-found:
+    description: >-
+      Fail the job when vulnerabilities are found. Default false: this action
+      was a stub until 2026-08-17, so nothing downstream has ever seen a real
+      result, and failing the first honest run on a pre-existing backlog is how
+      a step gets disabled. A BROKEN scan fails regardless of this setting.
+    required: false
+    default: "false"
 
 outputs:
   findings:
+    description: "Count of vulnerabilities at or above `severity`."
     value: ${{ steps.run.outputs.findings }}
+  scanned:
+    description: >-
+      "true" only when a report was produced and read. Gate on THIS, not on the
+      step succeeding — a zero `findings` with `scanned: false` means nothing
+      was examined.
+    value: ${{ steps.run.outputs.scanned }}
+  outcome:
+    description: "clean | findings | scan-error | report-unparseable."
+    value: ${{ steps.run.outputs.outcome }}
 
 runs:
   using: composite
@@ -35,3 +60,4 @@ runs:
       env:
         WORKDIR: ${{ inputs.workdir }}
         SEVERITY: ${{ inputs.severity }}
+        FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
