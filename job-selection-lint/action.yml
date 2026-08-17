@@ -13,15 +13,26 @@ branding:
   color: 'red'
 
 inputs:
+  workflow-dir:
+    description: >-
+      Directory to scan. Every `<workflow>.cases.tsv` found is paired with its
+      `<workflow>.yml` and checked. PREFER THIS over naming files one at a time:
+      it makes adding a table the whole act of adding coverage, where a
+      hand-listed matrix is a second place to remember and the table nobody
+      added to it is indistinguishable from one that passes. Finding zero tables
+      is a failure, not a pass.
+    required: false
+    default: ""
   workflow:
-    description: "Path to the workflow file to analyse."
-    required: true
+    description: "Single workflow file to analyse. Ignored when workflow-dir is set."
+    required: false
+    default: ""
   cases:
     description: >-
-      Path to the case table (TSV: name, context k=v;k=v, expect-run csv,
-      expect-skip csv). An EMPTY table fails the run rather than passing
-      vacuously — a selection check that asserts nothing passes everything.
-    required: true
+      Case table for `workflow` (TSV: name, context k=v;k=v, expect-run csv,
+      expect-skip csv). An EMPTY table fails rather than passing vacuously.
+    required: false
+    default: ""
   fail-on-violation:
     description: >-
       Fail the job on any violation. Set false to survey a workflow before
@@ -30,17 +41,9 @@ inputs:
     default: "true"
 
 outputs:
-  jobs:
-    description: "Jobs found in the workflow."
-    value: ${{ steps.check.outputs.jobs }}
-  cases:
-    description: "Cases evaluated."
-    value: ${{ steps.check.outputs.cases }}
-  never-selects:
-    description: >-
-      Jobs that select in NO case. Non-zero means a step in this workflow can
-      never run — the silent-skip class, stated positively.
-    value: ${{ steps.check.outputs.never-selects }}
+  workflows:
+    description: "Workflow/table pairs checked."
+    value: ${{ steps.check.outputs.workflows }}
   violations:
     description: "Total violations — the number that fails the build."
     value: ${{ steps.check.outputs.violations }}
@@ -68,6 +71,7 @@ runs:
       with:
         script-file: ${{ steps.src.outputs.path }}
       env:
+        WORKFLOW_DIR: ${{ inputs.workflow-dir }}
         WORKFLOW: ${{ inputs.workflow }}
         CASES: ${{ inputs.cases }}
         FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}

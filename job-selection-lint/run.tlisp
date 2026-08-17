@@ -286,120 +286,130 @@
 
 (define (jsl:minus xs ys) (filter (fn (x) (not (jsl:member? ys x))) xs))
 
+;; ── checking one workflow/table pair ───────────────────────────────────────
+;; Returns the violation count; logs every finding as it goes.
+
+(define (jsl:check-pair wf cases-file)
+  (let*
+    ((jobs (jsl:jobs wf))
+      (rows (jsl:rows (read-file cases-file)))
+      (job-ids (map jsl:j-id jobs))
+      (label (last (string-split wf "/"))))
+
+    (cond
+      ((null? jobs)
+        (log-error (string-append label ": no jobs — a selection check over zero jobs passes everything"))
+        1)
+      ((null? rows)
+        (log-error (string-append label ": no cases — a table with no rows asserts nothing"))
+        1)
+      (else
+        (let*
+          ((results
+             (map
+               (fn (row)
+                 (let*
+                   ((name (jsl:col row 0))
+                     (ctx (jsl:ctx-of (jsl:col row 1)))
+                     (want-run (jsl:csv (jsl:col row 2)))
+                     (want-skip (jsl:csv (jsl:col row 3)))
+                     (r (jsl:selected jobs ctx))
+                     (sel (nth 0 r)))
+                   (list name sel (nth 1 r)
+                     (jsl:minus (concat want-run want-skip) job-ids)
+                     (jsl:minus want-run sel)
+                     (filter (fn (j) (jsl:member? sel j)) want-skip))))
+               rows))
+            (all-selected (distinct (flatten (map (fn (r) (nth 1 r)) results))))
+            (never (jsl:minus job-ids all-selected))
+            (asserted
+              (distinct
+                (flatten
+                  (map (fn (row) (concat (jsl:csv (jsl:col row 2)) (jsl:csv (jsl:col row 3)))) rows)))))
+
+          (map
+            (fn (r)
+              (let ((n (nth 0 r)))
+                (map (fn (e) (log-error (string-append "  EVAL     " label "/" n ": " e))) (nth 2 r))
+                (map (fn (u) (log-error (string-append "  STALE    " label "/" n ": '" u "' is not a job in this workflow"))) (nth 3 r))
+                (map (fn (m) (log-error (string-append "  NOT-RUN  " label "/" n ": '" m "' was expected to run and did not"))) (nth 4 r))
+                (map (fn (x) (log-error (string-append "  RAN      " label "/" n ": '" x "' was expected to skip and ran"))) (nth 5 r))
+                #f))
+            results)
+
+          (map
+            (fn (j)
+              (log-error (string-append "  NEVER    " label ": '" j
+                           "' selects in NO case — it can never run, and a job that can never run looks exactly like one that works")))
+            never)
+
+          (let ((unasserted (jsl:minus job-ids asserted)))
+            (cond
+              ((not (null? unasserted))
+                (log-warn (string-append "  " label ": " (string-format "{}" (length unasserted))
+                            " job(s) named in no case — unasserted, not verified: "
+                            (string-format "{}" unasserted))))
+              (else #f)))
+
+          (let
+            ((total
+               (+ (length (flatten (map (fn (r) (nth 2 r)) results)))
+                 (+ (length (flatten (map (fn (r) (nth 3 r)) results)))
+                   (+ (length (flatten (map (fn (r) (nth 4 r)) results)))
+                     (+ (length (flatten (map (fn (r) (nth 5 r)) results)))
+                       (length never)))))))
+            (log-info (string-append "  " label ": " (string-format "{}" (length job-ids)) " job(s), "
+                        (string-format "{}" (length rows)) " case(s), "
+                        (string-format "{}" total) " violation(s)"))
+            total))))))
+
+;; ── discovery ──────────────────────────────────────────────────────────────
+;; A table is <workflow>.cases.tsv beside its workflow. Discovery makes adding a
+;; table the WHOLE act of adding coverage — the alternative, a hand-listed
+;; matrix, is a second place to remember, and the table that never got added to
+;; it is indistinguishable from one that passes.
+(define (jsl:discover dir)
+  (map
+    (fn (t)
+      (list (string-append (string-replace t ".cases.tsv" "") ".yml") t))
+    (filter (fn (f) (string-ends-with? f ".cases.tsv")) (ls dir))))
+
+(define (jsl:sum xs)
+  (cond ((null? xs) 0) (else (+ (car xs) (jsl:sum (cdr xs))))))
+
 (define (jsl:main)
   (let*
-    ((wf (env-get "WORKFLOW" ""))
+    ((dir (env-get "WORKFLOW_DIR" ""))
+      (wf (env-get "WORKFLOW" ""))
       (cases-file (env-get "CASES" ""))
-      (fail-on (env-get "FAIL_ON_VIOLATION" "true")))
+      (fail-on (env-get "FAIL_ON_VIOLATION" "true"))
+      (pairs
+        (cond
+          ((not (equal? dir "")) (jsl:discover dir))
+          ((and (not (equal? wf "")) (not (equal? cases-file ""))) (list (list wf cases-file)))
+          (else (list)))))
 
-    (cond ((equal? wf "") (log-error "WORKFLOW is required") (exit 2)) (else #f))
-    (cond ((equal? cases-file "") (log-error "CASES is required") (exit 2)) (else #f))
+    (cond
+      ((null? pairs)
+        (log-error "give WORKFLOW_DIR, or WORKFLOW together with CASES. In directory mode, zero *.cases.tsv found is a failure, not a pass — a discovery that finds nothing checks nothing.")
+        (exit 2))
+      (else #f))
 
-    (let*
-      ((jobs (jsl:jobs wf))
-        (rows (jsl:rows (read-file cases-file)))
-        (job-ids (map jsl:j-id jobs)))
+    (log-info (string-append "==> job-selection-lint: " (string-format "{}" (length pairs)) " workflow(s)"))
 
-      ;; Anti-vacuity, both halves. A workflow with no jobs or a table with no
-      ;; cases would otherwise report a clean run while asserting nothing —
-      ;; which is the same failure mode as the bug this tool exists to catch.
+    (let ((total (jsl:sum (map (fn (p) (jsl:check-pair (nth 0 p) (nth 1 p))) pairs))))
+      (append-output (string-append "workflows=" (string-format "{}" (length pairs))))
+      (append-output (string-append "violations=" (string-format "{}" total)))
       (cond
-        ((null? jobs)
-          (log-error (string-append "no jobs found in " wf " — a selection check over zero jobs passes everything"))
+        ((= total 0)
+          (log-info "job-selection-lint: clean — every asserted job selected as declared, and no job is unreachable.")
+          (exit 0))
+        ((equal? fail-on "true")
+          (log-error (string-append "job-selection-lint: " (string-format "{}" total) " violation(s)."))
           (exit 1))
-        (else #f))
-      (cond
-        ((null? rows)
-          (log-error (string-append "no cases in " cases-file " — a table with no rows asserts nothing"))
-          (exit 1))
-        (else #f))
-
-      (log-info (string-append "==> job-selection-lint: " (string-format "{}" (length job-ids))
-                  " job(s), " (string-format "{}" (length rows)) " case(s)"))
-
-      (let*
-        ((results
-           (map
-             (fn (row)
-               (let*
-                 ((name (jsl:col row 0))
-                   (ctx (jsl:ctx-of (jsl:col row 1)))
-                   (want-run (jsl:csv (jsl:col row 2)))
-                   (want-skip (jsl:csv (jsl:col row 3)))
-                   (r (jsl:selected jobs ctx))
-                   (sel (nth 0 r))
-                   (errs (nth 1 r))
-                   ;; A name in the table that is not a job in the workflow is a
-                   ;; stale row — it asserts nothing and reads as if it does.
-                   (unknown (jsl:minus (concat want-run want-skip) job-ids))
-                   (missing (jsl:minus want-run sel))
-                   (ran-anyway (filter (fn (j) (jsl:member? sel j)) want-skip)))
-                 (list name sel errs unknown missing ran-anyway)))
-             rows))
-          (all-selected (distinct (flatten (map (fn (r) (nth 1 r)) results))))
-          (never (jsl:minus job-ids all-selected))
-          ;; Asserted = every job any case NAMES, computed from the rows. It
-          ;; was briefly computed from `results`' failure columns, which meant
-          ;; the coverage line reported all five jobs unasserted while the table
-          ;; named every one — a status line that lies is the same defect class
-          ;; this tool exists to catch, one level up.
-          (asserted
-            (distinct
-              (flatten
-                (map (fn (row) (concat (jsl:csv (jsl:col row 2)) (jsl:csv (jsl:col row 3)))) rows)))))
-
-        ;; per-case findings
-        (map
-          (fn (r)
-            (let ((name (nth 0 r)))
-              (map (fn (e) (log-error (string-append "  EVAL     " name ": " e))) (nth 2 r))
-              (map (fn (u) (log-error (string-append "  STALE    " name ": '" u "' is not a job in this workflow"))) (nth 3 r))
-              (map (fn (m) (log-error (string-append "  NOT-RUN  " name ": '" m "' was expected to run and did not"))) (nth 4 r))
-              (map (fn (x) (log-error (string-append "  RAN      " name ": '" x "' was expected to skip and ran"))) (nth 5 r))
-              #f))
-          results)
-
-        ;; THE headline check.
-        (map
-          (fn (j)
-            (log-error (string-append "  NEVER    '" j
-                         "' selects in NO case — it can never run, and a job that can never run looks exactly like one that works")))
-          never)
-
-        (let*
-          ((n-eval (length (flatten (map (fn (r) (nth 2 r)) results))))
-            (n-stale (length (flatten (map (fn (r) (nth 3 r)) results))))
-            (n-missing (length (flatten (map (fn (r) (nth 4 r)) results))))
-            (n-ran (length (flatten (map (fn (r) (nth 5 r)) results))))
-            (n-never (length never))
-            (total (+ (+ (+ (+ n-eval n-stale) n-missing) n-ran) n-never))
-            (unasserted (jsl:minus job-ids asserted)))
-
-          (append-output (string-append "jobs=" (string-format "{}" (length job-ids))))
-          (append-output (string-append "cases=" (string-format "{}" (length rows))))
-          (append-output (string-append "never-selects=" (string-format "{}" n-never)))
-          (append-output (string-append "violations=" (string-format "{}" total)))
-
-          ;; Coverage, reported without failing: a job no case mentions is not a
-          ;; passing job, it is an unexamined one, and the difference matters.
-          (cond
-            ((not (null? unasserted))
-              (log-warn (string-append "  " (string-format "{}" (length unasserted))
-                          " job(s) named in no case — unasserted, not verified: "
-                          (string-format "{}" unasserted))))
-            (else #f))
-
-          (cond
-            ((= total 0)
-              (log-info "job-selection-lint: clean — every asserted job selected as declared, and no job is unreachable.")
-              (exit 0))
-            ((equal? fail-on "true")
-              (log-error (string-append "job-selection-lint: " (string-format "{}" total) " violation(s)."))
-              (exit 1))
-            (else
-              (log-warn (string-append "job-selection-lint: " (string-format "{}" total)
-                          " violation(s) (reporting only)."))
-              (exit 0))))))))
+        (else
+          (log-warn (string-append "job-selection-lint: " (string-format "{}" total) " violation(s) (reporting only)."))
+          (exit 0))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
