@@ -1,0 +1,407 @@
+;; job-selection-lint — assert WHICH JOBS RUN, for a table of inputs.
+;;
+;; THE DEFECT THIS EXISTS FOR, measured 2026-08-17. pleme-io/graphql-synthesizer
+;; ran `cargo-auto-release`. The run reported SUCCESS. Its `bump` job bumped,
+;; tagged and pushed; its `ship` job was SKIPPED; the crate was never published,
+;; and nothing anywhere said so. The condition was
+;;
+;;   if: needs.bump.outputs.bumped == 'true' && !github.event.repository.private
+;;
+;; which is correct, well-typed, and does exactly what it says. That is the
+;; point. No unit test could see it — the condition is not in any action's code.
+;; actionlint could not see it — the expression is valid. A whole layer of
+;; testing was missing: nobody asserted which jobs MUST run for a given input,
+;; so "ship did not run" and "ship ran fine" produced the same green tick.
+;;
+;; So this evaluates each job's `if:` against a table of synthetic contexts and
+;; compares the selected set to what the table says it should be. No Docker, no
+;; runner, milliseconds.
+;;
+;; THE MOST VALUABLE CHECK HERE IS `never-selects`: a job that selects in NONE
+;; of the declared cases. That is the silent-skip class stated positively — a
+;; publish step that can never fire is a release pipeline that can never
+;; release, and it looks identical to a healthy one from the outside.
+;;
+;; IT REFUSES RATHER THAN GUESSES. The supported expression subset is literals,
+;; context paths, the four status functions, ! && || == !=, and parentheses.
+;; Anything else — contains(), fromJSON(), startsWith() — is an ERROR naming the
+;; construct, never a silently-wrong verdict. A test oracle that quietly
+;; mis-evaluates is worse than no oracle, because it is believed.
+
+;; ── expression tokenizer ───────────────────────────────────────────────────
+;; Alternation order is load-bearing: Rust regex is leftmost-FIRST, not
+;; leftmost-longest, so `!=` must precede `!` and `always()` must precede the
+;; bare-identifier arm or it tokenizes as `always` followed by `(` `)`.
+(define jsl:token-re
+  "'[^']*'|!=|==|&&|\\|\\||[A-Za-z_][A-Za-z0-9_.-]*\\(\\)|[A-Za-z_][A-Za-z0-9_.-]*|[()!]")
+
+;; `if:` may or may not be wrapped in ${{ }}; GitHub accepts both.
+(define (jsl:unwrap s)
+  (let ((t (string-trim s)))
+    (cond
+      ((and (string-starts-with? t "${{") (string-ends-with? t "}}"))
+        (string-trim (string-replace (string-replace t "${{" "") "}}" "")))
+      (else t))))
+
+(define (jsl:tokens expr) (re-find-all jsl:token-re (jsl:unwrap expr)))
+
+;; ── context lookup ─────────────────────────────────────────────────────────
+;; A context is a list of (key value) pairs. A path the table does not declare
+;; is an ERROR, not an empty string. GitHub itself would yield empty — but for
+;; an oracle, an undeclared path almost always means the case is incomplete, and
+;; defaulting it silently is how a case table drifts out from under the
+;; workflow it claims to cover.
+(define (jsl:lookup ctx path)
+  (cond
+    ((null? ctx) (list "error" (string-append "context path not declared in this case: " path)))
+    ((equal? (car (car ctx)) path) (list "ok" (nth 1 (car ctx))))
+    (else (jsl:lookup (cdr ctx) path))))
+
+(define jsl:status-fns (list "always()" "success()" "failure()" "cancelled()"))
+
+;; GitHub truthiness: '', 'false', '0' and null are falsy; everything else true.
+(define (jsl:truthy? v)
+  (not (or (equal? v "") (equal? v "false") (equal? v "0") (equal? v "nil"))))
+
+(define (jsl:bool->s b) (cond (b "true") (else "false")))
+
+;; ── recursive-descent evaluator ────────────────────────────────────────────
+;; Each parse fn takes (tokens ctx) and returns (value rest) or an error triple.
+;; Precedence, loosest first: || , && , == / != , unary ! , primary.
+
+(define (jsl:err msg) (list "error" msg (list)))
+(define (jsl:err? r) (equal? (car r) "error"))
+
+(define (jsl:primary ts ctx)
+  (cond
+    ((null? ts) (jsl:err "expression ended early"))
+    ((equal? (car ts) "(")
+      (let ((inner (jsl:or-expr (cdr ts) ctx)))
+        (cond
+          ((jsl:err? inner) inner)
+          ((or (null? (nth 1 inner)) (not (equal? (car (nth 1 inner)) ")")))
+            (jsl:err "unbalanced parentheses"))
+          (else (list (car inner) (cdr (nth 1 inner)))))))
+    ((equal? (car ts) "!")
+      (let ((v (jsl:primary (cdr ts) ctx)))
+        (cond
+          ((jsl:err? v) v)
+          (else (list (jsl:bool->s (not (jsl:truthy? (car v)))) (nth 1 v))))))
+    ((string-starts-with? (car ts) "'")
+      (list (string-replace (car ts) "'" "") (cdr ts)))
+    ((equal? (car ts) "true") (list "true" (cdr ts)))
+    ((equal? (car ts) "false") (list "false" (cdr ts)))
+    ;; A status function is resolved from the case like any other context key,
+    ;; so a table can model a rerun-after-failure without special syntax.
+    ((jsl:member? jsl:status-fns (car ts))
+      (let ((r (jsl:lookup ctx (car ts))))
+        (cond
+          ((equal? (car r) "error") (jsl:err (nth 1 r)))
+          (else (list (nth 1 r) (cdr ts))))))
+    ;; Any OTHER call is outside the supported subset. Refuse loudly.
+    ((string-ends-with? (car ts) "()")
+      (jsl:err (string-append "unsupported expression function: " (car ts)
+                 " — this linter evaluates a deliberate subset and will not guess at the rest")))
+    ;; A call WITH ARGUMENTS — contains(a, b), startsWith(x, y), fromJSON(s) —
+    ;; tokenizes as an identifier followed by `(`, because the zero-arg arm
+    ;; above only matches `name()`. Without this clause it fell through to a
+    ;; context lookup and reported "context path not declared: contains",
+    ;; which is a misleading error at best; and had a case happened to declare
+    ;; a key of that name it would have evaluated the call as that value and
+    ;; been confidently WRONG. Refusing on the shape closes both.
+    ((and (not (null? (cdr ts))) (equal? (car (cdr ts)) "("))
+      (jsl:err (string-append "unsupported expression function: " (car ts)
+                 "(…) — this linter evaluates a deliberate subset and will not guess at the rest")))
+    (else
+      (let ((r (jsl:lookup ctx (car ts))))
+        (cond
+          ((equal? (car r) "error") (jsl:err (nth 1 r)))
+          (else (list (nth 1 r) (cdr ts))))))))
+
+(define (jsl:cmp-expr ts ctx)
+  (let ((l (jsl:primary ts ctx)))
+    (cond
+      ((jsl:err? l) l)
+      ((null? (nth 1 l)) l)
+      ((or (equal? (car (nth 1 l)) "==") (equal? (car (nth 1 l)) "!="))
+        (let
+          ((op (car (nth 1 l)))
+            (r (jsl:primary (cdr (nth 1 l)) ctx)))
+          (cond
+            ((jsl:err? r) r)
+            (else
+              (let ((same (equal? (car l) (car r))))
+                (list
+                  (jsl:bool->s (cond ((equal? op "==") same) (else (not same))))
+                  (nth 1 r)))))))
+      (else l))))
+
+(define (jsl:and-expr ts ctx)
+  (let ((l (jsl:cmp-expr ts ctx)))
+    (cond
+      ((jsl:err? l) l)
+      ((and (not (null? (nth 1 l))) (equal? (car (nth 1 l)) "&&"))
+        (let ((r (jsl:and-expr (cdr (nth 1 l)) ctx)))
+          (cond
+            ((jsl:err? r) r)
+            (else (list (jsl:bool->s (and (jsl:truthy? (car l)) (jsl:truthy? (car r)))) (nth 1 r))))))
+      (else l))))
+
+(define (jsl:or-expr ts ctx)
+  (let ((l (jsl:and-expr ts ctx)))
+    (cond
+      ((jsl:err? l) l)
+      ((and (not (null? (nth 1 l))) (equal? (car (nth 1 l)) "||"))
+        (let ((r (jsl:or-expr (cdr (nth 1 l)) ctx)))
+          (cond
+            ((jsl:err? r) r)
+            (else (list (jsl:bool->s (or (jsl:truthy? (car l)) (jsl:truthy? (car r)))) (nth 1 r))))))
+      (else l))))
+
+;; -> "true" | "false" | ("error" msg)
+(define (jsl:eval expr ctx)
+  (cond
+    ((equal? (string-trim expr) "") "true") ;; no `if:` means the job always selects
+    (else
+      (let ((r (jsl:or-expr (jsl:tokens expr) ctx)))
+        (cond
+          ((jsl:err? r) (list "error" (nth 1 r)))
+          ((not (null? (nth 1 r)))
+            (list "error" (string-append "trailing tokens after a complete expression: "
+                            (string-format "{}" (nth 1 r)))))
+          (else (car r)))))))
+
+(define (jsl:member? xs s)
+  (cond
+    ((null? xs) #f)
+    ((equal? (car xs) s) #t)
+    (else (jsl:member? (cdr xs) s))))
+
+;; ── reading the workflow ───────────────────────────────────────────────────
+;; `yaml-read` yields an ASSOCIATION LIST — a list of (key value) pairs, not a
+;; map — so every lookup here walks pairs. Measured on
+;; substrate/.github/workflows/cargo-auto-release.yml, whose top level is
+;; (name on permissions concurrency jobs).
+
+(define (jsl:aget al key dflt)
+  (cond
+    ((null? al) dflt)
+    ((equal? (car (car al)) key) (nth 1 (car al)))
+    (else (jsl:aget (cdr al) key dflt))))
+
+;; `needs:` is a bare string for one dependency and a list for several.
+(define (jsl:as-list v)
+  (cond
+    ((equal? v "") (list))
+    ((list? v) v)
+    (else (list v))))
+
+;; -> list of (id if-string needs-list)
+(define (jsl:jobs wf-path)
+  ;; `yaml-read` returns the top-level alist ITSELF, not a list of documents —
+  ;; so there is no (car …) here. Measured: it yields 5 pairs for a workflow
+  ;; whose top level is (name on permissions concurrency jobs).
+  (let ((jobs (jsl:aget (yaml-read wf-path) "jobs" (list))))
+    (map
+      (fn (pair)
+        (let ((body (nth 1 pair)))
+          (list
+            (car pair)
+            (jsl:aget body "if" "")
+            (jsl:as-list (jsl:aget body "needs" "")))))
+      jobs)))
+
+(define (jsl:j-id j) (nth 0 j))
+(define (jsl:j-if j) (nth 1 j))
+(define (jsl:j-needs j) (nth 2 j))
+
+;; ── selection ──────────────────────────────────────────────────────────────
+;; A job runs iff its `if:` is true AND every job it needs also ran — UNLESS its
+;; condition calls always(), which is precisely what lifts a job out of the
+;; skipped-because-my-dependency-skipped rule. cargo-auto-release's own
+;; "Registry catch-up" job documents that always() is load-bearing there for
+;; exactly this reason, so modelling it is not optional fidelity.
+(define (jsl:needs-met? needs sel)
+  (cond
+    ((null? needs) #t)
+    ((jsl:member? sel (car needs)) (jsl:needs-met? (cdr needs) sel))
+    (else #f)))
+
+;; Fixed-point over the job list: re-scan until no new job selects, so order in
+;; the file never changes the verdict.
+(define (jsl:select-pass jobs ctx sel errs)
+  (cond
+    ((null? jobs) (list sel errs))
+    (else
+      (let*
+        ((j (car jobs))
+          (id (jsl:j-id j))
+          (cond-str (jsl:j-if j))
+          (v (jsl:eval cond-str ctx)))
+        (cond
+          ((and (list? v) (equal? (car v) "error"))
+            (jsl:select-pass (cdr jobs) ctx sel
+              (concat errs (list (string-append id ": " (nth 1 v))))))
+          ((jsl:member? sel id) (jsl:select-pass (cdr jobs) ctx sel errs))
+          ((and (jsl:truthy? v)
+             (or (string-contains? cond-str "always()")
+               (jsl:needs-met? (jsl:j-needs j) sel)))
+            (jsl:select-pass (cdr jobs) ctx (concat sel (list id)) errs))
+          (else (jsl:select-pass (cdr jobs) ctx sel errs)))))))
+
+(define (jsl:select-fix jobs ctx sel errs rounds)
+  (let ((r (jsl:select-pass jobs ctx sel (list))))
+    (cond
+      ((= rounds 0) (list (nth 0 r) (concat errs (nth 1 r))))
+      ((= (length (nth 0 r)) (length sel)) (list (nth 0 r) (concat errs (nth 1 r))))
+      (else (jsl:select-fix jobs ctx (nth 0 r) (nth 1 r) (- rounds 1))))))
+
+(define (jsl:selected jobs ctx) (jsl:select-fix jobs ctx (list) (list) 12))
+
+;; ── the case table ─────────────────────────────────────────────────────────
+;; TSV: <name> \t <k=v;k=v> \t <expect-run csv> \t <expect-skip csv>
+;; A job named in neither column is UNASSERTED and reported as such — silence
+;; about a job is not the same as a claim about it.
+
+(define (jsl:rows text)
+  (filter
+    (fn (l) (let ((t (string-trim l))) (and (not (equal? t "")) (not (string-starts-with? t "#")))))
+    (string-split text "\n")))
+
+(define (jsl:col row n)
+  (let ((parts (string-split row "\t")))
+    (cond ((> (length parts) n) (string-trim (nth n parts))) (else ""))))
+
+(define (jsl:csv s)
+  (filter (fn (x) (not (equal? x ""))) (map string-trim (string-split s ","))))
+
+(define (jsl:ctx-of s)
+  (map
+    (fn (kv)
+      (let ((p (string-split kv "=")))
+        (list (string-trim (nth 0 p)) (string-trim (cond ((> (length p) 1) (nth 1 p)) (else ""))))))
+    (filter (fn (x) (not (equal? (string-trim x) ""))) (string-split s ";"))))
+
+;; ── main ───────────────────────────────────────────────────────────────────
+
+(define (jsl:minus xs ys) (filter (fn (x) (not (jsl:member? ys x))) xs))
+
+(define (jsl:main)
+  (let*
+    ((wf (env-get "WORKFLOW" ""))
+      (cases-file (env-get "CASES" ""))
+      (fail-on (env-get "FAIL_ON_VIOLATION" "true")))
+
+    (cond ((equal? wf "") (log-error "WORKFLOW is required") (exit 2)) (else #f))
+    (cond ((equal? cases-file "") (log-error "CASES is required") (exit 2)) (else #f))
+
+    (let*
+      ((jobs (jsl:jobs wf))
+        (rows (jsl:rows (read-file cases-file)))
+        (job-ids (map jsl:j-id jobs)))
+
+      ;; Anti-vacuity, both halves. A workflow with no jobs or a table with no
+      ;; cases would otherwise report a clean run while asserting nothing —
+      ;; which is the same failure mode as the bug this tool exists to catch.
+      (cond
+        ((null? jobs)
+          (log-error (string-append "no jobs found in " wf " — a selection check over zero jobs passes everything"))
+          (exit 1))
+        (else #f))
+      (cond
+        ((null? rows)
+          (log-error (string-append "no cases in " cases-file " — a table with no rows asserts nothing"))
+          (exit 1))
+        (else #f))
+
+      (log-info (string-append "==> job-selection-lint: " (string-format "{}" (length job-ids))
+                  " job(s), " (string-format "{}" (length rows)) " case(s)"))
+
+      (let*
+        ((results
+           (map
+             (fn (row)
+               (let*
+                 ((name (jsl:col row 0))
+                   (ctx (jsl:ctx-of (jsl:col row 1)))
+                   (want-run (jsl:csv (jsl:col row 2)))
+                   (want-skip (jsl:csv (jsl:col row 3)))
+                   (r (jsl:selected jobs ctx))
+                   (sel (nth 0 r))
+                   (errs (nth 1 r))
+                   ;; A name in the table that is not a job in the workflow is a
+                   ;; stale row — it asserts nothing and reads as if it does.
+                   (unknown (jsl:minus (concat want-run want-skip) job-ids))
+                   (missing (jsl:minus want-run sel))
+                   (ran-anyway (filter (fn (j) (jsl:member? sel j)) want-skip)))
+                 (list name sel errs unknown missing ran-anyway)))
+             rows))
+          (all-selected (distinct (flatten (map (fn (r) (nth 1 r)) results))))
+          (never (jsl:minus job-ids all-selected))
+          ;; Asserted = every job any case NAMES, computed from the rows. It
+          ;; was briefly computed from `results`' failure columns, which meant
+          ;; the coverage line reported all five jobs unasserted while the table
+          ;; named every one — a status line that lies is the same defect class
+          ;; this tool exists to catch, one level up.
+          (asserted
+            (distinct
+              (flatten
+                (map (fn (row) (concat (jsl:csv (jsl:col row 2)) (jsl:csv (jsl:col row 3)))) rows)))))
+
+        ;; per-case findings
+        (map
+          (fn (r)
+            (let ((name (nth 0 r)))
+              (map (fn (e) (log-error (string-append "  EVAL     " name ": " e))) (nth 2 r))
+              (map (fn (u) (log-error (string-append "  STALE    " name ": '" u "' is not a job in this workflow"))) (nth 3 r))
+              (map (fn (m) (log-error (string-append "  NOT-RUN  " name ": '" m "' was expected to run and did not"))) (nth 4 r))
+              (map (fn (x) (log-error (string-append "  RAN      " name ": '" x "' was expected to skip and ran"))) (nth 5 r))
+              #f))
+          results)
+
+        ;; THE headline check.
+        (map
+          (fn (j)
+            (log-error (string-append "  NEVER    '" j
+                         "' selects in NO case — it can never run, and a job that can never run looks exactly like one that works")))
+          never)
+
+        (let*
+          ((n-eval (length (flatten (map (fn (r) (nth 2 r)) results))))
+            (n-stale (length (flatten (map (fn (r) (nth 3 r)) results))))
+            (n-missing (length (flatten (map (fn (r) (nth 4 r)) results))))
+            (n-ran (length (flatten (map (fn (r) (nth 5 r)) results))))
+            (n-never (length never))
+            (total (+ (+ (+ (+ n-eval n-stale) n-missing) n-ran) n-never))
+            (unasserted (jsl:minus job-ids asserted)))
+
+          (append-output (string-append "jobs=" (string-format "{}" (length job-ids))))
+          (append-output (string-append "cases=" (string-format "{}" (length rows))))
+          (append-output (string-append "never-selects=" (string-format "{}" n-never)))
+          (append-output (string-append "violations=" (string-format "{}" total)))
+
+          ;; Coverage, reported without failing: a job no case mentions is not a
+          ;; passing job, it is an unexamined one, and the difference matters.
+          (cond
+            ((not (null? unasserted))
+              (log-warn (string-append "  " (string-format "{}" (length unasserted))
+                          " job(s) named in no case — unasserted, not verified: "
+                          (string-format "{}" unasserted))))
+            (else #f))
+
+          (cond
+            ((= total 0)
+              (log-info "job-selection-lint: clean — every asserted job selected as declared, and no job is unreachable.")
+              (exit 0))
+            ((equal? fail-on "true")
+              (log-error (string-append "job-selection-lint: " (string-format "{}" total) " violation(s)."))
+              (exit 1))
+            (else
+              (log-warn (string-append "job-selection-lint: " (string-format "{}" total)
+                          " violation(s) (reporting only)."))
+              (exit 0))))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — job-selection-lint helpers loaded; main skipped"))
+  (else (jsl:main)))
