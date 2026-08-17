@@ -82,8 +82,9 @@ runs:
       id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/security-audit.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # READ IN-CHECKOUT, NOT FETCHED. This used to be
           #   curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp
           # which defeated the consumer's own pin: `uses:
@@ -103,12 +104,12 @@ runs:
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
     - id: audit
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}

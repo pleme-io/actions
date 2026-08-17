@@ -38,18 +38,19 @@ runs:
     - id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/cloudflare-worker-deploy.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
     - id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
         # This is the `cd "${{ inputs.workdir }}"` replacement. `working-directory`
         # is a typed YAML field the runner applies to the process; the value is
         # never parsed as shell source, so the injection the old `cd` carried has

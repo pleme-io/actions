@@ -73,8 +73,9 @@ runs:
     - id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/oci-image-push.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # In-checkout, not fetched. substrate pins this action `@v1`, so
           # run.tlisp below comes from the v1 checkout -- but the stdlib was
           # curl'd from `main`, and the two halves of one script ran at
@@ -85,12 +86,12 @@ runs:
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
     - id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         REGISTRY:  ${{ inputs.registry }}
         IMAGE:     ${{ inputs.image }}
