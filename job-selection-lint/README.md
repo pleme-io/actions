@@ -87,5 +87,22 @@ the real `cargo-auto-release.yml`:
 - a case expecting `ship` to run on a private repo → `NOT-RUN`
 - a table naming `publishh` → `STALE`
 
-`cases/cargo-auto-release.tsv` is the live table for that workflow: 5 jobs,
-5 cases, clean.
+## Where the tables live
+
+**Next to the workflow they describe, as `<workflow>.cases.tsv` — never in this
+repo.** A table kept beside the action would go stale the first time someone
+edited a condition in a repo they never opened; co-located, the workflow edit
+and the table edit land in the same PR and this check fails in the same repo.
+
+Live tables and the job that runs them:
+
+| | |
+|---|---|
+| `substrate/.github/workflows/cargo-auto-release.cases.tsv` | 5 jobs, 5 cases |
+| `substrate/.github/workflows/pre-merge-gate.cases.tsv` | 9 jobs, 7 cases |
+| `substrate/.github/workflows/job-selection-selftest.yml` | runs both on any workflow or table change |
+
+Both are clean, and the wiring was red-run against a realistic regression:
+changing `pre-merge-gate`'s publishability toggle from `== 'true'` to
+`== 'enabled'` — a value no caller sends — produces three `NOT-RUN` findings and
+the `NEVER` headline.
