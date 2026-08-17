@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ""
   svc:
-    description: "Akeyless service name (auth|uam|kfm|…); composes 'akeyless-<svc>'"
+    description: "Service slug (e.g. service-a); composes 'akeyless-<svc>'"
     required: false
     default: ""
   arch:
@@ -40,15 +40,15 @@ inputs:
     required: false
     default: "false"
   dest-user:
-    description: "Zot push credential username (e.g. the akeyless-builder admin user)"
+    description: "Zot push credential username (e.g. the registry's builder admin user)"
     required: true
   dest-pass:
     description: "Zot push credential password"
     required: true
   ca-cert-url:
-    description: "Raw URL of the pinned CA/leaf cert (PEM) to trust for TLS -- default points at the committed cert for this cluster's in-pod Zot TLS"
+    description: "Raw URL of the pinned CA/leaf cert (PEM) to trust for TLS -- point it at the cert YOUR GitOps repo commits beside its Zot release. No default: a cert is a property of the caller's cluster, so an unset value fails closed with reason=no-ca-cert rather than pinning somebody else's. Set insecure=true to accept plain HTTP instead, explicitly."
     required: false
-    default: "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"
+    default: ""
   insecure:
     description: "Fall back to plain HTTP if the CA cert fetch fails (real degradation, logged loudly -- never the default path when the cert is reachable)"
     required: false
@@ -58,7 +58,7 @@ inputs:
     required: false
     default: "/tmp/zot-push-ca.crt"
   ca-cert-token:
-    description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (the default ca-cert-url points at the private pleme-io/akeyless-k8s; an unauthenticated fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
+    description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (an unauthenticated raw.githubusercontent.com fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
     required: false
     default: ""
   doca-ref:

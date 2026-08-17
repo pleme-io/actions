@@ -77,8 +77,7 @@
       :name "ca-cert-url"
       :type :string
       :required nil
-      :default
-      "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt")
+      :default "")
     (
       :name "ca-cert-path"
       :type :string

@@ -50,11 +50,11 @@
 ;; It is now resolved the way `oci:doca-argv` resolves doca: a BAKED
 ;; `regctl` on PATH wins, and `nix run <REGCTL_REF>` is the LOGGED
 ;; fallback (see `mlj:regctl-source-note`) so a job never silently takes
-;; the weaker path. regctl is not preinstalled on the akeylesslabs camelot
-;; ARC runner image (stock `ghcr.io/actions/actions-runner:latest` + dind
-;; -- confirmed live 2026-07-23: no buildah/podman/regctl on PATH, only
-;; the dind-sidecar `docker`), so the fallback is the live path there
-;; today; baking regctl into that image closes it for real.
+;; the weaker path. regctl is not preinstalled on the ARC runner image
+;; (stock `ghcr.io/actions/actions-runner:latest` + dind -- confirmed live
+;; 2026-07-23: no buildah/podman/regctl on PATH, only the dind-sidecar
+;; `docker`), so the fallback is the live path there today; baking regctl
+;; into that image closes it for real.
 ;;
 ;; The fallback got cheaper at the same time: regctl used to be invoked
 ;; THREE times (`registry set --cacert`, `registry set --tls`, `registry
@@ -65,7 +65,7 @@
 ;; algebra + arch/ref parsing are pure + unit-tested. The ONE runtime
 ;; dependency is a manifest tool reachable from the runner — if none is
 ;; the action FAILS loudly with reason=no-tool (never fakes an index
-;; digest). Today the akeyless build is amd64-only, so a 1-arch join is a
+;; digest). Today the upstream build is amd64-only, so a 1-arch join is a
 ;; DEGENERATE (but honest) index; it becomes load-bearing the moment
 ;; arm64-native lands (reason emits `single-arch` vs `joined`).
 ;;
@@ -79,7 +79,7 @@
 ;;   REGISTRY      cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
 ;;   REPO          full base override "<host>/<repo>" (no tag); wins when set
 ;;   IMAGE         repo path override "<repo>" (with REGISTRY when REPO empty)
-;;   SVC           akeyless service name; composes "akeyless-<svc>"
+;;   SVC           service slug (e.g. service-a); composes "akeyless-<svc>"
 ;;   ARCH_REFS     per-arch refs to join: "amd64=<ref>,arm64=<ref>"  (required)
 ;;   TAG           explicit index tag; else composed r<run>-<sha>
 ;;   RUN_NUMBER    github.run_number (for the composed index tag)
@@ -101,10 +101,9 @@
 ;;                 own default so one job step never clobbers the other's
 ;;                 cached fetch)
 ;;   CA_CERT_TOKEN a GitHub token with read access to CA_CERT_URL's repo --
-;;                 REQUIRED when that repo is private (the default
-;;                 CA_CERT_URL points at pleme-io/akeyless-k8s, which is
-;;                 private). Empty (default) keeps the unauthenticated path
-;;                 for a public cert URL.
+;;                 REQUIRED when that repo is private (an unauthenticated
+;;                 raw.githubusercontent.com fetch 404s). Empty (default)
+;;                 keeps the unauthenticated path for a public cert URL.
 ;;   REGCTL_REF    flake ref `nix run` resolves when regctl is NOT baked
 ;;                 (default github:NixOS/nixpkgs/nixos-24.05#regctl — the same
 ;;                 exact-pinned channel the deleted install step used)
@@ -410,7 +409,7 @@
 ;; unless a caller reads it, and `main`'s own failure branch only ever
 ;; had a generic "index create/push failed (exit N)" with no way to
 ;; tell auth-denied from no-such-manifest from a transient registry
-;; error. Confirmed live (2026-07-21): a real akeylesslabs run failed
+;; error. Confirmed live (2026-07-21): a real consumer run failed
 ;; in 0.28s with zero diagnostic beyond "exit 1" -- this is that gap,
 ;; closed at every tool path, not just the one that happened to fail.
 
@@ -511,10 +510,10 @@
 ;; SEPARATE CI job on a separate runner/daemon that never pulled them
 ;; back down, so every source ref is "no such manifest" locally --
 ;; confirmed live (2026-07-17): reproduced instantly (no network delay)
-;; against a real registry with the exact refs a failing akeylesslabs
-;; camelot/hardened-images run passed. `imagetools create` has no such
-;; requirement -- it inspects and composes purely via registry API
-;; calls, which is what a cross-job/cross-runner join always needs.
+;; against a real registry with the exact refs a failing hardened-images
+;; run passed. `imagetools create` has no such requirement -- it inspects
+;; and composes purely via registry API calls, which is what a
+;; cross-job/cross-runner join always needs.
 ;;
 ;; No direct `--insecure`/`--tls-verify` equivalent exists for buildx;
 ;; it defers to the daemon's own registry trust config (localhost/
@@ -631,10 +630,7 @@
       (dest-user (env-required "DEST_USER"))
       (dest-pass (env-required "DEST_PASS"))
       (tool-req (env-get "TOOL" "auto"))
-      (ca-cert-url
-        (env-get
-          "CA_CERT_URL"
-          "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+      (ca-cert-url (env-get "CA_CERT_URL" ""))
       (ca-cert-path (env-get "CA_CERT_PATH" "/tmp/manifest-list-join-ca.crt"))
       (ca-cert-token (env-get "CA_CERT_TOKEN" ""))
       (pairs (mlj:parse-pairs (string-split arch-refs ",")))

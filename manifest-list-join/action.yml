@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ""
   svc:
-    description: "Akeyless service name (auth|uam|…); composes 'akeyless-<svc>'"
+    description: "Service slug (e.g. service-a); composes 'akeyless-<svc>'"
     required: false
     default: ""
   arch-refs:
@@ -51,15 +51,15 @@ inputs:
     required: false
     default: "auto"
   ca-cert-url:
-    description: "Raw URL of the pinned CA/leaf cert (PEM) the regctl path trusts -- default points at the committed cert for this cluster's in-pod Zot TLS (the same cert zot-push already trusts)"
+    description: "Raw URL of the pinned CA/leaf cert (PEM) the regctl path trusts -- point it at the cert YOUR GitOps repo commits beside its Zot release (the same cert zot-push is given). No default: a cert is a property of the caller's cluster, and leaving it unset means regctl performs ordinary TLS verification, which a self-signed Zot fails loudly rather than being trusted blindly."
     required: false
-    default: "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"
+    default: ""
   ca-cert-path:
     description: "Local path the fetched CA cert is written to -- distinct default from zot-push's own so one job step never clobbers the other's cached fetch"
     required: false
     default: "/tmp/manifest-list-join-ca.crt"
   ca-cert-token:
-    description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (the default ca-cert-url points at the private pleme-io/akeyless-k8s; an unauthenticated fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
+    description: "GitHub token with read access to ca-cert-url's repo -- REQUIRED when that repo is private (an unauthenticated raw.githubusercontent.com fetch 404s). Empty (default) keeps the unauthenticated path for a public cert URL."
     required: false
     default: ""
   regctl-ref:
@@ -137,7 +137,7 @@ runs:
     # way the stdlib's `oci:doca-argv` resolves doca: a BAKED `regctl` on PATH
     # wins, `nix run ${REGCTL_REF}` is the fallback, and which one was taken is
     # LOGGED (`mlj:regctl-source-note`) so the weaker path is never silent.
-    # Baking regctl into the camelot ARC runner image is what closes it fully.
+    # Baking regctl into the ARC runner image is what closes it fully.
     #
     # The fallback also got four times cheaper in the same change: writing
     # regctl's credential/trust config as a file (REGCTL_CONFIG) collapsed
