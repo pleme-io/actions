@@ -94,15 +94,17 @@ repo.** A table kept beside the action would go stale the first time someone
 edited a condition in a repo they never opened; co-located, the workflow edit
 and the table edit land in the same PR and this check fails in the same repo.
 
-Live tables and the job that runs them:
+Point `workflow-dir` at the directory and every `<workflow>.cases.tsv` beside
+its `<workflow>.yml` is discovered and checked. **Adding a table is the whole
+act of adding coverage** — a hand-listed matrix would be a second place to
+remember, and the table nobody added to it is indistinguishable from one that
+passes. Discovery finding nothing is a failure, not a pass.
 
-| | |
-|---|---|
-| `substrate/.github/workflows/cargo-auto-release.cases.tsv` | 5 jobs, 5 cases |
-| `substrate/.github/workflows/pre-merge-gate.cases.tsv` | 9 jobs, 7 cases |
-| `substrate/.github/workflows/job-selection-selftest.yml` | runs both on any workflow or table change |
+Live in `substrate/.github/workflows/job-selection-selftest.yml`, one step, no
+matrix: **18 workflows, 64 jobs, 98 cases, 0 violations** — the whole release
+family plus `pre-merge-gate`.
 
-Both are clean, and the wiring was red-run against a realistic regression:
-changing `pre-merge-gate`'s publishability toggle from `== 'true'` to
-`== 'enabled'` — a value no caller sends — produces three `NOT-RUN` findings and
-the `NEVER` headline.
+Red-run against realistic regressions rather than assumed: changing
+`pre-merge-gate`'s publishability toggle from `== 'true'` to `== 'enabled'` — a
+value no caller sends — yields three `NOT-RUN` findings and the `NEVER`
+headline; a directory with no tables exits 2.
