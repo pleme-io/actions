@@ -34,11 +34,12 @@ runs:
       id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/spec-watch.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
     - name: Compare upstream sha
       id: compare
       # @main, not @v1 — the `changed` / `new-sha` / `cached-sha` output
@@ -61,7 +62,7 @@ runs:
       # (it moves a release tag under 288 consumers at once).
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         UPSTREAM_URL: ${{ inputs.upstream-url }}
         CACHE_FILE: ${{ inputs.cache-file }}

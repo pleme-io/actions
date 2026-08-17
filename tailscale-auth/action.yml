@@ -24,18 +24,19 @@ runs:
     - id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/tailscale-auth.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
     - id: run
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         AUTH_KEY: ${{ inputs.auth-key }}
         TAGS: ${{ inputs.tags }}

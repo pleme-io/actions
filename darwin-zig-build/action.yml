@@ -35,16 +35,17 @@ runs:
       id: src
       shell: bash
       run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/darwin-zig-build.tlisp"
         {
-          echo 'script<<TLISP_EOF'
           cat ${{ github.action_path }}/run.tlisp
-          echo 'TLISP_EOF'
-        } >> "$GITHUB_OUTPUT"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
     - name: Zigbuild + stage
       uses: pleme-io/actions/tatara-script@main
       with:
-        script: ${{ steps.src.outputs.script }}
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
         BIN:         ${{ inputs.binary-name }}
         SUFFIX:      ${{ inputs.suffix }}
