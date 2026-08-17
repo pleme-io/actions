@@ -26,3 +26,39 @@
 (deftest "extract-gem-version: non-version lines extract to empty"
   (assert (equal? (extract-gem-version "module PangeaConsul") "") "no VERSION= marker yields empty")
   (assert (equal? (extract-gem-version "") "") "empty line yields empty"))
+
+;; ── gem-app-absent? ──────────────────────────────────────────────────────
+;; Splits "the bump ran and failed" from "the app this action assumes does not
+;; exist in this repo". They need different messages aimed at different people,
+;; and conflating them is what left 20 failures in the last 7 days reported only
+;; as a nix attribute error (measured 2026-08-17).
+
+(deftest "gem-app-absent?: the REAL stderr from a failing run classifies as absent"
+  ;; Verbatim from pangea-architectures run 31972777153.
+  (assert
+    (gem-app-absent?
+      "error: flake 'git+file:///home/runner/_work/pangea-architectures/pangea-architectures' does not provide attribute 'apps.x86_64-linux.gem:bump', 'defaultApp.x86_64-linux.gem:bump', 'packages.x86_64-linux.gem:bump', 'defaultPackage.x86_64-linux.gem:bump', 'legacyPackages.x86_64-linux.gem:bump' or 'gem:bump'")
+    "the measured stderr is recognised as a missing app")
+  ;; System-agnostic: the same shape on a darwin runner must classify too.
+  (assert
+    (gem-app-absent?
+      "error: flake 'git+file:///x' does not provide attribute 'apps.aarch64-darwin.gem:bump' or 'gem:bump'")
+    "not pinned to x86_64-linux"))
+
+(deftest "gem-app-absent?: a REAL bump failure is NOT reported as a missing app"
+  ;; The anti-fold guard. If this ever returns true, a genuine bump failure gets
+  ;; the wrong remedy printed at it — the exact misdiagnosis class this splits.
+  (assert
+    (not (gem-app-absent? "error: version 0.2.5 is not above the highest release v0.3.1"))
+    "a monotonicity failure is not a missing app")
+  (assert
+    (not (gem-app-absent? "error: Permission denied writing lib/pangea/version.rb"))
+    "a write failure is not a missing app")
+  (assert (not (gem-app-absent? "")) "empty stderr is not evidence of absence")
+  ;; BOTH halves are required: prose naming one alone must not match.
+  (assert
+    (not (gem-app-absent? "error: flake does not provide attribute 'apps.x86_64-linux.bump'"))
+    "a different missing attribute (.#bump) is not the gem:bump precondition")
+  (assert
+    (not (gem-app-absent? "running gem:bump for this workspace"))
+    "merely mentioning gem:bump is not an absence"))
