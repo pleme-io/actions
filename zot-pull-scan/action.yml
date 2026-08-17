@@ -27,7 +27,8 @@ inputs:
       vex/hardened-chproxy-GO-2026-5932.openvex.json and its Zot mirror failed
       "zot faucet REJECT: scan outcome=failure severity=UNKNOWN". The two gates
       disagreed BY CONSTRUCTION, so a VEX-dependent image could never enter Zot
-      and therefore could never reach 2F. Empty = no VEX, prior behaviour exactly.
+      and therefore could never reach the downstream consumer. Empty = no VEX,
+      prior behaviour exactly.
       NOTE the path is resolved on the runner's filesystem, so the caller must
       have checked the repo out (vendor-image-mirror.yml now does).
     required: false
@@ -46,7 +47,7 @@ inputs:
   #
   # 1. STALE-BY-CACHE. Zot's serving cert was reissued 01:25 by a new
   #    cert-manager ClusterIssuer. The corrected CA was committed and the API
-  #    served it immediately (fp CF:0F:CA… at akeyless-k8s@6f19747), while
+  #    served it immediately (fp CF:0F:CA… at the GitOps repo's tip), while
   #    raw.githubusercontent.com kept returning the OLD cert (fp 7F:6C:CC…) for
   #    minutes afterward. A mirror running in that window fetches HTTP 200,
   #    gets the wrong bytes, and fails — with the fix already committed and
@@ -71,7 +72,7 @@ inputs:
   #  CDN-cached raw URL; keep the committed file only as an off-cluster
   #  fallback.`
   src-ca-cert-url:
-    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for a self-signed SOURCE registry (mirrors zot-push's ca-cert-url; doca pins it via --dest-ca-cert). Default '' = OPT-OUT (plain copy, the original behavior) -- correct for a publicly-trusted source like GHCR (the shipped vendor-image-mirror consumer pulls its source from GHCR, so a required zot-CA fetch would wrongly refuse it). When the SOURCE is the self-signed zot itself, set this to the committed zot-ca.crt raw URL (https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt) plus src-ca-cert-token, or set src-insecure=true."
+    description: "Raw URL of the pinned CA/leaf cert (PEM) to TRUST for a self-signed SOURCE registry (mirrors zot-push's ca-cert-url; doca pins it via --dest-ca-cert). Default '' = OPT-OUT (plain copy, the original behavior) -- correct for a publicly-trusted source like GHCR (the shipped vendor-image-mirror consumer pulls its source from GHCR, so a required zot-CA fetch would wrongly refuse it). When the SOURCE is the self-signed zot itself, set this to the raw URL of the zot-ca.crt YOUR GitOps repo commits beside its Zot release, plus src-ca-cert-token, or set src-insecure=true."
     required: false
     default: ""
   src-ca-cert-dir:
@@ -79,7 +80,7 @@ inputs:
     required: false
     default: "/tmp/zot-pull-certs"
   src-ca-cert-token:
-    description: "GitHub token with read access to src-ca-cert-url's repo -- REQUIRED when that repo is private (the default URL points at the private pleme-io/akeyless-k8s; an unauthenticated raw fetch 404s). Empty keeps the unauthenticated path for a public cert URL."
+    description: "GitHub token with read access to src-ca-cert-url's repo -- REQUIRED when that repo is private (an unauthenticated raw fetch 404s). Empty keeps the unauthenticated path for a public cert URL."
     required: false
     default: ""
   src-insecure:

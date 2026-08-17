@@ -6,14 +6,14 @@
 ;;
 ;; ── WHY THE RETRY MOVED BEFORE THE CONVERSION ────────────────────────────────
 ;; The skopeo call this replaces carried `--retry-times 5`, and it was not
-;; decoration: it was added against a MEASURED failure (2026-07-21, Harbor /
-;; registry.secondfront.com) -- "writing blob: ... read: connection reset by
+;; decoration: it was added against a MEASURED failure (2026-07-21, against a
+;; remote Harbor registry) -- "writing blob: ... read: connection reset by
 ;; peer" partway through a ~40-blob rabbitmq image, after most blobs had already
 ;; uploaded. doca had NO retry at all.
 ;;
 ;; Converting first and noticing later would have silently regressed resilience
-;; on precisely the path that pushes large hardened images to Harbor -- the 2F
-;; endpoint, i.e. the same registry the original incident was measured against.
+;; on precisely the path that pushes large hardened images to a remote Harbor,
+;; i.e. the same registry the original incident was measured against.
 ;; So the retry landed in doca FIRST (substrate 8f2a136, three tests each with a
 ;; recorded red run), and only then did this call site move. doca's retry is
 ;; also strictly better than what it replaces: skopeo retried EVERY failure five

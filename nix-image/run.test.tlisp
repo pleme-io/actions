@@ -40,7 +40,7 @@
         "gateway")
       "dockerImage-arm64-gateway")
     "dash-triple arm64")
-  ;; dockerImage:{arch}:{svc} — akeyless-nix-images (multi-service, colon-triple)
+  ;; dockerImage:{arch}:{svc} — a colon-namespaced image flake (multi-service)
   (assert
     (equal?
       (render-attr
@@ -49,7 +49,7 @@
         "arm64"
         "gateway")
       "dockerImage:arm64:gateway")
-    "colon-triple (akeyless-nix-images)")
+    "colon-triple (colon-namespaced image flake)")
   ;; dockerImage:{arch}       — substrate go service-flake (single-service, colon-pair)
   (assert
     (equal? (render-attr "dockerImage:{arch}" "dockerImage" "amd64" "") "dockerImage:amd64")
@@ -87,8 +87,8 @@
     "trimmed + threaded"))
 
 ;; ── THE DYNAMIC CORE-PARTITION TUNER — the free config squeeze ────
-;; The partition MATRIX: one row per (V,N,shape). A NARROW DAG (the akeyless
-;; monolithic buildGoModule fleet) partitions V across N: jobs=N, cores=V/N.
+;; The partition MATRIX: one row per (V,N,shape). A NARROW DAG (a monolithic
+;; buildGoModule fleet) partitions V across N: jobs=N, cores=V/N.
 ;; The no-oversubscribe invariant (planned ≤ V) is asserted on EVERY row.
 (deftest "ni:tune-partition — narrow DAG partitions V across N (jobs=N, cores=floor(V/N))"
   ;; the measured cases from the prompt
@@ -128,7 +128,7 @@
 ;; realistic (V,N) grid — a partition that over-subscribes a valid V≥N box has
 ;; no passing row.
 (deftest "ni:tune-partition — no-oversubscribe + saturate invariant over the V>=N grid"
-  ;; realistic builder sizes × the akeyless fleet size band
+  ;; realistic builder sizes × a realistic fleet size band
   (for-each
     (lambda (v)
       (for-each

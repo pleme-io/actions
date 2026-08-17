@@ -33,7 +33,7 @@ the private-Zot akeyless images.
 - uses: pleme-io/actions/cartorio-attest@v1
   id: cartorio
   with:
-    subject: akeyless-auth
+    subject: akeyless-service-a
     image-ref: ${{ steps.index.outputs.index-ref }}
     image-digest: ${{ steps.index.outputs.index-digest }}
     nix-store-path: ${{ steps.image.outputs.tarball-amd64 }}   # the Nix-closure SBOM source

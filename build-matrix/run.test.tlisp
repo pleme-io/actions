@@ -12,12 +12,12 @@
 ;; attrs, plus a non-image attr — every reject/accept path in one set.
 (define bm:test-names
   (list
-    "default:auth"
-    "default:uam"
-    "dockerImage:amd64:auth"
-    "dockerImage:amd64:uam"
+    "default:svc-a"
+    "default:svc-b"
+    "dockerImage:amd64:svc-a"
+    "dockerImage:amd64:svc-b"
     "dockerImage:amd64:gateway"
-    "dockerImage:arm64:auth"
+    "dockerImage:arm64:svc-a"
     "somethingElse"))
 
 ;; "<arch>:<svc>" key per row, for readable membership assertions
@@ -45,11 +45,11 @@
 (deftest "parse-attr accepts the colon-triple and rejects everything else"
   (assert
     (equal?
-      (bm:parse-attr "dockerImage" "dockerImage:amd64:auth")
+      (bm:parse-attr "dockerImage" "dockerImage:amd64:svc-a")
       (list
-        "auth"
+        "svc-a"
         "amd64"
-        "dockerImage:amd64:auth"
+        "dockerImage:amd64:svc-a"
         "x86_64-linux"))
     "valid <base>:<arch>:<svc> triple parses")
   (assert
@@ -61,67 +61,67 @@
         "dockerImage:arm64:gateway"
         "aarch64-linux"))
     "arm64 gateway triple parses")
-  (assert (not (bm:parse-attr "dockerImage" "default:auth")) "default:<svc> (2 parts) rejected")
+  (assert (not (bm:parse-attr "dockerImage" "default:svc-a")) "default:<svc> (2 parts) rejected")
   (assert
     (not (bm:parse-attr "dockerImage" "dockerImage-amd64"))
     "dash convention (1 part) rejected")
-  (assert (not (bm:parse-attr "dockerImage" "otherBase:amd64:auth")) "wrong base rejected")
-  (assert (not (bm:parse-attr "dockerImage" "dockerImage:riscv:auth")) "unknown arch rejected")
+  (assert (not (bm:parse-attr "dockerImage" "otherBase:amd64:svc-a")) "wrong base rejected")
+  (assert (not (bm:parse-attr "dockerImage" "dockerImage:riscv:svc-a")) "unknown arch rejected")
   (assert (not (bm:parse-attr "dockerImage" "dockerImage:amd64:")) "empty service rejected"))
 
 (deftest "tokens splits space AND comma inputs and drops empties"
-  (assert (equal? (bm:tokens "auth uam") (list "auth" "uam")) "space separated")
-  (assert (equal? (bm:tokens "auth,uam") (list "auth" "uam")) "comma separated")
-  (assert (equal? (bm:tokens "auth, uam") (list "auth" "uam")) "comma+space")
+  (assert (equal? (bm:tokens "svc-a svc-b") (list "svc-a" "svc-b")) "space separated")
+  (assert (equal? (bm:tokens "svc-a,svc-b") (list "svc-a" "svc-b")) "comma separated")
+  (assert (equal? (bm:tokens "svc-a, svc-b") (list "svc-a" "svc-b")) "comma+space")
   (assert (equal? (bm:tokens "") (list)) "empty => empty list")
   (assert (equal? (bm:tokens "  ") (list)) "whitespace => empty list"))
 
 (deftest "selected? — an empty filter set selects everything"
-  (assert (bm:selected? (list) "auth") "empty set selects any candidate")
-  (assert (bm:selected? (list "auth" "uam") "uam") "member selected")
-  (assert (not (bm:selected? (list "auth" "uam") "kfm")) "non-member not selected"))
+  (assert (bm:selected? (list) "svc-a") "empty set selects any candidate")
+  (assert (bm:selected? (list "svc-a" "svc-b") "svc-b") "member selected")
+  (assert (not (bm:selected? (list "svc-a" "svc-b") "svc-c")) "non-member not selected"))
 
 (deftest "excluded? matches <arch>:<svc> and bare <svc>"
-  (assert (bm:excluded? (list "amd64:auth") "amd64" "auth") "arch:svc exclusion hits")
-  (assert (bm:excluded? (list "gator") "arm64" "gator") "bare svc exclusion hits all arches")
+  (assert (bm:excluded? (list "amd64:svc-a") "amd64" "svc-a") "arch:svc exclusion hits")
+  (assert (bm:excluded? (list "svc-d") "arm64" "svc-d") "bare svc exclusion hits all arches")
   (assert
-    (not (bm:excluded? (list "amd64:auth") "arm64" "auth"))
+    (not (bm:excluded? (list "amd64:svc-a") "arm64" "svc-a"))
     "arch-scoped exclusion misses other arch")
-  (assert (not (bm:excluded? (list) "amd64" "auth")) "empty exclusion never hits"))
+  (assert (not (bm:excluded? (list) "amd64" "svc-a")) "empty exclusion never hits"))
 
 (deftest "rows-from-names: no filters => every colon-triple, bare/non-image dropped"
   (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list) (list))))
     (assert (= (length rows) 4) "4 image rows (2 default + 1 non-image dropped)")
-    (assert (bm:member? "amd64:auth" (bm:rows->argkeys rows)) "amd64 auth present")
-    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth present")
+    (assert (bm:member? "amd64:svc-a" (bm:rows->argkeys rows)) "amd64 svc-a present")
+    (assert (bm:member? "arm64:svc-a" (bm:rows->argkeys rows)) "arm64 svc-a present")
     (assert (bm:member? "amd64:gateway" (bm:rows->argkeys rows)) "amd64 gateway present")
     (assert
       (not (bm:member? "amd64:somethingElse" (bm:rows->argkeys rows)))
       "non-image never a row")))
 
 (deftest "rows-from-names: services filter narrows to the allowlist"
-  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list "auth") (list) (list))))
-    (assert (= (length rows) 2) "only auth rows (amd64 + arm64)")
-    (assert (bm:member? "amd64:auth" (bm:rows->argkeys rows)) "amd64 auth kept")
-    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth kept")))
+  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list "svc-a") (list) (list))))
+    (assert (= (length rows) 2) "only svc-a rows (amd64 + arm64)")
+    (assert (bm:member? "amd64:svc-a" (bm:rows->argkeys rows)) "amd64 svc-a kept")
+    (assert (bm:member? "arm64:svc-a" (bm:rows->argkeys rows)) "arm64 svc-a kept")))
 
 (deftest "rows-from-names: arches filter is honest discovery (arm64 only where the attr exists)"
   (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list "arm64") (list))))
     (assert
       (= (length rows) 1)
       "only the one arm64 attr that exists => 1 row, never a fabricated pair")
-    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth is the sole arm64 attr")))
+    (assert (bm:member? "arm64:svc-a" (bm:rows->argkeys rows)) "arm64 svc-a is the sole arm64 attr")))
 
 (deftest "rows-from-names: exclude drops the named (arch,svc)"
-  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list) (list "amd64:auth"))))
-    (assert (= (length rows) 3) "the excluded amd64:auth is gone")
-    (assert (not (bm:member? "amd64:auth" (bm:rows->argkeys rows))) "amd64 auth excluded")
-    (assert (bm:member? "arm64:auth" (bm:rows->argkeys rows)) "arm64 auth (different arch) kept")))
+  (let ((rows (bm:rows-from-names bm:test-names "dockerImage" (list) (list) (list "amd64:svc-a"))))
+    (assert (= (length rows) 3) "the excluded amd64:svc-a is gone")
+    (assert (not (bm:member? "amd64:svc-a" (bm:rows->argkeys rows))) "amd64 svc-a excluded")
+    (assert (bm:member? "arm64:svc-a" (bm:rows->argkeys rows)) "arm64 svc-a (different arch) kept")))
 
 (deftest "row->arg serializes the pipe-joined jq positional, attr colons intact"
-  (let ((row (bm:parse-attr "dockerImage" "dockerImage:amd64:auth")))
+  (let ((row (bm:parse-attr "dockerImage" "dockerImage:amd64:svc-a")))
     (assert
-      (equal? (bm:row->arg row) "auth|amd64|dockerImage:amd64:auth|x86_64-linux")
+      (equal? (bm:row->arg row) "svc-a|amd64|dockerImage:amd64:svc-a|x86_64-linux")
       "image|arch|attr|system with the attr's own ':' preserved")))
 
 (deftest "distinct is order-preserving and dedups"

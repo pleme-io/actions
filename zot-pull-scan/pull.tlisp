@@ -45,8 +45,7 @@
 ;;   SRC_CA_CERT_DIR   local dir the fetched cert is written into + handed to
 ;;                     skopeo's --src-cert-dir (default /tmp/zot-pull-certs).
 ;;   SRC_CA_CERT_TOKEN GitHub token with read access to SRC_CA_CERT_URL's
-;;                     repo — REQUIRED when that repo is private (the default
-;;                     URL points at the private pleme-io/akeyless-k8s; an
+;;                     repo — REQUIRED when that repo is private (an
 ;;                     unauthenticated raw fetch 404s). Empty keeps the
 ;;                     unauthenticated path (public cert URL).
 ;;   SRC_INSECURE      fall back to --src-tls-verify=false if the cert fetch
@@ -176,8 +175,8 @@
       ;; installer's own self-test, which had already FAILED for both sh and
       ;; bash (`WARN SelfTest([ShellFailed ...])`) and let the job continue.
       ;; So `nix run` had no daemon, doca never started, and an image that had
-      ;; passed its CVE gate and been pushed could not be mirrored -- a 2F
-      ;; blocker with no security meaning whatsoever.
+      ;; passed its CVE gate and been pushed could not be mirrored -- a
+      ;; delivery blocker with no security meaning whatsoever.
       ;;
       ;; It is also the honest closure of this action's earlier hermetic fix.
       ;; Replacing `nix profile install ...#skopeo` with

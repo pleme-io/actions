@@ -11,7 +11,7 @@
 ;; verb targets every flake-attr convention without a fork:
 ;;   {base}-{arch}            substrate mkImageReleaseApp        (default; single image)
 ;;   {base}-{arch}-{svc}      substrate mkGoDockerImage          (multi-service, dash-triple)
-;;   dockerImage:{arch}:{svc} akeyless-nix-images                (multi-service, colon-triple)
+;;   dockerImage:{arch}:{svc} a colon-namespaced image flake      (multi-service, colon-triple)
 ;;   dockerImage:{arch}       substrate go service-flake         (single-service, colon-pair)
 ;; The flake exposes packages.<system>.<resolved-attr> producing a
 ;; docker-archive tarball (pkgs.dockerTools.buildLayeredImage — layered for
@@ -44,7 +44,7 @@
 ;;   take N=TARGETS (the images built concurrently by the ACROSS-IMAGES layer),
 ;;   and COMPUTE the partition so total planned concurrency SATURATES V without
 ;;   OVER-SUBSCRIBING it:
-;;     - NARROW DAG (default; the akeyless fleet = N monolithic buildGoModule
+;;     - NARROW DAG (default; a fleet of N monolithic buildGoModule
 ;;       derivations, each internally parallel via the Go compiler):
 ;;         --max-jobs N, --cores max(1, floor(V/N))
 ;;       ⇒ N × cores ≤ V (no thrash) and ≈ V (full use). V=96,N=9 → jobs 9,
@@ -140,7 +140,7 @@
 ;; return the (max-jobs . cores) pair as a typed 2-list of INTEGERS.
 ;;   narrow (monolithic, default): jobs = N,  cores = max(1, floor(V/N))
 ;;   wide   (per-package/gen-gomod): jobs = V, cores = 1
-;; The narrow case is the akeyless buildGoModule fleet (N big Go compiles,
+;; The narrow case is a monolithic buildGoModule fleet (N big Go compiles,
 ;; each internally parallel); the wide case is many tiny independent
 ;; derivations (nix's list-scheduler fills the box with 1-core builds).
 ;; N<=0 degenerates to a lone build (jobs 1, cores V — the whole box).

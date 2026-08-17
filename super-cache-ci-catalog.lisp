@@ -366,7 +366,7 @@
 (defaction
   "nix-image"
   :description
-  "Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and akeyless-nix-images (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO:super-cache-build); correct local nix build otherwise."
+  "Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and a colon-namespaced image flake (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO:super-cache-build); correct local nix build otherwise."
   :inputs
   ((
      :name "image-attr"

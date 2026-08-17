@@ -1,12 +1,12 @@
 name: 'pleme-io · pangea-grafana-converge'
-description: 'MODEL-2 (remote-reconcile) FedRAMP observability executor — health-probe a remote Grafana REST endpoint (inbound-only + scoped SA token) then drive the shipped pangea rio-observability workspace + deployment-agnostic pangea-grafana provider + magma runner against it, converging 2F Grafana from our side. Reports the runner''s real status; the exact flake app attr is a named LiveTODO, never faked.'
+description: 'MODEL-2 (remote-reconcile) FedRAMP observability executor — health-probe a remote Grafana REST endpoint (inbound-only + scoped SA token) then drive the shipped pangea rio-observability workspace + deployment-agnostic pangea-grafana provider + magma runner against it, converging a remote Grafana from our side. Reports the runner''s real status; the exact flake app attr is a named LiveTODO, never faked.'
 branding:
   icon: 'bar-chart-2'
   color: 'orange'
 
 inputs:
   grafana-url:
-    description: "Remote Grafana base URL (inbound-only, no trailing slash), e.g. https://grafana.2f.example"
+    description: "Remote Grafana base URL (inbound-only, no trailing slash), e.g. https://grafana.example.com"
     required: true
   grafana-token:
     description: "Scoped Grafana service-account token (least-privilege, inbound-only). Passed via env, never argv."

@@ -6,7 +6,7 @@ branding:
 
 inputs:
   flake-ref:
-    description: "Flake ref to enumerate (e.g. . or github:akeylesslabs/akeyless-nix-images)."
+    description: "Flake ref to enumerate (e.g. . or github:example-org/nix-images)."
     required: false
     default: "."
   eval-system:

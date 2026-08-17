@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pleme-io/actions/breathe-band-lint@main
         with:
-          root: clusters/camelot-eks
+          root: clusters/<cluster>
 ```
 
 ### Running it locally
@@ -90,7 +90,7 @@ which is how every result in this README was produced:
 ```sh
 curl -sL https://raw.githubusercontent.com/pleme-io/actions/main/_tlisp-stdlib/stdlib.tlisp > /tmp/lint.tlisp
 cat "$(git rev-parse --show-toplevel)/breathe-band-lint/run.tlisp" >> /tmp/lint.tlisp
-ROOT=clusters/camelot-eks tatara-script /tmp/lint.tlisp   # exit 0 = clean, 1 = new findings
+ROOT=clusters/<cluster> tatara-script /tmp/lint.tlisp   # exit 0 = clean, 1 = new findings
 ```
 
 Requires `yq` (v4) and `tatara-script` on `PATH`.

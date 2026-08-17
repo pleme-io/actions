@@ -6,7 +6,7 @@ branding:
 
 inputs:
   flake-ref:
-    description: "Flake ref to eval (e.g. . or github:akeylesslabs/akeyless-nix-images)."
+    description: "Flake ref to eval (e.g. . or github:example-org/nix-images)."
     required: false
     default: "."
   image-attr:
@@ -14,7 +14,7 @@ inputs:
     required: false
     default: "dockerImage"
   attr-template:
-    description: "Attr template over {base} {arch} {svc}. Default is the akeyless colon-triple; the same template grammar as nix-image (dockerImage:{arch}:{svc} | {base}-{arch}-{svc} | {base}-{arch} | dockerImage:{arch})."
+    description: "Attr template over {base} {arch} {svc}. Default is the colon-triple; the same template grammar as nix-image (dockerImage:{arch}:{svc} | {base}-{arch}-{svc} | {base}-{arch} | dockerImage:{arch})."
     required: false
     default: "dockerImage:{arch}:{svc}"
   svc:

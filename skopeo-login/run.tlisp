@@ -24,8 +24,8 @@
 ;; `skopeo login`; the action's `description` carries the [RETIRED] marker so a
 ;; reader of the catalog sees it before wiring it into anything new.
 ;;
-;; Ported from the proven akeyless_services/release/skopeo-login.sh
-;; shape (push-to-harbor.yml's own working Harbor-login mechanism):
+;; Ported from a proven upstream shell shape (a working Harbor-login
+;; mechanism):
 ;; ECR registries resolve a short-lived password via
 ;; `aws ecr(-public) get-login-password`, using USERNAME/PASSWORD as
 ;; AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; every other registry logs

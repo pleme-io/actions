@@ -18,10 +18,10 @@ jobs:
       - id: m
         uses: pleme-io/actions/build-matrix@v1
         with:
-          flake-ref: github:akeylesslabs/akeyless-nix-images
+          flake-ref: github:example-org/nix-images
           eval-system: x86_64-linux    # where the colon-triple attrs live
           image-base: dockerImage
-          services: "auth uam gateway"  # empty = all discovered
+          services: "svc-a svc-b gateway"  # empty = all discovered
           arches: "amd64"               # empty = all discovered
   build:
     needs: graph
@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: pleme-io/actions/nix-image@v1
         with:
-          flake-ref: github:akeylesslabs/akeyless-nix-images
+          flake-ref: github:example-org/nix-images
           # ${{ matrix.image }} / ${{ matrix.arch }} / ${{ matrix.attr }} / ${{ matrix.system }}
 ```
 

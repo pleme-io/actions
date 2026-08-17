@@ -38,9 +38,9 @@
           "reg:5000"
           ""
           "akeyless-"
-          "auth")
+          "service-a")
         (oci:index-tag "7" "cafe"))
-      "reg:5000/akeyless-auth:r7-cafe")
+      "reg:5000/akeyless-service-a:r7-cafe")
     "index ref composed end-to-end"))
 
 (deftest "mlj:regctl-ref-flags interleaves --ref before each ref"
@@ -109,11 +109,11 @@
 ;; whatever host each ref was on. Narrowing to the target host only would
 ;; have been a silent behaviour change.
 (deftest "mlj:ref-host / mlj:hosts-of enumerate every registry the join touches"
-  (assert (equal? (mlj:ref-host "zot:5000/akeyless-auth:amd64-r1-a") "zot:5000") "tagged ref")
+  (assert (equal? (mlj:ref-host "zot:5000/akeyless-service-a:amd64-r1-a") "zot:5000") "tagged ref")
   (assert (equal? (mlj:ref-host "zot:5000/x/y@sha256:ab") "zot:5000") "digest ref, nested path")
   (assert
     (equal?
-      (mlj:hosts-of "zot:5000/akeyless-auth:r1-a" (list "zot:5000/akeyless-auth:amd64-r1-a"))
+      (mlj:hosts-of "zot:5000/akeyless-service-a:r1-a" (list "zot:5000/akeyless-service-a:amd64-r1-a"))
       (list "zot:5000"))
     "same host collapses to one entry")
   (assert
@@ -149,13 +149,13 @@
   "oci:split-registry / oci:split-image recover regctl's bare registry-host + doca's --image from a composed base"
   (assert
     (equal?
-      (oci:split-registry "zot-pleme-zot.zot.svc.cluster.local:5000/akeyless-auth")
+      (oci:split-registry "zot-pleme-zot.zot.svc.cluster.local:5000/akeyless-service-a")
       "zot-pleme-zot.zot.svc.cluster.local:5000")
     "registry-host is everything before the first /")
   (assert
     (equal?
-      (oci:split-image "zot-pleme-zot.zot.svc.cluster.local:5000/akeyless-auth")
-      "akeyless-auth")
+      (oci:split-image "zot-pleme-zot.zot.svc.cluster.local:5000/akeyless-service-a")
+      "akeyless-service-a")
     "image is everything after the first /")
   (assert
     (equal? (oci:split-image "zot.internal/x/y") "x/y")
@@ -179,7 +179,7 @@
   (assert
     (equal?
       (oci:ca-cert-curl-args
-        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"
+        "https://raw.githubusercontent.com/example-org/example-gitops/main/x.crt"
         "/tmp/ca.crt"
         "ghp_abc123")
       (list
@@ -190,5 +190,5 @@
         "Authorization: token ghp_abc123"
         "-o"
         "/tmp/ca.crt"
-        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"))
-    "non-empty token -> Authorization header added (needed for the private akeyless-k8s repo)"))
+        "https://raw.githubusercontent.com/example-org/example-gitops/main/x.crt"))
+    "non-empty token -> Authorization header added (needed for a private cert repo)"))

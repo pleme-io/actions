@@ -36,8 +36,8 @@ runs:
       # tag was cut. @v1 silently has NO `count:` output declared at all,
       # so this step's output comes back empty with no error -- the exact
       # bug that commit already fixed for other consumers. Reproduced here
-      # live (2026-07-21): every downstream tag in
-      # akeylesslabs/akeyless-main-repo's camelot-hardened-images.yml
+      # live (2026-07-21): every downstream tag in a consumer's
+      # hardened-images workflow
       # rendered as "1.0." with no patch number
       # (needs.resolve-patch.outputs.patch was empty), failing every
       # join-manifests job. Same fix shape as build-matrix/cartorio-attest/

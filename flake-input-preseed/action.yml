@@ -14,7 +14,7 @@ inputs:
     required: false
     default: "flake.lock"
   inputs:
-    description: "Space/comma list of flake-input NODE names to preseed (as they appear under flake.lock nodes), e.g. 'akeyless-main-repo nixpkgs'. The big git input is the load-bearing one."
+    description: "Space/comma list of flake-input NODE names to preseed (as they appear under flake.lock nodes), e.g. 'big-monorepo nixpkgs'. The big git input is the load-bearing one."
     required: false
     default: ""
   require:

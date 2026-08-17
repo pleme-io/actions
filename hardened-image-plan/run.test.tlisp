@@ -11,7 +11,7 @@
 ;; The PROJECTION itself is jq and is verified differently — against the live
 ;; catalog, by parity with the workflow it replaces. Measured 2026-08-12 on
 ;; pleme-io/hardened-images: 40 rows in, 22 doMirror, 13 doPromote, 18 held —
-;; matching one-for-one the 22 `mirror-*-to-zot` and 13 `promote-trigger-*-to-2f`
+;; matching one-for-one the 22 `mirror-*-to-zot` and 13 `promote-trigger-*`
 ;; jobs that physically exist in the 7027-line workflow. That parity is the real
 ;; acceptance gate for this action; these tests guard the helpers parity cannot
 ;; see into.

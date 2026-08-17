@@ -28,7 +28,7 @@ re-implementation.
   id: push
   with:
     registry: zot.zot-system.svc.cluster.local:5000
-    svc: auth                       # → repo akeyless-auth
+    svc: service-a                  # → repo akeyless-service-a
     arch: amd64
     run-number: ${{ github.run_number }}
     sha: ${{ github.sha }}
@@ -53,7 +53,7 @@ and is never a deploy source.
 | `registry` | `zot.zot-system.svc.cluster.local:5000` | cluster Zot host:port (used when `repo` empty) |
 | `repo` | `""` | full base override `<host>/<repo>` (wins when set) |
 | `image` | `""` | repo path override (composed with `registry`) |
-| `svc` | `""` | akeyless service → repo `akeyless-<svc>` |
+| `svc` | `""` | service slug → repo `akeyless-<svc>` |
 | `arch` | `amd64` | tag prefix |
 | `run-number` | *(required)* | numeric sort key `r<n>` |
 | `sha` | *(required)* | trace suffix |

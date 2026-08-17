@@ -83,7 +83,7 @@
 ;;   FLAKE_REF          flake ref to eval (default ".")
 ;;   IMAGE_ATTR         attr base ({base}) (default "dockerImage")
 ;;   ATTR_TEMPLATE      attr template over {base} {arch} {svc}
-;;                        (default "dockerImage:{arch}:{svc}" — the akeyless
+;;                        (default "dockerImage:{arch}:{svc}" — the
 ;;                         colon-triple; the same template grammar as nix-image)
 ;;   SVC                service name ({svc}) — REQUIRED when the template names {svc}
 ;;   ARCH               arch ({arch}) (default "amd64")

@@ -4,10 +4,10 @@
 
 (deftest "zot:compose-base precedence — repo > registry/image > akeyless-<svc>"
   (assert
-    (equal? (zot:compose-base "zot.internal/x/y" "reg:5000" "img" "auth") "zot.internal/x/y")
+    (equal? (zot:compose-base "zot.internal/x/y" "reg:5000" "img" "service-a") "zot.internal/x/y")
     "explicit repo wins")
   (assert
-    (equal? (zot:compose-base "" "reg:5000" "custom/img" "auth") "reg:5000/custom/img")
+    (equal? (zot:compose-base "" "reg:5000" "custom/img" "service-a") "reg:5000/custom/img")
     "registry/image when no repo")
   (assert
     (equal?
@@ -15,8 +15,8 @@
         ""
         "zot.zot-system.svc.cluster.local:5000"
         ""
-        "auth")
-      "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
+        "service-a")
+      "zot.zot-system.svc.cluster.local:5000/akeyless-service-a")
     "akeyless-<svc> repo-shape")
   (assert (equal? (zot:compose-base "" "reg:5000" "" "") "") "no target resolvable -> empty"))
 
@@ -29,8 +29,8 @@
 (deftest "oci:target-ref appends :tag to the base"
   (assert
     (equal?
-      (oci:target-ref "reg:5000/akeyless-auth" "amd64-r1-abc")
-      "reg:5000/akeyless-auth:amd64-r1-abc")
+      (oci:target-ref "reg:5000/akeyless-service-a" "amd64-r1-abc")
+      "reg:5000/akeyless-service-a:amd64-r1-abc")
     "exact ref")
   (assert
     (equal?
@@ -39,12 +39,12 @@
           ""
           "reg:5000"
           ""
-          "uam")
+          "service-b")
         (oci:autobump-tag
           "amd64"
           "99"
           "cafe"))
-      "reg:5000/akeyless-uam:amd64-r99-cafe")
+      "reg:5000/akeyless-service-b:amd64-r99-cafe")
     "composed end-to-end"))
 
 (deftest "oci:moving-tag is the human <arch>-latest pointer (never a deploy source)"
@@ -69,7 +69,7 @@
   (assert
     (equal?
       (zot:ca-cert-curl-args
-        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"
+        "https://raw.githubusercontent.com/example-org/example-gitops/main/x.crt"
         "/tmp/ca.crt"
         "ghp_abc123")
       (list
@@ -80,18 +80,18 @@
         "Authorization: token ghp_abc123"
         "-o"
         "/tmp/ca.crt"
-        "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/x.crt"))
-    "non-empty token -> Authorization header added (needed for the private akeyless-k8s repo)"))
+        "https://raw.githubusercontent.com/example-org/example-gitops/main/x.crt"))
+    "non-empty token -> Authorization header added (needed for a private cert repo)"))
 
 (deftest
   "zot:split-registry / zot:split-image recover doca's separate --registry/--image from a composed base"
   (assert
     (equal?
-      (zot:split-registry "zot.zot-system.svc.cluster.local:5000/akeyless-auth")
+      (zot:split-registry "zot.zot-system.svc.cluster.local:5000/akeyless-service-a")
       "zot.zot-system.svc.cluster.local:5000")
     "registry is everything before the first /")
   (assert
-    (equal? (zot:split-image "zot.zot-system.svc.cluster.local:5000/akeyless-auth") "akeyless-auth")
+    (equal? (zot:split-image "zot.zot-system.svc.cluster.local:5000/akeyless-service-a") "akeyless-service-a")
     "image is everything after the first /")
   (assert
     (equal? (zot:split-image "zot.internal/x/y") "x/y")

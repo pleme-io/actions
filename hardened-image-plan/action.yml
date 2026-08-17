@@ -33,7 +33,7 @@ inputs:
     required: false
     default: ""
   stage:
-    description: "How far down the delivery chain to go: build (build+scan, no push) | publish (through the registry) | mirror (through Zot admission) | all (through the 2F pointer commit) | rescan (scan what is already published, no build). Empty = derived from `event`."
+    description: "How far down the delivery chain to go: build (build+scan, no push) | publish (through the registry) | mirror (through Zot admission) | all (through the downstream pointer commit) | rescan (scan what is already published, no build). Empty = derived from `event`."
     required: false
     default: ""
   max-stage:

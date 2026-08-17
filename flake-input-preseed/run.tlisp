@@ -3,7 +3,7 @@
 ;; PROBLEM. A warm build sets `substituters=<sui>` so the *build* closures
 ;; substitute — but nix's git/tarball fetcher NEVER consults substituters
 ;; for a flake input's SOURCE tree. So a heavy git input (the
-;; akeyless-main-repo 18,904-commit monorepo, 450 MiB tip tree) is
+;; big-monorepo 18,904-commit monorepo, 450 MiB tip tree) is
 ;; re-git-cloned at eval time on every fresh runner pod — ~21–40s
 ;; (egress-bound), paid cold AND warm. Empirically verified: a warm
 ;; `nix flake prefetch` of a LOCKED input already present in sui still
@@ -13,9 +13,9 @@
 ;; store path derivable PURELY from flake.lock's narHash — knowable without
 ;; any fetch. This action computes that path and `nix copy --from <endpoint>`
 ;; pulls it out of the super-cache into the local store (an in-cluster ~8s
-;; substituter pull for the 70 MiB xz'd akeyless-main-repo source). Once the
+;; substituter pull for the 70 MiB xz'd big-monorepo source). Once the
 ;; CA path is local, the in-flake LOCKED eval reuses it and SKIPS the clone
-;; (measured: in-flake drvPath eval 21s→14s, zero akeyless-main-repo clone).
+;; (measured: in-flake drvPath eval 21s→14s, zero big-monorepo clone).
 ;; No `--override-input` needed — nix resolves the locked input to the
 ;; already-present store path.
 ;;

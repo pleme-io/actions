@@ -4,22 +4,22 @@
 
 (deftest "preseed-parse-inputs splits on whitespace and commas, dropping empties"
   (assert
-    (equal? (preseed-parse-inputs "akeyless-main-repo") (list "akeyless-main-repo"))
+    (equal? (preseed-parse-inputs "big-monorepo") (list "big-monorepo"))
     "single token")
   (assert
     (equal?
-      (preseed-parse-inputs "akeyless-main-repo nixpkgs")
-      (list "akeyless-main-repo" "nixpkgs"))
+      (preseed-parse-inputs "big-monorepo nixpkgs")
+      (list "big-monorepo" "nixpkgs"))
     "space list")
   (assert
     (equal?
-      (preseed-parse-inputs "akeyless-main-repo,nixpkgs")
-      (list "akeyless-main-repo" "nixpkgs"))
+      (preseed-parse-inputs "big-monorepo,nixpkgs")
+      (list "big-monorepo" "nixpkgs"))
     "comma list")
   (assert
     (equal?
-      (preseed-parse-inputs "akeyless-main-repo, nixpkgs")
-      (list "akeyless-main-repo" "nixpkgs"))
+      (preseed-parse-inputs "big-monorepo, nixpkgs")
+      (list "big-monorepo" "nixpkgs"))
     "comma+space list")
   (assert (null? (preseed-parse-inputs "   ")) "whitespace-only => empty")
   (assert (null? (preseed-parse-inputs "")) "empty => empty"))

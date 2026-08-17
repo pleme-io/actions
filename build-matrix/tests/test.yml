@@ -52,9 +52,9 @@ jobs:
   #
   #   - uses: ./build-matrix
   #     with:
-  #       flake-ref: github:akeylesslabs/akeyless-nix-images
+  #       flake-ref: github:example-org/nix-images
   #       eval-system: x86_64-linux
   #       image-base: dockerImage
-  #       services: "auth uam gateway"
+  #       services: "svc-a svc-b gateway"
   #       arches: "amd64"
   #   # then: strategy.matrix: ${{ fromJSON(steps.<id>.outputs.matrix) }}

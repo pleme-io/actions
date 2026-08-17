@@ -23,7 +23,7 @@ gen-build-spec      → SPEC_PATHS (typed *.build-spec.json, one per service)
   uses: pleme-io/actions/sui-warm-hydrate@v1
   with:
     endpoint:   ${{ steps.sui.outputs.endpoint }}
-    spec-paths: Cargo.build-spec.json,uam.build-spec.json,gator.build-spec.json
+    spec-paths: Cargo.build-spec.json,svc-b.build-spec.json,svc-d.build-spec.json
     store-backend: ${{ steps.sui.outputs.store-backend }}
     cache-backend: ${{ steps.sui.outputs.cache-backend }}
     sandbox:       ${{ steps.sui.outputs.sandbox }}
