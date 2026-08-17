@@ -7,7 +7,15 @@
 ;; way for every repo flavour.
 ;;
 ;;   Ansible collection: galaxy.yml present → `.#bump` (mutates galaxy.yml)
-;;   Ruby gem:           *.gemspec at root  → `.#gem:bump` (mutates lib/<name>/version.rb)
+;;   Ruby gem:           *.gemspec at root  → `forge gem bump --seed-from-tags`
+;;                                            (mutates lib/<name>/version.rb)
+;;
+;; NOTE the asymmetry, which is a migration in progress and not a design: the
+;; gem path calls forge DIRECTLY, the ansible path still delegates to the
+;; consumer's `.#bump` flake app. Direct is the destination — it removes the
+;; per-repo "does your flake expose the app" precondition and lets forge own the
+;; seeding arithmetic. The ansible path has no forge equivalent yet.
+;; pending-forge-bump: ansible collection path still delegates to .#bump
 ;;
 ;; Inputs (env):
 ;;   BUMP_TYPE      — patch | minor | major (default "patch")
@@ -87,59 +95,66 @@
       ""
       (first-version-line (string-split (read-file path) "\n")))))
 
-;; `exec-capture`, not `exec-check`: the status alone cannot tell "the bump ran
-;; and failed" from "the app this action assumes does not exist here", and those
-;; need different messages to different people. Measured 2026-08-17: 20 of the
-;; last 7 days' failures are the SECOND case, reported only as nix's
-;; `does not provide attribute 'apps.x86_64-linux.gem:bump'`.
-(define (gem-bump) (exec-capture "nix" "run" ".#gem:bump" "--" bump-type))
-
-;; Pure, so it is testable: does this stderr say the app is ABSENT rather than
-;; that the bump failed?
+;; Calls forge DIRECTLY, not the consumer repo's `.#gem:bump` app.
 ;;
-;; WHY THIS IS A PRECONDITION AND NOT A BUG IN THE REPO. `find-gemspec` decides
-;; "this is a gem" from a root `*.gemspec` and nothing else, but `.#gem:bump` is
-;; provided only by substrate's ruby-gem builder (`lib/build/ruby/build.nix`).
-;; A repo that is genuinely a gem AND hand-rolls its own flake `outputs`
-;; therefore satisfies the detector and cannot satisfy the call — it fails 100%
-;; of the time, by construction, and no retry or version arithmetic can help.
-;; pangea-architectures is exactly this: `pangea-architectures.gemspec` at root,
-;; a hand-written `outputs`, no `gem:bump` anywhere.
+;; WHY THE DELEGATION WENT AWAY. This used to run `nix run .#gem:bump`, which
+;; required the CONSUMER's flake to expose that app. Only substrate's ruby-gem
+;; builder provides it, so a repo that is genuinely a gem and hand-rolls its own
+;; flake satisfied the gemspec detector and could never satisfy the call. Four
+;; repos were in that state -- pangea, pangea-architectures, pangea-orchestrator,
+;; pangea-porkbun -- failing 100% of the time, by construction, and they were 20
+;; of the last 7 days' failures. Calling forge directly removes the
+;; per-repo precondition entirely: nothing about the consumer's flake matters.
 ;;
-;; NOTE the near-miss that makes this worth naming precisely: substrate ALSO
-;; carries a `gem-bump` (hyphen) app in `lib/workspace/managed-flake.nix`, with
-;; a different arity (`<gem-name> <new-version>` positionally, not
-;; `-- <bump-type>`). It is NOT this app and cannot serve this call. Confirming
-;; that took reading both builders; do not "fix" a repo by wiring that one.
-(define (gem-app-absent? stderr-text)
-  (and (string-contains? stderr-text "does not provide attribute")
-       (string-contains? stderr-text "gem:bump")))
+;; And the 35 repos that DO expose `gem:bump` need no change, because that app
+;; was only ever a 4-line shim over this same binary. Removing a layer, not
+;; swapping one dependency for another.
+;;
+;; `--seed-from-tags` is the substantive upgrade. forge reads the `v*` tags
+;; itself and seeds from max(manifest, highest released), then skips versions
+;; whose tag exists (forge@4c68278). Previously the arithmetic lived in the
+;; consumer's flake app, which saw only the manifest -- which is precisely why
+;; the monotonicity guard below could only ever be a POST-condition. It stays as
+;; defence in depth, but it should now be unreachable rather than load-bearing.
+;;
+;; `github:pleme-io/forge#forge-cli` unpinned matches the convention 10 sibling
+;; actions already use for a pleme-io binary (e.g. doca ->
+;; `github:pleme-io/substrate#oci-push`); pinning here would diverge from them.
+(define (gem-bump gem-name)
+  (exec-capture "nix" "run" "github:pleme-io/forge#forge-cli" "--"
+    "gem" "bump"
+    "--working-dir" "."
+    "--name" gem-name
+    "--level" bump-type
+    "--seed-from-tags"))
 
 ;; ---------------------------------------------------------------- ;;
 ;; Release monotonicity                                             ;;
 ;; ---------------------------------------------------------------- ;;
 ;;
-;; This action does not COMPUTE a version — it delegates the whole write
-;; to the consumer repo's own flake app (`nix run .#bump` / `.#gem:bump`),
-;; which seeds from the manifest and, like every other bumper before this
-;; fix, knows nothing about the repo's tags. So a manifest that lags its
-;; tags bumps into already-passed territory and the release walks BACKWARD
-;; (937-repo census, 2026-07-27: 527 inverted tag pairs on linear history).
+;; A POST-condition, and its role now DIFFERS per path — read which before
+;; trusting it.
 ;;
-;; TIER-HONEST, and weaker here than in the siblings. rust-workspace-bump
-;; and cargo-bump SEED from max(manifest, released), so a backward version
-;; is unnameable by the arithmetic. Here the arithmetic lives in another
-;; repo's flake, so the honest ceiling is a POST-CONDITION: let the
-;; delegated bump run, then refuse to report success if what it produced
-;; is not above the highest release. That is only-mitigated — a loud
-;; Result::Err — and it is genuinely late: the flake app may already have
-;; committed and tagged locally. It is still real protection, because both
-;; consuming workflows (gem-auto-bump, ansible-collection-auto-bump) push
-;; in a LATER step, and a non-zero exit here fails the job before
-;; git-push-with-token ever runs — the bad tag never leaves the runner.
+;; The failure it guards: a bumper that seeds from the MANIFEST alone walks a
+;; release backward whenever the manifest lags its tags (manifest 0.2.5 with
+;; v0.3.1 published yields 0.2.6). 937-repo census, 2026-07-27: 527 inverted tag
+;; pairs on linear history, so that is the fleet's normal state.
 ;;
-;; Seeding this properly means teaching the substrate flake apps the same
-;; invariant; that is a substrate change, deliberately not made from here.
+;;   GEM path — now DEFENCE IN DEPTH, and expected to be unreachable. forge
+;;   seeds from max(manifest, released) and skips taken tags before writing
+;;   (`--seed-from-tags`, forge@4c68278), so a backward version is unnameable by
+;;   the arithmetic. Kept rather than deleted: it is cheap, and it is the only
+;;   thing that would catch a regression in that seeding.
+;;
+;;   ANSIBLE path — still LOAD-BEARING and still only-mitigated. That leg
+;;   delegates to the consumer's `.#bump` flake app, which sees only galaxy.yml,
+;;   so this check is the sole protection. It is genuinely late — the flake app
+;;   may already have committed and tagged locally — but both consuming
+;;   workflows push in a LATER step, so a non-zero exit here fails the job
+;;   before git-push-with-token runs and the bad tag never leaves the runner.
+;;
+;; The ansible leg is the remaining half of the migration: forge has no ansible
+;; bump yet. pending-forge-bump names it in the header.
 (define (release-monotone-or-die! label after)
   (let ((max-released (git:max-released-version "v")))
     (cond
@@ -205,7 +220,7 @@
       ;; Ruby gem path
       ((not (equal? gem-name ""))
         (define before (read-gem-version gem-name))
-        (define result (gem-bump))
+        (define result (gem-bump gem-name))
         (define status (status-of result))
         (cond
           ((= status 0)
@@ -214,7 +229,7 @@
                 ((and (not (equal? after "")) (not (equal? after before)))
                   (release-monotone-or-die!
                     (string-append
-                      "nix run .#gem:bump ("
+                      "forge gem bump --seed-from-tags ("
                       gem-name
                       ")")
                     after)
@@ -225,46 +240,21 @@
                   (append-output "bumped=false")
                   (append-output "new-version=")
                   (log-info (string-append "no version change detected (gem " gem-name ")"))))))
-          ;; The app is ABSENT — name the precondition, not nix's attribute
-          ;; error, and say who has to change what. Left as a failure
-          ;; deliberately: it IS misconfigured, and reporting bumped=false with
-          ;; exit 0 would let a release proceed having bumped nothing.
-          ((gem-app-absent? (stderr-of result))
-            (append-output "bumped=false")
-            (append-output "new-version=")
-            (log-error
-              (string-append
-                "substrate-bump: this repo has " gem-name ".gemspec, so it was "
-                "detected as a Ruby gem, but its flake exposes no `.#gem:bump` "
-                "app — so there is nothing here for this action to delegate to."))
-            (log-error
-              (string-append
-                "  `.#gem:bump` comes from substrate's ruby-gem builder "
-                "(lib/build/ruby/build.nix). A gem that hand-rolls its own "
-                "flake `outputs` satisfies the gemspec detector and can never "
-                "satisfy this call: it fails 100% of the time, by construction."))
-            (log-error
-              (string-append
-                "  Fix at the REPO: build the flake with substrate's ruby-gem "
-                "builder so `.#gem:bump` exists. Do NOT wire "
-                "lib/workspace/managed-flake.nix's `gem-bump` (hyphen) — a "
-                "different app with a different arity, and it is unwired."))
-            (exit status))
           (else
             (append-output "bumped=false")
             (append-output "new-version=")
             (log-error
-              (string-append "nix run .#gem:bump failed with status " (string-format "{}" status)))
+              (string-append "forge gem bump failed with status " (string-format "{}" status)))
             ;; Relay the child's own output. Without this the message above is
             ;; the ONLY thing a reader gets, which is the same swallowing that
             ;; left `ERROR cargo set-version failed` undiagnosable across 74
             ;; repos until cargo-bump started relaying stderr.
             (cond
               ((not (equal? (stderr-of result) ""))
-                (log-error (string-append "nix run .#gem:bump stderr: " (stderr-of result)))))
+                (log-error (string-append "forge gem bump stderr: " (stderr-of result)))))
             (cond
               ((not (equal? (stdout-of result) ""))
-                (log-info (string-append "nix run .#gem:bump stdout: " (stdout-of result)))))
+                (log-info (string-append "forge gem bump stdout: " (stdout-of result)))))
             (exit status))))
 
       ;; Unknown repo type — fail loudly so misconfiguration surfaces
