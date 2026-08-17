@@ -51,9 +51,9 @@ inputs:
 # the container (it's just an inode in the bind-mounted workspace), but
 # opening what it points to is a guaranteed "no such file or directory",
 # regardless of the symlink's freshness on the host. Confirmed against a
-# real akeylesslabs/akeyless-main-repo run: skopeo failed
-# "initializing source docker-archive:camelot/hardened-images/result:
-# ... open camelot/hardened-images/result: no such file or directory"
+# real downstream consumer run: skopeo failed
+# "initializing source docker-archive:hardened-images/result:
+# ... open hardened-images/result: no such file or directory"
 # every single time, silently, because the calling workflow had
 # continue-on-error: true on this step -- masked for as long as this
 # action existed in Docker mode. Every OTHER action in the same pipeline

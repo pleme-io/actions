@@ -3,7 +3,7 @@ description: >-
   Attach an OpenVEX 0.2.0 predicate to an OCI image via
   `cosign attest --type openvex`. Keyless (Fulcio + Rekor via ambient OIDC)
   by default; supply key-ref for a cofre/ESO/KMS-held key. Lets a downstream
-  re-scanner (e.g. 2F/SecondFront) consume the transferable not_affected /
+  re-scanner consume the transferable not_affected /
   backport justifications with `grype --vex` instead of re-flagging
   version-based CVEs whose code is backported or unreachable. The V-attest
   sibling of the L-sign (cosign-sign) layer.

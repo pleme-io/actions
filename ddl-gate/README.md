@@ -61,14 +61,14 @@ the statement does.
 ```yaml
 - uses: pleme-io/actions/ddl-gate@main
   with:
-    root: clusters/camelot-eks/apps/camelot/schemas
+    root: clusters/<cluster>/apps/<app>/schemas
 ```
 
 Run it locally — the same code path CI executes:
 
 ```bash
 cat _tlisp-stdlib/stdlib.tlisp _tlisp-ddl/stdlib.tlisp ddl-gate/run.tlisp > /tmp/gate.tlisp
-ROOT=clusters/camelot-eks/apps/camelot/schemas tatara-script /tmp/gate.tlisp
+ROOT=clusters/<cluster>/apps/<app>/schemas tatara-script /tmp/gate.tlisp
 ```
 
 ## Sunset lifecycle

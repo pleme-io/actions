@@ -33,7 +33,7 @@ three more jobs.
     event: ${{ github.event_name }}
     only: ${{ inputs.only }}
     stage: ${{ inputs.stage }}
-    max-stage: ${{ inputs.ship-to-2f && 'all' || 'mirror' }}
+    max-stage: ${{ inputs.ship-downstream && 'all' || 'mirror' }}
     held-file: tools/delivery-hold.txt
     runner: ${{ steps.runner.outputs.runner }}
 
@@ -128,7 +128,7 @@ gates `main` so no `nix eval` runs.
 The **projection** is jq and is verified differently: against the live catalog,
 by parity with the workflow it replaces. Measured 2026-08-12 on
 `pleme-io/hardened-images` — 40 rows in → 22 `doMirror`, 13 `doPromote`, 18 held,
-matching one-for-one the 22 `mirror-*-to-zot` and 13 `promote-trigger-*-to-2f`
+matching one-for-one the 22 `mirror-*-to-zot` and 13 `promote-trigger-*`
 jobs that physically exist. That parity is the real acceptance gate; the deftests
 guard what parity cannot see into.
 

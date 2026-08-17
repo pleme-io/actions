@@ -35,8 +35,8 @@ jobs:
       - id: cartorio
         uses: ./cartorio-attest
         with:
-          subject: akeyless-auth
-          image-ref: zot.internal/akeyless-auth:r412-9c1f2ab
+          subject: akeyless-service-a
+          image-ref: zot.internal/akeyless-service-a:r412-9c1f2ab
           image-digest: sha256:deadbeefcafebabe
           nix-store-path: ${{ steps.build.outputs.store-path }}
           prev-receipt-hash: 00000000buildreceipt

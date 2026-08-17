@@ -6,7 +6,7 @@ branding:
 
 inputs:
   root:
-    description: "Tree to scan (e.g. clusters/camelot-eks). Tracked debt is read from <root>/.suspend-blocker-baseline.txt, so each cluster carries its own."
+    description: "Tree to scan (e.g. clusters/<cluster>). Tracked debt is read from <root>/.suspend-blocker-baseline.txt, so each cluster carries its own."
     required: false
     default: "."
   fail-on-violation:

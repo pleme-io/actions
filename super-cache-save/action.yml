@@ -30,7 +30,7 @@ inputs:
     required: false
     default: ""
   flake-inputs:
-    description: "Space/comma list of flake-input NODE names whose SOURCE FODs to also push to the endpoint (e.g. 'akeyless-main-repo'), so a warm build preseeds them instead of re-git-cloning. Empty => outputs-only push."
+    description: "Space/comma list of flake-input NODE names whose SOURCE FODs to also push to the endpoint (e.g. 'big-monorepo'), so a warm build preseeds them instead of re-git-cloning. Empty => outputs-only push."
     required: false
     default: ""
   result-link:

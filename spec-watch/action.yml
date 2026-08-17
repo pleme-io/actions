@@ -50,7 +50,7 @@ runs:
       # the cause.
       #
       # Same fix shape, same reason, as git-path-commit-count (whose comment
-      # documents this class biting akeylesslabs/akeyless-main-repo live on
+      # documents this class biting a downstream consumer live on
       # 2026-07-21 — every tag rendered "1.0." with an empty patch) and as
       # build-matrix / cartorio-attest / nix-build / nix-image / zot-push,
       # which all pin @main for exactly this.

@@ -38,7 +38,7 @@ fallback — and with it the `nix-installer-action` step.
   id: index
   with:
     registry: zot.zot-system.svc.cluster.local:5000
-    svc: auth
+    svc: service-a
     arch-refs: "amd64=${{ steps.push-amd64.outputs.ref }},arm64=${{ steps.push-arm64.outputs.ref }}"
     run-number: ${{ github.run_number }}
     sha: ${{ github.sha }}
@@ -88,7 +88,7 @@ environment pins the returned `index-digest` (`sha256:…`) — never a moving t
 - The **one runtime dependency** is a manifest tool reachable from the runner
   (baked, or `nix run` for regctl); absence is a loud failure (`reason=no-tool`),
   never a faked digest.
-- Today the akeyless build is **amd64-only**, so a 1-arch join is a
+- Today the upstream build is **amd64-only**, so a 1-arch join is a
   **degenerate-but-honest** index (`reason=single-arch`). It becomes load-bearing
   the moment arm64-native lands — no action change, just a second `arch-refs`
   entry.

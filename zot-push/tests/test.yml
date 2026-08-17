@@ -41,7 +41,7 @@ jobs:
         uses: ./zot-push
         with:
           registry: localhost:5000
-          svc: auth
+          svc: service-a
           arch: amd64
           run-number: "412"
           sha: 9c1f2ab
@@ -50,7 +50,7 @@ jobs:
       - name: Independently prove the exact tag landed in the registry
         run: |
           set -euo pipefail
-          REF="localhost:5000/akeyless-auth:amd64-r412-9c1f2ab"
+          REF="localhost:5000/akeyless-service-a:amd64-r412-9c1f2ab"
           DIGEST=$(skopeo --insecure-policy inspect --tls-verify=false --format '{{.Digest}}' "docker://$REF")
           [ -n "$DIGEST" ] || { echo "no image at $REF"; exit 1; }
           echo "zot-push verified — $REF @ $DIGEST"

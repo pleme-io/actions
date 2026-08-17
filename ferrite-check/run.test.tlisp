@@ -33,17 +33,17 @@
         "dockerImage:{arch}:{svc}"
         "dockerImage"
         "amd64"
-        "auth")
-      "dockerImage:amd64:auth")
-    "akeyless colon-triple")
+        "svc-a")
+      "dockerImage:amd64:svc-a")
+    "colon-triple")
   (assert
     (equal?
       (ferrite:render-attr
         "{base}-{arch}-{svc}"
         "dockerImage"
         "arm64"
-        "uam")
-      "dockerImage-arm64-uam")
+        "svc-b")
+      "dockerImage-arm64-svc-b")
     "substrate mkGoDockerImage dash-triple")
   (assert
     (equal? (ferrite:render-attr "{base}-{arch}" "dockerImage" "amd64" "") "dockerImage-amd64")
@@ -63,8 +63,8 @@
 (deftest "store-basename extracts the content-addressed store hash-name"
   (assert
     (equal?
-      (ferrite:store-basename "/nix/store/7p5zhwc7r3ji6m5p7cbj5rxw965yzm23-akeyless-uam.tar.gz")
-      "7p5zhwc7r3ji6m5p7cbj5rxw965yzm23-akeyless-uam.tar.gz")
+      (ferrite:store-basename "/nix/store/7p5zhwc7r3ji6m5p7cbj5rxw965yzm23-akeyless-svc-b.tar.gz")
+      "7p5zhwc7r3ji6m5p7cbj5rxw965yzm23-akeyless-svc-b.tar.gz")
     "full /nix/store path => basename")
   (assert
     (equal? (ferrite:store-basename "  /nix/store/abc-x  ") "abc-x")
@@ -83,10 +83,10 @@
 ;; ── poms-cache-path (the by-source-hash cache key algebra) ────────
 (deftest "poms-cache-path composes dir + hash, empty when unresolvable"
   (assert
-    (equal? (ferrite:poms-cache-path "/poms" "abc-uam") "/poms/abc-uam.poms.json")
+    (equal? (ferrite:poms-cache-path "/poms" "abc-svc-b") "/poms/abc-svc-b.poms.json")
     "dir + source-hash => <dir>/<hash>.poms.json")
   (assert
-    (equal? (ferrite:poms-cache-path "" "abc-uam") "")
+    (equal? (ferrite:poms-cache-path "" "abc-svc-b") "")
     "empty dir => no cache path (always-miss)")
   (assert
     (equal? (ferrite:poms-cache-path "/poms" "") "")

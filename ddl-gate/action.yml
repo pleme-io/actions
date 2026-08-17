@@ -6,7 +6,7 @@ branding:
 
 inputs:
   root:
-    description: "Tree to scan for .sql (e.g. clusters/camelot-eks/apps/camelot/schemas). Tracked debt is read from <root>/.ddl-gate-baseline.txt, so each model tree carries its own."
+    description: "Tree to scan for .sql (e.g. clusters/<cluster>/apps/<app>/schemas). Tracked debt is read from <root>/.ddl-gate-baseline.txt, so each model tree carries its own."
     required: false
     default: "."
   fail-on-violation:

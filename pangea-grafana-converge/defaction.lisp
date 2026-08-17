@@ -17,7 +17,7 @@
 (defaction
   "pangea-grafana-converge"
   :description
-  "MODEL-2 remote-reconcile FedRAMP observability executor: health-probe a remote (inbound-only, scoped-SA-token) Grafana REST endpoint, then drive the shipped pangea rio-observability workspace + deployment-agnostic pangea-grafana provider + magma runner against it — converging 2F Grafana from our side (same Pangea AST → same CRs → same provider code → same fixpoint as Model 1; only executor residency moves). No new provider code — a typed shim over `nix run` of the shipped workspace. Reports the runner's real status; the exact flake app attr + the thinner alert remote-apply leg are named LiveTODOs, never faked."
+  "MODEL-2 remote-reconcile FedRAMP observability executor: health-probe a remote (inbound-only, scoped-SA-token) Grafana REST endpoint, then drive the shipped pangea rio-observability workspace + deployment-agnostic pangea-grafana provider + magma runner against it — converging a remote Grafana from our side (same Pangea AST → same CRs → same provider code → same fixpoint as Model 1; only executor residency moves). No new provider code — a typed shim over `nix run` of the shipped workspace. Reports the runner's real status; the exact flake app attr + the thinner alert remote-apply leg are named LiveTODOs, never faked."
   :inputs
   ((:name "grafana-url" :type :string :required #t)
     (

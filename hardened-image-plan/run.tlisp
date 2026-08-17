@@ -87,7 +87,7 @@
 ;;   pipeline-count   rows in the pipeline matrix
 ;;   rescan-matrix    {"include":[{component,ref,...},...]} for the published set
 ;;   rescan-count     rows in the rescan matrix
-;;   promoting        space-separated slugs that promote to 2F in THIS run
+;;   promoting        space-separated slugs that promote downstream in THIS run
 ;;   scanned          catalog rows read before any filter (the denominator)
 ;;   reason           ok | empty-plan | empty-lane | nix-absent | jq-absent |
 ;;                    nix-eval-failed | jq-failed | malformed-row
@@ -584,8 +584,8 @@
             (string-append
               "hardened-image-plan: " pcount " pipeline row(s), " rcount " rescan row(s)"
               (if (equal? promoting "")
-                ", none promoting to 2F"
-                (string-append ", promoting to 2F: " promoting))))
+                ", none promoting downstream"
+                (string-append ", promoting downstream: " promoting))))
           (cond
             ;; A lane naming no component is a TYPO, not an empty day's work.
             ;; Reporting it as a clean empty plan is how a dispatch silently

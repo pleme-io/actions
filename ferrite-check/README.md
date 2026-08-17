@@ -30,10 +30,10 @@ jobs:
       - id: ferrite
         uses: pleme-io/actions/ferrite-check@v1
         with:
-          flake-ref: github:akeylesslabs/akeyless-nix-images
+          flake-ref: github:example-org/nix-images
           image-attr: dockerImage
-          attr-template: "dockerImage:{arch}:{svc}"   # akeyless colon-triple
-          svc: ${{ matrix.image }}                    # e.g. auth / uam / gateway
+          attr-template: "dockerImage:{arch}:{svc}"   # colon-triple
+          svc: ${{ matrix.image }}                    # e.g. svc-a / svc-b / gateway
           arch: ${{ matrix.arch }}                    # e.g. amd64
           poms-dir: .poms-cache                        # by-source-hash PoMS cache
           prev-receipt-hash: ${{ steps.spec.outputs.spec-hash }}  # chain to gen-build-spec
@@ -41,7 +41,7 @@ jobs:
       - if: steps.ferrite.outputs.cached != 'true'
         uses: pleme-io/actions/nix-image@v1
         with:
-          flake-ref: github:akeylesslabs/akeyless-nix-images
+          flake-ref: github:example-org/nix-images
           attr-template: "dockerImage:{arch}:{svc}"
           svc: ${{ matrix.image }}
           arches: ${{ matrix.arch }}
@@ -92,10 +92,10 @@ and `cartorio-attest`'s delivery receipt on **one chain**: it carries
 ```json
 {
   "schema": "pleme-io.ferrite.materialization-spec/v1",
-  "subject": "auth:amd64",
-  "package": { "svc": "auth", "arch": "amd64", "system": "x86_64-linux", "attr": "dockerImage:amd64:auth" },
-  "source": { "hash": "7p5zhw…-akeyless-auth.tar.gz", "algorithm": "nix-store-path" },
-  "materialization": { "materializable": true, "drv_path": "/nix/store/…-akeyless-auth.drv" },
+  "subject": "svc-a:amd64",
+  "package": { "svc": "svc-a", "arch": "amd64", "system": "x86_64-linux", "attr": "dockerImage:amd64:svc-a" },
+  "source": { "hash": "7p5zhw…-akeyless-svc-a.tar.gz", "algorithm": "nix-store-path" },
+  "materialization": { "materializable": true, "drv_path": "/nix/store/…-akeyless-svc-a.drv" },
   "chain": { "chain_algorithm": "blake3", "prev": "<gen-build-spec hash>" },
   "attestation": { "hash_algorithm": "blake3", "receipt_hash": "<real b3sum>", "signed": false, "signature": null, "outcome_chain": false }
 }

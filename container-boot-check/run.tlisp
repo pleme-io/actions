@@ -101,7 +101,7 @@
       'timeout)))
 
 ;; ── THIRD MODE: a binary that CANNOT fully start in isolation ──────────────
-;; Measured 2026-08-01 on akeylesslabs' camelot-hardened-images run 30702469999:
+;; Measured 2026-08-01 on a hardened-images run:
 ;; `clickhouse-operator` fails boot-check with
 ;;   F():Unable to build kubeconf: ~/.kube/config not found  -> exitCode=255
 ;; It is a KUBERNETES OPERATOR. There is no cluster inside `docker run`, so it
@@ -135,8 +135,7 @@
 ;; "any output passes" — the failure shape it exists to remove. Callers must
 ;; name a string only a correctly-loading binary can emit; a string the runtime
 ;; prints before exec'ing the entrypoint would make this vacuous again.
-;; ── MEASURED CONSUMERS (akeylesslabs camelot-hardened-images run 30706207197,
-;; 2026-08-01). THREE images fail boot-check, and they are TWO distinct causes,
+;; ── MEASURED CONSUMERS (a hardened-images run, 2026-08-01). THREE images fail boot-check, and they are TWO distinct causes,
 ;; not one -- which matters, because "three boot-check failures" reads as one
 ;; bug and is not:
 ;;

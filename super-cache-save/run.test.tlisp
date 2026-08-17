@@ -46,17 +46,17 @@
 
 (deftest
   "flake-inputs->list parses a space/comma node-name list, dropping empties (the WARM lever push half)"
-  (assert (equal? (flake-inputs->list "akeyless-main-repo") (list "akeyless-main-repo")) "single")
+  (assert (equal? (flake-inputs->list "big-monorepo") (list "big-monorepo")) "single")
   (assert
-    (equal? (flake-inputs->list "akeyless-main-repo nixpkgs") (list "akeyless-main-repo" "nixpkgs"))
+    (equal? (flake-inputs->list "big-monorepo nixpkgs") (list "big-monorepo" "nixpkgs"))
     "space list")
   (assert
-    (equal? (flake-inputs->list "akeyless-main-repo,nixpkgs") (list "akeyless-main-repo" "nixpkgs"))
+    (equal? (flake-inputs->list "big-monorepo,nixpkgs") (list "big-monorepo" "nixpkgs"))
     "comma list")
   (assert
     (equal?
-      (flake-inputs->list "akeyless-main-repo, nixpkgs")
-      (list "akeyless-main-repo" "nixpkgs"))
+      (flake-inputs->list "big-monorepo, nixpkgs")
+      (list "big-monorepo" "nixpkgs"))
     "comma+space")
   (assert (null? (flake-inputs->list "  ")) "whitespace-only => empty")
   (assert (null? (flake-inputs->list "")) "empty => empty"))

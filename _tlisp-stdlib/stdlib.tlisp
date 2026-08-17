@@ -1250,7 +1250,7 @@
 ;;
 ;; The YAML sibling's receipt is what that costs: `yq` is absent from the
 ;; `camelot-builder-pleme-eks` ARC runner, so it returned "" for every field
-;; of every file, release-promote's idempotency check never matched, and no 2F
+;; of every file, release-promote's idempotency check never matched, and no
 ;; promotion has ever completed. Nothing about that failure was jq- or
 ;; yq-specific; this reader had the same hole and the same blast radius.
 ;;
@@ -1324,7 +1324,7 @@
 ;; ARC runner, so on that runner this function returned "" for every field of
 ;; every file. release-promote's idempotency check compared against "" every
 ;; time, never matched, and always fell through to its write — which then died
-;; on the same missing binary (run 30555068358). No 2F promotion has ever
+;; on the same missing binary (run 30555068358). No promotion has ever
 ;; completed; the pointer files still read their seed `version: 0.0.0`.
 ;;
 ;; A read whose failure is indistinguishable from a legitimate empty result
@@ -1666,7 +1666,7 @@
 ;;       flake-inputs push), and
 ;;   (b) PRE-SEED it back on a warm pod via `nix copy --from <endpoint>`
 ;;       (flake-input-preseed) — an in-cluster substituter pull (~8s for
-;;       the akeyless-main-repo 450MiB→70MiB xz source, measured) that
+;;       the big-monorepo 450MiB→70MiB xz source, measured) that
 ;;       REPLACES the eval-time git clone the git fetcher would otherwise
 ;;       run (~21–40s, egress-bound).
 ;;
@@ -1677,7 +1677,7 @@
 ;; `substituters=<sui>` alone does nothing for the source; the source
 ;; must be copied into the local store explicitly. Once local, the
 ;; in-flake locked eval reuses the CA path and skips the clone (measured:
-;; in-flake drvPath eval 21s→14s, zero akeyless-main-repo clone).
+;; in-flake drvPath eval 21s→14s, zero big-monorepo clone).
 ;;
 ;; Shared by super-cache-save (push, `nix copy --to`) + flake-input-preseed
 ;; (pull, `nix copy --from`): the ≥2-consumer rule (Pillar 12).
@@ -1999,7 +1999,8 @@
 
 ;; Fetch the pinned CA cert to a local path via curl (universally
 ;; available on these runners). Returns the local path on success, ""
-;; on failure -- an honest miss, never a silent lie.
+;; on failure -- an honest miss, never a silent lie. An unset url is
+;; a curl failure, so it too returns "" -- the same fail-closed answer.
 (define (oci:fetch-ca-cert url path token)
   (let ((r (apply exec-capture (oci:ca-cert-curl-args url path token))))
     (if (= (status-of r) 0)

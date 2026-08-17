@@ -2,13 +2,13 @@
 ;; executor of the FedRAMP observability delivery pipeline
 ;; (theory/FEDRAMP-OBSERVABILITY-DELIVERY.md, step 8b).
 ;;
-;; Model 2 keeps the control loop on OUR side: 2F exposes an
-;; INBOUND-ONLY Grafana REST endpoint + a scoped SA token, and this
-;; action drives the SHIPPED pangea rio-observability workspace (the
+;; Model 2 keeps the control loop on OUR side: the remote environment
+;; exposes an INBOUND-ONLY Grafana REST endpoint + a scoped SA token, and
+;; this action drives the SHIPPED pangea rio-observability workspace (the
 ;; `provider :grafana, url:, auth:` shape) + the deployment-agnostic
 ;; `pangea-grafana` provider + the generic `magma` runner against that
-;; remote Grafana. Nothing of ours runs inside 2F's boundary; the same
-;; Pangea AST → the same CRs → the same provider code → the same
+;; remote Grafana. Nothing of ours runs inside the remote boundary; the
+;; same Pangea AST → the same CRs → the same provider code → the same
 ;; fixpoint as Model 1 — only the executor's residency moves.
 ;;
 ;; ── What it does NOW (real, not asserted) ───────────────────────────

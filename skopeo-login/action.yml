@@ -6,7 +6,7 @@ branding:
 
 inputs:
   registry:
-    description: "Registry host (e.g. registry.secondfront.com, ghcr.io, <acct>.dkr.ecr.<region>.amazonaws.com, public.ecr.aws)"
+    description: "Registry host (e.g. registry.example.com, ghcr.io, <acct>.dkr.ecr.<region>.amazonaws.com, public.ecr.aws)"
     required: true
   username:
     description: "Username — or AWS_ACCESS_KEY_ID for an ECR registry"

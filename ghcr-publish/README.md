@@ -9,7 +9,7 @@ Part of the **super-cache-ci** delivery leg. Consumes a tarball from `nix-image`
 - uses: pleme-io/actions/ghcr-publish@v1
   id: publish
   with:
-    repo: ghcr.io/pleme-io/akeyless-auth
+    repo: ghcr.io/pleme-io/example-service
     arch: amd64
     run-number: ${{ github.run_number }}
     sha: ${{ github.sha }}

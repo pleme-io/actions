@@ -15,9 +15,9 @@
     (equal?
       (cartorio:normalize-subject
         ""
-        "reg/akeyless-auth:tag"
+        "reg/akeyless-service-a:tag"
         "org/repo")
-      "reg/akeyless-auth:tag")
+      "reg/akeyless-service-a:tag")
     "image-ref next")
   (assert (equal? (cartorio:normalize-subject "" "" "org/repo") "org/repo") "repo fallback"))
 

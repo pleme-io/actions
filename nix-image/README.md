@@ -31,7 +31,7 @@ jobs:
         with:
           image-attr: dockerImage
           attr-template: "{base}-{arch}-{svc}"   # substrate mkGoDockerImage multi-service
-          svc: auth                               # => dockerImage-amd64-auth / -arm64-auth
+          svc: service-a                          # => dockerImage-amd64-service-a / -arm64-service-a
           arches: ${{ matrix.arch }}              # ONE arch, native to the runner
           flake-ref: "."
           # endpoint: ${{ steps.sui.outputs.endpoint }}  # LiveTODO: sui warm-layer routing
@@ -39,11 +39,11 @@ jobs:
 
 ## attr-template — the flake-attr conventions
 
-| `attr-template` | resolves (arch=amd64, svc=auth) | source convention |
+| `attr-template` | resolves (arch=amd64, svc=service-a) | source convention |
 |---|---|---|
 | `{base}-{arch}` *(default)* | `dockerImage-amd64` | substrate `mkImageReleaseApp` (single image) |
-| `{base}-{arch}-{svc}` | `dockerImage-amd64-auth` | substrate `mkGoDockerImage` (multi-service) |
-| `dockerImage:{arch}:{svc}` | `dockerImage:amd64:auth` | akeyless-nix-images (multi-service) |
+| `{base}-{arch}-{svc}` | `dockerImage-amd64-service-a` | substrate `mkGoDockerImage` (multi-service) |
+| `dockerImage:{arch}:{svc}` | `dockerImage:amd64:service-a` | a colon-namespaced image flake (multi-service) |
 | `dockerImage:{arch}` | `dockerImage:amd64` | substrate go `service-flake` (single-service) |
 
 `{base}` = `image-attr`. A template that names `{svc}` requires a non-empty

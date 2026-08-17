@@ -35,7 +35,7 @@ what you pulled — not a re-resolved tag.
 | `dest` | no | `zot-pull.tar` | Local docker-archive path for the pulled bytes |
 | `src-ca-cert-url` | no | `""` (opt-out) | Raw URL of the pinned CA/leaf cert to TRUST for a **self-signed SOURCE** registry (mirrors `zot-push`'s `ca-cert-url`; skopeo pins it via `--src-cert-dir`). **Default `""` keeps the original plain-copy behavior** — correct for a publicly-trusted source like GHCR (the shipped `vendor-image-mirror` consumer pulls its source from GHCR). When the source *is* the self-signed zot, set this to the committed `zot-ca.crt` URL (+ `src-ca-cert-token`), or set `src-insecure=true`. |
 | `src-ca-cert-dir` | no | `/tmp/zot-pull-certs` | Local dir the fetched CA cert is written into and handed to skopeo's `--src-cert-dir` (skopeo pins a **directory** of `*.crt`, not a single file). |
-| `src-ca-cert-token` | no | `""` | GitHub token with read access to `src-ca-cert-url`'s repo — **required** when that repo is private (the default URL points at the private `pleme-io/akeyless-k8s`; an unauthenticated fetch 404s). |
+| `src-ca-cert-token` | no | `""` | GitHub token with read access to `src-ca-cert-url`'s repo — **required** when that repo is private (an unauthenticated fetch 404s). |
 | `src-insecure` | no | `false` | Fall back to `--src-tls-verify=false` if the CA cert fetch fails (real degradation, logged loudly — never the default path when the cert is reachable). |
 
 ## Outputs
