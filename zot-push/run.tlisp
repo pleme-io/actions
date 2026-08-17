@@ -14,23 +14,24 @@
 ;; "Ensure skopeo" step (`apt-get install -y skopeo`, action.yml) silently
 ;; never worked on a stock `ghcr.io/actions/actions-runner:latest`
 ;; container (no apt-get/sudo baked in) -- confirmed live, three real jobs
-;; (kfm/gateway/auth) failed at exactly this step with `exec-check: No
-;; such file or directory`. Replaced with `doca`
-;; (pleme-io/substrate's `oci-push`, `nix run github:pleme-io/substrate#
-;; oci-push`), the SAME native Rust OCI push already proven end-to-end for
-;; ghcr.io via substrate's own `image-push.yml` (`doca-selftest.yml`).
+;; failed at exactly this step with `exec-check: No such file or
+;; directory`. Replaced with `doca` (pleme-io/substrate's `oci-push`,
+;; `nix run github:pleme-io/substrate#oci-push`), the SAME native Rust
+;; OCI push already proven end-to-end for ghcr.io via substrate's own
+;; `image-push.yml` (`doca-selftest.yml`).
 ;; `nix run` needs no pre-installed binary at all -- it's fetched +
 ;; built on demand, the same way this action's own stdlib is fetched.
 ;;
 ;; TLS: the in-cluster Zot moved off plain HTTP to real in-pod TLS
-;; (self-signed, no cert-manager on this cluster) 2026-07-18 -- see
-;; pleme-io/akeyless-k8s clusters/camelot-eks/infrastructure/zot/
-;; release.yaml + the committed zot-ca.crt (public, safe to fetch over
-;; plain HTTPS from GitHub). `CA_CERT_URL` (default: that committed cert's
-;; raw GitHub URL) is fetched once and passed to doca's `--dest-ca-cert` --
-;; real encryption in transit AND real server-identity verification
-;; against a SPECIFIC known cert, never a blanket "accept any cert"
-;; escape hatch. `INSECURE=true` (the old default) is now the FALLBACK,
+;; (self-signed, no cert-manager on that cluster) 2026-07-18. `CA_CERT_URL`
+;; names the raw URL of the CA/leaf cert the CALLER's GitOps repo commits
+;; beside its Zot release; it is fetched once and passed to doca's
+;; `--dest-ca-cert` -- real encryption in transit AND real server-identity
+;; verification against a SPECIFIC known cert, never a blanket "accept any
+;; cert" escape hatch. There is deliberately NO built-in default: a cert URL
+;; is a property of the caller's cluster, not of this action, so an unset
+;; CA_CERT_URL fails closed with reason=no-ca-cert rather than pinning
+;; somebody else's cert. `INSECURE=true` (the old default) is the FALLBACK,
 ;; used only if the cert fetch itself fails -- logged loudly, not silent.
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader):
@@ -41,7 +42,7 @@
 ;;   REGISTRY      cluster Zot host:port (default zot.zot-system.svc.cluster.local:5000)
 ;;   REPO          full base override "<host>/<repo>" (no tag); wins when set
 ;;   IMAGE         repo path override "<repo>" (used with REGISTRY when REPO empty)
-;;   SVC           akeyless service name (auth|uam|…); composes "akeyless-<svc>"
+;;   SVC           service slug (e.g. service-a); composes "akeyless-<svc>"
 ;;   ARCH          image arch for the tag prefix (default amd64)
 ;;   RUN_NUMBER    github.run_number — the numeric sort key r<n>  (required)
 ;;   SHA           github.sha — the trace suffix                  (required)
@@ -49,18 +50,19 @@
 ;;   MOVING_LATEST also push <arch>-latest human pointer (default "false")
 ;;   DEST_USER     registry push credential username                (required)
 ;;   DEST_PASS     registry push credential password                (required)
-;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once
+;;   CA_CERT_URL   raw URL of the pinned CA/leaf cert (PEM); fetched once.
+;;                 REQUIRED for a self-signed Zot -- no default (the cert is
+;;                 a property of the caller's cluster, not of this action).
 ;;   CA_CERT_PATH  local path the fetched cert is written to (default
 ;;                 /tmp/zot-push-ca.crt) — override if a single job runs
 ;;                 this action more than once against DIFFERENT certs, to
 ;;                 avoid one invocation's cache clobbering another's.
 ;;   CA_CERT_TOKEN a GitHub token with read access to CA_CERT_URL's repo --
-;;                 REQUIRED when that repo is private (the default
-;;                 CA_CERT_URL points at pleme-io/akeyless-k8s, which is
-;;                 private; an unauthenticated fetch 404s -- confirmed
-;;                 live 2026-07-18, the root cause of a real akeyless-
-;;                 nix-images build failure). Empty (default) keeps the
-;;                 original unauthenticated path for a public cert URL.
+;;                 REQUIRED when that repo is private; an unauthenticated
+;;                 raw.githubusercontent.com fetch 404s -- confirmed live
+;;                 2026-07-18, the root cause of a real consumer build
+;;                 failure. Empty (default) keeps the unauthenticated path
+;;                 for a public cert URL.
 ;;   INSECURE      fallback to plain HTTP if the cert fetch fails (default "false")
 ;;   DOCA_REF      the doca (oci-push) flake ref `nix run` resolves
 ;;                 (default github:pleme-io/substrate#oci-push — the
@@ -93,10 +95,9 @@
 
 ;; Build the curl argv for fetching the pinned CA cert -- pure, testable
 ;; separately from the exec-capture side effect. When the cert lives in a
-;; PRIVATE repo (e.g. pleme-io/akeyless-k8s, the default CA_CERT_URL's
-;; home), an unauthenticated raw.githubusercontent.com request 404s --
-;; confirmed live 2026-07-18, root cause of a real akeyless-nix-images
-;; build failure ("could not fetch the pinned CA cert"). A bare
+;; PRIVATE repo, an unauthenticated raw.githubusercontent.com request 404s
+;; -- confirmed live 2026-07-18, root cause of a real consumer build
+;; failure ("could not fetch the pinned CA cert"). A bare
 ;; `Authorization: token <PAT>` header IS honored by
 ;; raw.githubusercontent.com for private repos (verified live), so an
 ;; empty token keeps the original unauthenticated path (public repo /
@@ -125,11 +126,20 @@
 ;; available on these runners, unlike skopeo -- this action's own loader
 ;; step already relies on curl to fetch stdlib.tlisp). Returns the local
 ;; path on success, "" on failure (an honest miss, not a silent lie).
+;;
+;; An EMPTY url is short-circuited rather than handed to curl. There is no
+;; built-in cert URL -- the cert belongs to the caller's cluster -- so the
+;; unset case is the common one, and `curl -f -o path ""` would report it as
+;; a fetch failure, which is a different fact from "nobody asked for cert
+;; pinning". Both land on the same fail-closed branch in main; only the
+;; logged reason differs, and it is the reason an operator reads.
 (define (zot:fetch-ca-cert url path token)
-  (let ((r (apply exec-capture (zot:ca-cert-curl-args url path token))))
-    (if (= (status-of r) 0)
-      path
-      "")))
+  (if (equal? url "")
+    ""
+    (let ((r (apply exec-capture (zot:ca-cert-curl-args url path token))))
+      (if (= (status-of r) 0)
+        path
+        ""))))
 
 ;; ── main ──────────────────────────────────────────────────────────
 (define (zot:emit-fail reason)
@@ -149,10 +159,7 @@
       (moving (oci:flag-true? (env-get "MOVING_LATEST" "false")))
       (dest-user (env-required "DEST_USER"))
       (dest-pass (env-required "DEST_PASS"))
-      (ca-cert-url
-        (env-get
-          "CA_CERT_URL"
-          "https://raw.githubusercontent.com/pleme-io/akeyless-k8s/main/clusters/camelot-eks/infrastructure/zot/zot-ca.crt"))
+      (ca-cert-url (env-get "CA_CERT_URL" ""))
       (ca-cert-target-path (env-get "CA_CERT_PATH" "/tmp/zot-push-ca.crt"))
       (ca-cert-token (env-get "CA_CERT_TOKEN" ""))
       (allow-insecure-fallback (oci:flag-true? (env-get "INSECURE" "false")))
@@ -178,6 +185,10 @@
                   (log-info
                     "::warning::zot-push: CA cert fetch failed, falling back to --insecure (plain HTTP) -- this is a real, tracked degradation, not silent")
                   (list "--insecure"))
+                ((equal? ca-cert-url "")
+                  (log-error
+                    "zot-push: no ca-cert-url was supplied and INSECURE fallback is not enabled -- refusing to push over an unverified or plaintext connection. Pass ca-cert-url (the raw URL of YOUR cluster's committed Zot CA/leaf cert, plus ca-cert-token when that repo is private), or set insecure=true to accept the degradation explicitly.")
+                  (list))
                 (else
                   (log-error
                     "zot-push: could not fetch the pinned CA cert and INSECURE fallback is not enabled -- refusing to push over an unverified or plaintext connection")
