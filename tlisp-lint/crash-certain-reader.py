@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """crash-certain-reader.py — the STATIC s-expression reader behind tlisp-lint
 Layer 6 (crash-certain forms).
 

@@ -1,0 +1,36 @@
+name: security-gate
+
+# PR-time + weekly security gate. All behavior lives in substrate's reusable
+# workflow; this file is a call with values (★★ PIPELINING — a workflow is a
+# CALL, never a place for logic).
+#
+# check-dependencies: false — this repo has NO dependency ecosystem at all:
+# no Cargo.toml, package.json, go.mod, Gemfile or requirements.txt. It ships
+# composite actions plus tlisp, so there is nothing for a dependency auditor
+# to resolve.
+#
+# That is a DECLARATION, not a workaround. security-audit types `no-manifest`
+# as exit 3 on purpose, and exit 3 is deliberately not exit 1: "this gate did
+# not run" is a different answer from "no vulnerabilities found". Left on, the
+# audit job would be red on every PR forever — and a permanently-red gate
+# teaches reviewers to ignore the gate, which costs more than the layer was
+# worth. The fix is never to make the scanner pass on nothing; it is to say
+# out loud, here, that the layer does not apply. If this repo ever gains a
+# real manifest, delete the line — do not touch the scanner.
+#
+# The other two layers DO apply and are live:
+#   sbom-generate        cyclonedx SBOM over the tree
+#   license-header-check SPDX sweep (rs ts js py rb sh — one .py today)
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'   # weekly Mon 06:00 UTC
+
+jobs:
+  gate:
+    uses: pleme-io/substrate/.github/workflows/security-gate.yml@main
+    with:
+      check-dependencies: "false"
+    secrets: inherit
