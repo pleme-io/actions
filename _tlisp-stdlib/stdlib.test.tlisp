@@ -810,3 +810,82 @@
   (assert (not (string-contains? "in native `http-post-json`: http status: 401"
                                  "response not JSON"))
     "and a real HTTP failure does NOT contain it, so the two never collide"))
+
+;; ── line-assigns-field? — alignment inside a dotted key ──────────────────
+;; Regression tests for a LIVE defect: 54 lines across 5 workspace-root repos
+;; write `version      .workspace = true`, and the pre-2026-08-17 predicate
+;; answered #f for every one of them, so rust-workspace-bump silently skipped
+;; its intra-workspace pin rewrite with no error.
+
+(deftest "line-assigns-field?: a dotted key matches however it is aligned"
+  (assert (line-assigns-field? "version.workspace = true" "version.workspace")
+    "canonical form")
+  (assert (line-assigns-field? "version      .workspace = true" "version.workspace")
+    "padding BEFORE the dot — the form that was silently skipped (54 fleet lines)")
+  (assert (line-assigns-field? "version.workspace      = true" "version.workspace")
+    "padding before = — already worked, must keep working (47 fleet lines)")
+  (assert (line-assigns-field? "version . workspace = true" "version.workspace")
+    "padding on both sides of the dot")
+  (assert (line-assigns-field? "  version.workspace = true" "version.workspace")
+    "leading indentation")
+  (assert (line-assigns-field? "version.workspace=true" "version.workspace")
+    "no whitespace at all"))
+
+(deftest "line-assigns-field?: normalization does NOT loosen the substring guard"
+  ;; The whole reason this predicate is strict: `rust-version = "1.97.0"`
+  ;; contains `version = "1.97.0"`, and writing there raises the declared MSRV,
+  ;; which under resolver="3" makes cargo REFUSE the package. 449 rust-version
+  ;; lines sit in [package]/[workspace.package] across the fleet.
+  (assert (not (line-assigns-field? "rust-version = \"1.97.0\"" "version"))
+    "rust-version must never match version")
+  (assert (not (line-assigns-field? "rust-version.workspace = true" "version.workspace"))
+    "…nor its dotted form")
+  (assert (not (line-assigns-field? "appVersion = \"1.0.0\"" "version"))
+    "appVersion must not match version")
+  (assert (not (line-assigns-field? "version-suffix = \"x\"" "version"))
+    "a hyphenated sibling key must not match")
+  (assert (not (line-assigns-field? "versionworkspace = true" "version.workspace"))
+    "removing whitespace must not let a DOTLESS key match a dotted one")
+  (assert (not (line-assigns-field? "notversion = true" "version"))
+    "a prefixed key must not match"))
+
+;; ── line-assigns-field? — alignment inside a dotted key ──────────────────
+;; Regression tests for a LIVE defect: 54 lines across 5 workspace-root repos
+;; write `version      .workspace = true`, and the pre-2026-08-17 predicate
+;; answered #f for every one, so rust-workspace-bump silently skipped its
+;; intra-workspace pin rewrite with no error. Real file: escriba/escriba-ts.
+
+(deftest "line-assigns-field?: a dotted key matches however it is aligned"
+  (assert (line-assigns-field? "version.workspace = true" "version.workspace")
+    "canonical form")
+  (assert (line-assigns-field? "version      .workspace = true" "version.workspace")
+    "padding BEFORE the dot — the form that was silently skipped (54 fleet lines)")
+  (assert (line-assigns-field? "version.workspace      = true" "version.workspace")
+    "padding before = — already worked, must keep working (47 fleet lines)")
+  (assert (line-assigns-field? "version . workspace = true" "version.workspace")
+    "padding on both sides of the dot")
+  (assert (line-assigns-field? "  version.workspace = true" "version.workspace")
+    "leading indentation")
+  (assert (line-assigns-field? "version.workspace=true" "version.workspace")
+    "no whitespace at all"))
+
+(deftest "line-assigns-field?: normalization does NOT loosen the substring guard"
+  ;; The whole reason this predicate is strict: `rust-version = "1.97.0"`
+  ;; contains `version = "1.97.0"`, and writing there raises the declared MSRV,
+  ;; which under resolver="3" makes cargo REFUSE the package. 449 rust-version
+  ;; lines sit in [package]/[workspace.package] across the fleet, and in
+  ;; escriba/escriba-ts the padded decoy is ONE LINE BELOW the real key.
+  (assert (not (line-assigns-field? "rust-version = \"1.97.0\"" "version"))
+    "rust-version must never match version")
+  (assert (not (line-assigns-field? "rust-version .workspace = true" "version.workspace"))
+    "…nor its PADDED dotted form (the real escriba adjacency)")
+  (assert (line-assigns-field? "rust-version .workspace = true" "rust-version.workspace")
+    "…while staying findable under its own name")
+  (assert (not (line-assigns-field? "appVersion = \"1.0.0\"" "version"))
+    "appVersion must not match version")
+  (assert (not (line-assigns-field? "version-suffix = \"x\"" "version"))
+    "a hyphenated sibling key must not match")
+  (assert (not (line-assigns-field? "versionworkspace = true" "version.workspace"))
+    "removing whitespace must not let a DOTLESS key match a dotted one")
+  (assert (not (line-assigns-field? "notversion = true" "version"))
+    "a prefixed key must not match"))

@@ -293,14 +293,45 @@
       (equal? (string-trim (car (string-split trimmed "["))) "")
       (not (string-contains? trimmed "=")))))
 
+;; Remove EVERY space and tab from a TOML key. Used to compare a dotted key
+;; whose author aligned it: `version      .workspace` and `version.workspace`
+;; are the same key to TOML, so they must be the same key to us.
+;;
+;; Safe against the substring trap this file already guards: whitespace removal
+;; cannot turn `rust-version` into `version` (a hyphen is not whitespace), so
+;; the byte-equality below stays strict on everything except alignment.
+(define (toml-key-normalize s)
+  (string-replace (string-replace s " " "") "\t" ""))
+
 ;; True when a TOML line is `<field> = ...` for the EXACT field name.
 ;; The previous predicate used (string-contains? line field) which
 ;; matches `version` inside `rust-version` — produced version-unchanged
 ;; "1.71" instead of the real package version on caixa-mio. Strict:
 ;; split at first =, trim the LHS, byte-equal against field.
+;;
+;; WIDENED 2026-08-17 to normalize whitespace INSIDE the key, because
+;; `string-trim` only strips the ENDS and a dotted key can be padded in the
+;; middle. Measured, and it was a LIVE defect rather than a hypothetical:
+;;   54 lines across 5 repos write `version      .workspace = true`
+;;   (tatara-rust-ast 27, repo-forge 10, arnes 7, escriba 6, tatara 4)
+;; and all 5 are `[workspace.package]` roots, so rust-workspace-bump:287 —
+;; which guards its intra-workspace caret-pin rewrite on
+;; `(line-assigns-field? l "version.workspace")` — silently SKIPPED every one
+;; of them. `version      .workspace` trims to itself, which is not
+;; `version.workspace`, so the guard answered #f and the line was left alone
+;; with no error. The padded-before-`=` variant (`version.workspace      =`,
+;; 47 more lines in magma/engenho/sui) already worked, because THAT padding is
+;; at an end — which is exactly why the bug survived: two thirds of the padded
+;; corpus behaved correctly.
+;;
+;; Real-file receipt: escriba/escriba-ts/Cargo.toml line 4 is
+;; `version      .workspace = true` and line 6 is `rust-version .workspace =
+;; true`. The fix must accept line 4 and still refuse line 6 — both pinned.
 (define (line-assigns-field? line field)
   (let ((parts (string-split line "=")))
-    (cond ((< (length parts) 2) #f) (else (equal? (string-trim (car parts)) field)))))
+    (cond
+      ((< (length parts) 2) #f)
+      (else (equal? (toml-key-normalize (car parts)) (toml-key-normalize field))))))
 
 ;; True when the trimmed line IS the named section header — i.e.
 ;; the line, after stripping whitespace, byte-equals 'section'.
