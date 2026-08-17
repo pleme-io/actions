@@ -34,8 +34,18 @@ runs:
         # can name produces a component list nobody can reproduce.
         # Verified 2026-08-01: the tagged script URL is HTTP 200; v1.50.0 is
         # the current release.
+        #
+        # DESTINATION IS $RUNNER_TEMP/bin, NOT /usr/local/bin, and that is a
+        # correctness fix rather than a preference: the fleet's self-hosted ARC
+        # runners do not run as root, so `-b /usr/local/bin` dies with
+        #   install: cannot create regular file '/usr/local/bin/syft': Permission denied
+        #   [error] failed to install syft
+        # and the step fails before syft is ever invoked. Measured on
+        # caixa-tempfile 2026-08-17. $RUNNER_TEMP is writable on both
+        # GitHub-hosted and ARC runners, so this works on either.
         curl -sSfL https://raw.githubusercontent.com/anchore/syft/v1.50.0/install.sh \
-          | sh -s -- -b /usr/local/bin v1.50.0
+          | sh -s -- -b "$RUNNER_TEMP/bin" v1.50.0
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
     - name: Load stdlib + run.tlisp
       id: src
