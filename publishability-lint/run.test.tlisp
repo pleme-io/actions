@@ -1,0 +1,111 @@
+;; publishability-lint/run.test.tlisp — (deftest …) over the PURE helpers, run
+;; via tatara-script --test by the tlisp-test action. No repo, no git, no
+;; network: every test here drives a classifier on a literal string.
+;;
+;; Nothing in this file may contain a real account id, a real customer or
+;; tenant name, or a real resource id. It ships in a public repo, and a test
+;; fixture is as published as any other line. Every value below is either a
+;; reserved placeholder or invented.
+
+;; ── row parsing ────────────────────────────────────────────────────────────
+
+(deftest "pl:table-rows drops blanks and comments"
+  (let ((rows (pl:table-rows "# a comment\n\ndeny-substring\tfoo\tr\n   \n")))
+    (assert (= (length rows) 1) "one live row survives")))
+
+(deftest "pl:row->spec rejects an unknown class rather than ignoring it"
+  (let ((s (pl:row->spec "not-a-class\tfoo\tr")))
+    (assert (pl:invalid? s) "unknown class is invalid, never silently skipped")))
+
+(deftest "pl:row->spec rejects a malformed prefix-hexbody prefix"
+  ;; The prefix must end in `-`; without that anchor the matcher would hunt
+  ;; hex after an arbitrary word and report most of a hash file.
+  (assert (pl:invalid? (pl:row->spec "prefix-hexbody\tvpc\t8\t\tr")) "no trailing dash -> invalid")
+  (assert (pl:invalid? (pl:row->spec "prefix-hexbody\tvpc-\t0\t\tr")) "zero minlen -> invalid"))
+
+;; ── deny-substring ─────────────────────────────────────────────────────────
+
+(deftest "deny-substring matches case-insensitively"
+  (let ((spec (pl:row->spec "deny-substring\t.eks.amazonaws.com\treason")))
+    (assert (= (length (pl:hits spec "X.EKS.AMAZONAWS.COM" "x.eks.amazonaws.com")) 1) "upper-case hit")
+    (assert (= (length (pl:hits spec "nothing here" "nothing here")) 0) "clean text is clean")))
+
+;; ── allowlist-digit-run — the INVERTED matcher ─────────────────────────────
+
+(deftest "allowlist-digit-run catches an unlisted 12-digit run"
+  (let ((spec (pl:row->spec "allowlist-digit-run\t12\t000000000000,123456789012\treason")))
+    (assert (= (length (pl:hits spec "acct = 908172635444" "acct = 908172635444")) 1) "unlisted id is a hit")
+    (assert (= (length (pl:hits spec "acct = 123456789012" "acct = 123456789012")) 0) "placeholder is allowed")))
+
+(deftest "allowlist-digit-run does not fire on a longer number"
+  ;; The load-bearing property: re-find-all returns MAXIMAL runs, so a 13-digit
+  ;; millisecond timestamp is one run of 13 and not a 12-digit slice. A fixed
+  ;; \d{12} pattern would report every timestamp in the repo, the gate would be
+  ;; drowned in false positives, and the reliable end of that is a disabled gate.
+  (let ((spec (pl:row->spec "allowlist-digit-run\t12\t000000000000\treason")))
+    (assert (= (length (pl:hits spec "ts=1786924800000" "ts=1786924800000")) 0) "13-digit timestamp is not a hit")
+    (assert (= (length (pl:hits spec "n=12345678901" "n=12345678901")) 0) "11 digits is not a hit")))
+
+;; ── prefix-hexbody ─────────────────────────────────────────────────────────
+
+(deftest "prefix-hexbody catches a real-shaped id and allows the placeholder"
+  (let ((spec (pl:row->spec "prefix-hexbody\tvpc-\t8\t0123456789abcdef0\treason")))
+    (assert (= (length (pl:hits spec "vpc-0abc12345def67890" "x")) 1) "real-shaped id is a hit")
+    (assert (= (length (pl:hits spec "vpc-0123456789abcdef0" "x")) 0) "canonical placeholder allowed")
+    (assert (= (length (pl:hits spec "vpc-0abc" "x")) 0) "body under minlen is not an id")))
+
+(deftest "prefix-hexbody anchors the prefix on a word boundary"
+  (let ((spec (pl:row->spec "prefix-hexbody\tvpc-\t8\t\treason")))
+    (assert (= (length (pl:hits spec "myvpc-0abc12345def" "x")) 0) "a suffix match is not a hit")))
+
+;; ── base64 — THE REGRESSION TEST ───────────────────────────────────────────
+;;
+;; This is the most important test in the file. On 2026-08-07 a textual cleanup
+;; ran, its gate reported 3/3 green, and it shipped. It was wrong for ten days
+;; on a public repo: one fixture carried a rendered user_data, a user_data is
+;; base64, and a find-and-replace cannot reach inside one. Every name the
+;; cleanup removed from the plaintext was still there, one decode away, and a
+;; grep-based gate is precisely the tool that cannot see it.
+;;
+;; So the unit of scanning is not the file's bytes; it is the bytes PLUS every
+;; base64 run in them that decodes to text.
+
+(deftest "pl:base64-candidate? pre-filters before decoding"
+  ;; base64-decode RAISES on a bad alphabet and on non-UTF-8 output, so short
+  ;; and non-multiple-of-4 runs are rejected before they reach it.
+  (assert (equal? (pl:base64-candidate? "c2hvcnQ=") #f) "too short to be a payload")
+  (assert (equal? (pl:base64-candidate? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") #f) "41 chars, not a multiple of 4"))
+
+(deftest "pl:base64-payloads decodes a real payload and drops a hex digest"
+  ;; A sha256 digest is spelled in the base64 alphabet and is long enough, so it
+  ;; reaches the decoder — and removes itself by not decoding to UTF-8.
+  (let ((payloads (pl:base64-payloads "user_data: dnBjLTBhYmMxMjM0NWRlZjY3ODkwIGlzIGluc2lkZSB0aGlzIHBheWxvYWQ=")))
+    (assert (= (length payloads) 1) "one payload decoded")
+    (assert (string-contains? (car payloads) "vpc-0abc12345def67890") "the hidden id is now visible to the matcher")))
+
+(deftest "pl:scan-units gives a file N+1 units, and labels where a hit was hiding"
+  (let ((units (pl:scan-units "cfg.json" "x: dnBjLTBhYmMxMjM0NWRlZjY3ODkwIGlzIGluc2lkZSB0aGlzIHBheWxvYWQ=")))
+    (assert (= (length units) 2) "the file itself, plus one payload")
+    (assert (equal? (nth 0 (nth 0 units)) "cfg.json") "unit 0 is the file")
+    (assert (string-contains? (nth 0 (nth 1 units)) "base64 payload #0") "the payload unit says where it came from")))
+
+(deftest "a violation ONLY inside base64 is caught end to end"
+  ;; The whole point, asserted as one statement: the plaintext is clean, the
+  ;; decoded payload is not, and the scan-unit expansion is what closes the gap.
+  (let
+    ((spec (pl:row->spec "prefix-hexbody\tvpc-\t8\t\treason"))
+      (text "{\"user_data\":\"dnBjLTBhYmMxMjM0NWRlZjY3ODkwIGlzIGluc2lkZSB0aGlzIHBheWxvYWQ=\"}"))
+    (assert (= (length (pl:hits spec text (string-lowercase text))) 0) "plaintext alone shows nothing — this is the trap")
+    (let ((units (pl:scan-units "f.json" text)))
+      (assert
+        (= (length (pl:hits spec (nth 1 (nth 1 units)) (string-lowercase (nth 1 (nth 1 units))))) 1)
+        "scanning the decoded unit catches it"))))
+
+;; ── misc helpers ───────────────────────────────────────────────────────────
+
+(deftest "pl:csv drops empties"
+  (assert (= (length (pl:csv "a, b ,,c")) 3) "three values, blank dropped"))
+
+(deftest "pl:int falls back rather than raising"
+  (assert (= (pl:int "not-a-number" 7) 7) "bad input -> fallback")
+  (assert (= (pl:int "42" 7) 42) "good input parses"))

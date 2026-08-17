@@ -1,0 +1,109 @@
+name: 'pleme-io · publishability-lint'
+description: >-
+  Fail on a NEW disclosure of somebody else''s estate in a repo that is (or is
+  about to be) public: an AWS account id, a live resource id, a cloud endpoint
+  hostname. Rules are SHAPE-based, never a list of the real values — this file
+  ships in a public repo, and a detector that carries what it detects publishes
+  the one string it exists to keep out. Scans decoded base64 as well as
+  plaintext, because a rendered user_data blob hid a full estate from a
+  grep-based gate for ten days. Scans only git-TRACKED files: publishability is
+  a property of what git ships, not of what is on this disk.
+branding:
+  icon: 'eye-off'
+  color: 'red'
+
+inputs:
+  paths:
+    description: "Root to scan (default: the whole checked-out repo)."
+    required: false
+    default: "."
+  fail-on-violation:
+    description: >-
+      Fail the job on a NEW (not-yet-baselined) finding. Baselined debt is
+      always reported, never silently accepted. Ship "false" for a repo's first
+      sweep — the fleet ramp is survey, then ratchet. Failing a whole fleet on
+      day one teaches people to ignore the gate.
+    required: false
+    default: "true"
+  rules-file:
+    description: >-
+      Path to the rule table (TSV). A MISSING or EMPTY table fails the run
+      rather than passing vacuously — a gate with no rules passes everything and
+      reads exactly like a clean run.
+    required: false
+    default: "publishability-lint/rules.txt"
+  baseline-file:
+    description: >-
+      Path to this repo's tracked-debt baseline. A CONSUMING repo sets its own,
+      e.g. .github/publishability-baseline.txt.
+    required: false
+    default: "publishability-lint/baseline.txt"
+  extensions:
+    description: "Comma-separated extension allowlist for the walk."
+    required: false
+    default: "rs,go,nix,toml,json,md,yml,yaml,tf,tfvars,tfstate,tlisp,lisp,rb,py,ts,js,sh,env,tpl,txt,cfg,ini,conf,properties,sql,csv,xml,html"
+  min-files:
+    description: >-
+      Anti-vacuity floor. A scan that selects fewer than this many tracked files
+      is a BROKEN RUN, not a pass, and exits non-zero. Raise it for a repo whose
+      size you know — the default of 1 only catches a totally empty checkout.
+    required: false
+    default: "1"
+  extra-deny-substrings:
+    description: >-
+      Comma/newline-separated extra needles for this repo only. Anything you put
+      here is PUBLISHED with the workflow — put a shape here, never a real
+      customer name, tenant or account.
+    required: false
+    default: ""
+
+outputs:
+  findings:
+    description: "Total findings (baselined + new). Zero against a non-empty repo with a sane min-files is a real clean result."
+    value: ${{ steps.scan.outputs.findings }}
+  baselined:
+    description: "Count of already-tracked findings (reported, not failed)."
+    value: ${{ steps.scan.outputs.baselined }}
+  new-findings:
+    description: "Count of NEW findings — the number that fails the build."
+    value: ${{ steps.scan.outputs.new-findings }}
+  stale-baseline:
+    description: >-
+      Count of baseline rows matching NO finding. Non-zero means the disclosure
+      is already gone from those paths and the rows must be deleted — each one is
+      a standing per-file permission for it to come back. Checking the baseline
+      in BOTH directions is how a cleanup can observe its own completion.
+    value: ${{ steps.scan.outputs.stale-baseline }}
+
+runs:
+  using: composite
+  steps:
+    # A PATH, not an inline string. Measured 2026-08-17: stdlib (118,484 B) +
+    # run.tlisp (26,180 B) = 144,664 B, against Linux MAX_ARG_STRLEN of 131,072.
+    # Passing this through `script:` dies with "Argument list too long", and it
+    # would also echo the entire scanner into the step log — where grepping the
+    # log for a finding then matches the line that WOULD print it.
+    - name: Compose stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        DEST="${RUNNER_TEMP}/publishability-lint-composed.tlisp"
+        # stdlib read in-checkout, at the SAME ref as the tlisp below — never fetched.
+        cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp" > "$DEST"
+        echo >> "$DEST"
+        cat "${{ github.action_path }}/run.tlisp" >> "$DEST"
+        echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+    - name: Run publishability-lint
+      id: scan
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.path }}
+      env:
+        PATHS: ${{ inputs.paths }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        RULES_FILE: ${{ inputs.rules-file }}
+        BASELINE_FILE: ${{ inputs.baseline-file }}
+        EXTENSIONS: ${{ inputs.extensions }}
+        MIN_FILES: ${{ inputs.min-files }}
+        EXTRA_DENY_SUBSTRINGS: ${{ inputs.extra-deny-substrings }}

@@ -1,0 +1,540 @@
+;; publishability-lint/run.tlisp — fail the build when a repo that is meant to
+;; be publishable names somebody's real estate.
+;;
+;; ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+;; On 2026-08-17 a sweep found customer-identifying content in 25 PUBLIC
+;; pleme-io repos. All of it was written in good faith: "measured, not assumed"
+;; evidence — a cluster name, an account id, a VPC id, an internal DNS zone —
+;; which is the right instinct for a private repo and becomes a disclosure the
+;; moment the repo is published. It was all cleaned at the tip, and nothing
+;; whatsoever stopped it coming back, because the habit that produced it is a
+;; GOOD habit. This is the gate that stops the re-introduction.
+;;
+;; The engine is a generalisation of the one working copy in the fleet,
+;; magma/magma-test/tests/publishability_no_host_estate.rs. Four ideas in it are
+;; load-bearing, each learned from a real failure, and all four are preserved
+;; here.
+;;
+;; ── 1. A DETECTOR MUST NOT CARRY WHAT IT DETECTS ───────────────────────────
+;; The account check used to name the host's real AWS account as a constant so
+;; it could grep for it. On a public repo that publishes the one string the
+;; check exists to keep out — and that literal was the LAST copy of the account
+;; left in the repo after the sweep. The check existed, was green, and was the
+;; leak.
+;;
+;; So two of the three rule classes are INVERTED: they state the SHAPE and the
+;; reserved placeholders allowed to wear it, and everything else of that shape
+;; is a finding. Inversion publishes nothing AND is strictly stronger — it
+;; catches the ids nobody remembered to list. The inversion is applied a second
+;; time one level up: needles that CANNOT be expressed as a shape (a customer
+;; name) are supplied by the caller from a secret and reported REDACTED, so a
+;; hit does not print the name into a public CI log either.
+;;
+;; ── 2. SCAN DECODED BASE64 ─────────────────────────────────────────────────
+;; A 2026-08-07 scrub ran, its gate went 3/3 green, and the names sat one decode
+;; away inside a rendered `user_data` blob on a public repo for ten days. A
+;; `user_data` is base64; a textual find-and-replace cannot reach inside it, and
+;; a grep-based gate is precisely the tool that structurally cannot see it.
+;;
+;; So the unit of scanning is not "the file's bytes". Each file contributes N+1
+;; LABELLED scan units: its own text, plus every base64 run in it that decodes
+;; to UTF-8. That closes the class rather than the instance — a cloud-init, an
+;; embedded cert body, a captured kubeconfig are all scanned on the way in — and
+;; the label says WHERE the hit was hiding.
+;;
+;; ── 3. GIT-TRACKED FILES ONLY ──────────────────────────────────────────────
+;; Publishability is a property of what git SHIPS, so the file set is what git
+;; says it is. Unfiltered, the magma check reported four "account ids" out of a
+;; gitignored local build artifact — a false positive that fires differently on
+;; every machine. The hole runs the other way too and matters more: only git
+;; knows which files a reader of the repo can actually see.
+;;
+;; This implementation goes to git FIRST rather than walking and intersecting.
+;; `git ls-files -s -z` yields the tracked set WITH its mode, which is a
+;; strictly better symlink filter than an lstat: mode 120000 is a symlink and
+;; 160000 is a submodule gitlink, and both are skipped by reading what git
+;; recorded rather than by re-deriving it from the working tree. A filesystem
+;; walk can descend THROUGH a symlinked directory into somebody's local scratch
+;; (a search index, a build cache) and report it as content of this repo; going
+;; to git first makes that descent unrepresentable rather than guarded.
+;;
+;; ── 4. REFUSE A VACUOUS PASS ───────────────────────────────────────────────
+;; A gate that scans nothing passes everything, and reads exactly like a clean
+;; run. So: a missing or empty rule table is exit 1, an unparseable rule row is
+;; exit 1, a failing `git ls-files` is exit 1 (never a silent fall back to the
+;; filesystem), and the scanned-file count is both an OUTPUT and a FLOOR.
+;;
+;; ── SCOPE ──────────────────────────────────────────────────────────────────
+;; Estate disclosure only. Credential material is `secrets-scan`'s job, runtime
+;; tool installation is `runtime-install-lint`'s, banned tools are
+;; `banned-tool-lint`'s. Two gates with one job is two gates with no reason.
+;;
+;; Inputs (env):
+;;   PATHS                  one git pathspec to scan (default ".")
+;;   RULES_FILE             the TSV rule table
+;;   BASELINE_FILE          the shrink-only ratchet
+;;   EXTRA_DENY_SUBSTRINGS  caller-supplied needles (comma/newline separated),
+;;                          reported REDACTED — meant to come from a secret
+;;   EXTENSIONS             comma-separated extension allowlist
+;;   MIN_FILES              anti-vacuity floor on the scanned count
+;;   FAIL_ON_VIOLATION      "true" (default) => new or stale is exit 1
+;;
+;; Outputs: scanned, findings, baselined, new-findings, stale-baseline, reason
+
+;; ═══════════════════════════════════════════════════════════════════════════
+;; PURE CLASSIFIER — everything below this line up to "SIDE-EFFECTING" is
+;; total, repo-free and network-free, and is what run.test.tlisp drives.
+;; ═══════════════════════════════════════════════════════════════════════════
+
+;; A non-negative integer, or the fallback. Deliberately NOT `|| 0`: a rule row
+;; whose length field is garbage must not silently become "length 0", which
+;; matches nothing and reads as a clean rule.
+(define (pl:int s fallback)
+  (let ((t (string-trim s)))
+    (cond
+      ((re-match? "^[0-9]+$" t) (json-parse t))
+      (else fallback))))
+
+;; Non-blank, non-comment rows of a TSV table.
+(define (pl:table-rows text)
+  (filter
+    (fn (l)
+      (let ((t (string-trim l)))
+        (and (not (equal? t "")) (not (string-starts-with? t "#")))))
+    (string-split text "\n")))
+
+(define (pl:field row n)
+  (let ((parts (string-split row "\t")))
+    (if (> (length parts) n) (string-trim (nth n parts)) "")))
+
+(define (pl:csv s)
+  (filter (fn (x) (not (equal? x ""))) (map string-trim (string-split s ","))))
+
+(define (pl:member? xs s)
+  (cond
+    ((null? xs) #f)
+    ((equal? (car xs) s) #t)
+    (else (pl:member? (cdr xs) s))))
+
+;; ── a rule spec ────────────────────────────────────────────────────────────
+;; (class id p1 p2 p3 reason redact). Positional rather than an alist because
+;; the three classes carry different arities and a fixed shape keeps the
+;; dispatch in pl:hits total.
+(define (pl:spec class id p1 p2 p3 reason redact) (list class id p1 p2 p3 reason redact))
+
+(define (pl:s-class r) (nth 0 r))
+(define (pl:s-id r) (nth 1 r))
+(define (pl:s-p1 r) (nth 2 r))
+(define (pl:s-p2 r) (nth 3 r))
+(define (pl:s-p3 r) (nth 4 r))
+(define (pl:s-reason r) (nth 5 r))
+(define (pl:s-redact? r) (equal? (nth 6 r) "redact"))
+
+;; A prefix is interpolated into a regex, so its alphabet is constrained rather
+;; than trusted. A prefix carrying `.` or `(` would silently widen the rule into
+;; something nobody wrote; refusing it is the parse-time rejection.
+(define (pl:prefix-ok? p) (re-match? "^[A-Za-z][A-Za-z0-9-]*-$" p))
+
+;; A row -> a spec, or a one-element list carrying the reason it is invalid.
+;; Never silently dropped: an unrecognised class is a rule that does nothing
+;; while looking like a rule, which is the vacuity this file exists to refuse.
+(define (pl:row->spec row)
+  (let ((c (pl:field row 0)))
+    (cond
+      ((equal? c "deny-substring")
+        (let ((needle (string-lowercase (pl:field row 1))))
+          (cond
+            ((equal? needle "") (list "invalid" "deny-substring row has an empty needle"))
+            (else
+              (pl:spec c (string-append "deny:" needle) needle "" "" (pl:field row 2) "plain")))))
+      ((equal? c "allowlist-digit-run")
+        (let ((len (pl:int (pl:field row 1) 0)))
+          (cond
+            ((= len 0)
+              (list "invalid" (string-append "allowlist-digit-run has a bad length: " (pl:field row 1))))
+            (else
+              (pl:spec
+                c
+                (string-append "digit-run:" (pl:field row 1))
+                len
+                (pl:csv (pl:field row 2))
+                ""
+                (pl:field row 3)
+                "plain")))))
+      ((equal? c "prefix-hexbody")
+        (let ((pfx (pl:field row 1)) (minlen (pl:int (pl:field row 2) 0)))
+          (cond
+            ((not (pl:prefix-ok? pfx))
+              (list "invalid" (string-append "prefix-hexbody prefix is not [A-Za-z][A-Za-z0-9-]*- : " pfx)))
+            ((= minlen 0)
+              (list "invalid" (string-append "prefix-hexbody has a bad minlen: " (pl:field row 2))))
+            (else
+              (pl:spec
+                c
+                (string-append "resource-id:" pfx)
+                pfx
+                minlen
+                (pl:csv (pl:field row 3))
+                (pl:field row 4)
+                "plain")))))
+      (else (list "invalid" (string-append "unknown rule class: " c))))))
+
+(define (pl:invalid? spec) (equal? (pl:s-class spec) "invalid"))
+
+;; A caller-supplied needle. The id is POSITIONAL and the hit is REDACTED — see
+;; the header, and baseline.txt on why these are not baselineable.
+(define (pl:extra-spec needle n)
+  (pl:spec
+    "deny-substring"
+    (string-append "deny:extra#" (string-format "{}" n))
+    (string-lowercase needle)
+    ""
+    ""
+    "A caller-supplied forbidden name (from extra-deny-substrings). The needle is not printed."
+    "redact"))
+
+(define (pl:extra-specs needles n)
+  (cond
+    ((null? needles) (list))
+    (else (cons (pl:extra-spec (car needles) n) (pl:extra-specs (cdr needles) (+ n 1))))))
+
+;; ── the matchers ───────────────────────────────────────────────────────────
+;; Every hit is returned as the DISPLAY string for that finding, already
+;; redacted where the rule says so, so no caller can reconstruct a secret from
+;; a "raw" variant that does not exist.
+(define (pl:hits spec text text-lower)
+  (let ((c (pl:s-class spec)))
+    (cond
+      ((equal? c "deny-substring")
+        (cond
+          ((not (string-contains? text-lower (pl:s-p1 spec))) (list))
+          ((pl:s-redact? spec) (list "<redacted — caller-supplied needle>"))
+          (else (list (pl:s-p1 spec)))))
+      ;; INVERTED. re-find-all returns MAXIMAL, non-overlapping runs, which is
+      ;; the whole reason this is not `\d{12}`: a 13-digit millisecond timestamp
+      ;; is one run of 13 and is correctly not a hit, where a fixed-width
+      ;; pattern would match a 12-digit slice of it.
+      ((equal? c "allowlist-digit-run")
+        (distinct
+          (filter
+            (fn (r) (and (= (string-length r) (pl:s-p1 spec)) (not (pl:member? (pl:s-p2 spec) r))))
+            (re-find-all "[0-9]+" text))))
+      ;; INVERTED. `\b` anchors the prefix so `myvpc-0123abcd` and
+      ;; `msg-0123abcd` are not hits; `+` is greedy so the body is the maximal
+      ;; hex run and a longer id is never truncated into a shorter allowed one.
+      ((equal? c "prefix-hexbody")
+        (let ((pfx (pl:s-p1 spec)))
+          (distinct
+            (filter
+              (fn (m)
+                (let ((body (string-strip-prefix m pfx)))
+                  (and (>= (string-length body) (pl:s-p2 spec)) (not (pl:member? (pl:s-p3 spec) body)))))
+              (re-find-all (string-append "\\b" pfx "[0-9a-fA-F]+") text)))))
+      (else (list)))))
+
+;; ── base64 scan-unit expansion (IDEA 2) ────────────────────────────────────
+
+;; Shortest run worth decoding. A user_data script is hundreds of bytes; this
+;; only needs to be long enough that a stray word is not a candidate.
+(define pl:min-base64-run 40)
+
+(define (pl:base64-candidate? run)
+  (and (>= (string-length run) pl:min-base64-run) (= (modulo (string-length run) 4) 0)))
+
+;; base64-decode RAISES on a bad alphabet AND on a payload that is not UTF-8
+;; ("not utf8: …"), which is the desirable filter — a hex digest is also spelled
+;; in the base64 alphabet but decodes to bytes that are not text, so it removes
+;; itself. The raise has to be caught rather than avoided: there is no
+;; try-decode primitive, and letting it propagate would abort the whole scan on
+;; the first sha256 it met.
+(define (pl:decode-or-empty run) (try (base64-decode run) (catch (e) "")))
+
+(define (pl:base64-payloads text)
+  (filter
+    (fn (s) (not (equal? s "")))
+    (map pl:decode-or-empty (filter pl:base64-candidate? (re-split "[^A-Za-z0-9+/=]" text)))))
+
+(define (pl:label-payloads label payloads n)
+  (cond
+    ((null? payloads) (list))
+    (else
+      (cons
+        (list (string-append label " (base64 payload #" (string-format "{}" n) ")") (car payloads))
+        (pl:label-payloads label (cdr payloads) (+ n 1))))))
+
+;; The units one file contributes: its own text, then each decoded payload it
+;; carries. Labelled so a hit says where it was hiding.
+(define (pl:scan-units label text)
+  (cons (list label text) (pl:label-payloads label (pl:base64-payloads text) 0)))
+
+;; ── findings ───────────────────────────────────────────────────────────────
+;; A finding is (file label rule-id display). `file` is the baseline key half —
+;; the FILE, never the payload label, so a baseline row does not break when a
+;; payload's index shifts.
+(define (pl:f-file f) (nth 0 f))
+(define (pl:f-label f) (nth 1 f))
+(define (pl:f-rule f) (nth 2 f))
+(define (pl:f-display f) (nth 3 f))
+
+(define (pl:f-key f) (string-append (pl:f-file f) "\t" (pl:f-rule f)))
+
+(define (pl:f-line f) (string-append (pl:f-label f) ": " (pl:f-display f)))
+
+(define (pl:unit-findings specs file label text)
+  (let ((low (string-lowercase text)))
+    (reduce
+      (fn (acc spec)
+        (append acc (map (fn (h) (list file label (pl:s-id spec) h)) (pl:hits spec text low))))
+      (list)
+      specs)))
+
+(define (pl:file-findings specs file text)
+  (reduce
+    (fn (acc u) (append acc (pl:unit-findings specs file (nth 0 u) (nth 1 u))))
+    (list)
+    (pl:scan-units file text)))
+
+;; ── the file set ───────────────────────────────────────────────────────────
+
+;; `git ls-files -s` row: "<mode> <sha> <stage>\t<path>".
+(define (pl:ls-mode row) (car (string-split (string-trim row) " ")))
+
+(define (pl:ls-path row)
+  (let ((parts (string-split row "\t")))
+    (if (> (length parts) 1) (string-join "\t" (cdr parts)) "")))
+
+;; 120000 is a symlink, 160000 a submodule gitlink. Neither is content this repo
+;; ships as text, and following either is how a scan wanders off into somebody's
+;; local scratch. Read from what git RECORDED rather than re-derived by lstat.
+(define (pl:ls-blob? row) (equal? (pl:ls-mode row) "100644"))
+
+(define (pl:ls-exec? row) (equal? (pl:ls-mode row) "100755"))
+
+(define (pl:ls-scannable-mode? row) (or (pl:ls-blob? row) (pl:ls-exec? row)))
+
+(define (pl:ext-ok? path exts) (pl:member? exts (string-lowercase (path-extension path))))
+
+;; The rule table names what it forbids, so scanning it would report every rule
+;; as a finding. Excluded by identity (the two configured files) plus this
+;; action's own directory, whose README quotes the same needles.
+(define (pl:self? path rules-file baseline-file)
+  (or
+    (equal? path rules-file)
+    (equal? path baseline-file)
+    (string-contains? path "publishability-lint/")))
+
+(define (pl:selected rows exts rules-file baseline-file)
+  (map
+    pl:ls-path
+    (filter
+      (fn (r)
+        (and
+          (pl:ls-scannable-mode? r)
+          (pl:ext-ok? (pl:ls-path r) exts)
+          (not (pl:self? (pl:ls-path r) rules-file baseline-file))))
+      rows)))
+
+;; ═══════════════════════════════════════════════════════════════════════════
+;; SIDE-EFFECTING
+;; ═══════════════════════════════════════════════════════════════════════════
+
+(define pl:NUL "\u{0}")
+
+(define (pl:die msg)
+  (log-error (string-append "publishability-lint: " msg))
+  (pl:emit 0 0 0 0 0 "broken")
+  (exit 1))
+
+(define (pl:emit scanned findings baselined new stale reason)
+  (emit-output "scanned" (string-format "{}" scanned))
+  (emit-output "findings" (string-format "{}" findings))
+  (emit-output "baselined" (string-format "{}" baselined))
+  (emit-output "new-findings" (string-format "{}" new))
+  (emit-output "stale-baseline" (string-format "{}" stale))
+  (emit-output "reason" reason))
+
+;; A tracked file that cannot be read as UTF-8 is a BLIND SPOT, not a pass. It
+;; is counted and reported rather than dropped silently, because "0 findings"
+;; over a file nobody could open is the same lie as "0 findings" over a file
+;; nobody looked for.
+(define (pl:read-or-nil path) (try (read-file path) (catch (e) (quote unreadable))))
+
+(define (pl:collect specs paths acc unreadable)
+  (cond
+    ((null? paths) (list acc unreadable))
+    (else
+      (let* ((p (car paths)) (txt (pl:read-or-nil p)))
+        (cond
+          ((eq? txt (quote unreadable)) (pl:collect specs (cdr paths) acc (cons p unreadable)))
+          (else (pl:collect specs (cdr paths) (append acc (pl:file-findings specs p txt)) unreadable)))))))
+
+(define (pl:main)
+  (let*
+    ((paths (env-get "PATHS" "."))
+      (rules-file (env-get "RULES_FILE" "publishability-lint/rules.txt"))
+      (baseline-file (env-get "BASELINE_FILE" "publishability-lint/baseline.txt"))
+      (exts (map string-lowercase (pl:csv (env-get "EXTENSIONS" "rs,go,nix,toml,json,md,yml,yaml,tf,tfvars,tfstate,tlisp,lisp,rb,py,ts,js,sh,env,tpl,txt,cfg,ini,conf,properties,sql,csv,xml,html"))))
+      (min-files (pl:int (env-get "MIN_FILES" "1") 1))
+      (fail-on (env-get "FAIL_ON_VIOLATION" "true")))
+    (cond
+      ((not (path-exists? rules-file))
+        (pl:die
+          (string-append
+            "no rule table at " rules-file
+            ". That is a wiring failure, not an empty rule set — a gate with no"
+            " rules passes everything and reads exactly like a clean run.")))
+      (else (pl:with-rules paths rules-file baseline-file exts min-files fail-on)))))
+
+(define (pl:with-rules paths rules-file baseline-file exts min-files fail-on)
+  (let*
+    ((rows (pl:table-rows (read-file rules-file)))
+      (shipped (map pl:row->spec rows))
+      (bad (filter pl:invalid? shipped))
+      (extra-needles
+        (filter
+          (fn (x) (not (equal? x "")))
+          (map string-trim (re-split "[,\n]" (env-get "EXTRA_DENY_SUBSTRINGS" "")))))
+      (specs (append (filter (fn (s) (not (pl:invalid? s))) shipped) (pl:extra-specs extra-needles 0))))
+    (cond
+      ((null? rows)
+        (pl:die
+          (string-append
+            rules-file " has zero rules. Refusing to report a vacuous pass — add"
+            " a row or remove the gate.")))
+      ;; An unparseable row is not skipped. A rule that looks like a rule and
+      ;; matches nothing is the exact defect the anti-vacuity floor exists for,
+      ;; one level down.
+      ((not (null? bad))
+        (for-each (fn (b) (log-error (string-append "  BAD RULE   " (pl:s-id b)))) bad)
+        (pl:die
+          (string-append
+            (string-format "{}" (length bad)) " rule row(s) in " rules-file
+            " could not be parsed. A rule that does not parse is a rule that"
+            " matches nothing while looking like protection.")))
+      (else (pl:with-files paths rules-file baseline-file exts min-files fail-on specs)))))
+
+(define (pl:with-files paths rules-file baseline-file exts min-files fail-on specs)
+  (let* ((r (exec-capture "git" "ls-files" "-s" "-z" "--" paths)))
+    (cond
+      ;; NEVER fall back to a filesystem walk. Publishability is a statement
+      ;; about what git ships; without git this gate has no denominator and
+      ;; anything it printed would be a guess wearing a verdict's clothes.
+      ((not (= (status-of r) 0))
+        (pl:die
+          (string-append
+            "`git ls-files` failed (status "
+            (string-format "{}" (status-of r))
+            "): "
+            (string-trim (stderr-of r))
+            ". Refusing to scan the filesystem instead — the tracked set IS the"
+            " thing being checked.")))
+      (else
+        (pl:with-selected
+          (pl:selected
+            (filter (fn (x) (not (equal? x ""))) (string-split (stdout-of r) pl:NUL))
+            exts
+            rules-file
+            baseline-file)
+          baseline-file
+          min-files
+          fail-on
+          specs)))))
+
+(define (pl:with-selected files baseline-file min-files fail-on specs)
+  (log-info
+    (string-append
+      "==> publishability-lint: "
+      (string-format "{}" (length specs))
+      " rule(s) over "
+      (string-format "{}" (length files))
+      " tracked file(s)"))
+  (cond
+    ((< (length files) min-files)
+      (pl:emit (length files) 0 0 0 0 "no-files")
+      (log-error
+        (string-append
+          "publishability-lint: selected "
+          (string-format "{}" (length files))
+          " file(s), below the floor of "
+          (string-format "{}" min-files)
+          ". A scan below its floor is a broken run, never a pass — check the"
+          " checkout, the `paths` pathspec and the extension allowlist."))
+      (exit 1))
+    (else (pl:report (pl:collect specs files (list) (list)) (length files) baseline-file fail-on))))
+
+(define (pl:report collected scanned baseline-file fail-on)
+  (let*
+    ((found (nth 0 collected))
+      (unreadable (nth 1 collected))
+      (baseline-rows
+        (if (path-exists? baseline-file) (pl:table-rows (read-file baseline-file)) (list)))
+      (baseline-keys (map (fn (b) (string-append (pl:field b 0) "\t" (pl:field b 1))) baseline-rows))
+      (found-keys (distinct (map pl:f-key found)))
+      (known (filter (fn (f) (pl:member? baseline-keys (pl:f-key f))) found))
+      (new (filter (fn (f) (not (pl:member? baseline-keys (pl:f-key f)))) found))
+      (stale (filter (fn (b) (not (pl:member? found-keys (string-append (pl:field b 0) "\t" (pl:field b 1))))) baseline-rows)))
+    (for-each
+      (fn (p) (log-warn (string-append "  UNREADABLE " p " — tracked, not UTF-8, NOT scanned")))
+      unreadable)
+    (for-each (fn (f) (log-info (string-append "  baselined  " (pl:f-rule f) "  " (pl:f-line f)))) known)
+    (for-each (fn (f) (log-error (string-append "  NEW        " (pl:f-rule f) "  " (pl:f-line f)))) new)
+    (for-each
+      (fn (b) (log-error (string-append "  STALE      " (pl:field b 0) "\t" (pl:field b 1))))
+      stale)
+    (pl:emit
+      scanned
+      (length found)
+      (length known)
+      (length new)
+      (length stale)
+      (cond
+        ((not (null? new)) "new-findings")
+        ((not (null? stale)) "stale-baseline")
+        (else "ok")))
+    (pl:verdict new stale baseline-file fail-on)))
+
+(define (pl:verdict new stale baseline-file fail-on)
+  (cond
+    ((not (equal? fail-on "true"))
+      (log-info
+        (string-append
+          "publishability-lint: "
+          (string-format "{}" (length new))
+          " new, "
+          (string-format "{}" (length stale))
+          " stale — report-only (fail-on-violation=false)."))
+      (exit 0))
+    ((not (null? new))
+      (log-error
+        (string-append
+          "publishability-lint: "
+          (string-format "{}" (length new))
+          " NEW disclosure(s). Genericize the reference — keep the evidence, drop"
+          " the address. If it genuinely cannot be genericized, add a"
+          " TAB-separated `<path> <rule-id> <reason>` row to "
+          baseline-file
+          ". Baselining is visible debt; a silent new finding is how a repo"
+          " re-acquires somebody's estate."))
+      (exit 1))
+    ((not (null? stale))
+      (log-error
+        (string-append
+          "publishability-lint: "
+          (string-format "{}" (length stale))
+          " baseline row(s) match NO finding. Delete each row above from "
+          baseline-file
+          " in the same change that cleaned it. A row left behind is not"
+          " harmless bookkeeping: the key is `path TAB rule`, so it grants a"
+          " standing per-file permission for that rule to reappear there, and"
+          " the run reports it as \"baselined\" when it does."))
+      (exit 1))
+    (else
+      (log-info "publishability-lint: clean — no new findings, no stale baseline rows.")
+      (exit 0))))
+
+;; TLISP_TEST=1 loads the definitions and skips main, so run.test.tlisp can
+;; drive the pure classifier with no repo, no git and no network.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — publishability-lint helpers loaded; main skipped"))
+  (else (pl:main)))
