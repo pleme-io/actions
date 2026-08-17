@@ -224,7 +224,8 @@
     ((over (eab:over-rows rows))
       (near (eab:near-rows rows warn-margin))
       (scanned (string-format "{}" (length manifests)))
-      (inlining (string-format "{}" (eab:distinct-dirs rows)))
+      (ninline (eab:distinct-dirs rows))
+      (inlining (string-format "{}" ninline))
       (nover (length over))
       (minh (string-format "{}" (eab:min-headroom rows))))
     (log-info
@@ -235,10 +236,42 @@
         (string-format "{}" warn-margin) " bytes of the ceiling"))
     (eab:log-rows over "OVER BUDGET — exec will fail with `Argument list too long`" stdlib-bytes limit)
     (eab:log-rows near "close to the ceiling — a stdlib growth of that many bytes breaks it" stdlib-bytes limit)
+    ;; Inlining is itself the violation now, not merely a thing with a budget.
+    ;;
+    ;; The budget check below stays as defence in depth, but it can only ever
+    ;; catch an action AFTER someone has already put a ~120KB stdlib into an
+    ;; exec argument, and whether that trips depends on a byte count nobody
+    ;; controls: every byte added to stdlib.tlisp spends every inlining action's
+    ;; headroom at once. Measured 2026-08-17 — a 1,785-byte stdlib commit took 11
+    ;; actions over simultaneously, and the nearest survivor had 51 bytes left.
+    ;; A threshold that far from the edit that crosses it is not a gate anyone
+    ;; can act on.
+    ;;
+    ;; `script-file` removes size from the question entirely, so the durable
+    ;; invariant is COUNT-ZERO rather than size-under-limit: no action inlines,
+    ;; full stop. It cannot be tipped by a stdlib edit because there is no
+    ;; threshold left to cross, and it is non-vacuous because the verdict carries
+    ;; the scanned denominator beside it — 0 inlining out of 0 scanned would
+    ;; report as a discovery failure, not as success.
+    (cond
+      ((> ninline 0)
+        (log-error
+          (string-append
+            "exec-arg-budget-lint: " inlining " action(s) still pass tlisp INLINE via `script:`. "
+            "Pass a path instead: write stdlib+run.tlisp to \"${RUNNER_TEMP}/<action>.tlisp\" "
+            "and hand tatara-script `script-file:`. Inline also pins a FIXED heredoc marker "
+            "(an injection point whenever content comes from outside) and echoes the whole "
+            "script into the step log, which is why a failing job's log matches greps on its "
+            "own comments instead of on errors.")))
+      (else #t))
     (eab:emit scanned inlining (string-format "{}" nover) (string-format "{}" (length near)) minh
-      (if (> nover 0) "over-budget" "ok"))
+      (cond
+        ((> nover 0) "over-budget")
+        ((> ninline 0) "inlining")
+        (else "ok")))
     (cond
       ((and (> nover 0) (equal? fail-on "true")) 1)
+      ((and (> ninline 0) (equal? fail-on "true")) 1)
       (else 0))))
 
 (define (eab:log-rows rows label stdlib-bytes limit)
