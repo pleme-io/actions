@@ -4,13 +4,24 @@ branding: { icon: 'file-text', color: 'blue' }
 
 inputs:
   template:
+    description: >-
+      Markdown to append to the step summary. `{{key}}` is substituted from
+      `vars`; a placeholder with no matching key is LEFT VISIBLE rather than
+      blanked, so an unwired value is legible instead of silently empty. An
+      empty template fails the step.
     required: true
   vars:
+    description: 'JSON object of substitutions, e.g. {"registry":"npmjs.org"}.'
     required: false
     default: "{}"
 
 outputs:
   rendered:
+    description: >-
+      Bytes written to the summary. NOT the markdown: a GITHUB_OUTPUT k=v line
+      cannot carry a multi-line value without the heredoc form, and a summary is
+      multi-line by nature. A count is something a caller can actually assert
+      on. (The stub emitted the literal string "stub" here.)
     value: ${{ steps.run.outputs.rendered }}
 
 runs:
