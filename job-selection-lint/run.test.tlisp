@@ -1,0 +1,111 @@
+;; job-selection-lint/run.test.tlisp — (deftest …) over the pure evaluator and
+;; selection rules. No workflow file, no YAML, no network.
+;;
+;; The expression evaluator is the risky part of this action: everything else
+;; is bookkeeping, but a wrong verdict here is a confidently-wrong oracle, which
+;; is worse than having no oracle at all. So the tests below are mostly about
+;; what it REFUSES.
+
+(define ctx-public
+  (list
+    (list "needs.bump.outputs.bumped" "true")
+    (list "github.event.repository.private" "false")))
+
+(define ctx-private
+  (list
+    (list "needs.bump.outputs.bumped" "true")
+    (list "github.event.repository.private" "true")))
+
+(define ship-if
+  "needs.bump.outputs.bumped == 'true' && !github.event.repository.private")
+
+;; ── the defect this action exists for, as one assertion ────────────────────
+
+(deftest "the real ship condition selects on public and skips on private"
+  (assert (equal? (jsl:eval ship-if ctx-public) "true") "public + bumped -> ship runs")
+  (assert (equal? (jsl:eval ship-if ctx-private) "false")
+    "private -> ship is skipped; this is the silent no-publish that shipped green"))
+
+;; ── operators ──────────────────────────────────────────────────────────────
+
+(deftest "equality and inequality compare as strings"
+  (let ((c (list (list "a" "rust"))))
+    (assert (equal? (jsl:eval "a == 'rust'" c) "true") "==")
+    (assert (equal? (jsl:eval "a != 'rust'" c) "false") "!=")
+    (assert (equal? (jsl:eval "a != 'unknown'" c) "true") "!= on a differing value")))
+
+(deftest "not, and, or"
+  (let ((c (list (list "t" "true") (list "f" "false"))))
+    (assert (equal? (jsl:eval "!f" c) "true") "!false")
+    (assert (equal? (jsl:eval "!t" c) "false") "!true")
+    (assert (equal? (jsl:eval "t && f" c) "false") "&&")
+    (assert (equal? (jsl:eval "t || f" c) "true") "||")))
+
+(deftest "parentheses bind tighter than the operators around them"
+  (let ((c (list (list "a" "x") (list "b" "y") (list "c" "false"))))
+    ;; (false || true) && true  ->  true. Without grouping, && would bind first
+    ;; and the answer would differ, so this is a real precedence check.
+    (assert (equal? (jsl:eval "(a == 'q' || b == 'y') && !c" c) "true") "grouped or")))
+
+(deftest "github truthiness: empty, 'false' and '0' are falsy"
+  (let ((c (list (list "e" "") (list "f" "false") (list "z" "0") (list "s" "anything"))))
+    (assert (equal? (jsl:eval "!e" c) "true") "empty is falsy")
+    (assert (equal? (jsl:eval "!f" c) "true") "'false' is falsy")
+    (assert (equal? (jsl:eval "!z" c) "true") "'0' is falsy")
+    (assert (equal? (jsl:eval "!s" c) "false") "a non-empty string is truthy")))
+
+(deftest "an absent if: means the job always selects"
+  (assert (equal? (jsl:eval "" (list)) "true") "no condition -> selected"))
+
+(deftest "a ${{ }} wrapper is accepted"
+  (assert (equal? (jsl:eval "${{ x == 'true' }}" (list (list "x" "true"))) "true") "unwrapped"))
+
+;; ── the refusals, which are the point ──────────────────────────────────────
+
+(deftest "an undeclared context path is an error, never an empty string"
+  ;; GitHub would yield empty here. For an oracle that is the wrong default:
+  ;; it silently turns an incomplete case into a confident verdict.
+  (let ((r (jsl:eval "nope.missing == 'x'" (list))))
+    (assert (list? r) "returns an error pair")
+    (assert (equal? (car r) "error") "flagged as error")
+    (assert (string-contains? (nth 1 r) "not declared") "names the problem")))
+
+(deftest "a zero-arg function outside the status set is refused"
+  (let ((r (jsl:eval "hashFiles()" (list))))
+    (assert (equal? (car r) "error") "refused")
+    (assert (string-contains? (nth 1 r) "unsupported expression function") "says why")))
+
+(deftest "a function WITH arguments is refused, not read as a context path"
+  ;; The zero-arg arm only matches `name()`, so `contains(a, b)` tokenizes as an
+  ;; identifier followed by `(`. Before this was handled it fell through to a
+  ;; context lookup and reported "context path not declared: contains" — and had
+  ;; a case declared a key of that name, it would have evaluated the call AS
+  ;; that value and been confidently wrong.
+  (let ((r (jsl:eval "contains(github.ref, 'main')" (list (list "contains" "true")))))
+    (assert (equal? (car r) "error") "refused even when a key shadows the name")
+    (assert (string-contains? (nth 1 r) "unsupported expression function") "says why")))
+
+(deftest "the status functions resolve from the case"
+  (assert (equal? (jsl:eval "always()" (list (list "always()" "true"))) "true") "always() true")
+  (assert (equal? (jsl:eval "always()" (list (list "always()" "false"))) "false") "always() false"))
+
+;; ── selection rules ────────────────────────────────────────────────────────
+
+(deftest "a job whose needs did not select is itself skipped"
+  (assert (equal? (jsl:needs-met? (list "a" "b") (list "a" "b")) #t) "all needs ran")
+  (assert (equal? (jsl:needs-met? (list "a" "b") (list "a")) #f) "one need missing")
+  (assert (equal? (jsl:needs-met? (list) (list)) #t) "no needs is met vacuously"))
+
+(deftest "table parsing: comments, blanks and columns"
+  (let ((rows (jsl:rows "# comment\n\nname\tk=v\tone,two\tthree\n   \n")))
+    (assert (= (length rows) 1) "one live row")
+    (assert (equal? (jsl:col (car rows) 0) "name") "col 0")
+    (assert (= (length (jsl:csv (jsl:col (car rows) 2))) 2) "expect-run parses to 2")
+    (assert (= (length (jsl:ctx-of (jsl:col (car rows) 1))) 1) "context parses to 1 pair")))
+
+(deftest "a context value may itself be empty"
+  ;; `needs.bump.outputs.bumped=` models a skipped upstream job, which is a
+  ;; distinct state from 'false' and the tables need to express it.
+  (let ((c (jsl:ctx-of "a=;b=true")))
+    (assert (= (length c) 2) "both pairs kept")
+    (assert (equal? (jsl:eval "!a" c) "true") "an empty value is falsy, not an error")))

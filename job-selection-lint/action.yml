@@ -1,0 +1,73 @@
+name: 'pleme-io · job-selection-lint'
+description: >-
+  Assert WHICH JOBS RUN for a table of inputs. Evaluates each job''s `if:`
+  against synthetic contexts and compares the selected set to what the table
+  declares, modelling needs-propagation and always(). Catches the class no other
+  layer can: a job that is skipped when it should have run, which is
+  indistinguishable from success on a green tick. Its headline check is
+  `never-selects` — a job that fires in NO declared case, i.e. a step that can
+  never run at all. Refuses to evaluate expression constructs outside its
+  supported subset rather than guessing at them.
+branding:
+  icon: 'git-merge'
+  color: 'red'
+
+inputs:
+  workflow:
+    description: "Path to the workflow file to analyse."
+    required: true
+  cases:
+    description: >-
+      Path to the case table (TSV: name, context k=v;k=v, expect-run csv,
+      expect-skip csv). An EMPTY table fails the run rather than passing
+      vacuously — a selection check that asserts nothing passes everything.
+    required: true
+  fail-on-violation:
+    description: >-
+      Fail the job on any violation. Set false to survey a workflow before
+      adopting the check.
+    required: false
+    default: "true"
+
+outputs:
+  jobs:
+    description: "Jobs found in the workflow."
+    value: ${{ steps.check.outputs.jobs }}
+  cases:
+    description: "Cases evaluated."
+    value: ${{ steps.check.outputs.cases }}
+  never-selects:
+    description: >-
+      Jobs that select in NO case. Non-zero means a step in this workflow can
+      never run — the silent-skip class, stated positively.
+    value: ${{ steps.check.outputs.never-selects }}
+  violations:
+    description: "Total violations — the number that fails the build."
+    value: ${{ steps.check.outputs.violations }}
+
+runs:
+  using: composite
+  steps:
+    # A PATH, not an inline string: stdlib alone is ~118 KB, against Linux
+    # MAX_ARG_STRLEN of 131072. Inlining also echoes the whole evaluator into
+    # the step log, where grepping the log for a finding then matches the line
+    # that WOULD print it.
+    - name: Compose stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        DEST="${RUNNER_TEMP}/job-selection-lint-composed.tlisp"
+        cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp" > "$DEST"
+        echo >> "$DEST"
+        cat "${{ github.action_path }}/run.tlisp" >> "$DEST"
+        echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+    - name: Run job-selection-lint
+      id: check
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.path }}
+      env:
+        WORKFLOW: ${{ inputs.workflow }}
+        CASES: ${{ inputs.cases }}
+        FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
