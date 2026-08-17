@@ -1,6 +1,106 @@
-;; step-summary-publish/run.tlisp — typed schema locked, body lands on consumer demand
-(log-info "::warning::step-summary-publish not yet implemented")
+;; step-summary-publish — render a templated markdown to $GITHUB_STEP_SUMMARY.
+;;
+;; IMPLEMENTED 2026-08-17. Until today the body of this file was three lines:
+;;
+;;   (log-info "::warning::step-summary-publish not yet implemented")
+;;   (append-output "rendered=stub")
+;;   (exit 0)
+;;
+;; A typed schema over a stub body, exiting 0. That is worse than an absent
+;; action: a caller reads the name and the inputs, wires it in, sees a green
+;; step, and gets no summary — with only a `::warning` in a log nobody reads to
+;; say so. It was found while converting six release workflows' withheld-publish
+;; notices from inline bash to "the typed action that already exists".
+;; Converting to it would have replaced working bash with a silent no-op, which
+;; is precisely the defect those notices exist to prevent.
+;;
+;; The old header said "body lands on consumer demand". There is now a consumer.
 
-(append-output "rendered=stub")
+;; ── the pure renderer ──────────────────────────────────────────────────────
+;; Top level, not inside main, so run.test.tlisp can drive it with no env and
+;; no side effects.
+;;
+;; Substitution iterates the TEMPLATE's placeholders, NOT the VARS entries, and
+;; that direction is deliberate. `json-parse` returns a MAP, not the association
+;; list `yaml-read` gives — and a map is not `null?` when empty, so walking it
+;; with car/cdr crashes on `VARS: "{}"` while working fine on a populated one.
+;; Measured: the populated case rendered correctly and the empty case died with
+;; "expected pair, got map". That is the worst shape of bug, because it passes
+;; exactly the test you would write first.
+;;
+;; Iterating placeholders also buys leave-unknown-visible for free: a key absent
+;; from VARS yields nil and its `{{key}}` survives into the output, where a
+;; reader can see something is unwired. Blanking it would read as a deliberate
+;; empty.
+(define (ssp:subst text holes vars)
+  (cond
+    ((null? holes) text)
+    (else
+      (let*
+        ((hole (car holes))
+          (key (string-replace (string-replace hole "{{" "") "}}" ""))
+          (val (alist-get vars key)))
+        (ssp:subst
+          (cond
+            ((equal? (string-format "{}" val) "nil") text)
+            (else (string-replace text hole (string-format "{}" val))))
+          (cdr holes)
+          vars)))))
 
-(exit 0)
+(define (ssp:render tmpl vars-raw)
+  (ssp:subst
+    tmpl
+    (distinct (re-find-all "\\{\\{[A-Za-z0-9_.-]+\\}\\}" tmpl))
+    (try (json-parse vars-raw) (catch (e) (json-parse "{}")))))
+
+;; ── main ───────────────────────────────────────────────────────────────────
+
+(define (ssp:main)
+  (let
+    ((tmpl (env-get "TEMPLATE" ""))
+      (vars-raw (env-get "VARS" "{}"))
+      (dest (env-get "GITHUB_STEP_SUMMARY" "")))
+
+    ;; An empty template is a caller mistake, not a no-op to absorb quietly.
+    ;; The whole point of this action is that something appears; rendering
+    ;; nothing and exiting 0 is how the stub misled its callers.
+    (cond
+      ((equal? (string-trim tmpl) "")
+        (log-error "step-summary-publish: TEMPLATE is empty — refusing to report success for a summary nobody will see")
+        (exit 2))
+      (else #f))
+
+    (let
+      ((rendered (ssp:render tmpl vars-raw)))
+
+      (cond
+        ((equal? dest "")
+          ;; Local run, or a context with no step summary. Print rather than
+          ;; fail — but SAY so, instead of letting a caller believe it landed.
+          (log-warn "step-summary-publish: GITHUB_STEP_SUMMARY is unset; printing to stdout instead")
+          (print-line rendered))
+        (else
+          ;; Append, never overwrite: a job may publish several sections and
+          ;; clobbering an earlier one would silently drop it.
+          (write-file dest
+            (string-append
+              (cond ((path-exists? dest) (read-file dest)) (else ""))
+              rendered
+              "\n"))))
+
+      ;; `rendered` is the BYTE COUNT written, not the markdown. A GITHUB_OUTPUT
+      ;; k=v line cannot carry a multi-line value without the heredoc form, and
+      ;; a summary is multi-line by nature, so returning the text would either
+      ;; corrupt the output file or be silently truncated. A count is honest and
+      ;; is what a caller can assert on. The stub emitted `rendered=stub`.
+      (append-output (string-append "rendered=" (string-format "{}" (string-length rendered))))
+      (exit 0))))
+
+;; Gated so run.test.tlisp can drive the pure renderer. Without this the script
+;; runs at LOAD and exits before a single (deftest …) is reached — measured
+;; here, and the same shape actions/ci.yml records for three other actions whose
+;; test files ran zero assertions while reporting nothing wrong.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — step-summary-publish helpers loaded; main skipped"))
+  (else (ssp:main)))

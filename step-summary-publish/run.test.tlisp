@@ -1,0 +1,42 @@
+;; step-summary-publish/run.test.tlisp — (deftest …) over the pure renderer.
+;;
+;; This action shipped for some time as a stub: a typed schema, a `::warning`,
+;; `rendered=stub`, exit 0. It was caught only because someone tried to USE it,
+;; and using it would have replaced working inline bash with a silent no-op.
+;; These tests exist so the body cannot quietly become a stub again — a green
+;; suite over a renderer that renders nothing is not reachable from here.
+
+(deftest "substitutes every placeholder present in vars"
+  (let
+    ((out (ssp:subst "to {{registry}} v{{version}}"
+            (list "{{registry}}" "{{version}}")
+            (json-parse "{\"registry\":\"npmjs.org\",\"version\":\"1.2.3\"}"))))
+    (assert (equal? out "to npmjs.org v1.2.3") "both substituted")))
+
+(deftest "a placeholder absent from vars is LEFT VISIBLE, not blanked"
+  ;; A stray `{{version}}` in a summary tells the reader something is unwired.
+  ;; An empty string reads as a deliberate blank and hides the defect.
+  (let
+    ((out (ssp:subst "v={{nope}} r={{registry}}"
+            (list "{{nope}}" "{{registry}}")
+            (json-parse "{\"registry\":\"x\"}"))))
+    (assert (equal? out "v={{nope}} r=x") "unknown key survives verbatim")))
+
+(deftest "empty vars renders the template unchanged"
+  ;; THE REGRESSION TEST. json-parse returns a MAP, not the association list
+  ;; yaml-read gives, and a map is not `null?` when empty — so the first
+  ;; implementation walked it with car/cdr, rendered a populated VARS correctly,
+  ;; and died with "expected pair, got map" on `{}`. It passed exactly the test
+  ;; you would write first. Iterating the template's placeholders instead of the
+  ;; map's entries is what fixed it, and this row is why it stays that way.
+  (let ((out (ssp:subst "no holes here" (list) (json-parse "{}"))))
+    (assert (equal? out "no holes here") "empty vars is not an error")))
+
+(deftest "a non-string var value is rendered, not dropped"
+  (let
+    ((out (ssp:subst "n={{count}}" (list "{{count}}") (json-parse "{\"count\":7}"))))
+    (assert (equal? out "n=7") "numbers render")))
+
+(deftest "a template with no placeholders is passed through"
+  (let ((out (ssp:subst "### Heading\n\nbody" (list) (json-parse "{}"))))
+    (assert (string-contains? out "### Heading") "markdown survives intact")))
