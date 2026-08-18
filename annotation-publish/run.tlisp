@@ -1,0 +1,203 @@
+;; annotation-publish — emit a GitHub workflow ANNOTATION (::notice/::warning/::error).
+;;
+;; WHY THIS EXISTS, and it is not "one more echo wrapped in YAML".
+;;
+;; substrate's three `*-auto-release` withheld-publish jobs each carried a step
+;; that was pure `run:` shell:
+;;
+;;   - shell: bash
+;;     run: |
+;;       echo "::notice title=Publish withheld::This repository is private, …"
+;;
+;; and each sat directly under a `step-summary-publish` call, with a comment
+;; explaining that converting the echo to that action would have DELETED the
+;; annotation — because the summary and the annotation are two different
+;; surfaces and the action only writes the first. The comment was right, and it
+;; described a missing primitive rather than an exception: ★★ PIPELINING says a
+;; workflow is a call with values and all logic lives inside an action, so an
+;; annotation surface with no action is a hole in the vocabulary. This is that
+;; action; the echoes are now calls.
+;;
+;; ── WHAT A TYPED ANNOTATION BUYS THAT `echo` CANNOT ───────────────────────
+;;
+;; GitHub's workflow-command grammar is not "print a string". It is
+;;
+;;     ::<level> <k>=<v>,<k>=<v>::<message>
+;;
+;; parsed by splitting properties on `,` and the pair on `=`, with a documented
+;; percent-encoding for the parts that would otherwise collide with that
+;; grammar. Three consequences an `echo` author has to remember every time, and
+;; that are silent when forgotten — no error, just a wrong or absent annotation:
+;;
+;;   1. A NEWLINE ends the command. A multi-line message emits one annotation
+;;      plus N stray log lines. `%0A` is the only way to get a multi-line
+;;      annotation, so the raw form cannot express one at all.
+;;   2. A `,` or `:` in a PROPERTY VALUE forges the grammar: a title of
+;;      `a,file=/etc/passwd` becomes a second property. Property values escape
+;;      `:` and `,` for exactly this reason. (The three converted callers had
+;;      already been bitten by the neighbouring case, and their comments say so:
+;;      each used a YAML block scalar because the message contains `": "`.)
+;;   3. A literal `%` must be `%25`, and FIRST, or every later escape this
+;;      renderer inserts gets re-encoded by the next replacement.
+;;
+;; So the escaping is the substance here, `ann:render` is a pure function over
+;; it, and run.test.tlisp drives that function directly.
+;;
+;; ── DELIBERATELY NOT HERE ─────────────────────────────────────────────────
+;;
+;; No `{{key}}` templating, even though the sibling `step-summary-publish` has
+;; it. Copying its renderer would be a second implementation of one thing
+;; (PRIME DIRECTIVE: duplication is a bug). If a caller needs a shared template
+;; across both surfaces, the move is to lift `ssp:render` into
+;; _tlisp-stdlib/stdlib.tlisp and have both actions consume it — a stdlib
+;; addition, which CONTRIBUTING.md says to raise before making. Nothing needs it
+;; yet, so nothing is duplicated yet.
+
+;; ── the closed level set ───────────────────────────────────────────────────
+;;
+;; A list, not a free string, and checked before anything is printed. An
+;; unknown level does not fail on GitHub's side: the runner prints the line as
+;; ordinary log text and the caller sees a green step with no annotation, which
+;; is the exact class of silent loss this action was created to remove.
+(define ann:levels (list "notice" "warning" "error"))
+
+;; ── escaping ───────────────────────────────────────────────────────────────
+;;
+;; ORDER IS LOAD-BEARING: `%` first. Encoding a newline to `%0A` and then
+;; encoding `%` would yield `%250A`, i.e. the literal text `%0A` in the
+;; annotation. Message-level (`data`) escaping is exactly %25/%0D/%0A per
+;; GitHub's docs — a `:` inside a MESSAGE is data and must survive verbatim,
+;; which is why this is two functions and not one.
+(define (ann:escape-data s)
+  (string-replace (string-replace (string-replace s "%" "%25") "\r" "%0D") "\n" "%0A"))
+
+;; Property values additionally escape the two characters that ARE the property
+;; grammar. Without this a `,` in a title starts a new property and an `=` after
+;; it names it — a forged `file=` being the interesting case.
+(define (ann:escape-prop s)
+  (string-replace (string-replace (ann:escape-data s) ":" "%3A") "," "%2C"))
+
+;; ── property rendering ─────────────────────────────────────────────────────
+;;
+;; An empty value is OMITTED rather than emitted as `k=`. GitHub tolerates the
+;; empty form, but it renders as a blank heading, which reads as a deliberately
+;; empty title instead of an absent one.
+(define (ann:prop k v)
+  (cond
+    ((equal? (string-trim v) "") "")
+    (else (string-append k "=" (ann:escape-prop (string-trim v))))))
+
+(define (ann:props title file line end-line col end-col)
+  (string-join
+    ","
+    (filter
+      (lambda (p) (not (equal? p "")))
+      (list
+        (ann:prop "title" title)
+        (ann:prop "file" file)
+        (ann:prop "line" line)
+        (ann:prop "endLine" end-line)
+        (ann:prop "col" col)
+        (ann:prop "endColumn" end-col)))))
+
+;; `::<level>::<message>` when there are no properties — note the absent space.
+;; `:: notice ::` and `::notice ::` are both non-commands, so the space cannot
+;; be unconditional.
+(define (ann:render level props message)
+  (string-append
+    "::"
+    level
+    (cond
+      ((equal? props "") "")
+      (else (string-append " " props)))
+    "::"
+    (ann:escape-data message)))
+
+;; ── main ───────────────────────────────────────────────────────────────────
+
+(define (ann:digits-ok? v)
+  (cond
+    ((equal? (string-trim v) "") #t)
+    (else (re-match? "^[0-9]+$" (string-trim v)))))
+
+(define (ann:main)
+  (let
+    ((level (string-trim (env-get "LEVEL" "notice")))
+      (message (env-get "MESSAGE" ""))
+      (title (env-get "TITLE" ""))
+      (file (env-get "FILE" ""))
+      (line (env-get "LINE" ""))
+      (end-line (env-get "END_LINE" ""))
+      (col (env-get "COL" ""))
+      (end-col (env-get "END_COL" "")))
+
+    ;; (1) the closed set.
+    (cond
+      ((not (member? level ann:levels))
+        (log-error
+          (string-append
+            "annotation-publish: level '"
+            level
+            "' is not one of notice / warning / error. GitHub would print this "
+            "line as ordinary log text and create no annotation, so the step "
+            "fails here instead of reporting success for nothing."))
+        (exit 2))
+      (else #f))
+
+    ;; (2) an empty message is a caller mistake, not a no-op to absorb. Same
+    ;; discipline as step-summary-publish's empty TEMPLATE: rendering nothing
+    ;; and exiting 0 is how a stub misleads its callers.
+    (cond
+      ((equal? (string-trim message) "")
+        (log-error
+          "annotation-publish: MESSAGE is empty — refusing to report success for an annotation nobody will see")
+        (exit 2))
+      (else #f))
+
+    ;; (3) a position with no file. GitHub attaches a position to a file; with
+    ;; `file` absent it drops line/col and shows an unanchored annotation, so
+    ;; the caller's intent (inline on the diff) is lost silently.
+    (cond
+      ((and (equal? (string-trim file) "")
+         (not
+           (and (equal? (string-trim line) "")
+             (and (equal? (string-trim end-line) "")
+               (and (equal? (string-trim col) "") (equal? (string-trim end-col) ""))))))
+        (log-error
+          "annotation-publish: line/col given with no `file` — GitHub anchors a position to a file, so this would emit an annotation attached to nothing")
+        (exit 2))
+      (else #f))
+
+    ;; (4) non-numeric positions are DISCARDED by the runner without complaint.
+    (cond
+      ((not
+         (and (ann:digits-ok? line)
+           (and (ann:digits-ok? end-line)
+             (and (ann:digits-ok? col) (ann:digits-ok? end-col)))))
+        (log-error
+          "annotation-publish: line / end-line / col / end-col must be digits only — the runner silently discards a non-numeric position")
+        (exit 2))
+      (else #f))
+
+    (let
+      ((directive (ann:render level (ann:props title file line end-line col end-col) message)))
+
+      ;; The whole point: stdout, verbatim, at column 0. `log-info` would
+      ;; prefix a timestamp and the runner would stop recognising the command.
+      (print-line directive)
+
+      ;; A receipt, not a claim: the runner never acknowledges an annotation, so
+      ;; the emitted bytes are the only honest thing to return. Escaped, so it
+      ;; carries no newline and `emit-output`'s injection guard is satisfied by
+      ;; construction rather than by luck.
+      (emit-output "directive" directive)
+      (exit 0))))
+
+;; Gated so run.test.tlisp can drive the pure renderer. Without this the script
+;; runs at LOAD and exits before a single (deftest …) is reached — the shape
+;; actions/ci.yml records for three action test files that ran zero assertions
+;; while reporting nothing wrong.
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1")
+    (log-info "TLISP_TEST=1 — annotation-publish helpers loaded; main skipped"))
+  (else (ann:main)))

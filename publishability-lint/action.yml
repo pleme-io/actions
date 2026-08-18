@@ -58,6 +58,26 @@ inputs:
     default: ""
 
 outputs:
+  # DECLARED 2026-08-18, and the two below are not new behaviour: run.tlisp's
+  # `pl:emit` has always written six keys while this block forwarded four, so
+  # `scanned` and `reason` were dropped at the composite boundary and no caller
+  # could read them. Found by output-contract-sync's OUTER-boundary layer, which
+  # is the gate that exists for exactly this silent shape.
+  scanned:
+    description: >-
+      Tracked files actually scanned — the DENOMINATOR behind `findings`. A
+      caller asserting "clean" without it is asserting nothing: zero findings
+      over zero files is the vacuous pass this action's min-files floor exists to
+      refuse, and the floor can only be checked against a number the caller can
+      see.
+    value: ${{ steps.scan.outputs.scanned }}
+  reason:
+    description: >-
+      Why the run ended, one of `ok` / `new-findings` / `stale-baseline` /
+      `no-files` / `broken`. Distinguishes a clean scan from a scan that never
+      happened — `no-files` and `broken` both report zero findings, and only this
+      key says which of the five cases produced them.
+    value: ${{ steps.scan.outputs.reason }}
   findings:
     description: "Total findings (baselined + new). Zero against a non-empty repo with a sane min-files is a real clean result."
     value: ${{ steps.scan.outputs.findings }}

@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                356
-# routing tatara-script  340
-# distinct keys written  337
+# actions                360
+# routing tatara-script  344
+# distinct keys written  341
 # dynamic key expansions 8
-# inner union (generated)345
+# inner union (generated)349
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -37,6 +37,7 @@ aldrava-lint	tatara-script	run.tlisp	3	3
 aldrava-resolve	tatara-script	run.tlisp	7	7
 algolia-index-push	tatara-script	run.tlisp	1	1
 anchor-build	tatara-script	run.tlisp	1	1
+annotation-publish	tatara-script	run.tlisp	1	1
 ansible-collection-build	tatara-script	run.tlisp	2	2
 ansible-collection-publish	tatara-script	run.tlisp	0	0
 anthropic-message	tatara-script	run.tlisp	1	1
@@ -84,6 +85,7 @@ changelog-fragments-merge	tatara-script	run.tlisp	1	1
 changelog-generate	tatara-script	run.tlisp	2	2
 changesets	tatara-script	run.tlisp	1	1
 checkov	tatara-script	run.tlisp	1	1
+ci-triage	tatara-script	run.tlisp	1	1
 clickup-task-create	tatara-script	run.tlisp	1	1
 cloudflare-cache-purge	tatara-script	run.tlisp	1	1
 cloudflare-d1-migrate	tatara-script	run.tlisp	1	1
@@ -198,6 +200,7 @@ infracost-comment	tatara-script	run.tlisp	1	1
 issue-create	tatara-script	run.tlisp	2	2
 istio-apply	tatara-script	run.tlisp	1	1
 jira-issue-create	tatara-script	run.tlisp	1	1
+job-selection-lint	tatara-script	run.tlisp	2	2
 json-schema-check	tatara-script	run.tlisp	1	1
 jupyter-notebook-render	tatara-script	run.tlisp	1	1
 k6-load-test	tatara-script	run.tlisp	2	2
@@ -273,6 +276,7 @@ prisma-migrate	tatara-script	run.tlisp	1	1
 prometheus-push	tatara-script	run.tlisp	1	1
 provenance-attest	tatara-script	run.tlisp	2	2
 provide-cc	own-runner	-	0	1
+publishability-lint	tatara-script	run.tlisp	6	6
 pull-request-gate	tatara-script	run.tlisp	0	0
 pulumi-up	tatara-script	run.tlisp	1	1
 puppeteer-screenshot	tatara-script	run.tlisp	1	1
@@ -341,7 +345,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	345
+tatara-script	own-runner	-	0	349
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -351,7 +355,7 @@ tfsec	tatara-script	run.tlisp	1	1
 tlisp-lint	tatara-script	run.tlisp	2	2
 tlisp-test	tatara-script	run.tlisp	2	2
 toc-update	tatara-script	run.tlisp	1	1
-trivy-fs-scan	tatara-script	run.tlisp	1	1
+trivy-fs-scan	tatara-script	run.tlisp	3	3
 turbo-build	tatara-script	run.tlisp	1	1
 twilio-sms	tatara-script	run.tlisp	1	1
 twilio-voice-call	tatara-script	run.tlisp	1	1
@@ -424,6 +428,7 @@ aldrava-resolve	reason	static	declared	forwarded
 aldrava-resolve	should-run	static	declared	forwarded
 algolia-index-push	pushed	static	declared	forwarded
 anchor-build	program-id	static	declared	forwarded
+annotation-publish	directive	static	declared	forwarded
 ansible-collection-build	tarball-path	static	declared	forwarded
 ansible-collection-build	version	static	declared	forwarded
 anthropic-message	response	static	declared	forwarded
@@ -521,6 +526,7 @@ changelog-generate	changelog	static	declared	forwarded
 changelog-generate	commit-count	static	declared	forwarded
 changesets	published-count	static	declared	forwarded
 checkov	findings-count	static	declared	forwarded
+ci-triage	class	static	declared	forwarded
 clickup-task-create	task-id	static	declared	forwarded
 cloudflare-cache-purge	purged	static	declared	forwarded
 cloudflare-d1-migrate	applied	static	declared	forwarded
@@ -684,6 +690,8 @@ issue-create	action-taken	static	declared	forwarded
 issue-create	issue-url	static	declared	forwarded
 istio-apply	applied	static	declared	forwarded
 jira-issue-create	key	static	declared	forwarded
+job-selection-lint	violations	static	declared	forwarded
+job-selection-lint	workflows	static	declared	forwarded
 json-schema-check	errors	static	declared	forwarded
 jupyter-notebook-render	output-path	static	declared	forwarded
 k6-load-test	passed	static	declared	forwarded
@@ -798,6 +806,12 @@ prisma-migrate	applied	static	declared	forwarded
 prometheus-push	pushed	static	declared	forwarded
 provenance-attest	certificate-path	static	declared	forwarded
 provenance-attest	signature-path	static	declared	forwarded
+publishability-lint	baselined	static	declared	forwarded
+publishability-lint	findings	static	declared	forwarded
+publishability-lint	new-findings	static	declared	forwarded
+publishability-lint	reason	static	declared	forwarded
+publishability-lint	scanned	static	declared	forwarded
+publishability-lint	stale-baseline	static	declared	forwarded
 pulumi-up	updated	static	declared	forwarded
 puppeteer-screenshot	captured	static	declared	forwarded
 pyroscope-push	pushed	static	declared	forwarded
@@ -953,6 +967,8 @@ tlisp-test	failed-files	static	declared	forwarded
 tlisp-test	test-files	static	declared	forwarded
 toc-update	changed	static	declared	forwarded
 trivy-fs-scan	findings	static	declared	forwarded
+trivy-fs-scan	outcome	static	declared	forwarded
+trivy-fs-scan	scanned	static	declared	forwarded
 turbo-build	built	static	declared	forwarded
 twilio-sms	sid	static	declared	forwarded
 twilio-voice-call	sid	static	declared	forwarded

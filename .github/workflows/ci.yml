@@ -89,9 +89,17 @@ jobs:
       # below reality, so a 32% collapse in discovery still passed the check
       # that exists to catch exactly that. Two files of slack, not fourteen.
       # Raise it as the suite grows.
+      #
+      # RE-MEASURED 2026-08-18 by running the harness locally: 58 files, all
+      # green. The floor had drifted back to 16 below reality — the same gap the
+      # note above was written to close, reopened by 14 suites landing without
+      # anyone re-reading the floor they were supposed to raise. 42 -> 56, two
+      # files of slack again. THE LESSON IS THE DRIFT, not the number: a floor
+      # stated once and never re-measured is a ratchet that quietly unwinds, so
+      # re-measure it whenever you add a suite rather than trusting this comment.
       - uses: ./tlisp-test
         with:
-          min-files: "42"
+          min-files: "56"
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files
