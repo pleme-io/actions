@@ -1,0 +1,113 @@
+;; annotation-publish/run.test.tlisp — (deftest …) over the pure renderer.
+;;
+;; The escaping IS the reason this action exists rather than an `echo`, so it is
+;; what the suite covers. Every row below is a case where the raw echo form
+;; produces a WRONG or ABSENT annotation and reports success either way.
+
+(deftest "a bare level and message render the command with no space"
+  ;; `::notice ::msg` is not a command. The space before the properties has to
+  ;; disappear with the properties, which is why ann:render branches on it.
+  (let ((out (ann:render "notice" "" "hello")))
+    (assert (equal? out "::notice::hello") "no properties, no space")))
+
+(deftest "a title renders as a property"
+  (let ((out (ann:render "warning" (ann:props "T" "" "" "" "" "") "body")))
+    (assert (equal? out "::warning title=T::body") "title=T")))
+
+(deftest "a newline in the message becomes %0A, not a truncated command"
+  ;; THE CAPABILITY THE ECHO DID NOT HAVE. A literal newline ends the workflow
+  ;; command: the first line becomes an annotation and the rest becomes log
+  ;; text. Percent-encoding is the only multi-line annotation there is.
+  (let ((out (ann:render "notice" "" "one\ntwo")))
+    (assert (equal? out "::notice::one%0Atwo") "newline encoded")
+    (assert (not (string-contains? out "\n")) "the emitted line is one line")))
+
+(deftest "a carriage return becomes %0D"
+  (let ((out (ann:escape-data "a\rb")))
+    (assert (equal? out "a%0Db") "CR encoded")))
+
+(deftest "a literal percent is encoded FIRST"
+  ;; ORDER REGRESSION ROW. Encode the newline first and `%` second and the
+  ;; renderer emits `%250A` — the literal text `%0A` in the annotation instead
+  ;; of a line break. Both orders pass a test that uses only one of the two
+  ;; characters, so the case has to mix them.
+  (let ((out (ann:escape-data "100%\ndone")))
+    (assert (equal? out "100%25%0Adone") "percent encoded once, newline still a newline")))
+
+(deftest "a comma in a property value cannot forge a second property"
+  ;; THE INJECTION ROW. Properties split on `,` and each pair on `=`, so an
+  ;; unescaped comma in a title lets whoever controls that title inject
+  ;; `file=`, moving the annotation onto a file of their choosing.
+  (let ((out (ann:props "oops,file=/etc/passwd" "" "" "" "" "")))
+    (assert (equal? out "title=oops%2Cfile=/etc/passwd") "comma escaped, one property")
+    (assert (not (string-contains? out ",")) "no separator survives in the value")))
+
+(deftest "a colon in a property value is escaped, but a colon in a MESSAGE is not"
+  ;; Two escaping levels, and conflating them is a real bug in both directions:
+  ;; escaping the message's colons would mangle every "key: value" sentence,
+  ;; and not escaping a property's would end the property list early.
+  (let
+    ((prop (ann:props "a:b" "" "" "" "" ""))
+      (msg (ann:render "notice" "" "Set publish-from-private: true")))
+    (assert (equal? prop "title=a%3Ab") "property colon encoded")
+    (assert (equal? msg "::notice::Set publish-from-private: true") "message colon verbatim")))
+
+(deftest "empty properties are omitted, not emitted as k="
+  (let ((out (ann:props "" "src/main.rs" "12" "" "" "")))
+    (assert (equal? out "file=src/main.rs,line=12") "only the two given properties")))
+
+(deftest "properties render in a fixed order"
+  ;; Deterministic output is what lets a caller diff a directive at all.
+  (let ((out (ann:props "T" "f.rs" "1" "2" "3" "4")))
+    (assert
+      (equal? out "title=T,file=f.rs,line=1,endLine=2,col=3,endColumn=4")
+      "title,file,line,endLine,col,endColumn")))
+
+(deftest "the closed level set rejects everything outside it"
+  (assert (member? "notice" ann:levels) "notice is a level")
+  (assert (member? "warning" ann:levels) "warning is a level")
+  (assert (member? "error" ann:levels) "error is a level")
+  ;; `::debug::` is a LOG message gated on ACTIONS_STEP_DEBUG, not an
+  ;; annotation. Accepting it would let a caller ask for an annotation and get
+  ;; nothing on any surface, which is the failure this action removes.
+  (assert (not (member? "debug" ann:levels)) "debug is not an annotation level")
+  (assert (not (member? "" ann:levels)) "empty is not a level"))
+
+(deftest "a position is digits-only"
+  ;; The runner discards a non-numeric position without complaint.
+  (assert (ann:digits-ok? "12") "digits pass")
+  (assert (ann:digits-ok? "") "absent passes — the inputs are optional")
+  (assert (not (ann:digits-ok? "12a")) "trailing garbage fails")
+  (assert (not (ann:digits-ok? "-1")) "a sign is not a line number"))
+
+;; ── the three withheld-publish notices, byte-for-byte ─────────────────────
+;;
+;; These are the exact strings the converted `run: echo` steps emitted in
+;; substrate's cargo-publish-each-member / npm / python auto-release workflows.
+;; The conversion is only honest if the annotation surface is unchanged, so the
+;; expectation is a literal, not a property — a reader can diff it against
+;; `git show` of the deleted step.
+
+(deftest "npm withheld notice is byte-identical to the echo it replaced"
+  (assert
+    (equal?
+      (ann:render "notice" (ann:props "Publish withheld" "" "" "" "" "")
+        "This repository is private, so the npm package was NOT published. The version was bumped and tagged. Set publish-from-private: true if this repo is meant to publish a public artifact from private source.")
+      "::notice title=Publish withheld::This repository is private, so the npm package was NOT published. The version was bumped and tagged. Set publish-from-private: true if this repo is meant to publish a public artifact from private source.")
+    "npm-auto-release.yml"))
+
+(deftest "python withheld notice is byte-identical to the echo it replaced"
+  (assert
+    (equal?
+      (ann:render "notice" (ann:props "Publish withheld" "" "" "" "" "")
+        "This repository is private, so the Python package was NOT published to pypi.org. The version was bumped and tagged. Set publish-from-private: true if this repo is meant to publish a public artifact from private source.")
+      "::notice title=Publish withheld::This repository is private, so the Python package was NOT published to pypi.org. The version was bumped and tagged. Set publish-from-private: true if this repo is meant to publish a public artifact from private source.")
+    "python-auto-release.yml"))
+
+(deftest "cargo workspace withheld notice is byte-identical to the echo it replaced"
+  (assert
+    (equal?
+      (ann:render "notice" (ann:props "Publish withheld" "" "" "" "" "")
+        "This repository is private, so no workspace member was published to crates.io. Nothing was bumped or tagged either -- this workflow bumps, publishes and tags in one action, so the three move together. Set publish-from-private: true if this repo is meant to publish public crates from private source.")
+      "::notice title=Publish withheld::This repository is private, so no workspace member was published to crates.io. Nothing was bumped or tagged either -- this workflow bumps, publishes and tags in one action, so the three move together. Set publish-from-private: true if this repo is meant to publish public crates from private source.")
+    "cargo-publish-each-member-auto-release.yml"))

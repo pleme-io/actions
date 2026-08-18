@@ -1,0 +1,96 @@
+name: 'pleme-io · annotation-publish'
+description: 'Emit a GitHub workflow annotation (::notice / ::warning / ::error).'
+branding: { icon: 'alert-circle', color: 'blue' }
+
+# THE SIBLING, AND WHY IT IS NOT THIS. `step-summary-publish` writes
+# $GITHUB_STEP_SUMMARY — markdown on the run's summary page. This writes a
+# workflow COMMAND to stdout, which the runner turns into an annotation: a
+# banner on the run, on the PR checks tab, and (with `file`) inline on the diff.
+# Two different surfaces with two different audiences; a job that wants both
+# calls both. Reaching for one when the caller meant the other is how a notice
+# gets silently dropped, which is the defect that produced this action.
+
+inputs:
+  level:
+    description: >-
+      `notice`, `warning` or `error`. The set is CLOSED: anything else fails the
+      step rather than printing a line GitHub shows as ordinary log text.
+      `debug` is deliberately absent — `::debug::` is a log message gated on
+      ACTIONS_STEP_DEBUG, not an annotation, so accepting it here would let a
+      caller ask for an annotation and receive nothing on any surface.
+    required: false
+    default: notice
+  message:
+    description: >-
+      The annotation body. May contain newlines — they are percent-encoded, so a
+      multi-line message renders as ONE multi-line annotation instead of one
+      annotation plus stray log lines (which is what a raw multi-line `echo`
+      produces, and the reason this action exists). Empty fails the step.
+    required: true
+  title:
+    description: 'Bold heading on the annotation. Optional; GitHub renders a default when absent.'
+    required: false
+    default: ''
+  file:
+    description: >-
+      Repo-relative path to attach the annotation to, which is what makes it
+      appear inline on the diff. Required for any of the line/column inputs
+      below: GitHub attaches a position to a file, so a position with no file is
+      refused here rather than silently ignored there.
+    required: false
+    default: ''
+  line:
+    description: 'Start line within `file`. Digits only.'
+    required: false
+    default: ''
+  end-line:
+    description: 'End line within `file`. Digits only.'
+    required: false
+    default: ''
+  col:
+    description: 'Start column within `file`. Digits only.'
+    required: false
+    default: ''
+  end-col:
+    description: 'End column within `file`. Digits only.'
+    required: false
+    default: ''
+
+outputs:
+  directive:
+    description: >-
+      The exact line written to stdout, escaping included. NOT a boolean "sent":
+      the runner gives no acknowledgement an annotation was created, so the only
+      honest receipt is the bytes that were emitted — and those are something a
+      caller (or a differential test proving a converted workflow kept its
+      annotation) can assert on.
+    value: ${{ steps.run.outputs.directive }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/annotation-publish.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        LEVEL: ${{ inputs.level }}
+        MESSAGE: ${{ inputs.message }}
+        TITLE: ${{ inputs.title }}
+        FILE: ${{ inputs.file }}
+        LINE: ${{ inputs.line }}
+        END_LINE: ${{ inputs.end-line }}
+        COL: ${{ inputs.col }}
+        END_COL: ${{ inputs.end-col }}

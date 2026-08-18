@@ -242,6 +242,9 @@ outputs:
   checkout-ref:
     description: "Forwarded (key: checkout-ref) — aldrava-dispatch/aldrava-resolve resolved PR head SHA"
     value: ${{ steps.exec.outputs.checkout-ref }}
+  class:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: class)"
+    value: ${{ steps.exec.outputs.class }}
   clippy-passed:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: clippy-passed)"
     value: ${{ steps.exec.outputs.clippy-passed }}
@@ -329,6 +332,9 @@ outputs:
   digest:
     description: "Forwarded (key: digest) — zot-push pushed repository digest (exact deploy coord)"
     value: ${{ steps.exec.outputs.digest }}
+  directive:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: directive)"
+    value: ${{ steps.exec.outputs.directive }}
   dispatched:
     description: "Forwarded (key: dispatched) — aldrava-dispatch trusted-knock-matched flag"
     value: ${{ steps.exec.outputs.dispatched }}
@@ -587,6 +593,9 @@ outputs:
   new-call-sites:
     description: "Forwarded (key: new-call-sites) — banned-tool-lint count of NEW (non-baselined) banned-tool call sites; the number that fails the build"
     value: ${{ steps.exec.outputs.new-call-sites }}
+  new-findings:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: new-findings)"
+    value: ${{ steps.exec.outputs.new-findings }}
   new-sha:
     description: "Forwarded (key: new-sha) — spec-watch sha256 of the upstream spec fetched this run"
     value: ${{ steps.exec.outputs.new-sha }}
@@ -1094,6 +1103,9 @@ outputs:
   workflow-id:
     description: "Forwarded (key: workflow-id) — written by 1 action dir(s): temporal-trigger"
     value: ${{ steps.exec.outputs.workflow-id }}
+  workflows:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: workflows)"
+    value: ${{ steps.exec.outputs.workflows }}
   workloads-scanned:
     description: "Forwarded (key: workloads-scanned) — breathe-band-lint: Deployments/StatefulSets/DaemonSets found in the tree"
     value: ${{ steps.exec.outputs.workloads-scanned }}
