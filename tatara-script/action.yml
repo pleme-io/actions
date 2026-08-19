@@ -881,6 +881,9 @@ outputs:
   sha256:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: sha256)"
     value: ${{ steps.exec.outputs.sha256 }}
+  shell-lines:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: shell-lines)"
+    value: ${{ steps.exec.outputs.shell-lines }}
   shipped:
     description: "Forwarded (key: shipped) — written by 4 action dir(s): cargo-publish-crate, helm-publish, npm-publish …"
     value: ${{ steps.exec.outputs.shipped }}

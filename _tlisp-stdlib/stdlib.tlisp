@@ -2447,27 +2447,3 @@
               (erro:err (erro:new "num/bad-int"
                 (string-append "'" s "' is not an integer") (list "input" s))))
             (else r)))))))
-
-;; parse-int — an integer out of a string, with no subprocess.
-;;
-;; `string->number` is NOT a tatara-lisp primitive: the primitives list names
-;; it among the deliberately-absent Scheme spellings, which is a trap worth
-;; one line of stdlib because reaching for it looks obviously correct. The one
-;; existing fleet copy (`eab:to-int` in exec-arg-budget-lint) shells out to
-;; `printf %d` to get an integer — a process per parse, inside the catalog
-;; whose own directive bans shell. Its sibling `eab:parse-int` already had the
-;; answer: json-parse reads an integer literal directly.
-;;
-;; Returns `fallback` when the string is empty or not an integer literal.
-;; BOTH guards are load-bearing and the first was found by its own test:
-;; `json-parse ""` THROWS ("EOF while parsing a value") rather than returning
-;; empty, so the eab: precedent this was modelled on does not survive an unset
-;; input — which is exactly the case a defaulted budget hits.
-(define (parse-int s fallback)
-  (let ((t (string-trim s)))
-    (if (equal? t "")
-      fallback
-      (try
-        (let ((n (json-parse t)))
-          (if (equal? n (list)) fallback n))
-        (catch (e) fallback)))))
