@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                363
-# routing tatara-script  347
-# distinct keys written  347
+# actions                364
+# routing tatara-script  348
+# distinct keys written  349
 # dynamic key expansions 8
-# inner union (generated)355
+# inner union (generated)357
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -265,6 +265,7 @@ output-contract-sync	tatara-script	run.tlisp	9	9
 pa11y-ci	tatara-script	run.tlisp	1	1
 pagerduty-notify	tatara-script	run.tlisp	1	1
 pangea-grafana-converge	tatara-script	run.tlisp	5	5
+paths-dirty	tatara-script	run.tlisp	2	2
 percy-snapshot	tatara-script	run.tlisp	1	1
 pinecone-upsert	tatara-script	run.tlisp	1	1
 platformio-build	tatara-script	run.tlisp	1	1
@@ -348,7 +349,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	355
+tatara-script	own-runner	-	0	357
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -800,6 +801,8 @@ pangea-grafana-converge	dry-run	static	declared	forwarded
 pangea-grafana-converge	healthy	static	declared	forwarded
 pangea-grafana-converge	model	static	declared	forwarded
 pangea-grafana-converge	reason	static	declared	forwarded
+paths-dirty	dirty	static	declared	forwarded
+paths-dirty	files	static	declared	forwarded
 percy-snapshot	snapshots-count	static	declared	forwarded
 pinecone-upsert	upserted	static	declared	forwarded
 platformio-build	built	static	declared	forwarded
