@@ -353,6 +353,9 @@ outputs:
   drift-detected:
     description: "Forwarded (key: drift-detected) — written by 1 action dir(s): caixa-render-pr"
     value: ${{ steps.exec.outputs.drift-detected }}
+  drifted:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: drifted)"
+    value: ${{ steps.exec.outputs.drifted }}
   drv-path:
     description: "Forwarded (key: drv-path) — ferrite-check resolved .drv store path"
     value: ${{ steps.exec.outputs.drv-path }}

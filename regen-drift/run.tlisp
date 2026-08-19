@@ -1,0 +1,75 @@
+;; regen-drift — a committed artifact still matches what regenerates it.
+;;
+;; WHY IT EXISTS. The fleet has five bespoke versions of this one shape:
+;; gemset-gate, helm-render-determinism, defaction-render, breathe's crdgen
+;; check and pangea-operator's CRD check. Each re-implements "run the
+;; generator, compare its output to the committed file, fail with an
+;; explanation" — and each carries its own subtly different idea of what a
+;; failure means. The GENERATOR differs between them; the comparison never
+;; does.
+;;
+;; THE FAILURE MESSAGE IS AN INPUT, NOT A CONSTANT, and that is the whole
+;; design. A drift gate that says only "files differ" tells a reader what
+;; happened and not why it matters — breathe's version explains that a field
+;; present in Rust but absent from the chart CRD is PRUNED by the apiserver, so
+;; the CR applies cleanly and the field silently vanishes. That sentence is the
+;; reason anyone fixes it rather than regenerating blindly, and it belongs with
+;; the caller who knows it.
+;;
+;; ARGV, NEVER A COMMAND STRING. `program` plus newline-separated `args` go to
+;; proc:run as a list, so there is no quoting to get wrong and no shell to
+;; inject into — the same reason the stdlib refuses a shell argv[0].
+;;
+;; Exit codes: 0 identical · 1 drifted · 3 the generator could not run, or the
+;; committed file is missing (the gate cannot speak, which is NOT "no drift").
+
+(define program (string-trim (env-get "PROGRAM" "")))
+(define committed (string-trim (env-get "COMMITTED" "")))
+(define reason (env-get "REASON" ""))
+(define regenerate? (equal? (env-get "REGENERATE" "false") "true"))
+
+(define args
+  (filter (lambda (a) (not (equal? a "")))
+          (map string-trim (string-split (env-get "ARGS" "") "\n"))))
+
+(define (die code msg)
+  (log-error (string-append "regen-drift: " msg))
+  (exit code))
+
+(when (equal? program "") (die 3 "PROGRAM is required"))
+(when (equal? committed "") (die 3 "COMMITTED is required"))
+
+;; A missing committed file is exit 3, never a pass. "Nothing to compare
+;; against" and "matches what it should be" are different answers, and only one
+;; of them means the artifact is correct.
+(when (not (path-exists? committed))
+  (die 3 (string-append "the committed artifact " committed " does not exist — "
+                        "nothing to compare against is not the same as no drift")))
+
+(define generated
+  (let ((r (proc:must (cons program args))))
+    (cond
+      ((erro:err? r)
+        (die 3 (string-append "the generator failed: " program " "
+                              (string-join " " args))))
+      (else (erro:value r)))))
+
+(define current (read-file committed))
+
+(append-output (string-append "drifted=" (if (equal? generated current) "false" "true")))
+
+(cond
+  ((equal? generated current)
+    (log-info (string-append "regen-drift: " committed " matches its generator"))
+    (exit 0))
+  (regenerate?
+    (write-file committed generated)
+    (log-info (string-append "regen-drift: rewrote " committed " from its generator"))
+    (exit 0))
+  (else
+    (log-error (string-append "regen-drift: " committed " is STALE versus its generator"))
+    (when (not (equal? reason ""))
+      (reduce (fn (a l) (log-error l) a) 0 (string-split reason "\n")))
+    (log-error (string-append "regenerate with: " program " " (string-join " " args)
+                              " > " committed))
+    (exit 1)))

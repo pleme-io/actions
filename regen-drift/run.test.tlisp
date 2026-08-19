@@ -1,0 +1,30 @@
+;; Tests for regen-drift's argument parsing.
+;;
+;; The rest of this action is I/O — run a generator, read a file, compare — and
+;; is verified by a live six-path matrix recorded in the commit that added it
+;; (identical, drifted, reason-printed, missing-committed, generator-absent,
+;; regenerate-heals). What is worth pinning here is the SPLIT, because it has a
+;; silent failure mode: an argument list that quietly loses or merges entries
+;; produces a generator invocation nobody asked for, and the drift it then
+;; reports is an artifact of the parse rather than of the artifact.
+
+(define (parse-args s)
+  (filter (lambda (a) (not (equal? a "")))
+          (map string-trim (string-split s "\n"))))
+
+(deftest args-split-on-newlines-not-spaces
+  (assert
+    (equal? (parse-args "run\n--bin\ncrdgen") (list "run" "--bin" "crdgen"))
+    "one argument per line")
+  (assert
+    (equal? (parse-args "--message\nhello world") (list "--message" "hello world"))
+    "an argument containing a space survives intact — the reason the split is on newlines and not spaces")
+  (assert
+    (equal? (parse-args "") (list))
+    "no arguments is an empty list, not a list containing an empty string")
+  (assert
+    (equal? (parse-args "run\n\n--bin\n") (list "run" "--bin"))
+    "blank lines are dropped rather than becoming empty arguments")
+  (assert
+    (equal? (parse-args "  run  \n  --bin  ") (list "run" "--bin"))
+    "surrounding whitespace is trimmed, so a trailing space in YAML does not become part of the flag"))
