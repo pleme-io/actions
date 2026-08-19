@@ -48,6 +48,20 @@
 (define paths-glob (env-get "PATHS" ".github/workflows/*.yml"))
 (define fail-on-violation? (equal? (env-get "FAIL_ON_VIOLATION" "false") "true"))
 
+;; The budget gates SEPARATELY from the shim verdict, and it has to.
+;;
+;; The shim check is report-only fleet-wide and will stay that way for a while:
+;; 144 hand-authored workflows across 99 repos would go red at once, which is a
+;; backlog to burn down rather than a wall to hit. The BUDGET is the opposite --
+;; every repo carrying shell has a committed budget set to what it measured
+;; TODAY, so gating it can only fail a repo that ADDS shell. Nothing existing
+;; goes red.
+;;
+;; One flag for both would have forced the choice: either the budget stays inert
+;; while the backlog burns down, or the backlog fails the fleet today. Two flags
+;; is the whole reason the ratchet is real rather than advisory.
+(define fail-on-budget? (equal? (env-get "FAIL_ON_BUDGET" "true") "true"))
+
 ;; Both publishers count. substrate is not the only one — pleme-actions
 ;; publishes two reusables carrying 23 consumers each, and treating only
 ;; substrate as canonical would report 23 correctly-shimmed repos as
@@ -257,7 +271,7 @@
     (append-output (string-append "violations=" (string-format "{}" (length offenders))))
     (append-output (string-append "waived=" (string-format "{}" waived-n)))
     (cond
-      ((and (null? offenders) over-budget?) (exit (if fail-on-violation? 1 0)))
+      ((and (null? offenders) over-budget?) (exit (if fail-on-budget? 1 0)))
       ((null? offenders)
         (log-info
           (string-append
@@ -276,7 +290,10 @@
             "(see substrate/catalog/workflows.lisp for the 71 available and "
             "what each takes), or waive it with a typed reason: "
             "`# skip-workflow-shim: <reason>`."))
-        (if fail-on-violation? (exit 1) (exit 0))))))
+        (cond
+          ((and over-budget? fail-on-budget?) (exit 1))
+          (fail-on-violation? (exit 1))
+          (else (exit 0)))))))
 
 
 ;; TLISP_TEST=1 loads the definitions without running the scan, so the
