@@ -1,0 +1,76 @@
+name: 'pleme-io · next-tag'
+description: >-
+  Compute the next semver tag for a repo that PUBLISHES NOTHING — a catalog, an
+  org profile, a docs tree — where the tag itself is the artifact and there is no
+  manifest to write a version into. Reads the highest existing tag for a prefix,
+  skips when nothing under the declared paths changed since it, and emits the
+  next version. Sibling of cargo-bump / npm-bump / helm-bump / python-bump /
+  substrate-bump, which all differ by writing a MANIFEST; this one has none to
+  write. Extracted after the same shape was hand-rolled a third time
+  (substrate 80 lines, actions 92, the org .github repo 59).
+
+branding:
+  icon: 'tag'
+  color: 'green'
+
+inputs:
+  tag-prefix:
+    description: "Prefix on the released tags, stripped before ranking and re-applied to the result."
+    required: false
+    default: "v"
+  bump-type:
+    description: "patch | minor | major"
+    required: false
+    default: "patch"
+  source-paths:
+    description: >-
+      Space-separated pathspecs that decide whether this push is worth a tag. A
+      push touching none of them emits skip=true. EMPTY (the default) means
+      every push counts — the honest default, because a repo that cannot say
+      which paths matter should not have its releases silently skipped.
+    required: false
+    default: ""
+  initial-version:
+    description: "Version minted when the repo has no matching tag yet. A first release is never a skip."
+    required: false
+    default: "0.1.0"
+
+outputs:
+  tag:
+    description: "The full next tag, prefix included (e.g. v0.4.3). Unchanged from `previous` when skip is true."
+    value: ${{ steps.run.outputs.tag }}
+  version:
+    description: "The next version without the prefix."
+    value: ${{ steps.run.outputs.version }}
+  previous:
+    description: "The highest version already released for this prefix; empty on a first release."
+    value: ${{ steps.run.outputs.previous }}
+  skip:
+    description: "'true' when nothing under source-paths changed since the previous tag. Never true on a first release."
+    value: ${{ steps.run.outputs.skip }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/next-tag.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        BUMP_TYPE: ${{ inputs.bump-type }}
+        SOURCE_PATHS: ${{ inputs.source-paths }}
+        INITIAL_VERSION: ${{ inputs.initial-version }}

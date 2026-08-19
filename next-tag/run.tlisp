@@ -1,0 +1,83 @@
+;; next-tag — the next semver tag for a repo that PUBLISHES NOTHING.
+;;
+;; WHY IT EXISTS. Three repos hand-rolled this same workflow before anyone
+;; extracted it: substrate (80 lines), actions (92) and the org .github repo
+;; (59). substrate's own header says it "mirrors pleme-io/actions/.github/
+;; workflows/auto-bump.yml — same pattern, different repo", which is the third
+;; hand-wiring of a shape, and the org rule for that is that it is a primitive,
+;; not a task.
+;;
+;; It is deliberately NOT any of the existing bump actions. cargo-bump,
+;; npm-bump, helm-bump, python-bump and substrate-bump all write a version into
+;; a MANIFEST; these repos have no manifest to write — a catalog of workflows,
+;; a catalog of actions and an org profile. The tag IS the artifact, and that
+;; is the whole difference.
+;;
+;; Everything numeric here is stdlib: `git:max-released-version` reads the
+;; highest released tag for a prefix, `semver:bump` increments it. This action
+;; is composition plus one decision, and the decision is the part with tests.
+;;
+;; Outputs: tag · version · previous · skip
+
+(define tag-prefix (env-get "TAG_PREFIX" "v"))
+(define bump-type (env-get "BUMP_TYPE" "patch"))
+(define initial-version (env-get "INITIAL_VERSION" "0.1.0"))
+
+;; Space-separated globs. EMPTY means "always bump" — the honest default,
+;; because a repo that cannot say which paths matter should not have its
+;; releases silently skipped.
+(define source-paths
+  (filter (lambda (p) (not (equal? p "")))
+          (string-split (string-trim (env-get "SOURCE_PATHS" "")) " ")))
+
+;; ── the decision, kept pure so the tests can drive it ────────────────────
+;;
+;; Returns (list <version> <skip?>). Separated from git on purpose: the part
+;; that can be wrong in a way nobody notices is the arithmetic and the
+;; first-release case, not the subprocess.
+(define (next-version-decision previous changed? type initial)
+  (cond
+    ;; No previous tag is a genuine first release. It is NOT a skip: a repo
+    ;; with no tags has, by definition, nothing released to compare against,
+    ;; and skipping here would leave it permanently untagged.
+    ((equal? previous "") (list initial "false"))
+    ((not changed?) (list previous "true"))
+    (else (list (semver:bump previous type) "false"))))
+
+(define (paths-changed-since? tag)
+  ;; No declared paths means every push counts as a change.
+  (cond
+    ((null? source-paths) #t)
+    (else
+      (let ((r (proc:run (append (list "git" "diff" "--quiet" tag "HEAD" "--") source-paths))))
+        (cond
+          ;; A git that could not run at all must never read as "nothing
+          ;; changed" — that would silently stop every release in the repo.
+          ((erro:err? r) #t)
+          (else (not (= (status-of (erro:value r)) 0))))))))
+
+(define (main)
+  (let* ((previous (git:max-released-version tag-prefix))
+         (changed? (if (equal? previous "") #t
+                       (paths-changed-since? (string-append tag-prefix previous))))
+         (decision (next-version-decision previous changed? bump-type initial-version))
+         (version (nth 0 decision))
+         (skip (nth 1 decision)))
+    (append-output (string-append "previous=" previous))
+    (append-output (string-append "version=" version))
+    (append-output (string-append "tag=" tag-prefix version))
+    (append-output (string-append "skip=" skip))
+    (cond
+      ((equal? skip "true")
+        (log-info
+          (string-append "next-tag: no change under the declared paths since "
+                         tag-prefix previous " — nothing to tag")))
+      (else
+        (log-info
+          (string-append "next-tag: " (if (equal? previous "") "(first release)" (string-append tag-prefix previous))
+                         " -> " tag-prefix version " (" bump-type ")"))))
+    (exit 0)))
+
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))
