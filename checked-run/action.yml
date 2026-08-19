@@ -1,0 +1,61 @@
+name: 'pleme-io · checked-run'
+description: >-
+  Run a command and, on failure, print what the failure MEANS. The workflow-level
+  twin of `checked-status` in _tlisp-stdlib. A failing `run:` already fails the
+  job, so the only thing the shell around it ever added is the explanation — and
+  that is what gets lost when the explanation is a pile of `echo "::error::…"`
+  lines wrapped in an `if`. Argv, never a command string. The child's exit code
+  is propagated unchanged rather than flattened to 1.
+
+branding:
+  icon: 'check-circle'
+  color: 'orange'
+
+inputs:
+  program:
+    description: "The executable. Passed as argv[0] — a shell is refused."
+    required: true
+  args:
+    description: "Newline-separated arguments, so an argument containing a space needs no quoting."
+    required: false
+    default: ""
+  reason:
+    description: >-
+      What a non-zero exit MEANS, in the caller's words, printed after the
+      child's own output so a reader finds it beside the error it explains.
+
+      Supply it. This is the entire reason the action exists: it turns "cargo
+      fetch failed" into "you added a git dep on a private repo, and it will
+      also block the crates.io publish."
+    required: false
+    default: ""
+
+outputs:
+  status:
+    description: "The child's exit code."
+    value: ${{ steps.run.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/checked-run.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        PROGRAM: ${{ inputs.program }}
+        ARGS: ${{ inputs.args }}
+        REASON: ${{ inputs.reason }}
