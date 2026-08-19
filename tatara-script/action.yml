@@ -92,6 +92,9 @@ outputs:
   adoption-pct:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: adoption-pct)"
     value: ${{ steps.exec.outputs.adoption-pct }}
+  advanced:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: advanced)"
+    value: ${{ steps.exec.outputs.advanced }}
   annotation-id:
     description: "Forwarded (key: annotation-id) — written by 1 action dir(s): grafana-annotation"
     value: ${{ steps.exec.outputs.annotation-id }}
@@ -548,6 +551,9 @@ outputs:
   logged-in:
     description: "Forwarded (key: logged-in) — written by 1 action dir(s): skopeo-login"
     value: ${{ steps.exec.outputs.logged-in }}
+  major:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: major)"
+    value: ${{ steps.exec.outputs.major }}
   manifest-path:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: manifest-path) — the manifest that drove detect-repo-type's answer."
     value: ${{ steps.exec.outputs.manifest-path }}

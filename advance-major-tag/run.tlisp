@@ -1,0 +1,60 @@
+;; advance-major-tag — move `vX` to point at the `vX.Y.Z` just released.
+;;
+;; The consumer contract every GitHub Action publishes under: a caller writes
+;; `uses: org/action@v1` and expects it to track the newest 1.x. That moving tag
+;; does not maintain itself, and a repo that forgets to advance it ships new
+;; releases nobody consumes — silently, because `@v1` keeps resolving to
+;; whatever it pointed at last.
+;;
+;; A NON-MATCHING TAG IS A SKIP, NOT A FAILURE, and that is deliberate. Release
+;; workflows fire on tags that are not `vX.Y.Z` — release candidates, dated
+;; snapshots, per-action tags — and failing on those would redden a release that
+;; succeeded. The skip is reported, never silent.
+;;
+;; FORCE IS INHERENT, not a convenience: the whole point of the moving tag is
+;; that it moves, so the push is `--force` by definition. That is also why the
+;; form is validated FIRST — a force-push is the one operation here worth being
+;; certain about before running.
+;;
+;; Outputs: advanced ("true"/"false") · major (the tag moved, e.g. v1)
+
+(define tag (string-trim (env-get "TAG" "")))
+(define remote (string-trim (env-get "REMOTE" "origin")))
+(define identity-name (string-trim (env-get "IDENTITY_NAME" "github-actions[bot]")))
+(define identity-email
+  (string-trim (env-get "IDENTITY_EMAIL" "41898282+github-actions[bot]@users.noreply.github.com")))
+
+(when (equal? tag "")
+  (log-error "advance-major-tag: TAG is required")
+  (exit 2))
+
+;; vX.Y.Z, all three numeric. semver:parse rejects two- and four-segment
+;; versions and anything with a pre-release or build suffix, which is exactly
+;; the set that must NOT move a major tag.
+(define version (if (string-starts-with? tag "v") (string-replace tag "v" "") tag))
+(define parts (semver:parse version))
+
+(cond
+  ((null? parts)
+    (append-output "advanced=false")
+    (append-output "major=")
+    (log-info
+      (string-append "advance-major-tag: " tag
+                     " is not vX.Y.Z form; skipping major-tag advance"))
+    (exit 0))
+  (else
+    (let ((major (string-append "v" (string-format "{}" (nth 0 parts)))))
+      (define (must argv)
+        (let ((r (proc:must argv)))
+          (when (erro:err? r)
+            (log-error (string-append "advance-major-tag: failed: " (string-join " " argv)))
+            (exit 1))
+          (erro:value r)))
+      (must (list "git" "config" "user.name" identity-name))
+      (must (list "git" "config" "user.email" identity-email))
+      (must (list "git" "tag" "-f" major tag))
+      (must (list "git" "push" remote major "--force"))
+      (append-output "advanced=true")
+      (append-output (string-append "major=" major))
+      (log-info (string-append "advance-major-tag: advanced " major " -> " tag))
+      (exit 0))))

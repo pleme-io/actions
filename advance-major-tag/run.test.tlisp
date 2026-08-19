@@ -1,0 +1,21 @@
+;; Tests for the form check, which is the decision that must not be wrong in
+;; either direction: advancing a major tag on a release candidate points every
+;; `@v1` consumer at a pre-release, and refusing a legitimate vX.Y.Z leaves the
+;; whole fleet pinned to whatever it resolved to last — silently, because `@v1`
+;; keeps working either way.
+;;
+;; The git half is not mocked. A mocked force-push proves only the mock.
+
+(define (major-of tag)
+  (let* ((v (if (string-starts-with? tag "v") (string-replace tag "v" "") tag))
+         (p (semver:parse v)))
+    (if (null? p) "" (string-append "v" (string-format "{}" (nth 0 p))))))
+
+(deftest only-a-bare-three-segment-version-moves-the-tag
+  (assert (equal? (major-of "v1.2.3") "v1") "the ordinary case")
+  (assert (equal? (major-of "v0.9.12") "v0") "a 0.x major is still a major")
+  (assert (equal? (major-of "v10.0.1") "v10") "double-digit majors are not truncated")
+  (assert (equal? (major-of "v1.2.3-rc1") "") "a release CANDIDATE must not move v1")
+  (assert (equal? (major-of "v1.2") "") "a two-segment tag is not vX.Y.Z")
+  (assert (equal? (major-of "v1.2.3.4") "") "nor is a four-segment one")
+  (assert (equal? (major-of "nightly") "") "and neither is a name"))
