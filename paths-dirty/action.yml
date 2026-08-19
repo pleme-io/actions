@@ -17,6 +17,19 @@ inputs:
     required: false
     default: ""
 
+  expect:
+    description: >-
+      Leave empty to report only. `clean` fails when anything changed — the
+      regenerate-then-prove-nothing-moved assertion. `dirty` fails when nothing
+      did. Without this a caller has to add a shell step whose only job is to
+      exit 1, which puts back the conditional this action exists to remove.
+    required: false
+    default: ""
+  reason:
+    description: "Printed on an `expect` failure, in the caller's words. A gate that says only 'tree is dirty' does not tell a reader what to regenerate."
+    required: false
+    default: ""
+
 outputs:
   dirty:
     description: "'true' when at least one of the paths has an uncommitted change, tracked or untracked."
@@ -47,3 +60,5 @@ runs:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
         PATHS: ${{ inputs.paths }}
+        EXPECT: ${{ inputs.expect }}
+        REASON: ${{ inputs.reason }}
