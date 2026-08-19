@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                361
-# routing tatara-script  345
-# distinct keys written  345
+# actions                362
+# routing tatara-script  346
+# distinct keys written  346
 # dynamic key expansions 8
-# inner union (generated)353
+# inner union (generated)354
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -290,6 +290,7 @@ qiskit-job-submit	tatara-script	run.tlisp	1	1
 railway-up	tatara-script	run.tlisp	1	1
 readme-sync	tatara-script	run.tlisp	1	1
 redis-flush	tatara-script	run.tlisp	1	1
+regen-drift	tatara-script	run.tlisp	1	1
 registry-login	tatara-script	run.tlisp	1	1
 release-please	tatara-script	run.tlisp	1	1
 release-promote	tatara-script	run.tlisp	7	7
@@ -346,7 +347,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	353
+tatara-script	own-runner	-	0	354
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -832,6 +833,7 @@ qiskit-job-submit	job-id	static	declared	forwarded
 railway-up	deployed	static	declared	forwarded
 readme-sync	synced-count	static	declared	forwarded
 redis-flush	flushed	static	declared	forwarded
+regen-drift	drifted	static	declared	forwarded
 registry-login	result	static	declared	forwarded
 release-please	release-pr-url	static	declared	forwarded
 release-promote	committed	static	declared	forwarded

@@ -1,0 +1,74 @@
+name: 'pleme-io · regen-drift'
+description: >-
+  Assert that a committed generated artifact still matches what regenerates it.
+  Runs a generator (program + argv, never a shell string), compares its stdout
+  to a committed file, and fails with the CALLER'S typed explanation of why the
+  drift matters. Extracted after five bespoke versions of the same shape —
+  gemset-gate, helm-render-determinism, defaction-render, breathe's crdgen check
+  and pangea-operator's CRD check — each re-implementing the comparison around a
+  different generator.
+
+branding:
+  icon: 'git-compare'
+  color: 'orange'
+
+inputs:
+  program:
+    description: "The generator's executable. Passed as argv[0] — a shell is refused."
+    required: true
+  args:
+    description: "Newline-separated arguments. Newline-separated, not space-separated, so an argument containing a space needs no quoting and there is nothing for a shell to re-split."
+    required: false
+    default: ""
+  committed:
+    description: "Path to the committed artifact the generator's stdout must equal."
+    required: true
+  reason:
+    description: >-
+      Why this drift matters, in the caller's words, printed on failure. Multi-line
+      is fine — each line is logged separately.
+
+      Supply it. A gate that says only "files differ" tells a reader what happened
+      and not why to care, and the difference decides whether they fix the source
+      or regenerate blindly. breathe's version of this check explains that a field
+      present in Rust but absent from the chart CRD is pruned by the apiserver, so
+      the CR applies cleanly and the field silently vanishes — that sentence is the
+      whole value of the gate.
+    required: false
+    default: ""
+  regenerate:
+    description: "'true' rewrites the committed file instead of failing. For a heal job, never for a gate."
+    required: false
+    default: "false"
+
+outputs:
+  drifted:
+    description: "'true' when the committed artifact differed from the generator's output."
+    value: ${{ steps.run.outputs.drifted }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/regen-drift.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        PROGRAM: ${{ inputs.program }}
+        ARGS: ${{ inputs.args }}
+        COMMITTED: ${{ inputs.committed }}
+        REASON: ${{ inputs.reason }}
+        REGENERATE: ${{ inputs.regenerate }}
