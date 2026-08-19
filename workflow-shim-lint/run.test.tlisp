@@ -95,6 +95,23 @@
     (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          # why this is here\n          # and why it stays\n          echo a\n") 1)
     "a comment inside a body is prose, not shell — pricing it would make deleting the explanation the cheapest way to meet a budget"))
 
+(deftest inline-run-is-counted
+  ;; Counted as zero until 2026-08-19, which made the ratchet gameable in the
+  ;; cheapest possible way: collapse every block onto one line each and the repo
+  ;; reads clean while carrying the same shell.
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: echo one\n      - run: echo two\n") 2)
+    "two inline run: steps are two statements")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: echo a\n      - uses: actions/checkout@v4\n") 1)
+    "an inline run: does not swallow the step after it")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    uses: pleme-io/flows/.github/workflows/pleme-rust.yml@main\n") 0)
+    "and a shim still carries none")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          echo a\n      - run: echo b\n") 2)
+    "a block body and an inline step both count, and the inline one closes the block"))
+
 (deftest flows-is-a-publisher
   (assert
     (shim? "jobs:\n  x:\n    uses: pleme-io/flows/.github/workflows/pleme-rust.yml@main\n")
