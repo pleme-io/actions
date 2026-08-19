@@ -1,0 +1,49 @@
+name: 'pleme-io · paths-dirty'
+description: >-
+  Report whether the given paths have uncommitted changes, as a typed output, so
+  the caller branches with a step `if:` instead of a shell conditional. Uses
+  `git status --porcelain`, NOT `git diff`: a regenerator that writes a new file
+  leaves it untracked, and `git diff` cannot see untracked files — so a job that
+  regenerates and then asks `git diff` reports "unchanged" for exactly the case
+  that matters most.
+
+branding:
+  icon: 'git-branch'
+  color: 'blue'
+
+inputs:
+  paths:
+    description: "Newline-separated pathspecs to inspect. Empty means the whole tree."
+    required: false
+    default: ""
+
+outputs:
+  dirty:
+    description: "'true' when at least one of the paths has an uncommitted change, tracked or untracked."
+    value: ${{ steps.run.outputs.dirty }}
+  files:
+    description: "The porcelain lines, newline-separated, for a message or a PR body."
+    value: ${{ steps.run.outputs.files }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/paths-dirty.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        PATHS: ${{ inputs.paths }}

@@ -335,6 +335,9 @@ outputs:
   directive:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: directive)"
     value: ${{ steps.exec.outputs.directive }}
+  dirty:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: dirty)"
+    value: ${{ steps.exec.outputs.dirty }}
   dispatched:
     description: "Forwarded (key: dispatched) — aldrava-dispatch trusted-knock-matched flag"
     value: ${{ steps.exec.outputs.dispatched }}
@@ -407,6 +410,9 @@ outputs:
   fetched-path:
     description: "Forwarded (key: fetched-path) — written by 1 action dir(s): artifact-fetch"
     value: ${{ steps.exec.outputs.fetched-path }}
+  files:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: files)"
+    value: ${{ steps.exec.outputs.files }}
   files-rendered:
     description: "Forwarded (key: files-rendered) — written by 1 action dir(s): caixa-render-pr"
     value: ${{ steps.exec.outputs.files-rendered }}

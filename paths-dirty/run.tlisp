@@ -1,0 +1,54 @@
+;; paths-dirty — did these paths change in the working tree?
+;;
+;; The question every regenerate-then-maybe-open-a-PR job asks, and it was being
+;; asked in shell each time:
+;;
+;;   if [[ -n "$(git status --porcelain gen/ spec/…)" ]]; then …
+;;
+;; Emitting the answer as a typed output instead lets the caller use a step
+;; `if:`, which is where a conditional belongs in a workflow — the engine
+;; evaluates it, and the branch is visible in the run graph rather than buried
+;; inside a shell block that always reports success.
+;;
+;; PORCELAIN, NOT `git diff`, and the difference is the whole point: a
+;; regenerator that writes a NEW file leaves it untracked, and `git diff` does
+;; not see untracked files. A job that regenerates and then asks `git diff`
+;; reports "unchanged" for exactly the case that matters most — a generated
+;; artifact that did not exist before.
+;;
+;; Outputs: dirty ("true"/"false") · files (newline-separated, for a message)
+
+(define paths
+  (filter (lambda (p) (not (equal? p "")))
+          (map string-trim (string-split (env-get "PATHS" "") "\n"))))
+
+(define (porcelain)
+  (let ((r (proc:must (append (list "git" "status" "--porcelain" "--") paths))))
+    (cond
+      ;; A git that cannot run must not read as CLEAN. Reporting "nothing
+      ;; changed" because the query failed is the silent-skip that makes a
+      ;; regen job stop opening PRs and look healthy doing it.
+      ((erro:err? r)
+        (log-error "paths-dirty: git status failed — refusing to report clean")
+        (exit 2))
+      (else (erro:value r)))))
+
+(define changed
+  (filter (lambda (l) (not (equal? l "")))
+          (map string-trim (string-split (porcelain) "\n"))))
+
+(define dirty? (> (length changed) 0))
+
+(append-output (string-append "dirty=" (if dirty? "true" "false")))
+(append-output (string-append "files=" (string-join "\n" changed)))
+
+(cond
+  (dirty?
+    (log-info
+      (string-append "paths-dirty: " (string-format "{}" (length changed))
+                     " path(s) changed"))
+    (reduce (fn (a l) (print-line (string-append "  " l)) a) 0 changed))
+  (else
+    (log-info "paths-dirty: no change under the declared paths")))
+
+(exit 0)

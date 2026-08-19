@@ -1,0 +1,22 @@
+;; Tests for the parsing half of paths-dirty. The git half is exercised live
+;; against a real repository (clean / tracked-modified / untracked-new / change
+;; outside the declared paths) in the commit that added this action, because a
+;; mocked `git status` would only prove the mock.
+;;
+;; What is pinned here is the porcelain reading, which has a silent failure
+;; mode: dropping or merging lines makes a dirty tree read as clean, and a regen
+;; job that reports clean stops opening PRs while looking perfectly healthy.
+
+(define (parse-porcelain s)
+  (filter (lambda (l) (not (equal? l "")))
+          (map string-trim (string-split s "\n"))))
+
+(deftest porcelain-lines-are-counted-not-merged
+  (assert (= (length (parse-porcelain " M gen/a.txt\n?? gen/new.txt\n")) 2)
+          "a modified and an untracked file are two changes, not one")
+  (assert (= (length (parse-porcelain "")) 0)
+          "empty output is a clean tree")
+  (assert (= (length (parse-porcelain "\n\n")) 0)
+          "blank lines are not changes — this is the one that would report a clean tree as dirty forever")
+  (assert (= (length (parse-porcelain "?? gen/new.txt\n")) 1)
+          "an UNTRACKED file counts, which is the whole reason this uses porcelain rather than git diff"))
