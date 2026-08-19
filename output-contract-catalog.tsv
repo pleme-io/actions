@@ -5,8 +5,8 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                364
-# routing tatara-script  348
+# actions                365
+# routing tatara-script  349
 # distinct keys written  349
 # dynamic key expansions 8
 # inner union (generated)357
@@ -84,6 +84,7 @@ cdktf-deploy	tatara-script	run.tlisp	1	1
 changelog-fragments-merge	tatara-script	run.tlisp	1	1
 changelog-generate	tatara-script	run.tlisp	2	2
 changesets	tatara-script	run.tlisp	1	1
+checked-run	tatara-script	run.tlisp	1	1
 checkov	tatara-script	run.tlisp	1	1
 ci-triage	tatara-script	run.tlisp	1	1
 clickup-task-create	tatara-script	run.tlisp	1	1
@@ -529,6 +530,7 @@ changelog-fragments-merge	merged-count	static	declared	forwarded
 changelog-generate	changelog	static	declared	forwarded
 changelog-generate	commit-count	static	declared	forwarded
 changesets	published-count	static	declared	forwarded
+checked-run	status	static	declared	forwarded
 checkov	findings-count	static	declared	forwarded
 ci-triage	class	static	declared	forwarded
 clickup-task-create	task-id	static	declared	forwarded

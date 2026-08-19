@@ -1,0 +1,65 @@
+;; checked-run — run a command, and on failure say what the failure MEANS.
+;;
+;; The workflow-level twin of `checked-status` in _tlisp-stdlib. A failing
+;; `run:` already fails the job, so the only thing the shell around it was ever
+;; adding is the EXPLANATION — and that is exactly what gets lost when the
+;; explanation is a pile of `echo "::error::…"` lines wrapped in an `if`.
+;;
+;; The shape it replaces, from breathe/ci.yml:
+;;
+;;   if ! cargo fetch --locked; then
+;;     echo "::error::A dependency could not be resolved WITHOUT credentials."
+;;     echo "::error::breathe is a PUBLIC repo — every dep must be reachable…"
+;;     exit 1
+;;   fi
+;;
+;; The command is the easy half. The four lines underneath are the half worth
+;; keeping, and they are the half a reader needs: they turn "cargo fetch failed"
+;; into "you added a git dep on a private repo, and it will also block the
+;; crates.io publish."
+;;
+;; ARGV, NEVER A COMMAND STRING — proc:run refuses a shell as argv[0], so there
+;; is no quoting to get wrong and nothing to inject into.
+;;
+;; The child's exit code is propagated unchanged, never flattened to 1: a caller
+;; reading the status can still tell which failure it was.
+;;
+;; Outputs: status (the child's exit code, as a string)
+
+(define program (string-trim (env-get "PROGRAM" "")))
+(define reason (env-get "REASON" ""))
+
+(define args
+  (filter (lambda (a) (not (equal? a "")))
+          (map string-trim (string-split (env-get "ARGS" "") "\n"))))
+
+(when (equal? program "")
+  (log-error "checked-run: PROGRAM is required")
+  (exit 2))
+
+(define result (proc:run (cons program args)))
+
+(when (erro:err? result)
+  (log-error (string-append "checked-run: could not start '" program "'"))
+  (exit 2))
+
+(define res (erro:value result))
+(define code (status-of res))
+
+(print-line (stdout-of res))
+(when (not (equal? (stderr-of res) "")) (print-line (stderr-of res)))
+(append-output (string-append "status=" (string-format "{}" code)))
+
+(cond
+  ((= code 0)
+    (log-info (string-append "checked-run: " program " ok"))
+    (exit 0))
+  (else
+    (log-error
+      (string-append "checked-run: " program " exited " (string-format "{}" code)))
+    ;; The reason is printed AFTER the child's own output, deliberately: a
+    ;; reader scrolling a failed job finds the explanation next to the error it
+    ;; explains, not scrolled off the top before the tool had spoken.
+    (when (not (equal? reason ""))
+      (reduce (fn (a l) (log-error l) a) 0 (string-split reason "\n")))
+    (exit code)))
