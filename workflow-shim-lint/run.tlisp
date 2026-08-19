@@ -124,6 +124,15 @@
             (cond
               ((run-opener? line) (list total 1 (indent-of line)))
               ((equal? (string-trim line) "") (list total open base))
+              ;; A comment inside a `run:` body is not shell. Counting it makes a
+              ;; carefully-explained two-line block read as fifteen lines of debt
+              ;; -- measured on hardened-images/image-release.yml, where 12 of 15
+              ;; lines were a shellcheck-suppression rationale. A budget set from
+              ;; that number would price prose, and the cheapest way to meet it
+              ;; would be deleting the explanation.
+              ((and (equal? open 1) (> (indent-of line) base)
+                    (string-starts-with? (string-trim line) "#"))
+                (list total 1 base))
               ((and (equal? open 1) (> (indent-of line) base))
                 (list (+ total 1) 1 base))
               (else (list total 0 base)))))
