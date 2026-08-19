@@ -87,7 +87,10 @@
     "a pure shim carries no shell")
   (assert
     (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          echo a\n\n          echo b\n") 2)
-    "a blank line inside a body is not counted and does not close the block"))
+    "a blank line inside a body is not counted and does not close the block")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          # why this is here\n          # and why it stays\n          echo a\n") 1)
+    "a comment inside a body is prose, not shell — pricing it would make deleting the explanation the cheapest way to meet a budget"))
 
 (deftest flows-is-a-publisher
   (assert
