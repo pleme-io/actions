@@ -686,6 +686,9 @@ outputs:
   preseeded:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: preseeded)"
     value: ${{ steps.exec.outputs.preseeded }}
+  previous:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: previous)"
+    value: ${{ steps.exec.outputs.previous }}
   program-id:
     description: "Forwarded (key: program-id) — written by 1 action dir(s): anchor-build"
     value: ${{ steps.exec.outputs.program-id }}
@@ -911,6 +914,9 @@ outputs:
   site-path:
     description: "Forwarded (key: site-path) — written by 6 action dir(s): docusaurus-build, hugo-build, mdbook-build …"
     value: ${{ steps.exec.outputs.site-path }}
+  skip:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: skip)"
+    value: ${{ steps.exec.outputs.skip }}
   skipped:
     description: "Forwarded (key: skipped) — super-cache-save write-if-absent idempotent skip"
     value: ${{ steps.exec.outputs.skipped }}

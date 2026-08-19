@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                360
-# routing tatara-script  344
-# distinct keys written  343
+# actions                361
+# routing tatara-script  345
+# distinct keys written  345
 # dynamic key expansions 8
-# inner union (generated)351
+# inner union (generated)353
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -235,6 +235,7 @@ n8n-trigger-workflow	tatara-script	run.tlisp	1	1
 nats-publish	tatara-script	run.tlisp	1	1
 netlify-deploy	tatara-script	run.tlisp	1	1
 newrelic-deploy-marker	tatara-script	run.tlisp	1	1
+next-tag	tatara-script	run.tlisp	4	4
 nix-attic-push	tatara-script	run.tlisp	1	1
 nix-build	tatara-script	run.tlisp	1	1
 nix-cachix-push	tatara-script	run.tlisp	1	1
@@ -345,7 +346,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	351
+tatara-script	own-runner	-	0	353
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -735,6 +736,10 @@ n8n-trigger-workflow	triggered	static	declared	forwarded
 nats-publish	published	static	declared	forwarded
 netlify-deploy	url	static	declared	forwarded
 newrelic-deploy-marker	marker-id	static	declared	forwarded
+next-tag	previous	static	declared	forwarded
+next-tag	skip	static	declared	forwarded
+next-tag	tag	static	declared	forwarded
+next-tag	version	static	declared	forwarded
 nix-attic-push	pushed	static	declared	forwarded
 nix-build	out-path	static	declared	forwarded
 nix-cachix-push	pushed	static	declared	forwarded

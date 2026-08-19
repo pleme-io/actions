@@ -1,0 +1,34 @@
+;; Tests for next-tag's decision, which is the half that can be wrong quietly.
+;;
+;; The subprocess half is not tested here on purpose: a wrong `git diff` shows
+;; up as a build that obviously did or did not tag. A wrong FIRST-RELEASE case
+;; shows up as a repo that is never tagged at all and nobody notices for
+;; months, which is why that one is pinned three ways.
+
+(deftest first-release-is-not-a-skip
+  (assert
+    (equal? (next-version-decision "" #t "patch" "0.1.0") (list "0.1.0" "false"))
+    "no previous tag mints the initial version")
+  (assert
+    (equal? (next-version-decision "" #f "patch" "0.1.0") (list "0.1.0" "false"))
+    "and it mints it even when nothing changed — a repo with no tags has nothing to compare against, so skipping would leave it permanently untagged")
+  (assert
+    (equal? (next-version-decision "" #t "patch" "1.0.0") (list "1.0.0" "false"))
+    "the initial version is configurable, not hardcoded to 0.1.0"))
+
+(deftest unchanged-paths-skip-without-moving-the-version
+  (assert
+    (equal? (next-version-decision "0.4.2" #f "patch" "0.1.0") (list "0.4.2" "true"))
+    "no change under the declared paths is a skip")
+  (assert
+    (equal? (nth 0 (next-version-decision "0.4.2" #f "major" "0.1.0")) "0.4.2")
+    "a skip does not bump, whatever the bump type says"))
+
+(deftest bump-arithmetic-comes-from-stdlib
+  (assert (equal? (nth 0 (next-version-decision "0.4.2" #t "patch" "0.1.0")) "0.4.3") "patch")
+  (assert (equal? (nth 0 (next-version-decision "0.4.2" #t "minor" "0.1.0")) "0.5.0") "minor resets patch")
+  (assert (equal? (nth 0 (next-version-decision "0.4.2" #t "major" "0.1.0")) "1.0.0") "major resets both")
+  ;; 0.10.0 > 0.9.0 is the reason semver ranking exists at all; pin that the
+  ;; bump is numeric rather than lexical.
+  (assert (equal? (nth 0 (next-version-decision "0.9.0" #t "patch" "0.1.0")) "0.9.1") "double-digit minors bump numerically")
+  (assert (equal? (nth 0 (next-version-decision "0.10.0" #t "patch" "0.1.0")) "0.10.1") "and stay numeric past ten"))
