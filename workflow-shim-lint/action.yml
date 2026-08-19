@@ -28,6 +28,17 @@ inputs:
       test and is not absorbed.
     required: false
     default: ""
+  fail-on-budget:
+    description: >-
+      Whether exceeding shell-budget fails the job. Defaults to TRUE, unlike
+      fail-on-violation, and the asymmetry is deliberate: every repo's budget is
+      set to what it measured today, so gating it can only fail a repo that ADDS
+      shell — nothing existing goes red. The shim verdict cannot say that yet
+      (144 hand-authored workflows across 99 repos), so it stays advisory. One
+      flag for both would force the ratchet to stay inert until that backlog is
+      burned down.
+    required: false
+    default: "true"
   fail-on-violation:
     description: >-
       Fail the job on a hand-authored workflow.
@@ -84,3 +95,4 @@ runs:
       env:
         PATHS: ${{ inputs.paths }}
         FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        FAIL_ON_BUDGET: ${{ inputs.fail-on-budget }}
