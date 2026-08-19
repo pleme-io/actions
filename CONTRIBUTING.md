@@ -1,8 +1,20 @@
 # Contributing to pleme-io/actions
 
-Welcome. This repo ships 192+ typed GitHub Actions on **free public
-GitHub-hosted CI** — every contribution auto-publishes within minutes
-of merge.
+Welcome. This repo ships **360** typed GitHub Actions (counted 2026-08-19) on
+**free public GitHub-hosted CI** — every contribution auto-publishes within
+minutes of merge.
+
+> **Before you add one, check you are on the right rung.** This repo is rungs
+> 3–4 of the pipeline delivery ladder — *adopt a flow → configure it → compose
+> a flow → **extend an action → author one***. Most "we need a new action" is
+> really a new **input** on an existing one, and most "we need a new flow" is a
+> new input on an existing flow in
+> [`pleme-io/substrate/.github/workflows`](https://github.com/pleme-io/substrate/tree/main/.github/workflows).
+> Extending compounds to every current caller; authoring only pays the next one.
+> The ladder, the four artifact classes and their homes:
+> [`theory/PIPELINE-DELIVERY.md`](https://github.com/pleme-io/theory/blob/main/PIPELINE-DELIVERY.md).
+> What an action's body may contain:
+> [`CONSTRUCTIVE-ACTIONS.md`](https://github.com/pleme-io/theory/blob/main/CONSTRUCTIVE-ACTIONS.md) §0.
 
 ## TL;DR — add a new action in 5 minutes
 
