@@ -50,8 +50,11 @@ outputs:
     description: "Count of hand-authored workflows found"
     value: ${{ steps.run.outputs.violations }}
   shell-lines:
-    description: "Total shell lines found inside `run:` bodies. Emitted always, so the fleet number is observable even where the budget is unset."
+    description: "Shell lines inside `run:` bodies across UNWAIVED workflows. Emitted always, so the fleet number is observable even where the budget is unset."
     value: ${{ steps.run.outputs.shell-lines }}
+  shell-waived:
+    description: "Shell lines excluded by a typed `# skip-shell-budget: <reason>` marker. Reported separately so a waiver stays visible rather than vanishing from the total."
+    value: ${{ steps.run.outputs.shell-waived }}
   files-scanned:
     value: ${{ steps.run.outputs.files-scanned }}
   waived:

@@ -166,6 +166,31 @@
   (let ((parts (string-split line waiver-marker)))
     (if (> (length parts) 1) (string-trim (nth 1 parts)) "")))
 
+;; The SHELL waiver is a second, independent marker, and deliberately not the
+;; same one. A workflow can be a legitimate hand-authored non-shim (waived for
+;; shape) while its shell is still live debt, and vice versa: tend's
+;; docker-image.yml is a perfect shim question and a parked Dockerfile heredoc.
+;; One marker for both would make each waiver silently grant the other.
+;;
+;; It exists because parked, documented debt would otherwise sit under the
+;; ratchet forever and stop the number ever reaching zero -- and a target that
+;; cannot be reached is a target people stop reading. Same grammar as every
+;; other fleet waiver, same refusal of a bare marker.
+(define shell-waiver-marker "skip-shell-budget:")
+
+(define
+  (shell-waiver-reason line)
+  (let ((parts (string-split line shell-waiver-marker)))
+    (if (> (length parts) 1) (string-trim (nth 1 parts)) "")))
+
+(define
+  (shell-waived? text)
+  (any?
+    (lambda (line)
+      (and (string-contains? line shell-waiver-marker)
+           (not (equal? (shell-waiver-reason line) ""))))
+    (string-split text "\n")))
+
 (define
   (waived? text)
   (any?
@@ -193,15 +218,24 @@
       (verdicts (map (lambda (f) (list f (classify f))) files))
       (offenders (map (lambda (v) (nth 0 v)) (filter (lambda (v) (equal? (nth 1 v) 'hand-authored)) verdicts)))
       (waived-n (length (filter (lambda (v) (equal? (nth 1 v) 'waived)) verdicts)))
-      (shell-total (reduce (fn (a f) (+ a (shell-lines (read-file f)))) 0 files))
+      (live-files (filter (fn (f) (not (shell-waived? (read-file f)))) files))
+      (shell-total (reduce (fn (a f) (+ a (shell-lines (read-file f)))) 0 live-files))
+      (shell-waived-total
+        (reduce (fn (a f) (+ a (shell-lines (read-file f)))) 0
+                (filter (fn (f) (shell-waived? (read-file f))) files)))
       (over-budget?
         (and (not (equal? shell-budget ""))
              (> shell-total (shim:budget-of shell-budget)))))
     (append-output (string-append "shell-lines=" (string-format "{}" shell-total)))
+    (append-output (string-append "shell-waived=" (string-format "{}" shell-waived-total)))
     (log-info
       (string-append "workflow-shim-lint: " (string-format "{}" shell-total)
                      " shell line(s) in `run:` bodies across "
-                     (string-format "{}" (length files)) " workflow(s)"
+                     (string-format "{}" (length live-files)) " unwaived workflow(s)"
+                     (if (> shell-waived-total 0)
+                         (string-append "; " (string-format "{}" shell-waived-total)
+                                        " more waived with a typed reason")
+                         "")
                      (if (equal? shell-budget "") " (budget unset — reported, not enforced)"
                          (string-append " (budget " shell-budget ")"))))
     (when over-budget?

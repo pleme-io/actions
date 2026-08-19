@@ -7,9 +7,9 @@
 #
 # actions                360
 # routing tatara-script  344
-# distinct keys written  342
+# distinct keys written  343
 # dynamic key expansions 8
-# inner union (generated)350
+# inner union (generated)351
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -345,7 +345,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	350
+tatara-script	own-runner	-	0	351
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -372,7 +372,7 @@ wasmer-publish	tatara-script	run.tlisp	1	1
 weaviate-schema-apply	tatara-script	run.tlisp	1	1
 wireguard-up	tatara-script	run.tlisp	1	1
 woocommerce-product-sync	tatara-script	run.tlisp	1	1
-workflow-shim-lint	tatara-script	run.tlisp	4	4
+workflow-shim-lint	tatara-script	run.tlisp	5	5
 xcodebuild	tatara-script	run.tlisp	1	1
 yaml-lint	tatara-script	run.tlisp	1	1
 yank-version	tatara-script	run.tlisp	2	2
@@ -988,6 +988,7 @@ wireguard-up	interface	static	declared	forwarded
 woocommerce-product-sync	synced	static	declared	forwarded
 workflow-shim-lint	files-scanned	static	declared	forwarded
 workflow-shim-lint	shell-lines	static	declared	forwarded
+workflow-shim-lint	shell-waived	static	declared	forwarded
 workflow-shim-lint	violations	static	declared	forwarded
 workflow-shim-lint	waived	static	declared	forwarded
 xcodebuild	built	static	declared	forwarded

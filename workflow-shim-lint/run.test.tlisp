@@ -106,3 +106,13 @@
   (assert (= (shim:budget-of "  7 ") 7) "tolerates surrounding whitespace")
   (assert (= (shim:budget-of "0x10") 16) "hex comes free with the stdlib parser"))
 
+(deftest shell-waiver-needs-a-reason
+  (assert (shell-waived? "# skip-shell-budget: parked Dockerfile, nobody consumes the image\nname: x\n")
+          "a typed reason waives the shell budget")
+  (assert (not (shell-waived? "# skip-shell-budget:\nname: x\n"))
+          "a bare marker does not waive — that is the shape a waiver decays into")
+  (assert (not (shell-waived? "# skip-workflow-shim: vendored upstream\nname: x\n"))
+          "the SHIM waiver does not silently grant the SHELL waiver")
+  (assert (not (waived? "# skip-shell-budget: parked\nname: x\n"))
+          "and the shell waiver does not silently grant the shim waiver"))
+
