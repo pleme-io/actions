@@ -1,0 +1,63 @@
+name: 'pleme-io · advance-major-tag'
+description: >-
+  Move the floating `vX` tag to the `vX.Y.Z` just released — the consumer
+  contract every published action lives under, since a caller writing
+  `uses: org/action@v1` expects it to track the newest 1.x. A tag that is not
+  vX.Y.Z is SKIPPED and reported, never failed: release workflows fire on
+  candidates, snapshots and per-action tags, and failing on those would redden a
+  release that succeeded.
+
+branding:
+  icon: 'tag'
+  color: 'green'
+
+inputs:
+  tag:
+    description: "The released tag, e.g. v1.2.3. Anything not in vX.Y.Z form is skipped."
+    required: true
+  remote:
+    description: "Remote to force-push the moving tag to."
+    required: false
+    default: "origin"
+  identity-name:
+    description: "git user.name for the tag."
+    required: false
+    default: "github-actions[bot]"
+  identity-email:
+    description: "git user.email for the tag."
+    required: false
+    default: "41898282+github-actions[bot]@users.noreply.github.com"
+
+outputs:
+  advanced:
+    description: "'true' when the major tag was moved. 'false' means the tag was not vX.Y.Z — a skip, not a failure."
+    value: ${{ steps.run.outputs.advanced }}
+  major:
+    description: "The tag that was moved (e.g. v1); empty when skipped."
+    value: ${{ steps.run.outputs.major }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/advance-major-tag.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        TAG: ${{ inputs.tag }}
+        REMOTE: ${{ inputs.remote }}
+        IDENTITY_NAME: ${{ inputs.identity-name }}
+        IDENTITY_EMAIL: ${{ inputs.identity-email }}
