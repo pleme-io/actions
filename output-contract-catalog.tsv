@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                362
-# routing tatara-script  346
-# distinct keys written  346
+# actions                363
+# routing tatara-script  347
+# distinct keys written  347
 # dynamic key expansions 8
-# inner union (generated)354
+# inner union (generated)355
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -311,6 +311,7 @@ salesforce-record-create	tatara-script	run.tlisp	1	1
 sbom-generate	tatara-script	run.tlisp	2	2
 secrets-scan	tatara-script	run.tlisp	2	2
 security-audit	tatara-script	run.tlisp	4	4
+seed-pointer	tatara-script	run.tlisp	1	1
 selenium-grid-test	tatara-script	run.tlisp	1	1
 semantic-release	tatara-script	run.tlisp	1	1
 semgrep-scan	tatara-script	run.tlisp	1	1
@@ -347,7 +348,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	354
+tatara-script	own-runner	-	0	355
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -875,6 +876,7 @@ security-audit	ecosystem	static	declared	forwarded
 security-audit	outcome	static	declared	forwarded
 security-audit	severity	static	declared	forwarded
 security-audit	vuln-count	static	declared	forwarded
+seed-pointer	seeded	static	declared	forwarded
 selenium-grid-test	passed	static	declared	forwarded
 semantic-release	released-version	static	declared	forwarded
 semgrep-scan	findings-count	static	declared	forwarded

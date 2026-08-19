@@ -1,0 +1,62 @@
+;; seed-pointer — create a promotion pointer the first time an image ships.
+;;
+;; The companion to `release-promote`, which PINS a version into a pointer that
+;; already exists. An image that has never been promoted has no pointer at all,
+;; so the pin has nothing to write into — this seeds the zero-value file so the
+;; promote step is uniform across every image, first release or hundredth.
+;;
+;; WHY IT IS AN ACTION. hardened-images carried this same three-clause shell
+;; THIRTEEN times, differing only by the image name:
+;;
+;;   [ -f "$POINTER" ] || { printf 'image: X\nzotRepo: Y\n…' > "$POINTER"; git add "$POINTER"; }
+;;
+;; and the workflow's own comment records why all thirteen must seed rather than
+;; the seven that needed it: "the two oldest are fine, they pre-exist" is exactly
+;; the exemption that makes a guard vacuous the day someone deletes a file.
+;; Thirteen copies of a rule whose whole point is having no exemption is the
+;; shape most likely to grow one.
+;;
+;; IDEMPOTENT BY CONSTRUCTION: an existing pointer is never touched, never
+;; re-written, and never re-staged. That is the entire contract — a seed that
+;; overwrote would silently reset a promoted image to version 0.0.0.
+;;
+;; Outputs: seeded ("true" only when this run created the file)
+
+(define pointer (string-trim (env-get "POINTER" "")))
+(define image (string-trim (env-get "IMAGE" "")))
+(define zot-repo
+  (let ((z (string-trim (env-get "ZOT_REPO" ""))))
+    (if (equal? z "") image z)))
+(define version (string-trim (env-get "VERSION" "0.0.0")))
+(define digest (env-get "DIGEST" ""))
+
+(define (die msg)
+  (log-error (string-append "seed-pointer: " msg))
+  (exit 2))
+
+(when (equal? pointer "") (die "POINTER is required"))
+(when (equal? image "") (die "IMAGE is required"))
+
+(define (body)
+  (string-append
+    "image: " image "\n"
+    "zotRepo: " zot-repo "\n"
+    "version: " version "\n"
+    "digest: \"" digest "\"\n"))
+
+(cond
+  ((path-exists? pointer)
+    (append-output "seeded=false")
+    (log-info (string-append "seed-pointer: " pointer " already exists — untouched"))
+    (exit 0))
+  (else
+    (write-file pointer (body))
+    ;; Staged here rather than left to the caller: the promote step that follows
+    ;; commits, and an unstaged new file is invisible to it — the pointer would
+    ;; be written, used for this run, and vanish.
+    (let ((r (proc:must (list "git" "add" pointer))))
+      (when (erro:err? r)
+        (die (string-append "wrote " pointer " but could not stage it"))))
+    (append-output "seeded=true")
+    (log-info (string-append "seed-pointer: created " pointer " for " image " at " version))
+    (exit 0)))

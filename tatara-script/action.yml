@@ -878,6 +878,9 @@ outputs:
   secrets-created:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: secrets-created)"
     value: ${{ steps.exec.outputs.secrets-created }}
+  seeded:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: seeded)"
+    value: ${{ steps.exec.outputs.seeded }}
   sent:
     description: "Forwarded (key: sent) — written by 8 action dir(s): apprise-notify, matrix-notify, mattermost-notify …"
     value: ${{ steps.exec.outputs.sent }}

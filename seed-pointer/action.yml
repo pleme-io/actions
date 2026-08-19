@@ -1,0 +1,64 @@
+name: 'pleme-io · seed-pointer'
+description: >-
+  Create a promotion pointer file the first time an image ships, so
+  release-promote's pin has something to write into. Idempotent by construction:
+  an existing pointer is never touched, re-written or re-staged. Extracted after
+  hardened-images carried the same three-clause shell thirteen times, differing
+  only by the image name — thirteen copies of a rule whose whole point is having
+  no exemption.
+
+branding:
+  icon: 'file-plus'
+  color: 'green'
+
+inputs:
+  pointer:
+    description: "Path to the pointer file. Created only if absent."
+    required: true
+  image:
+    description: "Image name written to the `image:` field."
+    required: true
+  zot-repo:
+    description: "Zot repository name. Defaults to `image`, which is what every existing caller passes."
+    required: false
+    default: ""
+  version:
+    description: "Initial version. The zero value, because a seed must never look like a promotion that happened."
+    required: false
+    default: "0.0.0"
+  digest:
+    description: "Initial digest. Empty by default, for the same reason as version."
+    required: false
+    default: ""
+
+outputs:
+  seeded:
+    description: "'true' only when this run created the file. An existing pointer yields 'false' and is left exactly as it was."
+    value: ${{ steps.run.outputs.seeded }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/seed-pointer.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        POINTER: ${{ inputs.pointer }}
+        IMAGE: ${{ inputs.image }}
+        ZOT_REPO: ${{ inputs.zot-repo }}
+        VERSION: ${{ inputs.version }}
+        DIGEST: ${{ inputs.digest }}
