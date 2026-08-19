@@ -18,6 +18,9 @@
 ;;
 ;; Outputs: dirty ("true"/"false") · files (newline-separated, for a message)
 
+(define expect (string-trim (env-get "EXPECT" "")))
+(define reason (env-get "REASON" ""))
+
 (define paths
   (filter (lambda (p) (not (equal? p "")))
           (map string-trim (string-split (env-get "PATHS" "") "\n"))))
@@ -51,4 +54,19 @@
   (else
     (log-info "paths-dirty: no change under the declared paths")))
 
-(exit 0)
+(cond
+  ;; `expect: clean` turns the report into an ASSERTION, which is the second
+  ;; thing every caller wants: regenerate, then prove nothing moved. Without it
+  ;; a caller has to add a shell step whose only job is to exit 1 — putting back
+  ;; the conditional this action exists to remove.
+  ((and (equal? expect "clean") dirty?)
+    (log-error "paths-dirty: expected a clean tree and found changes")
+    (when (not (equal? reason ""))
+      (reduce (fn (a l) (log-error l) a) 0 (string-split reason "\n")))
+    (exit 1))
+  ((and (equal? expect "dirty") (not dirty?))
+    (log-error "paths-dirty: expected changes and found none")
+    (when (not (equal? reason ""))
+      (reduce (fn (a l) (log-error l) a) 0 (string-split reason "\n")))
+    (exit 1))
+  (else (exit 0)))
