@@ -120,10 +120,10 @@
     (nth 0
       (reduce
         (fn (acc line)
-          (let ((total (nth 0 acc)) (open (nth 1 acc)) (base (nth 2 acc)))
+          (let ((total (nth 0 acc)) (open (nth 1 acc)) (base (nth 2 acc)) (cont (nth 3 acc)))
             (cond
-              ((run-opener? line) (list total 1 (indent-of line)))
-              ((equal? (string-trim line) "") (list total open base))
+              ((run-opener? line) (list total 1 (indent-of line) 0))
+              ((equal? (string-trim line) "") (list total open base cont))
               ;; A comment inside a `run:` body is not shell. Counting it makes a
               ;; carefully-explained two-line block read as fifteen lines of debt
               ;; -- measured on hardened-images/image-release.yml, where 12 of 15
@@ -132,11 +132,18 @@
               ;; would be deleting the explanation.
               ((and (equal? open 1) (> (indent-of line) base)
                     (string-starts-with? (string-trim line) "#"))
-                (list total 1 base))
+                (list total 1 base cont))
+              ;; A backslash-continued command is ONE statement, however many
+              ;; lines it is wrapped across. Counting the wrap punishes exactly
+              ;; the shape the directive asks for -- invoking a typed binary
+              ;; with its flags one per line -- and rewards cramming it onto a
+              ;; single unreadable line to make a budget.
+              ((and (equal? open 1) (> (indent-of line) base) (equal? cont 1))
+                (list total 1 base (if (string-ends-with? (string-trim line) "\\") 1 0)))
               ((and (equal? open 1) (> (indent-of line) base))
-                (list (+ total 1) 1 base))
-              (else (list total 0 base)))))
-        (list 0 0 0)
+                (list (+ total 1) 1 base (if (string-ends-with? (string-trim line) "\\") 1 0)))
+              (else (list total 0 base 0)))))
+        (list 0 0 0 0)
         lines))))
 
 (define repo-waiver-path ".github/workflow-shim-waiver")
