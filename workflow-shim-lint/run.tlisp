@@ -114,6 +114,16 @@
 (define (indent-of line)
   (- (length (string-chars line)) (length (string-chars (string-trim line)))))
 
+(define (run-inline? line)
+  (let* ((t0 (string-trim line))
+         (t (if (string-starts-with? t0 "- ") (string-trim (string-replace t0 "- " "")) t0)))
+    (and (string-starts-with? t "run:")
+         (not (string-starts-with? t "run: |"))
+         (not (string-starts-with? t "run: >"))
+         (not (string-starts-with? t "run:|"))
+         (not (string-starts-with? t "run:>"))
+         (not (equal? (string-trim (string-replace t "run:" "")) "")))))
+
 (define (run-opener? line)
   ;; A step is `- run: |`, so the list dash has to come off before the test.
   ;; Without this the counter reads 0 on a file that is nothing but shell,
@@ -137,6 +147,13 @@
           (let ((total (nth 0 acc)) (open (nth 1 acc)) (base (nth 2 acc)) (cont (nth 3 acc)))
             (cond
               ((run-opener? line) (list total 1 (indent-of line) 0))
+              ;; An INLINE `run: cmd` is one statement of shell and was counted
+              ;; as zero until 2026-08-19, because only a block scalar opened a
+              ;; body. That made the ratchet gameable in the cheapest possible
+              ;; way: move every block onto one line each and a repo reads clean
+              ;; while carrying exactly as much shell. Counted, and it closes
+              ;; the block rather than opening one.
+              ((run-inline? line) (list (+ total 1) 0 base 0))
               ((equal? (string-trim line) "") (list total open base cont))
               ;; A comment inside a `run:` body is not shell. Counting it makes a
               ;; carefully-explained two-line block read as fifteen lines of debt
