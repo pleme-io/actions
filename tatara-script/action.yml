@@ -884,6 +884,9 @@ outputs:
   shell-lines:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: shell-lines)"
     value: ${{ steps.exec.outputs.shell-lines }}
+  shell-waived:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: shell-waived)"
+    value: ${{ steps.exec.outputs.shell-waived }}
   shipped:
     description: "Forwarded (key: shipped) — written by 4 action dir(s): cargo-publish-crate, helm-publish, npm-publish …"
     value: ${{ steps.exec.outputs.shipped }}
