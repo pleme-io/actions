@@ -67,3 +67,36 @@
   (assert
     (not (shim? "jobs:\n  x:\n    runs-on: ubuntu-latest\n"))
     "a hand-authored job is still not a shim"))
+
+;; ── the shell ratchet ────────────────────────────────────────────────────
+;; The counter is pinned on the STEP form (`- run: |`) because that is the one
+;; it got wrong: the first cut tested the trimmed line against "run: |", which
+;; a list item never starts with, so a file that was nothing but shell counted
+;; 0. For a ratchet that is the worst possible failure — it reports the number
+;; falling while the shell is still there — so the dash case is a test, not a
+;; comment.
+(deftest shell-lines-counts-step-bodies
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          echo a\n          echo b\n") 2)
+    "counts a two-line body behind the `- run: |` step form")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          echo a\n      - uses: actions/checkout@v4\n") 1)
+    "a following step at the same indent closes the block")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    uses: pleme-io/flows/.github/workflows/pleme-rust.yml@main\n") 0)
+    "a pure shim carries no shell")
+  (assert
+    (= (shell-lines "jobs:\n  x:\n    steps:\n      - run: |\n          echo a\n\n          echo b\n") 2)
+    "a blank line inside a body is not counted and does not close the block"))
+
+(deftest flows-is-a-publisher
+  (assert
+    (shim? "jobs:\n  x:\n    uses: pleme-io/flows/.github/workflows/pleme-rust.yml@main\n")
+    "pleme-io/flows is a shim publisher alongside substrate"))
+
+(deftest parse-int-has-no-subprocess
+  (assert (= (parse-int "42" 0) 42) "reads an integer literal")
+  (assert (= (parse-int "  7 " 0) 7) "tolerates surrounding whitespace")
+  (assert (= (parse-int "" 5) 5) "an empty budget falls back rather than reading 0")
+  (assert (= (parse-int "abc" 9) 9) "a non-integer falls back"))
+

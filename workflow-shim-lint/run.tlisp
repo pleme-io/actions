@@ -53,7 +53,57 @@
 ;; substrate as canonical would report 23 correctly-shimmed repos as
 ;; violations.
 (define shim-markers
-  (list "pleme-io/substrate/.github/workflows/" "pleme-io/pleme-actions/.github/workflows/"))
+  (list "pleme-io/substrate/.github/workflows/"
+        "pleme-io/flows/.github/workflows/"
+        "pleme-io/pleme-actions/.github/workflows/"))
+
+;; ── the shell ratchet ────────────────────────────────────────────────────
+;; Absorption is measured in shell REMOVED, not in workflows that merely call
+;; the catalog. A shim that calls auto-release and still carries 40 lines of
+;; its own `run:` counts as absorbed by the shim test above and is not; this
+;; counts what is actually left, so the number can be held down.
+;;
+;; Reported ALWAYS, enforced only when a budget is set — an empty budget is
+;; off, which is what lets 171 existing consumers inherit the measurement
+;; without a single one of them turning red on the day it ships.
+(define shell-budget (string-trim (env-get "SHELL_BUDGET" "")))
+
+;; Indent by character count. `string-trim` strips both ends, so a line with
+;; trailing whitespace reads as MORE indented and stays inside the block --
+;; an over-count of at most those lines, never an under-count, which is the
+;; right direction for a ratchet.
+(define (indent-of line)
+  (- (length (string-chars line)) (length (string-chars (string-trim line)))))
+
+(define (run-opener? line)
+  ;; A step is `- run: |`, so the list dash has to come off before the test.
+  ;; Without this the counter reads 0 on a file that is nothing but shell,
+  ;; which is the worst possible failure for a ratchet: it reports the number
+  ;; going DOWN while the shell is still there.
+  (let* ((t0 (string-trim line))
+         (t (if (string-starts-with? t0 "- ") (string-trim (string-replace t0 "- " "")) t0)))
+    (or (string-starts-with? t "run: |")
+        (string-starts-with? t "run: >")
+        (string-starts-with? t "run:|")
+        (string-starts-with? t "run:>"))))
+
+;; One pass, no regex: on a `run:` opener remember its indent; every later
+;; non-blank line indented FURTHER is body. A line at or below that indent
+;; closes the block.
+(define (shell-lines text)
+  (let ((lines (string-split text "\n")))
+    (nth 0
+      (reduce
+        (fn (acc line)
+          (let ((total (nth 0 acc)) (open (nth 1 acc)) (base (nth 2 acc)))
+            (cond
+              ((run-opener? line) (list total 1 (indent-of line)))
+              ((equal? (string-trim line) "") (list total open base))
+              ((and (equal? open 1) (> (indent-of line) base))
+                (list (+ total 1) 1 base))
+              (else (list total 0 base)))))
+        (list 0 0 0)
+        lines))))
 
 (define repo-waiver-path ".github/workflow-shim-waiver")
 (define waiver-marker "skip-workflow-shim:")
@@ -108,11 +158,31 @@
     ((files (glob paths-glob))
       (verdicts (map (lambda (f) (list f (classify f))) files))
       (offenders (map (lambda (v) (nth 0 v)) (filter (lambda (v) (equal? (nth 1 v) 'hand-authored)) verdicts)))
-      (waived-n (length (filter (lambda (v) (equal? (nth 1 v) 'waived)) verdicts))))
+      (waived-n (length (filter (lambda (v) (equal? (nth 1 v) 'waived)) verdicts)))
+      (shell-total (reduce (fn (a f) (+ a (shell-lines (read-file f)))) 0 files))
+      (over-budget?
+        (and (not (equal? shell-budget ""))
+             (> shell-total (parse-int shell-budget 0)))))
+    (append-output (string-append "shell-lines=" (string-format "{}" shell-total)))
+    (log-info
+      (string-append "workflow-shim-lint: " (string-format "{}" shell-total)
+                     " shell line(s) in `run:` bodies across "
+                     (string-format "{}" (length files)) " workflow(s)"
+                     (if (equal? shell-budget "") " (budget unset — reported, not enforced)"
+                         (string-append " (budget " shell-budget ")"))))
+    (when over-budget?
+      (log-error
+        (string-append "workflow-shim-lint: shell budget EXCEEDED — "
+                       (string-format "{}" shell-total) " > " shell-budget
+                       ". A workflow is a call with values; move the logic into a "
+                       "pleme-io/actions action and call it. The budget ratchets DOWN, "
+                       "never up -- lower it when you remove shell, never raise it to "
+                       "admit more.")))
     (append-output (string-append "files-scanned=" (string-format "{}" (length files))))
     (append-output (string-append "violations=" (string-format "{}" (length offenders))))
     (append-output (string-append "waived=" (string-format "{}" waived-n)))
     (cond
+      ((and (null? offenders) over-budget?) (exit (if fail-on-violation? 1 0)))
       ((null? offenders)
         (log-info
           (string-append
