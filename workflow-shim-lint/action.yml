@@ -7,6 +7,21 @@ inputs:
     description: "Glob of consumer workflow files to scan"
     required: false
     default: ".github/workflows/*.yml"
+  shell-budget:
+    description: >-
+      Maximum total shell lines allowed inside `run:` bodies across the scanned
+      workflows. EMPTY (the default) reports the count without enforcing it,
+      which is what lets every existing consumer inherit the measurement
+      without turning red on the day it ships.
+
+      It is a RATCHET: set it to what a repo measures today, then lower it as
+      shell is moved into actions. Raising it to admit more shell is the one
+      edit that defeats the point — absorption is measured in shell removed,
+      not in workflows that merely call the catalog, and a shim that calls
+      auto-release while carrying 40 lines of its own `run:` passes the shim
+      test and is not absorbed.
+    required: false
+    default: ""
   fail-on-violation:
     description: >-
       Fail the job on a hand-authored workflow.
@@ -28,6 +43,9 @@ outputs:
   violations:
     description: "Count of hand-authored workflows found"
     value: ${{ steps.run.outputs.violations }}
+  shell-lines:
+    description: "Total shell lines found inside `run:` bodies. Emitted always, so the fleet number is observable even where the budget is unset."
+    value: ${{ steps.run.outputs.shell-lines }}
   files-scanned:
     value: ${{ steps.run.outputs.files-scanned }}
   waived:
