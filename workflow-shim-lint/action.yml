@@ -14,6 +14,12 @@ inputs:
       which is what lets every existing consumer inherit the measurement
       without turning red on the day it ships.
 
+      Resolution: this input wins, else the repo's committed
+      `.github/shell-budget`, else empty. Prefer the committed file — a ratchet
+      whose value lives in the caller's YAML is a number nobody can see from
+      inside the repo it constrains, and lowering it becomes someone else's
+      edit.
+
       It is a RATCHET: set it to what a repo measures today, then lower it as
       shell is moved into actions. Raising it to admit more shell is the one
       edit that defeats the point — absorption is measured in shell removed,

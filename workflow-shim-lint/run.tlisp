@@ -66,7 +66,19 @@
 ;; Reported ALWAYS, enforced only when a budget is set — an empty budget is
 ;; off, which is what lets 171 existing consumers inherit the measurement
 ;; without a single one of them turning red on the day it ships.
-(define shell-budget (string-trim (env-get "SHELL_BUDGET" "")))
+;; Resolution order, matching runner-resolve's config-path idiom: an explicit
+;; input wins, else the repo's own committed budget, else off. The committed
+;; file is the point — a ratchet whose value lives in the caller's YAML is a
+;; number nobody can see from inside the repo it constrains, and lowering it
+;; becomes someone else's edit.
+(define budget-config-path ".github/shell-budget")
+
+(define shell-budget
+  (let ((given (string-trim (env-get "SHELL_BUDGET" ""))))
+    (cond
+      ((not (equal? given "")) given)
+      ((path-exists? budget-config-path) (string-trim (read-file budget-config-path)))
+      (else ""))))
 
 ;; Indent by character count. `string-trim` strips both ends, so a line with
 ;; trailing whitespace reads as MORE indented and stays inside the block --
