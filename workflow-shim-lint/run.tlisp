@@ -72,6 +72,19 @@
 ;; trailing whitespace reads as MORE indented and stays inside the block --
 ;; an over-count of at most those lines, never an under-count, which is the
 ;; right direction for a ratchet.
+;; A budget that does not parse is a CONFIGURATION error, not a zero. Zero
+;; would silently fail every repo with any shell at all, which reads as the
+;; ratchet working; stdlib's num:parse-int refuses to guess for exactly this
+;; reason, so the refusal is honoured here rather than defaulted away.
+(define (shim:budget-of s)
+  (let ((r (num:parse-int s)))
+    (cond
+      ((erro:ok? r) (erro:value r))
+      (else
+        (log-error (string-append "workflow-shim-lint: shell-budget '" s
+                                  "' is not a number — refusing to guess a budget"))
+        (exit 2)))))
+
 (define (indent-of line)
   (- (length (string-chars line)) (length (string-chars (string-trim line)))))
 
@@ -162,7 +175,7 @@
       (shell-total (reduce (fn (a f) (+ a (shell-lines (read-file f)))) 0 files))
       (over-budget?
         (and (not (equal? shell-budget ""))
-             (> shell-total (parse-int shell-budget 0)))))
+             (> shell-total (shim:budget-of shell-budget)))))
     (append-output (string-append "shell-lines=" (string-format "{}" shell-total)))
     (log-info
       (string-append "workflow-shim-lint: " (string-format "{}" shell-total)

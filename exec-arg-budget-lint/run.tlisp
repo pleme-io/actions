@@ -160,10 +160,15 @@
         (eab:run manifests (eab:size-of stdlib-path) limit warn-margin fail-on)))))
 
 (define (eab:to-int s fallback)
-  (let ((r (exec-capture "sh" "-c" (string-append "printf %d " s " 2>/dev/null || printf %d " (string-format "{}" fallback)))))
-    (if (= (status-of r) 0)
-      (eab:parse-int (string-trim (stdout-of r)) fallback)
-      fallback)))
+  ;; Was a `printf %d` SUBPROCESS — a whole process spawned to parse an integer,
+  ;; in the catalog whose own directive bans shell, and one of the two sites
+  ;; tlisp-lint reports as building a command as a string. stdlib's
+  ;; `num:parse-int` has done this with no process since it landed; this stays
+  ;; as a named alias so the call sites below read unchanged, and it is the
+  ;; ONLY place the fallback is applied — num:parse-int deliberately refuses to
+  ;; guess one.
+  (let ((r (num:parse-int s)))
+    (if (erro:ok? r) (erro:value r) fallback)))
 
 (define (eab:parse-int s fallback)
   (let ((n (json-parse s)))

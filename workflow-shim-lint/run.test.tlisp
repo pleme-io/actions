@@ -94,9 +94,12 @@
     (shim? "jobs:\n  x:\n    uses: pleme-io/flows/.github/workflows/pleme-rust.yml@main\n")
     "pleme-io/flows is a shim publisher alongside substrate"))
 
-(deftest parse-int-has-no-subprocess
-  (assert (= (parse-int "42" 0) 42) "reads an integer literal")
-  (assert (= (parse-int "  7 " 0) 7) "tolerates surrounding whitespace")
-  (assert (= (parse-int "" 5) 5) "an empty budget falls back rather than reading 0")
-  (assert (= (parse-int "abc" 9) 9) "a non-integer falls back"))
+(deftest budget-uses-the-stdlib-parser
+  ;; stdlib ALREADY had num:parse-int — decimal and hex, typed ok/err, and
+  ;; documented as never guessing a fallback. A second parse-int was written
+  ;; here before that was found, which is the differently-named
+  ;; reimplementation tlisp-lint exists to catch. These pin the survivor.
+  (assert (= (shim:budget-of "42") 42) "reads a decimal budget")
+  (assert (= (shim:budget-of "  7 ") 7) "tolerates surrounding whitespace")
+  (assert (= (shim:budget-of "0x10") 16) "hex comes free with the stdlib parser"))
 
