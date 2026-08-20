@@ -35,6 +35,14 @@ inputs:
     description: "Also push the moving <arch>-latest human pointer (never a deploy source)"
     required: false
     default: "true"
+  allow-private:
+    description: >-
+      A TYPED REASON to publish from a non-public repo. Empty (the default)
+      refuses — a package published from a private or internal repo is itself
+      private, and private packages bill the ORG's single shared storage
+      allowance rather than this repo's own budget. See package-visibility-gate.
+    required: false
+    default: ""
 
 outputs:
   tag:
@@ -68,6 +76,14 @@ outputs:
 runs:
   using: composite
   steps:
+    # FIRST, before installing anything: refuse to publish a package that would
+    # bill the org's shared storage allowance. Cheap to check and it fails
+    # before the job spends a runner minute on a nix install.
+    - uses: pleme-io/actions/package-visibility-gate@main
+      with:
+        what: "ghcr image"
+        allow-private: ${{ inputs.allow-private }}
+
     - uses: DeterminateSystems/nix-installer-action@main
 
     # NO TOOL-INSTALL STEP. This used to be:
