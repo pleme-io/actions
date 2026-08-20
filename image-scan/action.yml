@@ -282,10 +282,56 @@ runs:
       # scanning until the next `    - ` line, so a comment block written
       # BETWEEN two steps at 4-space indent is attributed to the PREVIOUS
       # step's body.
-      if: always()
+      #
+      # ── PUBLIC REPOS ONLY, AND THAT IS A QUOTA INVARIANT ────────────────
+      # Artifact storage is FREE AND UNLIMITED for public repositories, and
+      # billed against ONE shared org-wide allowance for private ones (500 MB
+      # on the free plan). pleme-io has 649 private repos against that single
+      # allowance, so a private repo uploading a triage convenience artifact
+      # spends a fleet-wide resource.
+      #
+      # Measured 2026-08-20, which is why this gate exists: the allowance was
+      # exhausted and this exact step failed with
+      #
+      #   Failed to CreateArtifact: Artifact storage quota has been hit.
+      #
+      # in ensaio and hardened-images — turning the WHOLE JOB red while the
+      # scan it belongs to had already reached a verdict. The gate's answer
+      # was never in doubt; the upload of the report about it was.
+      #
+      # Counted, not inferred: exactly TWO repos showed this error that day,
+      # ensaio and hardened-images, and both are private. `nix` and `kura` are
+      # private too and were ALSO red, but for unrelated reasons (failing eval
+      # checks; a failing test gate) — being private does not by itself put a
+      # repo in this bucket, and grouping them there would have sent the next
+      # reader looking for a quota problem that repo does not have.
+      #
+      # `visibility` is absent from payloads that carry no repository object,
+      # in which case this evaluates false and the upload is SKIPPED. That is
+      # the deliberate direction: losing a convenience artifact is recoverable,
+      # spending the fleet's shared allowance is not.
+      #
+      # The report is NOT lost on a private repo — the scan writes it to
+      # $RUNNER_TEMP and the step below prints where, and nothing anywhere
+      # consumes this artifact programmatically (checked: no download-artifact
+      # in the org's actions). It is for a human triaging a finding.
+      if: always() && github.event.repository.visibility == 'public'
       uses: actions/upload-artifact@v4
       with:
         name: trivy-report-${{ steps.sanitize.outputs.name }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/image-scan-trivy-output.json
         retention-days: 14
         if-no-files-found: ignore
+
+    - name: Say where the report is when the upload was skipped
+      # No silent caps: a skipped upload must announce itself, or the next
+      # person triaging a finding looks for an artifact that was never
+      # created and concludes the scan did not run.
+      if: always() && github.event.repository.visibility != 'public'
+      shell: bash
+      run: |
+        echo "::notice title=trivy report not uploaded::Artifact upload is \
+        public-repo-only (private uploads bill the org's shared storage \
+        allowance). The full trivy JSON for this run is on the runner at \
+        ${RUNNER_TEMP}/image-scan-trivy-output.json — the scan itself ran and \
+        its verdict gated normally."
