@@ -22,6 +22,15 @@ inputs:
     description: "What is being published, for the message (e.g. 'ghcr image', 'oci helm chart')."
     required: false
     default: "package"
+  mode:
+    description: >-
+      `enforce` (default) refuses a non-public publish. `warn` reports it and
+      continues — the survey half of the fleet's survey-then-ratchet ramp,
+      the same one publishability-lint documents: failing a whole fleet on day
+      one teaches people to ignore the gate. A caller in `warn` should carry a
+      dated note saying what has to be true before it flips to `enforce`.
+    required: false
+    default: "enforce"
 
 runs:
   using: composite
@@ -32,6 +41,7 @@ runs:
         VISIBILITY: ${{ github.event.repository.visibility }}
         ALLOW_PRIVATE: ${{ inputs.allow-private }}
         WHAT: ${{ inputs.what }}
+        MODE: ${{ inputs.mode }}
       run: |
         if [ "$VISIBILITY" = "public" ]; then
           echo "::notice title=package-visibility-gate::${WHAT}: repo is public — GHCR storage is free and unlimited."
@@ -41,7 +51,9 @@ runs:
           echo "::warning title=package-visibility-gate::${WHAT}: publishing from a ${VISIBILITY:-unknown} repo by declared exception: ${ALLOW_PRIVATE}"
           exit 0
         fi
-        echo "::error title=package-visibility-gate::${WHAT}: refusing to publish from a ${VISIBILITY:-unknown} repository."
+        LEVEL=error; VERB="refusing to publish"
+        if [ "$MODE" = "warn" ]; then LEVEL=warning; VERB="publishing (SURVEY MODE — this will be refused once this gate ratchets)"; fi
+        echo "::${LEVEL} title=package-visibility-gate::${WHAT}: ${VERB} from a ${VISIBILITY:-unknown} repository."
         echo "A package published from a non-public repo is private, and private packages bill" >&2
         echo "the organisation's ONE shared storage allowance (500 MB on the free plan) — not this" >&2
         echo "repo's own budget. On 2026-08-20 that allowance was exhausted and the symptom landed" >&2
@@ -53,4 +65,5 @@ runs:
         echo "  * ship it as a flake output and let the binary cache distribute it — no registry" >&2
         echo "    is involved and nothing is billed;" >&2
         echo "  * or declare an exception: allow-private: '<why this must be a private package>'." >&2
+        [ "$MODE" = "warn" ] && exit 0
         exit 1
