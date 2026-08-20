@@ -2,7 +2,8 @@ name: 'pleme-io · package-visibility-gate'
 description: >-
   Refuse to publish a package from a repository whose visibility would make
   that package bill the org''s one shared storage allowance. Public repos
-  publish freely; a private or internal repo must declare a typed reason.
+  publish freely; a non-public repo must declare a typed reason. See
+  README.md for why this is load-bearing rather than bookkeeping.
 branding:
   icon: 'shield'
   color: 'red'
@@ -11,59 +12,66 @@ inputs:
   allow-private:
     description: >-
       A TYPED REASON to publish anyway from a non-public repo. Empty (the
-      default) refuses. This is the fleet's `skip-<name>: <typed-reason>`
-      grammar as an action input: an exception must be written down at the
-      call site, so exceptions stay visible and countable instead of becoming
-      the silent default they were before this gate existed. Time pressure is
-      not a typed reason.
+      default) refuses. The fleet's `skip-<name>: <typed-reason>` grammar as an
+      action input: an exception is written at the call site, so exceptions stay
+      visible and countable. Time pressure is not a typed reason.
     required: false
     default: ""
   what:
-    description: "What is being published, for the message (e.g. 'ghcr image', 'oci helm chart')."
+    description: "What is being published, for the message (e.g. 'ghcr image')."
     required: false
     default: "package"
   mode:
     description: >-
-      `enforce` (default) refuses a non-public publish. `warn` reports it and
-      continues — the survey half of the fleet's survey-then-ratchet ramp,
-      the same one publishability-lint documents: failing a whole fleet on day
-      one teaches people to ignore the gate. A caller in `warn` should carry a
-      dated note saying what has to be true before it flips to `enforce`.
+      `enforce` (default) refuses. `warn` reports and continues — the survey
+      half of the fleet's survey-then-ratchet ramp, as publishability-lint
+      documents for its own first sweep. A caller in `warn` should carry a
+      dated note saying what must be true before it flips.
     required: false
     default: "enforce"
 
+# ── WHY THERE IS ALMOST NO SHELL HERE ──────────────────────────────────────
+# ★★ NO-SHELL. The DECISION is three mutually exclusive `if:` expressions —
+# declarative, evaluated by the runner, nothing to parse or quote. Each step's
+# body is a single `echo` of one workflow command. Inputs reach those bodies
+# through `env:` rather than `${{ }}` interpolation, so an input can never be
+# spliced into the script text.
 runs:
   using: composite
   steps:
-    - name: Gate the publish on repository visibility
+    - name: Public repository — storage is free
+      if: ${{ github.event.repository.visibility == 'public' }}
       shell: bash
       env:
-        VISIBILITY: ${{ github.event.repository.visibility }}
-        ALLOW_PRIVATE: ${{ inputs.allow-private }}
         WHAT: ${{ inputs.what }}
-        MODE: ${{ inputs.mode }}
       run: |
-        if [ "$VISIBILITY" = "public" ]; then
-          echo "::notice title=package-visibility-gate::${WHAT}: repo is public — GHCR storage is free and unlimited."
-          exit 0
-        fi
-        if [ -n "$ALLOW_PRIVATE" ]; then
-          echo "::warning title=package-visibility-gate::${WHAT}: publishing from a ${VISIBILITY:-unknown} repo by declared exception: ${ALLOW_PRIVATE}"
-          exit 0
-        fi
-        LEVEL=error; VERB="refusing to publish"
-        if [ "$MODE" = "warn" ]; then LEVEL=warning; VERB="publishing (SURVEY MODE — this will be refused once this gate ratchets)"; fi
-        echo "::${LEVEL} title=package-visibility-gate::${WHAT}: ${VERB} from a ${VISIBILITY:-unknown} repository."
-        echo "A package published from a non-public repo is private, and private packages bill" >&2
-        echo "the organisation's ONE shared storage allowance (500 MB on the free plan) — not this" >&2
-        echo "repo's own budget. On 2026-08-20 that allowance was exhausted and the symptom landed" >&2
-        echo "on unrelated repos, whose CI failed uploading a scan report." >&2
-        echo "" >&2
-        echo "Pick one:" >&2
-        echo "  * make the repository public — then this is free and unlimited;" >&2
-        echo "  * publish to the fleet's own registry (Zot) instead of GHCR;" >&2
-        echo "  * ship it as a flake output and let the binary cache distribute it — no registry" >&2
-        echo "    is involved and nothing is billed;" >&2
-        echo "  * or declare an exception: allow-private: '<why this must be a private package>'." >&2
-        [ "$MODE" = "warn" ] && exit 0
+        echo "::notice title=package-visibility-gate::${WHAT}: repo is public — GHCR storage is free and unlimited."
+
+    - name: Non-public, exception declared
+      if: ${{ github.event.repository.visibility != 'public' && inputs.allow-private != '' }}
+      shell: bash
+      env:
+        WHAT: ${{ inputs.what }}
+        WHY: ${{ inputs.allow-private }}
+        VIS: ${{ github.event.repository.visibility }}
+      run: |
+        echo "::warning title=package-visibility-gate::${WHAT}: publishing from a ${VIS:-unknown} repo by declared exception — ${WHY}"
+
+    - name: Non-public, survey mode
+      if: ${{ github.event.repository.visibility != 'public' && inputs.allow-private == '' && inputs.mode == 'warn' }}
+      shell: bash
+      env:
+        WHAT: ${{ inputs.what }}
+        VIS: ${{ github.event.repository.visibility }}
+      run: |
+        echo "::warning title=package-visibility-gate::${WHAT}: a ${VIS:-unknown} repo publishes a PRIVATE package, billing the org's shared 500 MB allowance. This is refused once this gate ratchets to enforce. See package-visibility-gate/README.md."
+
+    - name: Non-public — refuse
+      if: ${{ github.event.repository.visibility != 'public' && inputs.allow-private == '' && inputs.mode != 'warn' }}
+      shell: bash
+      env:
+        WHAT: ${{ inputs.what }}
+        VIS: ${{ github.event.repository.visibility }}
+      run: |
+        echo "::error title=package-visibility-gate::${WHAT}: refusing to publish from a ${VIS:-unknown} repository — a private package bills the ORG's one shared 500 MB allowance, not this repo's budget. Fixes: make the repo public; push to the fleet's own Zot; ship it as a flake output so the binary cache distributes it and nothing is billed; or declare allow-private: '<typed reason>'. See package-visibility-gate/README.md."
         exit 1
