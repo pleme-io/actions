@@ -1,0 +1,56 @@
+name: 'pleme-io · package-visibility-gate'
+description: >-
+  Refuse to publish a package from a repository whose visibility would make
+  that package bill the org''s one shared storage allowance. Public repos
+  publish freely; a private or internal repo must declare a typed reason.
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  allow-private:
+    description: >-
+      A TYPED REASON to publish anyway from a non-public repo. Empty (the
+      default) refuses. This is the fleet's `skip-<name>: <typed-reason>`
+      grammar as an action input: an exception must be written down at the
+      call site, so exceptions stay visible and countable instead of becoming
+      the silent default they were before this gate existed. Time pressure is
+      not a typed reason.
+    required: false
+    default: ""
+  what:
+    description: "What is being published, for the message (e.g. 'ghcr image', 'oci helm chart')."
+    required: false
+    default: "package"
+
+runs:
+  using: composite
+  steps:
+    - name: Gate the publish on repository visibility
+      shell: bash
+      env:
+        VISIBILITY: ${{ github.event.repository.visibility }}
+        ALLOW_PRIVATE: ${{ inputs.allow-private }}
+        WHAT: ${{ inputs.what }}
+      run: |
+        if [ "$VISIBILITY" = "public" ]; then
+          echo "::notice title=package-visibility-gate::${WHAT}: repo is public — GHCR storage is free and unlimited."
+          exit 0
+        fi
+        if [ -n "$ALLOW_PRIVATE" ]; then
+          echo "::warning title=package-visibility-gate::${WHAT}: publishing from a ${VISIBILITY:-unknown} repo by declared exception: ${ALLOW_PRIVATE}"
+          exit 0
+        fi
+        echo "::error title=package-visibility-gate::${WHAT}: refusing to publish from a ${VISIBILITY:-unknown} repository."
+        echo "A package published from a non-public repo is private, and private packages bill" >&2
+        echo "the organisation's ONE shared storage allowance (500 MB on the free plan) — not this" >&2
+        echo "repo's own budget. On 2026-08-20 that allowance was exhausted and the symptom landed" >&2
+        echo "on unrelated repos, whose CI failed uploading a scan report." >&2
+        echo "" >&2
+        echo "Pick one:" >&2
+        echo "  * make the repository public — then this is free and unlimited;" >&2
+        echo "  * publish to the fleet's own registry (Zot) instead of GHCR;" >&2
+        echo "  * ship it as a flake output and let the binary cache distribute it — no registry" >&2
+        echo "    is involved and nothing is billed;" >&2
+        echo "  * or declare an exception: allow-private: '<why this must be a private package>'." >&2
+        exit 1
