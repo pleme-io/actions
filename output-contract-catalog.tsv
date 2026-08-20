@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                366
+# actions                367
 # routing tatara-script  350
 # distinct keys written  351
 # dynamic key expansions 8
@@ -265,6 +265,7 @@ opentelemetry-trace-emit	tatara-script	run.tlisp	1	1
 otel-collector-deploy	tatara-script	run.tlisp	1	1
 output-contract-sync	tatara-script	run.tlisp	9	9
 pa11y-ci	tatara-script	run.tlisp	1	1
+package-visibility-gate	own-runner	-	0	0
 pagerduty-notify	tatara-script	run.tlisp	1	1
 pangea-grafana-converge	tatara-script	run.tlisp	5	5
 paths-dirty	tatara-script	run.tlisp	2	2
