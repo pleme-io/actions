@@ -33,8 +33,43 @@
 (define (rl:host r)
   (let ((parts (string-split r "/"))) (if (string-contains? r "://") (rl:nth parts 2) (car parts))))
 
-;; First non-empty of the three candidates, in priority order.
-(define (rl:pick a b c) (cond ((not (equal? a "")) a) ((not (equal? b "")) b) (else c)))
+;; ── ★ THE LADDER — ordered candidates, tried until one LOGS IN ─────────
+;; Superseded `rl:pick`, which returned the first NON-EMPTY credential and
+;; then treated that one credential's login failure as terminal. Two defects
+;; in one line, and the fleet has now paid for this exact shape three times:
+;;
+;;   1. SELECTION BY PRESENCE, NOT CAPABILITY. A dead-but-present BOT_PAT beat
+;;      a working GITHUB_TOKEN. Measured 2026-08-22: `github/classic` sat dead
+;;      for weeks while every consumer asked "is a credential configured?"
+;;      instead of "does it work?".
+;;   2. NO FALL-THROUGH. `rl:fail` exits 1, so rung 2 was unreachable whenever
+;;      rung 1 existed at all. A ladder whose lower rungs cannot be reached is
+;;      not a fallback, it is a single point of failure with extra inputs.
+;;
+;; A rung is now skipped when ABSENT (quietly — a private-repo caller
+;; legitimately passes BOT_PAT empty) and when it FAILS TO LOG IN (loudly).
+;;
+;; ★ AND THE RUNG THAT WON IS ANNOUNCED, ALWAYS — not only on fallback. A
+;; silent fallback that always succeeds is precisely how a top rung dies
+;; unnoticed.
+(define (rl:label-of pair) (car pair))
+(define (rl:token-of pair) (car (cdr pair)))
+
+;; Candidates in priority order, absent ones dropped.
+(define (rl:candidates)
+  (filter
+    (lambda (p) (not (equal? (rl:token-of p) "")))
+    (list
+      ;; ★ Rung 1 — a GitHub App installation token (`ghs_`), minted per job
+      ;; from a key that never expires. PROVEN 2026-08-22 to authenticate to
+      ;; ghcr.io, contradicting GitHub's own docs which name only classic PATs:
+      ;; anonymous /v2/ 401, garbage bearer 403, App token 200. It is preferred
+      ;; because its authority is bounded by INSTALLATION rather than by the
+      ;; scopes of some human's account.
+      (list "app-token" (env-get "APP_TOKEN" ""))
+      (list "bot-pat" (env-get "BOT_PAT" ""))
+      (list "ghcr-token" (env-get "GHCR_TOKEN" ""))
+      (list "github-token" (env-get "GITHUB_TOKEN" "")))))
 
 (define (rl:fail reason)
   (log-error (string-append "registry-login: " reason))
@@ -63,30 +98,63 @@
         token))
     (else (exec-check "docker" "login" host "--username" user "--password" token))))
 
+;; Walk the ladder. Returns the winning label, or "" when every rung failed.
+;; `first?` distinguishes "the preferred rung won" from "we degraded", because
+;; those want different operator attention even though both publish fine.
+(define (rl:try-rungs client host user rungs first?)
+  (cond
+    ((null? rungs) "")
+    (else
+      (let*
+        ((label (rl:label-of (car rungs)))
+          (r (rl:login client host user (rl:token-of (car rungs)))))
+        (cond
+          ((= r 0)
+            (if first?
+              (log-info (string-append "registry-login: rung `" label "` (preferred)"))
+              (log-error
+                (string-append
+                  "registry-login: rung `"
+                  label
+                  "` IN USE — a higher-priority credential was present and FAILED to log in. Publishing continues, but fix the primary.")))
+            label)
+          (else
+            (log-error
+              (string-append
+                "registry-login: rung `"
+                label
+                "` failed to log in (exit "
+                (string-format "{}" r)
+                ") — falling through"))
+            (rl:try-rungs client host user (cdr rungs) #f)))))))
+
 (define (main)
   (let*
     ((registry (env-required "REGISTRY"))
       (client (env-get "CLIENT" "docker"))
       (user (env-required "USERNAME"))
-      (token (rl:pick (env-get "BOT_PAT" "") (env-get "GHCR_TOKEN" "") (env-get "GITHUB_TOKEN" "")))
+      (rungs (rl:candidates))
       (host (rl:host registry)))
     (cond
-      ((equal? token "")
-        (rl:fail "no credential — BOT_PAT, GHCR_TOKEN, and GITHUB_TOKEN are all empty"))
+      ((null? rungs)
+        (rl:fail "no credential — APP_TOKEN, BOT_PAT, GHCR_TOKEN and GITHUB_TOKEN are all empty"))
       ((equal? host "")
         (rl:fail (string-append "could not extract a host from registry '" registry "'")))
       (else
         (log-info (string-append "==> " client " registry login " host))
-        (let ((r (rl:login client host user token)))
+        (let ((won (rl:try-rungs client host user rungs #t)))
           (cond
-            ((= r 0) (append-output "result=true") (exit 0))
-            (else
+            ((equal? won "")
+              ;; Every rung that was PRESENT failed. Name them, because "no
+              ;; credential supplied" and "every credential rejected" need
+              ;; different responses and must never render the same.
               (rl:fail
                 (string-append
                   client
-                  " login failed (exit "
-                  (string-format "{}" r)
-                  ")")))))))))
+                  " login failed on every supplied credential ("
+                  (string-join ", " (map rl:label-of rungs))
+                  ")")))
+            (else (append-output "result=true") (exit 0))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1")
