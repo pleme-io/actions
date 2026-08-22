@@ -15,8 +15,18 @@ inputs:
   username:
     description: "Registry username (typically github.actor)."
     required: true
+  app-token:
+    description: >-
+      PREFERRED — a GitHub App installation token (`ghs_...`), minted per job
+      from a key that never expires. Proven 2026-08-22 to authenticate to
+      ghcr.io (anonymous /v2/ 401, garbage bearer 403, App token 200),
+      contradicting GitHub's own docs which name only classic PATs. Its
+      authority is bounded by INSTALLATION rather than by the scopes of a
+      human's account, which is why it outranks every PAT below.
+    required: false
+    default: ""
   bot-pat:
-    description: "Org PAT with write:packages — preferred. Pass secrets.BOT_PAT raw; empty on private-repo callers where the Free plan doesn't share it."
+    description: "Org PAT with write:packages. Pass secrets.BOT_PAT raw; empty on private-repo callers where the Free plan doesn't share it. NOTE: a fine-grained PAT CANNOT authenticate to ghcr.io — GitHub Packages accepts only classic PATs, GITHUB_TOKEN, and (measured) App tokens. If BOT_PAT has been rotated to fine-grained, this rung will fail and the ladder will fall through, loudly."
     required: false
     default: ""
   ghcr-token:
@@ -66,6 +76,7 @@ runs:
         REGISTRY: ${{ inputs.registry }}
         CLIENT: ${{ inputs.client }}
         USERNAME: ${{ inputs.username }}
+        APP_TOKEN: ${{ inputs.app-token }}
         BOT_PAT: ${{ inputs.bot-pat }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
