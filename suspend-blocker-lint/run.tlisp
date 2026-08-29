@@ -9,7 +9,7 @@
 ;; source of truth. The failure mode is what happens NEXT. The reason lives in
 ;; prose inside a header (one of them is 146 lines), nothing re-reads it, and
 ;; the day the blocker clears there is no signal -- so a parked declaration
-;; quietly becomes a forgotten one. Measured on camelot-eks 2026-08-05: 4
+;; quietly becomes a forgotten one. Measured on one cluster-eks 2026-08-05: 4
 ;; suspended InfrastructureTemplates, ZERO carrying a machine-readable blocker.
 ;;
 ;; So: every `suspend: true` declares three annotations.
@@ -53,7 +53,7 @@
 ;; 3. THE CLEARING VOCABULARY WAS DOCUMENTED BUT NEVER CHECKED. Three values
 ;;    were named in a header; nothing compared against them, so any string --
 ;;    or a typo -- passed. It is enforced now, which is also what makes adding
-;;    a fourth value meaningful: two real camelot blockers (hardened-natscli
+;;    a fourth value meaningful: two real blockers (hardened-natscli
 ;;    and escuta, both absent from zot) are cleared by publishing an image,
 ;;    which none of the original three describes. Forcing either into
 ;;    `policy-decision` would have recorded a false clearing path -- and for

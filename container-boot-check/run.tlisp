@@ -1,7 +1,7 @@
 ;; container-boot-check/run.tlisp — start a container, poll a health
 ;; command until it succeeds or a bounded attempt count is exhausted.
 ;; Generic: any image, any health command, no secrets, no
-;; camelot/akeyless-specific logic. Dumps container logs on timeout so
+;; estate-specific logic. Dumps container logs on timeout so
 ;; a boot failure is never silent (the whole point of this gate).
 ;;
 ;; Real-world motivation: a Nix-rebuilt image can pass every CVE scan

@@ -25,7 +25,7 @@ constructor (`sui-bigorna/src/node.rs`). So on **one runner**:
 - the runner's **own** arch is the create-time native node (no endpoint);
 - a **foreign** target arch is native **only** if you supply a native
   `arch-endpoints` entry for it (a docker context / `tcp://` remote, e.g.
-  the camelot `runs-on:[camelot,<arch>]` fan);
+  the `runs-on:[self-hosted,<arch>]` fan);
 - a foreign arch with **no** endpoint would be **emulated** — which bigorna
   refuses. `fallthrough` decides what happens then:
   - `error` (default) → the honest hard fail;

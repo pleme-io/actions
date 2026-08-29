@@ -5,7 +5,7 @@
 > resolved from a typed `{base}/{arch}/{svc}` template, so one verb targets
 > every flake-attr convention without a fork.
 
-Part of the **super-cache-ci** delivery leg. A camelot build composes this with
+Part of the **super-cache-ci** delivery leg. A super-cache build composes this with
 `ghcr-publish` (or `zot-push`) + `zot-pull-scan`.
 
 ## Native-arch fan-out (no QEMU)
@@ -20,9 +20,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runs-on: [camelot, amd64]
+            runs-on: [self-hosted, amd64]
           - arch: arm64
-            runs-on: [camelot, arm64]
+            runs-on: [self-hosted, arm64]
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +102,7 @@ reusable, which passes the row count as `targets` — this verb owns one
 ## Tier-honesty (SUPER-CACHE-CI ledger)
 
 - **now (SHIPPABLE-NOW)** — local native `nix build .#<resolved-attr>` on a
-  `runs-on:[camelot,<arch>]` runner; `dockerTools.buildLayeredImage` (layered).
+  `runs-on:[self-hosted,<arch>]` runner; `dockerTools.buildLayeredImage` (layered).
 - **LiveTODO:super-cache-build** — when `endpoint` (SUI_ENDPOINT) is set, route the
   derivation through the sui daemon for warm layer-cache reuse. The seam is not
   yet live: the action logs the LiveTODO, performs a **correct local build**, and

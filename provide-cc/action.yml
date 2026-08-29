@@ -1,7 +1,7 @@
 name: 'pleme-io · provide-cc'
 description: >-
   Put a C toolchain (`cc`, `gcc`) on PATH for every LATER step in the job, from
-  nixpkgs. Exists because the Camelot ARC runner image is stock
+  nixpkgs. Exists because the self-hosted ARC runner image is stock
   `ghcr.io/actions/actions-runner:latest` — deliberately minimal, with NO
   compiler — where GitHub-hosted `ubuntu-*` ships build-essential. Any repo
   running `cargo`/`cc`/`go build` directly on that pool dies with ``linker `cc`

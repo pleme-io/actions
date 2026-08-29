@@ -16,7 +16,7 @@
 ;; tatara-script/output-contract.tlisp turned that silent drop into a hard
 ;; failure at RUNTIME — but a runtime gate only ever sees the ONE code path a
 ;; given run took, which is why 251 actions were broken while only a handful
-;; had surfaced (container-boot-check's `healthy` took down the camelot
+;; had surfaced (container-boot-check's `healthy` took down the
 ;; hardened-image pipeline: rabbitmq and vector BUILT and BOOTED GREEN and
 ;; failed the step anyway).
 ;;

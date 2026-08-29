@@ -6,7 +6,7 @@ branding:
 
 inputs:
   endpoint:
-    description: "The sui-cache binary-cache endpoint (e.g. http://sui.camelot-build.svc). CORRECTED 2026-08-05: this is NOT `sui-service-up`'s output — that action resolves sui-daemon-graph, whose default endpoint is a UDS path, and `nix copy --to <path>` writes into a LOCAL CHROOT STORE rather than the cache. It is also no longer a LiveTODO: a real `nix copy --to` lands in the durable Postgres tier (measured 2026-08-05, ~25 MB/s). Optional."
+    description: "The sui-cache binary-cache endpoint (e.g. http://sui.build.svc). CORRECTED 2026-08-05: this is NOT `sui-service-up`'s output — that action resolves sui-daemon-graph, whose default endpoint is a UDS path, and `nix copy --to <path>` writes into a LOCAL CHROOT STORE rather than the cache. It is also no longer a LiveTODO: a real `nix copy --to` lands in the durable Postgres tier (measured 2026-08-05, ~25 MB/s). Optional."
     required: false
     default: ""
   key:

@@ -1,7 +1,7 @@
 ;; nix-image/run.tlisp — build multi-arch nix OCI image tarballs via
 ;; dockerTools (NO Dockerfile), one per requested arch, NATIVE-ARCH (no QEMU).
 ;;
-;; A NATIVE build fans out over `runs-on: [camelot, <arch>]`: each arch builds
+;; A NATIVE build fans out over `runs-on: [self-hosted, <arch>]`: each arch builds
 ;; on its own native-metal runner (`nix build --system <sys>`), so there is no
 ;; binfmt/QEMU emulation — the emulated leg that made the Dockerfile pipeline
 ;; ~90 min disappears. The action always warns when it detects an off-target
@@ -364,7 +364,7 @@
               " on a "
               machine
               " runner (non-native) — prefer a native-arch "
-              "runner (runs-on: [camelot, "
+              "runner (runs-on: [self-hosted, "
               arch
               "]) to avoid exec-format mislabeling")))
         (let*

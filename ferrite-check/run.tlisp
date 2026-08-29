@@ -1,5 +1,5 @@
 ;; ferrite-check/run.tlisp — the per-package MATERIALIZABILITY gate of the
-;; camelot image pipeline: for ONE package (a flake image attr), verify the
+;; image pipeline: for ONE package (a flake image attr), verify the
 ;; package can be materialized (its attr resolves to a derivation) BEFORE the
 ;; expensive derive, content-address its SOURCE, and emit a PoMS — a
 ;; Proof-of-Materialization-Spec receipt — cached by that source hash so a

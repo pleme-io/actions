@@ -6,7 +6,7 @@ branding:
 
 inputs:
   endpoint:
-    description: "The super-cache endpoint to pull from (from sui-service-up), e.g. http://sui.camelot-build.svc. Empty => honest no-op (the build clones)."
+    description: "The super-cache endpoint to pull from (from sui-service-up), e.g. http://sui.build.svc. Empty => honest no-op (the build clones)."
     required: false
     default: ""
   flake-lock:

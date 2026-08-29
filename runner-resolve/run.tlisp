@@ -9,7 +9,7 @@
 ;; (`runs-on: ubuntu-latest`), with every other job in the same workflow
 ;; depending on it via `needs.<job-id>.outputs.runner`. This action does
 ;; NOT hardcode any repo-specific SELF-HOSTED posture beyond the fleet's
-;; own standing invariant (private repo -> camelot; public repo -> free
+;; own standing invariant (private repo -> the self-hosted pool; public repo -> free
 ;; GitHub-hosted minutes) — a caller that genuinely needs something else
 ;; still wins via override/config-path/default, all three unchanged.
 ;;
@@ -122,7 +122,7 @@
       (override (env-get "OVERRIDE" ""))
       (config-path (env-get "CONFIG_PATH" ".github/runner.yml"))
       (is-private (env-get "IS_PRIVATE" "false"))
-      (private-default (env-get "PRIVATE_RUNNER_DEFAULT" "camelot-builder-pleme-eks"))
+      (private-default (env-get "PRIVATE_RUNNER_DEFAULT" "the self-hosted builder pool"))
       (public-default (env-get "PUBLIC_RUNNER_DEFAULT" "ubuntu-24.04"))
       (file-runner (rr:read-file-runner config-path))
       (effective-default (rr:effective-default default is-private private-default public-default))

@@ -137,13 +137,13 @@
       ;; independently of this gate — neither side is a flag day.
       (capacity
         (br:classify-capacity
-          (env-get cap-env (env-get "CAMELOT_CAPACITY_TYPE" ""))))
+          (env-get cap-env (env-get "RUNNER_POOL_CAPACITY_TYPE" ""))))
       (node-group
-        (string-trim (env-get ng-env (env-get "CAMELOT_NODE_GROUP" ""))))
+        (string-trim (env-get ng-env (env-get "RUNNER_POOL_NODE_GROUP" ""))))
       (min-runners
-        (string-trim (env-get mr-env (env-get "CAMELOT_MIN_RUNNERS" ""))))
+        (string-trim (env-get mr-env (env-get "RUNNER_POOL_MIN_RUNNERS" ""))))
       (retirada-ready
-        (env-get "RUNNER_POOL_RETIRADA" (env-get "CAMELOT_RETIRADA" "")))
+        (env-get "RUNNER_POOL_RETIRADA" (env-get "RUNNER_POOL_RETIRADA" "")))
       (drain-armed (br:drain-armed? drain-handler retirada-ready))
       (failures
         (br:assess

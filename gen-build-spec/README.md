@@ -31,7 +31,7 @@ pipeline — it produces the `spec-path` + `spec-hash` that the tiered
 - **`lang ∈ {npm,pip,gomod}` is a LiveTODO** (ledger row 10) — adapters
   scaffolded, interpreters designed. Reported `regenerated=false reason=lang-livetodo`,
   never faked.
-- **`gen` must be on PATH.** This action does NOT install it — the camelot
+- **`gen` must be on PATH.** This action does NOT install it — the self-hosted pool
   arc-runner bakes `gen`; a hosted-runner consumer adds a gen-install step first.
   `gen` absent ⇒ an honest `gen-absent-livetodo` report (`exec-capture` raises on
   an absent binary, so `gen` is probed via a no-shell PATH scan first), unless

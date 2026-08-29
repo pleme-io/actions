@@ -1,5 +1,5 @@
 name: 'pleme-io · runner-resolve'
-description: 'Resolve the runs-on label for a job via typed precedence: an explicit override > an optional repo-committed config file (.github/runner.yml) > the caller-supplied default > a visibility-aware billing-safe default (private repo -> Camelot self-hosted, public repo -> free GitHub-hosted minutes). GitHub Actions runs-on: cannot read a same-job step output, so every workflow adopting this action MUST call it as its OWN job and have every other job in the same workflow depend on it via needs.<job-id>.outputs.runner. The visibility-aware tier is the ONLY posture this action bakes in — it exists to make the org standing invariant ("a CI path either flows through a genuinely public repo or Camelot self-hosted, never a metered GitHub-hosted runner on a private repo") the default outcome of omitting `default`, not something every caller re-derives by hand. A caller that needs something else always wins via override/config-path/an explicit default.'
+description: 'Resolve the runs-on label for a job via typed precedence: an explicit override > an optional repo-committed config file (.github/runner.yml) > the caller-supplied default > a visibility-aware billing-safe default (private repo -> an org self-hosted pool, public repo -> free GitHub-hosted minutes). GitHub Actions runs-on: cannot read a same-job step output, so every workflow adopting this action MUST call it as its OWN job and have every other job in the same workflow depend on it via needs.<job-id>.outputs.runner. The visibility-aware tier is the ONLY posture this action bakes in — it exists to make the org standing invariant ("a CI path either flows through a genuinely public repo or an org self-hosted pool, never a metered GitHub-hosted runner on a private repo") the default outcome of omitting `default`, not something every caller re-derives by hand. A caller that needs something else always wins via override/config-path/an explicit default.'
 branding:
   icon: 'cpu'
   color: 'blue'
@@ -18,9 +18,9 @@ inputs:
     required: false
     default: ".github/runner.yml"
   private-runner-default:
-    description: "The billing-safe default used when `default` is empty and the calling repo is private (github.event.repository.private == true) — Camelot's scale-to-zero breathable self-hosted pool by default. Override only if a repo needs a different self-hosted target (e.g. an arm64 pool)."
+    description: "The billing-safe default used when `default` is empty and the calling repo is private (github.event.repository.private == true) — the org's scale-to-zero breathable self-hosted pool by default. Override only if a repo needs a different self-hosted target (e.g. an arm64 pool)."
     required: false
-    default: "camelot-builder-pleme-eks"
+    default: "the self-hosted builder pool"
   public-runner-default:
     description: "The default used when `default` is empty and the calling repo is public — free GitHub-hosted minutes, no billing exposure."
     required: false

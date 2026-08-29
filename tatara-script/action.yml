@@ -618,7 +618,7 @@ outputs:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: new-version)"
     value: ${{ steps.exec.outputs.new-version }}
   node-group:
-    description: "Forwarded (key: node-group) — breathe-runner camelot node-group"
+    description: "Forwarded (key: node-group) — breathe-runner node-group"
     value: ${{ steps.exec.outputs.node-group }}
   ok:
     description: "Forwarded (key: ok) — aldrava-lint catalog-parsed-cleanly flag"

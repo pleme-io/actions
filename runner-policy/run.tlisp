@@ -3,7 +3,7 @@
 ;;
 ;; The invariant, stated once in pleme-io/actions/runner-resolve and enforced
 ;; here: a CI path either flows through a genuinely public repo on free
-;; GitHub-hosted minutes, or through Camelot self-hosted. Never a metered
+;; GitHub-hosted minutes, or through an org self-hosted pool. Never a metered
 ;; GitHub-hosted runner on a private repo.
 ;;
 ;; WHY A GATE AND NOT A SWEEP. On 2026-08-08 that invariant was violated in 56
@@ -24,7 +24,7 @@
 ;; free-form string, so nothing can make a metered label unconstructible — the
 ;; honest ceiling is a red gate at the parse boundary of the workflow file.
 ;;
-;; WAIVER. Some legs genuinely cannot route: Camelot is linux-only, so a darwin
+;; WAIVER. Some legs genuinely cannot route: the self-hosted pool is linux-only, so a darwin
 ;; release binary has no alternative to a macOS runner. That is a fact about
 ;; the world, not about our abstractions, so it gets a typed escape rather than
 ;; a silent exception — put this on the line above, and the reason is required:
@@ -35,7 +35,7 @@
 (define workflows-dir (env-get "WORKFLOWS_DIR" ".github/workflows"))
 (define is-private (string-contains? (env-get "REPO_PRIVATE" "false") "true"))
 
-;; Metered = any GitHub-hosted image. Self-hosted labels (camelot-*) and any
+;; Metered = any GitHub-hosted image. Self-hosted labels and any
 ;; expression that resolves by visibility are fine.
 (define (metered-label? s)
   (or (string-contains? s "ubuntu-")
@@ -160,9 +160,9 @@
       (for-each (lambda (v) (eprint-line (string-append "  " v))) violations)
       (eprint-line "")
       (eprint-line "Route on visibility instead:")
-      (eprint-line "  runs-on: ${{ github.event.repository.private && 'camelot-builder-pleme-eks' || 'ubuntu-latest' }}")
+      (eprint-line "  runs-on: ${{ github.event.repository.private && (vars.PRIVATE_BUILDER_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}")
       (eprint-line "")
-      (eprint-line "If the leg genuinely cannot route (Camelot is linux-only, so a darwin")
+      (eprint-line "If the leg genuinely cannot route (the self-hosted pool is linux-only, so a darwin")
       (eprint-line "binary has no alternative), put the typed waiver on the line above:")
       (eprint-line "  # runner-policy: allow <reason>")
       (exit 1))

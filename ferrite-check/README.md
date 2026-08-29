@@ -1,6 +1,6 @@
 # ferrite-check
 
-Per-package **materializability gate** of the camelot image pipeline. For one
+Per-package **materializability gate** of the image pipeline. For one
 package (a flake image attr), verify it can be **materialized** — its attr
 resolves to a derivation via a cheap `nix eval`, **not** a derive — *before*
 the expensive build, content-address its **source**, and emit a **PoMS**
@@ -24,7 +24,7 @@ jobs:
     needs: graph
     strategy:
       matrix: ${{ fromJSON(needs.graph.outputs.matrix) }}   # build-matrix rows
-    runs-on: [self-hosted, camelot]   # a runner that bakes nix + jq + b3sum
+    runs-on: [self-hosted, <pool>]   # a runner that bakes nix + jq + b3sum
     steps:
       - uses: actions/checkout@v4
       - id: ferrite

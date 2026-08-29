@@ -39,7 +39,7 @@ sui-service-up        → endpoint
 - id: preseed
   uses: pleme-io/actions/flake-input-preseed@main
   with:
-    endpoint:   ${{ steps.sui.outputs.endpoint }}   # http://sui.camelot-build.svc
+    endpoint:   ${{ steps.sui.outputs.endpoint }}   # http://sui.build.svc
     flake-lock: flake.lock
     inputs:     big-monorepo
 ```

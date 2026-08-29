@@ -1,7 +1,7 @@
 ;; Tests for suspend-blocker-lint's document-scoped predicates.
 ;;
 ;; Every case here is a defect this gate actually shipped with, not a
-;; hypothetical. The gate produced a 5-entry baseline on camelot-eks; auditing
+;; hypothetical. The gate produced a 5-entry baseline on one cluster-eks; auditing
 ;; those five by hand found that one was a phantom the gate could never have
 ;; been satisfied on, and that two of the checks were structurally unable to
 ;; fail. These lock all three shut.

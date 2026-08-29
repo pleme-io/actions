@@ -1,5 +1,5 @@
 name: 'pleme-io · nix-image'
-description: 'Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and a colon-namespaced image flake (dockerImage:<arch>:<svc>). Fan out over runs-on:[camelot,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO); correct local nix build otherwise.'
+description: 'Build native-arch nix OCI image tarballs via dockerTools (NO Dockerfile, NO QEMU), one per arch, resolving the flake attr from a typed {base}/{arch}/{svc} template — covers substrate mkImageReleaseApp (dockerImage-<arch>), mkGoDockerImage multi-service (dockerImage-<arch>-<svc>), and a colon-namespaced image flake (dockerImage:<arch>:<svc>). Fan out over runs-on:[self-hosted,<arch>] for a native build. Routes through the sui super-cache when SUI_ENDPOINT is set (LiveTODO); correct local nix build otherwise.'
 branding:
   icon: 'package'
   color: 'blue'
@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ""
   arches:
-    description: "Space-separated arch list to build (e.g. 'amd64 arm64'). For a NATIVE build, pass one arch matching the runner (runs-on:[camelot,<arch>])."
+    description: "Space-separated arch list to build (e.g. 'amd64 arm64'). For a NATIVE build, pass one arch matching the runner (runs-on:[self-hosted,<arch>])."
     required: false
     default: "amd64"
   flake-ref:
