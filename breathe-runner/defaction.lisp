@@ -22,7 +22,7 @@
 (defaction
   "breathe-runner"
   :description
-  "Preflight posture gate for camelot breathable spot runners: assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner (never rio) via config-driven CAMELOT_* signals, and arm the retirada drain->checkpoint hook. Never claims drain-armed without the handler present; enforce=false makes every requirement advisory."
+  "Preflight posture gate for breathable spot runners: assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner via config-driven pool signals, and arm the retirada drain->checkpoint hook. Never claims drain-armed without the handler present; enforce=false makes every requirement advisory."
   :inputs
   ((
      :name "require-spot"
@@ -30,10 +30,18 @@
      :required nil
      :default "true")
     (
+      :name "require-isolated-node-group"
+      :type :string
+      :required nil
+      :default "")
+    ;; DEPRECATED alias, kept renderable so an existing caller keeps working
+    ;; (★★ MODULARIZE, DON'T DELETE). Resolution order lives in action.yml's
+    ;; env block: new name, then this, then the historical default "true".
+    (
       :name "require-camelot-taint"
       :type :string
       :required nil
-      :default "true")
+      :default "")
     (
       :name "require-scale-to-zero"
       :type :string
@@ -53,17 +61,17 @@
       :name "capacity-type-env"
       :type :string
       :required nil
-      :default "CAMELOT_CAPACITY_TYPE")
+      :default "RUNNER_POOL_CAPACITY_TYPE")
     (
       :name "node-group-env"
       :type :string
       :required nil
-      :default "CAMELOT_NODE_GROUP")
+      :default "RUNNER_POOL_NODE_GROUP")
     (
       :name "min-runners-env"
       :type :string
       :required nil
-      :default "CAMELOT_MIN_RUNNERS"))
+      :default "RUNNER_POOL_MIN_RUNNERS"))
   :outputs
   ((:name "runner-ok")
     (:name "capacity-type")

@@ -19,15 +19,15 @@ on:
 # LiveTODO. The output VALUES are proven by run.test.tlisp instead.
 
 jobs:
-  # Simulated camelot spot posture (signals injected at job env) —
+  # Simulated spot posture (signals injected at job env) —
   # every requirement met -> the gate exits 0.
   posture-ok:
     runs-on: ubuntu-latest
     env:
-      CAMELOT_CAPACITY_TYPE: spot
-      CAMELOT_NODE_GROUP: camelot-spot
-      CAMELOT_MIN_RUNNERS: "0"
-      CAMELOT_RETIRADA: ready
+      RUNNER_POOL_CAPACITY_TYPE: spot
+      RUNNER_POOL_NODE_GROUP: isolated-spot
+      RUNNER_POOL_MIN_RUNNERS: "0"
+      RUNNER_POOL_RETIRADA: ready
     steps:
       - uses: actions/checkout@v4
       - id: preflight

@@ -18,7 +18,7 @@
   (assert (br:spot-ok? "on-demand" "false") "not required -> ok"))
 
 (deftest "br:taint-ok? demands a non-empty node group when required"
-  (assert (br:taint-ok? "camelot-spot" "true") "non-empty group satisfies")
+  (assert (br:taint-ok? "isolated-spot" "true") "non-empty group satisfies")
   (assert (not (br:taint-ok? "" "true")) "empty group fails require")
   (assert (not (br:taint-ok? "   " "true")) "whitespace-only group fails require")
   (assert (br:taint-ok? "" "false") "not required -> ok"))
@@ -41,7 +41,7 @@
 
 (deftest "br:assess collects exactly the unmet requirements"
   (assert
-    (= (length (br:assess "spot" "camelot-spot" "0" "true" "true" "true")) 0)
+    (= (length (br:assess "spot" "isolated-spot" "0" "true" "true" "true")) 0)
     "full posture -> no failures")
   (assert
     (= (length (br:assess "on-demand" "" "3" "true" "true" "false")) 2)
