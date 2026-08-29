@@ -1,5 +1,5 @@
 name: 'pleme-io · breathe-runner'
-description: 'Preflight posture gate for camelot breathable spot runners — assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner (never rio) and arm the retirada drain->checkpoint hook. First verb of a super-cache-ci build.'
+description: 'Preflight posture gate for breathable spot runners — assert the job landed on a 100%-spot, scale-to-zero, taint-isolated in-cluster GHA runner and arm the retirada drain->checkpoint hook. First verb of a super-cache-ci build.'
 branding:
   icon: 'wind'
   color: 'green'
@@ -9,16 +9,25 @@ inputs:
     description: "Fail (enforce=true) unless the runner is on a spot / interruptible node."
     required: false
     default: "true"
-  require-camelot-taint:
-    description: "Fail (enforce=true) unless the runner is on a camelot-isolated node group (a non-empty node-group signal)."
+  require-isolated-node-group:
+    description: "Fail (enforce=true) unless the runner is on an ISOLATED node group (a non-empty node-group signal). This is the current name."
     required: false
-    default: "true"
+    default: ""
+  require-camelot-taint:
+    # DEPRECATED, and deliberately NOT deleted (★★ MODULARIZE, DON'T DELETE).
+    # Renamed to require-isolated-node-group: the input asserts a node group is
+    # ISOLATED, which is a property of the pool, not the name of one estate's
+    # cluster. Both names are read, the new one wins, and the default lives on
+    # the RESOLVED value below so neither name has to be passed.
+    description: "DEPRECATED alias for require-isolated-node-group. Still honoured; prefer the new name."
+    required: false
+    default: ""
   require-scale-to-zero:
     description: "Fail (enforce=true) unless the stream is scale-to-zero (min-runners == 0). Informational by default since the runner cannot fully verify the scale-set config from inside a job."
     required: false
     default: "false"
   drain-handler:
-    description: "Arm the retirada spot-reclaim drain->checkpoint hook. drain-armed is true only when the retirada handler is actually present (CAMELOT_RETIRADA=ready); otherwise honestly false. [LiveTODO: retirada Spot::InterruptionHandler]"
+    description: "Arm the retirada spot-reclaim drain->checkpoint hook. drain-armed is true only when the retirada handler is actually present (RUNNER_POOL_RETIRADA=ready); otherwise honestly false. [LiveTODO: retirada Spot::InterruptionHandler]"
     required: false
     default: "true"
   enforce:
@@ -28,15 +37,15 @@ inputs:
   capacity-type-env:
     description: "Env var name carrying the node capacity-type (spot | on-demand), injected by the crunkrun Stream from the karpenter.sh/capacity-type node label."
     required: false
-    default: "CAMELOT_CAPACITY_TYPE"
+    default: "RUNNER_POOL_CAPACITY_TYPE"
   node-group-env:
-    description: "Env var name carrying the camelot node-group name (non-empty == taint-isolated)."
+    description: "Env var name carrying the node-group name (non-empty == taint-isolated)."
     required: false
-    default: "CAMELOT_NODE_GROUP"
+    default: "RUNNER_POOL_NODE_GROUP"
   min-runners-env:
     description: "Env var name carrying the stream's minRunners (0 == scale-to-zero)."
     required: false
-    default: "CAMELOT_MIN_RUNNERS"
+    default: "RUNNER_POOL_MIN_RUNNERS"
 
 outputs:
   runner-ok:
@@ -46,7 +55,7 @@ outputs:
     description: "Observed capacity type: spot | on-demand | unknown."
     value: ${{ steps.preflight.outputs.capacity-type }}
   node-group:
-    description: "Observed camelot node-group name (empty when not surfaced)."
+    description: "Observed node-group name (empty when not surfaced)."
     value: ${{ steps.preflight.outputs.node-group }}
   scale-to-zero:
     description: "true | false | unknown — whether the stream is scale-to-zero."
@@ -74,14 +83,17 @@ runs:
         } > "$out"
         echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
-    - name: Assert camelot spot-runner posture
+    - name: Assert spot-runner posture
       id: preflight
       uses: pleme-io/actions/tatara-script@main
       with:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
         REQUIRE_SPOT: ${{ inputs.require-spot }}
-        REQUIRE_CAMELOT_TAINT: ${{ inputs.require-camelot-taint }}
+        # New name wins; the deprecated alias is the fallback; "true" is the
+        # default when neither is passed — the same default the single input
+        # carried before the rename, so no caller changes behaviour.
+        REQUIRE_ISOLATED_NODE_GROUP: ${{ inputs.require-isolated-node-group != '' && inputs.require-isolated-node-group || (inputs.require-camelot-taint != '' && inputs.require-camelot-taint || 'true') }}
         REQUIRE_SCALE_TO_ZERO: ${{ inputs.require-scale-to-zero }}
         DRAIN_HANDLER: ${{ inputs.drain-handler }}
         ENFORCE: ${{ inputs.enforce }}

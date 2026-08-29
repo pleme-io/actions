@@ -1,8 +1,8 @@
-;; breathe-runner/run.tlisp — preflight posture gate for camelot
+;; breathe-runner/run.tlisp — preflight posture gate for a self-hosted
 ;; breathable spot runners.
 ;;
 ;; Part of the super-cache-ci action vocabulary (verb #1). A
-;; super-cache-ci build runs on camelot's taint-separated, breathable,
+;; super-cache-ci build runs on a taint-separated, breathable,
 ;; 100%-spot, scale-to-zero in-cluster GHA runners (never rio). This
 ;; verb is the FIRST step of every such build: it asserts the job
 ;; actually landed on that posture and arms the retirada drain hook,
@@ -12,18 +12,18 @@
 ;; The runner cannot read its own node's k8s labels directly, so the
 ;; posture is surfaced as ENV that the crunkrun Stream / ARC scale-set
 ;; injects (downward API from the node's karpenter.sh/capacity-type
-;; label, the camelot node-group, the stream's minRunners). The env
+;; label, the node-group, the stream's minRunners). The env
 ;; names are config-driven so a stream that surfaces them differently
 ;; still works. enforce=false makes every requirement advisory (for
 ;; hosted-runner dry-runs and the smoke).
 ;;
 ;; Tier-honest LiveTODOs (never rounded up):
 ;;   - The posture ASSERTIONS are shipped now (they read injected env
-;;     and gate). The live signal INJECTION is the camelot crunkrun
+;;     and gate). The live signal INJECTION is the crunkrun
 ;;     Stream's job [LiveTODO: super-cache-ci crunkrun Stream surfaces
-;;     CAMELOT_CAPACITY_TYPE / CAMELOT_NODE_GROUP / CAMELOT_MIN_RUNNERS].
+;;     RUNNER_POOL_CAPACITY_TYPE / _NODE_GROUP / _MIN_RUNNERS].
 ;;   - The retirada drain->checkpoint hook is NOT shipped. drain-armed
-;;     is true ONLY when CAMELOT_RETIRADA=ready is present; otherwise it
+;;     is true ONLY when RUNNER_POOL_RETIRADA=ready is present; otherwise it
 ;;     is honestly false + a warning [LiveTODO: retirada
 ;;     Spot::InterruptionHandler checkpoint-to-Pg].
 ;;
@@ -31,7 +31,7 @@
 ;;   append-output, config-resolve.
 ;;
 ;; Inputs (env, all config-resolvable via [breathe-runner] section):
-;;   REQUIRE_SPOT REQUIRE_CAMELOT_TAINT REQUIRE_SCALE_TO_ZERO
+;;   REQUIRE_SPOT REQUIRE_ISOLATED_NODE_GROUP REQUIRE_SCALE_TO_ZERO
 ;;   DRAIN_HANDLER ENFORCE CAPACITY_TYPE_ENV NODE_GROUP_ENV MIN_RUNNERS_ENV
 ;; Outputs (appended):
 ;;   runner-ok capacity-type node-group scale-to-zero drain-armed
@@ -80,7 +80,7 @@
       (list (string-append "not on a spot node (capacity-type=" capacity ", require-spot=true)")))
     (if (br:taint-ok? node-group require-taint)
       (list)
-      (list "not on a camelot-isolated node group (node-group empty, require-camelot-taint=true)"))
+      (list "not on an isolated node group (node-group empty, require-isolated-node-group=true)"))
     (if (br:scale-ok? min-runners require-s2z)
       (list)
       (list
@@ -101,9 +101,9 @@
     ((require-spot (config-resolve "REQUIRE_SPOT" "breathe-runner" "require-spot" "true"))
       (require-taint
         (config-resolve
-          "REQUIRE_CAMELOT_TAINT"
+          "REQUIRE_ISOLATED_NODE_GROUP"
           "breathe-runner"
-          "require-camelot-taint"
+          "require-isolated-node-group"
           "true"))
       (require-s2z
         (config-resolve
@@ -118,23 +118,32 @@
           "CAPACITY_TYPE_ENV"
           "breathe-runner"
           "capacity-type-env"
-          "CAMELOT_CAPACITY_TYPE"))
+          "RUNNER_POOL_CAPACITY_TYPE"))
       (ng-env
         (config-resolve
           "NODE_GROUP_ENV"
           "breathe-runner"
           "node-group-env"
-          "CAMELOT_NODE_GROUP"))
+          "RUNNER_POOL_NODE_GROUP"))
       (mr-env
         (config-resolve
           "MIN_RUNNERS_ENV"
           "breathe-runner"
           "min-runners-env"
-          "CAMELOT_MIN_RUNNERS"))
-      (capacity (br:classify-capacity (env-get cap-env "")))
-      (node-group (string-trim (env-get ng-env "")))
-      (min-runners (string-trim (env-get mr-env "")))
-      (retirada-ready (env-get "CAMELOT_RETIRADA" ""))
+          "RUNNER_POOL_MIN_RUNNERS"))
+      ;; The signal env-var NAMES were renamed off one estate's cluster name.
+      ;; Each is read at its current name and falls back to the legacy one, so
+      ;; the INJECTION side (the crunkrun Stream / ARC scale-set) can migrate
+      ;; independently of this gate — neither side is a flag day.
+      (capacity
+        (br:classify-capacity
+          (env-get cap-env (env-get "CAMELOT_CAPACITY_TYPE" ""))))
+      (node-group
+        (string-trim (env-get ng-env (env-get "CAMELOT_NODE_GROUP" ""))))
+      (min-runners
+        (string-trim (env-get mr-env (env-get "CAMELOT_MIN_RUNNERS" ""))))
+      (retirada-ready
+        (env-get "RUNNER_POOL_RETIRADA" (env-get "CAMELOT_RETIRADA" "")))
       (drain-armed (br:drain-armed? drain-handler retirada-ready))
       (failures
         (br:assess
@@ -151,10 +160,10 @@
     (append-output (string-append "drain-armed=" (if drain-armed "true" "false")))
     ;; retirada arming — honest about the unshipped handler
     (cond
-      (drain-armed (log-info "retirada drain->checkpoint hook armed (CAMELOT_RETIRADA=ready)"))
+      (drain-armed (log-info "retirada drain->checkpoint hook armed (RUNNER_POOL_RETIRADA=ready)"))
       ((equal? drain-handler "true")
         (log-info
-          "::warning::breathe-runner: drain-handler requested but retirada Spot::InterruptionHandler not present (CAMELOT_RETIRADA!=ready) — drain-armed=false [LiveTODO: retirada checkpoint-to-Pg]"))
+          "::warning::breathe-runner: drain-handler requested but retirada Spot::InterruptionHandler not present (RUNNER_POOL_RETIRADA!=ready) — drain-armed=false [LiveTODO: retirada checkpoint-to-Pg]"))
       (else (log-info "drain-handler=false — not arming the retirada hook")))
     ;; gate
     (cond
@@ -170,7 +179,7 @@
         (append-output "runner-ok=true")
         (exit 0))
       ((equal? enforce "true")
-        (log-error "breathe-runner: camelot spot-runner posture NOT met (enforce=true):")
+        (log-error "breathe-runner: spot-runner posture NOT met (enforce=true):")
         (br:log-failures failures)
         (append-output "runner-ok=false")
         (exit 1))
