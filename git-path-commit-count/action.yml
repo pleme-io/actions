@@ -4,7 +4,7 @@ branding: { icon: 'hash', color: 'gray-dark' }
 
 inputs:
   path:
-    description: "Pathspec to scope the count to (e.g. 'camelot/hardened-images/flake.nix', or a directory)"
+    description: "Pathspec to scope the count to (e.g. 'the hardened-images/flake.nix', or a directory)"
     required: true
   ref:
     description: "Git ref to count from"

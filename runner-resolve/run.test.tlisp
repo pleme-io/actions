@@ -17,17 +17,17 @@
     (equal?
       (rr:resolve-runner
         ""
-        "camelot-builder-pleme-eks"
+        "the self-hosted builder pool"
         "ubuntu-latest")
-      "camelot-builder-pleme-eks")
+      "the self-hosted builder pool")
     "file beats default when override is empty")
   (assert
     (equal?
       (rr:resolve-runner
         "   "
-        "  camelot-builder-pleme-eks  "
+        "  the self-hosted builder pool  "
         "ubuntu-latest")
-      "camelot-builder-pleme-eks")
+      "the self-hosted builder pool")
     "whitespace-only override treated as empty; file value trimmed"))
 
 (deftest "rr:resolve-runner — effective-default wins when nothing else is set"
@@ -69,7 +69,7 @@
       (rr:effective-default
         "gpu-runner"
         "true"
-        "camelot-builder-pleme-eks"
+        "the self-hosted builder pool"
         "ubuntu-24.04")
       "gpu-runner")
     "explicit default beats private visibility default")
@@ -78,7 +78,7 @@
       (rr:effective-default
         "gpu-runner"
         "false"
-        "camelot-builder-pleme-eks"
+        "the self-hosted builder pool"
         "ubuntu-24.04")
       "gpu-runner")
     "explicit default beats public visibility default too"))
@@ -90,10 +90,10 @@
       (rr:effective-default
         ""
         "true"
-        "camelot-builder-pleme-eks"
+        "the self-hosted builder pool"
         "ubuntu-24.04")
-      "camelot-builder-pleme-eks")
-    "the actual billing-safe fix: a private repo with no explicit default lands on camelot, never a metered runner"))
+      "the self-hosted builder pool")
+    "the actual billing-safe fix: a private repo with no explicit default lands on one cluster, never a metered runner"))
 
 (deftest
   "rr:effective-default — public repo, no explicit default, resolves to public-runner-default"
@@ -102,7 +102,7 @@
       (rr:effective-default
         ""
         "false"
-        "camelot-builder-pleme-eks"
+        "the self-hosted builder pool"
         "ubuntu-24.04")
       "ubuntu-24.04")
     "public repos keep their free GitHub-hosted minutes, untouched"))
@@ -110,8 +110,8 @@
 (deftest
   "rr:effective-default — unset/unrecognized visibility fails toward public (never private)"
   (assert
-    (equal? (rr:effective-default "" "" "camelot-builder-pleme-eks" "ubuntu-24.04") "ubuntu-24.04")
-    "an empty IS_PRIVATE context (e.g. a non-repository-scoped event) never silently routes onto camelot"))
+    (equal? (rr:effective-default "" "" "the self-hosted builder pool" "ubuntu-24.04") "ubuntu-24.04")
+    "an empty IS_PRIVATE context (e.g. a non-repository-scoped event) never silently routes onto the self-hosted pool"))
 
 (deftest
   "rr:effective-default-provenance — distinguishes an explicit default from the visibility fallback"
@@ -124,17 +124,17 @@
 
 ;; The scenario that MOTIVATED this action: a repo on GitHub's Free plan
 ;; has no access to Organization-level `vars.*`, so a caller's ternary
-;; reading e.g. `vars.CAMELOT_RUNNER` resolves to an empty string for
+;; reading e.g. `vars.PRIVATE_BUILDER_RUNNER` resolves to an empty string for
 ;; `override`. A repo-committed .github/runner.yml still resolves the
 ;; intended runner — with NO vars.* dependency anywhere in this path.
 (deftest "the motivating scenario — missing org vars resolves via config-path alone"
   (let ((override "")
      ;; unset vars.* forwards as ""
-     (file-runner "camelot-builder-pleme-eks")
+     (file-runner "the self-hosted builder pool")
      ;; read from .github/runner.yml
      (default "ubuntu-latest"))
     (assert
-      (equal? (rr:resolve-runner override file-runner default) "camelot-builder-pleme-eks")
+      (equal? (rr:resolve-runner override file-runner default) "the self-hosted builder pool")
       "resolves the committed runner with zero vars.* involved")
     (assert
       (equal? (rr:resolve-provenance override file-runner "default") "file")
@@ -146,9 +146,9 @@
 ;; any ordering dependency between test forms.
 
 (deftest "rr:read-file-runner — reads a real committed config file"
-  (write-file "/tmp/runner-resolve-fixture.yml" "runner: camelot-builder-pleme-eks\n")
+  (write-file "/tmp/runner-resolve-fixture.yml" "runner: the self-hosted builder pool\n")
   (assert
-    (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture.yml") "camelot-builder-pleme-eks")
+    (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture.yml") "the self-hosted builder pool")
     "reads the runner: field from a real YAML file via real yq"))
 
 (deftest "rr:read-file-runner — honestly empty when the file is absent"

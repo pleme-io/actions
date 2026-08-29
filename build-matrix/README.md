@@ -9,7 +9,7 @@ spec across every `(service, arch)` the flake actually exposes.
 ```yaml
 jobs:
   graph:
-    runs-on: [self-hosted, camelot]   # a runner that bakes nix + jq
+    runs-on: [self-hosted, <pool>]   # a runner that bakes nix + jq
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
       count:  ${{ steps.m.outputs.count }}
@@ -27,7 +27,7 @@ jobs:
     needs: graph
     strategy:
       matrix: ${{ fromJSON(needs.graph.outputs.matrix) }}
-    runs-on: [self-hosted, camelot]
+    runs-on: [self-hosted, <pool>]
     steps:
       - uses: pleme-io/actions/nix-image@v1
         with:

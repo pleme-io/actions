@@ -3,7 +3,7 @@ description: >-
   Fail the build when a PRIVATE repo declares a metered GitHub-hosted runner.
   Enforces the invariant stated once in `pleme-io/actions/runner-resolve`: a CI
   path either flows through a genuinely public repo on free GitHub-hosted
-  minutes, or through Camelot self-hosted — never a metered runner on a private
+  minutes, or through an org self-hosted pool — never a metered runner on a private
   repo. Checks BOTH shapes, the literal `runs-on: ubuntu-latest` and the
   matrix-supplied form where `runs-on` interpolates a `matrix.os` value; the
   second is the one a grep for `runs-on: ubuntu-*` silently misses. No-op on

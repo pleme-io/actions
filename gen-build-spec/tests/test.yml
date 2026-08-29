@@ -19,7 +19,7 @@ on:
 # runs to completion, reports regenerated=false / reason=lang-livetodo, exits 0
 # — an honest LiveTODO report, never a faked green. The cargo NOW path (a real
 # `gen build .` + the stale gate) is green on a runner that bakes `gen`
-# (the camelot arc-runner); it is proven locally via run.test.tlisp + a real
+# (a self-hosted arc-runner); it is proven locally via run.test.tlisp + a real
 # gen-cargo round-trip and is not exercised here to keep the fixture
 # gen-independent.
 jobs:

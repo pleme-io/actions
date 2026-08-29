@@ -40,7 +40,7 @@
     "nested path survives the split intact")
   ;; A host:port registry must keep its port on the registry side.
   (assert
-    (equal? (oci:split-registry "zot.camelot.svc:5000/pleme-io/svc") "zot.camelot.svc:5000")
+    (equal? (oci:split-registry "zot.registry.svc:5000/pleme-io/svc") "zot.registry.svc:5000")
     "host:port stays whole on the registry side"))
 
 (deftest "target-ref appends :tag to the base"

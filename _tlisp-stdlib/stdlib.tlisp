@@ -628,7 +628,7 @@
 ;; `gen build` shells out to the literal `cargo metadata` binary (not a
 ;; Nix-mediated call) to read the workspace graph. GitHub-hosted runners
 ;; ship a pre-installed Rust toolchain, so this always worked there
-;; silently; self-hosted pools (e.g. Camelot's camelot-builder-pleme-eks
+;; silently; self-hosted pools (e.g. the org's self-hosted builder pool
 ;; ARC runners) carry no such toolchain by default, so `cargo metadata`
 ;; failed with a bare "No such file or directory" the moment a consumer's
 ;; runner input moved off a GitHub-hosted default (confirmed live:
@@ -1280,7 +1280,7 @@
 ;;     the field is absent   ·   jq is not installed   ·   the file is missing
 ;;
 ;; The YAML sibling's receipt is what that costs: `yq` is absent from the
-;; `camelot-builder-pleme-eks` ARC runner, so it returned "" for every field
+;; the self-hosted builder pool ARC runner, so it returned "" for every field
 ;; of every file, release-promote's idempotency check never matched, and no
 ;; promotion has ever completed. Nothing about that failure was jq- or
 ;; yq-specific; this reader had the same hole and the same blast radius.
@@ -1351,7 +1351,7 @@
 ;; empty string. That collapses two completely different facts into one
 ;; answer: "the field is absent" and "yq does not exist on this machine".
 ;;
-;; That is not hypothetical. `yq` is absent from the `camelot-builder-pleme-eks`
+;; That is not hypothetical. `yq` is absent from the the self-hosted builder pool
 ;; ARC runner, so on that runner this function returned "" for every field of
 ;; every file. release-promote's idempotency check compared against "" every
 ;; time, never matched, and always fell through to its write — which then died
@@ -1551,7 +1551,7 @@
 ;;
 ;; Everything above this line resolves `sui-daemon-graph`, which speaks a UDS
 ;; RPC and whose default endpoint is $XDG_RUNTIME_DIR/sui-graph.sock. The thing
-;; serving `http://sui.camelot-build.svc` is `sui-cache` (`sui cache serve
+;; serving `http://sui.build.svc` is `sui-cache` (`sui cache serve
 ;; --listen=0.0.0.0:5000`) — a different binary speaking the Nix binary-cache
 ;; HTTP protocol. The predicates above keep their honest `(else #f)` LiveTODO
 ;; and stay pointed at the graph daemon.
@@ -1572,7 +1572,7 @@
 ;; The trusted public key sui-cache signs ingested narinfo with.
 ;;
 ;; MEASURED 2026-08-05 from the live pod log: sui-cache runs with a
-;; --signing-key and announces `signing ENABLED key_name="camelot-sui-1"`.
+;; --signing-key and announces `signing ENABLED key_name="pool-sui-1"`.
 ;; So the correct client-side statement is `extra-trusted-public-keys` — NOT
 ;; `require-sigs = false`, which disables signature checking GLOBALLY (including
 ;; for cache.nixos.org) and is strictly weaker than what the server already

@@ -24,7 +24,7 @@
 ;;   * the runner's OWN arch is the create-time native node (no endpoint);
 ;;   * a FOREIGN target arch is a native node ONLY if the consumer supplies
 ;;     a native endpoint for it (a docker context / tcp:// remote reached
-;;     via ARCH_ENDPOINTS, e.g. the camelot runs-on:[camelot,<arch>] fan);
+;;     via ARCH_ENDPOINTS, e.g. the runs-on:[self-hosted,<arch>] fan);
 ;;   * a foreign arch with NO endpoint would be EMULATED — which bigorna
 ;;     refuses. FALLTHROUGH decides what happens then:
 ;;       error         → the honest hard fail (default; exit 1)

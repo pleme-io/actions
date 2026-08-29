@@ -147,7 +147,7 @@
       ;; `gen build` shells out to the literal `cargo metadata` binary (not
       ;; a Nix-mediated call). A runner that bakes `gen` onto PATH (the
       ;; on-path? check above) may still lack a Rust toolchain -- confirmed
-      ;; live on Camelot's camelot-builder-pleme-eks pool, 2026-07-23.
+      ;; live on the org's self-hosted builder pool, 2026-07-23.
       ;; `nix shell nixpkgs#cargo` supplies it hermetically regardless of
       ;; what the runner ships with (same fix as stdlib's regen-gen-lock).
       (else

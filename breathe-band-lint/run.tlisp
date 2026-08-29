@@ -1,7 +1,7 @@
 ;; breathe-band-lint/run.tlisp — static coverage gate for breathe bands in a
 ;; GitOps tree. Parses the committed YAML only; NEVER contacts a cluster.
 ;;
-;; WHY THIS EXISTS. Band coverage drifted silently on camelot-eks in three
+;; WHY THIS EXISTS. Band coverage drifted silently on one cluster-eks in three
 ;; distinct ways that no human review caught, each one found only by hand:
 ;;   (a) a band was added for a workload, then the workload was renamed —
 ;;       the band kept reporting Healthy/Dormant ("target scaled to zero")

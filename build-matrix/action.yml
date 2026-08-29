@@ -62,7 +62,7 @@ runs:
     #   Argument list too long
     # attributed to the action rather than to its size. Observed 2026-08-10:
     # this action's `graph` job failed that way and skipped every downstream
-    # job in the camelot image pipeline.
+    # job in the image pipeline.
     #
     # `script-file` is tatara-script's own documented alternative, takes
     # precedence over `script`, and is already what 13 other actions here use.

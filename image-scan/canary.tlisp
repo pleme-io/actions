@@ -34,7 +34,7 @@
 ;;
 ;; NO jq. The first draft parsed the JSON report with jq, and jq appears
 ;; NOWHERE else in this action — nothing proves it exists on
-;; camelot-builder-pleme-eks, the self-hosted ARC runner these jobs use for
+;; the self-hosted builder pool, the self-hosted ARC runner these jobs use for
 ;; private repos. Combined with fail-closed, a missing jq would have turned
 ;; this into a RED GATE ON EVERY IMAGE for a reason unrelated to any image.
 ;; That is the same defect already recorded against this stack ("yq missing

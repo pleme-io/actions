@@ -55,7 +55,7 @@
 ;; NOT here. It was written for this action and then moved, because the
 ;; defect it fixes was never this action's alone: the stdlib reader shelled
 ;; out to `yq` and returned "" on any non-zero exit, so on a runner without
-;; yq -- which is every `camelot-builder-pleme-eks` runner -- "field absent"
+;; yq -- which is every the self-hosted builder pool runner -- "field absent"
 ;; and "binary missing" were the same answer for EVERY action. Keeping a
 ;; private copy here would have fixed one call site and left the class
 ;; intact. See stdlib.tlisp's header for the measurement (run 30555068358).

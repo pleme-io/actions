@@ -11,7 +11,7 @@ non-baselined finding fails the build.
 
 ## Why it exists
 
-Band coverage drifted silently on `camelot-eks` in three distinct ways, none of
+Band coverage drifted silently on one cluster in three distinct ways, none of
 which any human review caught — each was found only by hand-auditing the live
 cluster:
 
@@ -132,15 +132,15 @@ Never delete a line to make the gate green. The goal is an empty file.
 ## Proven to bite
 
 A gate that has never been shown to fail is not a gate. All four rules were
-verified against the real `camelot-eks` tree by deliberately introducing each
+verified against a real cluster tree by deliberately introducing each
 defect and confirming a non-zero exit, then restoring:
 
 | Test | Mutation | Result |
 |---|---|---|
-| R1 | deleted the `rustfs` MemoryBand | `EXIT=1` — `NEW R1-COVERAGE Deployment/camelot/rustfs` |
-| R2 | pointed `neo4j-cpu` at `neo4j-renamed` | `EXIT=1` — `NEW R2-TARGET CpuBand/camelot/neo4j-cpu` |
+| R1 | deleted the `rustfs` MemoryBand | `EXIT=1` — `NEW R1-COVERAGE Deployment/<ns>/rustfs` |
+| R2 | pointed `neo4j-cpu` at `neo4j-renamed` | `EXIT=1` — `NEW R2-TARGET CpuBand/<ns>/neo4j-cpu` |
 | R3 | stripped `requests` from `source-controller` | `EXIT=1` — `NEW R3-QOS Deployment/flux-system/source-controller` |
-| R4 | added a new band with no `spec.mode` | `EXIT=1` — `NEW R4-MODE CpuBand/camelot/rustfs-cpu-second` |
+| R4 | added a new band with no `spec.mode` | `EXIT=1` — `NEW R4-MODE CpuBand/<ns>/rustfs-cpu-second` |
 
 The R4 test is the important one for the baseline discipline: it fails on a
 **new** unset-mode band even though 44 existing ones are baselined — proving the

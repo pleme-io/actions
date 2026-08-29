@@ -17,7 +17,7 @@ naming one is rejected at the wire boundary. That is a real guarantee about the
 whose own doc comment is explicit that it is additive **by intent, not by a
 type guarantee**. This gate is the layer that reads that SQL.
 
-Camelot non-negotiable #13 is the rule it enforces: every schema, table, grant
+Platform non-negotiable #13 is the rule it enforces: every schema, table, grant
 and seed row arrives as a `DatabaseMigration`, and the model grows rather than
 being cut. Columns are tagged and sunset, drained and sealed — not dropped.
 

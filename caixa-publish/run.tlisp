@@ -20,7 +20,7 @@
 ;;      The action's only setup step is `azure/setup-helm@v4`. The sibling
 ;;      helm-publish installs yq explicitly (via nix) precisely because it is
 ;;      NOT universally present — the stdlib's own yaml-read-field header
-;;      records `yq` missing from the camelot-builder-pleme-eks ARC runner,
+;;      records `yq` missing from the the self-hosted builder pool ARC runner,
 ;;      where every field of every file read back as "". Worse, mikefarah yq
 ;;      exits 0 and prints the literal string `null` for an ABSENT key, so a
 ;;      Chart.yaml without `.name` yielded name="null" and the push targeted

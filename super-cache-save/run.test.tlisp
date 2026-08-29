@@ -81,15 +81,15 @@
   (assert (equal? (supercache:presence-of "requried") "invalid") "typo => invalid, NOT a default"))
 
 (deftest "supercache:nix-conf-for emits trusted-keys, never a global require-sigs=false"
-  (define conf (supercache:nix-conf-for "http://sui.camelot-build.svc" "camelot-sui-1:AAAA"))
-  (assert (string-contains? conf "extra-substituters = http://sui.camelot-build.svc") "substituter line")
-  (assert (string-contains? conf "extra-trusted-public-keys = camelot-sui-1:AAAA") "trusted key line")
+  (define conf (supercache:nix-conf-for "http://sui.build.svc" "pool-sui-1:AAAA"))
+  (assert (string-contains? conf "extra-substituters = http://sui.build.svc") "substituter line")
+  (assert (string-contains? conf "extra-trusted-public-keys = pool-sui-1:AAAA") "trusted key line")
   ;; require-sigs=false disables signature checking GLOBALLY, including for
   ;; cache.nixos.org. sui-cache signs at ingest, so the narrow statement is
   ;; strictly stronger and this must never regress to the blunt one.
   (assert (not (string-contains? conf "require-sigs")) "never disables signature checking globally")
   (assert (string-contains? conf "fallback = true") "fallback travels WITH the substituter")
-  (assert (equal? (supercache:nix-conf-for "" "camelot-sui-1:AAAA") "") "no endpoint => no config at all")
+  (assert (equal? (supercache:nix-conf-for "" "pool-sui-1:AAAA") "") "no endpoint => no config at all")
   (define nokey (supercache:nix-conf-for "http://sui" ""))
   (assert (not (string-contains? nokey "extra-trusted-public-keys")) "no key => no empty key line"))
 

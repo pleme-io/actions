@@ -61,9 +61,9 @@ inputs:
   #    time is the same class the doca conversion exists to remove; pinning the
   #    URL makes the fetch reproducible, not hermetic.
   #
-  # THE FIX IS AVAILABLE AND STRICTLY BETTER: these jobs run on Camelot's own
+  # THE FIX IS AVAILABLE AND STRICTLY BETTER: these jobs run on the org's own
   # in-cluster ARC pool, and the CA is already IN the cluster as the `ca.crt`
-  # key of the `zot-tls-camelot-ca` secret that cert-manager maintains. Reading
+  # key of the `zot-tls-registry-ca` secret that cert-manager maintains. Reading
   # it from there removes the CDN, removes the propagation window, and makes
   # rotation self-healing — the reconciler that rotates the cert also publishes
   # the anchor, so the two can never disagree. The committed file then becomes

@@ -4,7 +4,7 @@
 > output-hashes + cache tier + timings + image digests) into a
 > content-addressed, independently-verifiable JSON.
 
-**Category**: `super-cache-ci` — 🛡️ camelot breathable CI
+**Category**: `super-cache-ci` — 🛡️ breathable CI
 **Backend**: tatara-lisp
 **Auto-published**: pinnable via `@v0.x` tags or floating `@v1` / `@main`
 

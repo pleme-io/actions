@@ -20,7 +20,7 @@ on:
 # typed matrix serializer). On a hosted runner that bakes NEITHER, the action
 # does NOT crash — it probes PATH first and reports an honest reason=nix-absent
 # (exit 1), never a faked matrix. The green happy path (a real image×arch
-# matrix) runs on a runner that bakes nix+jq (the camelot arc-runner) and is
+# matrix) runs on a runner that bakes nix+jq (a self-hosted arc-runner) and is
 # proven locally via run.test.tlisp + an end-to-end `nix eval` round-trip
 # against a colon-triple flake; it is not exercised here to keep the fixture
 # nix-independent.
