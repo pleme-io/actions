@@ -1,0 +1,52 @@
+name: 'pleme-io · install-syft'
+description: >-
+  Install syft (Anchore) onto $PATH for downstream steps. Extracted from
+  sbom-generate/action.yml so other actions in the fleet (syft-attest,
+  future hardened-image-plan variants) can consume the same pinned install
+  without duplicating the shell block, and so sbom-generate itself stays
+  under the NO-SHELL threshold. Every consumer gets the same syft version.
+
+branding:
+  icon: 'download'
+  color: 'gray-dark'
+
+inputs:
+  version:
+    description: >-
+      syft release tag to install. Kept as an input rather than a hardcoded
+      constant so a security bump moves in one place and every consumer
+      picks it up without a coordinated release. Default is the version
+      the extraction was verified against.
+    required: false
+    default: 'v1.50.0'
+  install-dir:
+    description: >-
+      Directory to install the syft binary into. Default is $RUNNER_TEMP/bin
+      rather than /usr/local/bin: the fleet's self-hosted ARC runners do
+      not run as root, so /usr/local/bin dies with a permission error and
+      the step fails before syft is ever invoked (measured on
+      caixa-tempfile 2026-08-17). $RUNNER_TEMP is writable on both
+      GitHub-hosted and ARC runners, so this default works on either.
+    required: false
+    default: '${{ runner.temp }}/bin'
+
+outputs:
+  syft-path:
+    description: 'Absolute path to the installed syft binary.'
+    value: '${{ inputs.install-dir }}/syft'
+
+runs:
+  using: composite
+  steps:
+    - name: Install syft
+      shell: bash
+      # PINNED TWICE — the install SCRIPT is at a tag, and the VERSION it
+      # installs is a tag. Both were unpinned before extraction (install.sh
+      # from `main`, --version defaulted to "latest"). An SBOM is a
+      # provenance claim, so a syft nobody can name produces a component
+      # list nobody can reproduce.
+      run: |
+        set -euo pipefail
+        curl -sSfL "https://raw.githubusercontent.com/anchore/syft/${{ inputs.version }}/install.sh" \
+          | sh -s -- -b "${{ inputs.install-dir }}" "${{ inputs.version }}"
+        echo "${{ inputs.install-dir }}" >> "$GITHUB_PATH"

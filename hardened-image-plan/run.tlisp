@@ -350,7 +350,9 @@
 (define (hip:payload r) (car (cdr r)))
 
 (define (hip:on-path? bin)
-  (let ((r (exec-capture "sh" "-c" (string-append "command -v " bin " >/dev/null 2>&1"))))
+  (let ((r
+          ;; lint:allow shell-exec `command -v` is a shell builtin + `>/dev/null 2>&1` is a shell redirect — both require `sh -c`. `bin` is trusted-config-only.
+          (exec-capture "sh" "-c" (string-append "command -v " bin " >/dev/null 2>&1"))))
     (= (status-of r) 0)))
 
 ;; `nix eval --json` of the catalog attr, written to a file for jq.
