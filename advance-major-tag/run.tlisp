@@ -24,37 +24,44 @@
 (define identity-email
   (string-trim (env-get "IDENTITY_EMAIL" "41898282+github-actions[bot]@users.noreply.github.com")))
 
-(when (equal? tag "")
-  (log-error "advance-major-tag: TAG is required")
-  (exit 2))
+(define (main)
+  (when (equal? tag "")
+    (log-error "advance-major-tag: TAG is required")
+    (exit 2))
 
-;; vX.Y.Z, all three numeric. semver:parse rejects two- and four-segment
-;; versions and anything with a pre-release or build suffix, which is exactly
-;; the set that must NOT move a major tag.
-(define version (if (string-starts-with? tag "v") (string-replace tag "v" "") tag))
-(define parts (semver:parse version))
+  ;; vX.Y.Z, all three numeric. semver:parse rejects two- and four-segment
+  ;; versions and anything with a pre-release or build suffix, which is exactly
+  ;; the set that must NOT move a major tag.
+  (let* ((version (if (string-starts-with? tag "v") (string-replace tag "v" "") tag))
+         (parts (semver:parse version)))
+    (cond
+      ((null? parts)
+        (append-output "advanced=false")
+        (append-output "major=")
+        (log-info
+          (string-append "advance-major-tag: " tag
+                         " is not vX.Y.Z form; skipping major-tag advance"))
+        (exit 0))
+      (else
+        (let ((major (string-append "v" (string-format "{}" (nth 0 parts)))))
+          (define (must argv)
+            (let ((r (proc:must argv)))
+              (when (erro:err? r)
+                (log-error (string-append "advance-major-tag: failed: " (string-join " " argv)))
+                (exit 1))
+              (erro:value r)))
+          (must (list "git" "config" "user.name" identity-name))
+          (must (list "git" "config" "user.email" identity-email))
+          (must (list "git" "tag" "-f" major tag))
+          (must (list "git" "push" remote major "--force"))
+          (append-output "advanced=true")
+          (append-output (string-append "major=" major))
+          (log-info (string-append "advance-major-tag: advanced " major " -> " tag))
+          (exit 0))))))
 
-(cond
-  ((null? parts)
-    (append-output "advanced=false")
-    (append-output "major=")
-    (log-info
-      (string-append "advance-major-tag: " tag
-                     " is not vX.Y.Z form; skipping major-tag advance"))
-    (exit 0))
-  (else
-    (let ((major (string-append "v" (string-format "{}" (nth 0 parts)))))
-      (define (must argv)
-        (let ((r (proc:must argv)))
-          (when (erro:err? r)
-            (log-error (string-append "advance-major-tag: failed: " (string-join " " argv)))
-            (exit 1))
-          (erro:value r)))
-      (must (list "git" "config" "user.name" identity-name))
-      (must (list "git" "config" "user.email" identity-email))
-      (must (list "git" "tag" "-f" major tag))
-      (must (list "git" "push" remote major "--force"))
-      (append-output "advanced=true")
-      (append-output (string-append "major=" major))
-      (log-info (string-append "advance-major-tag: advanced " major " -> " tag))
-      (exit 0))))
+;; Gate the main on TLISP_TEST so `tlisp-test` can load this unit to reach the
+;; helpers under test without also running the git-push-`--force`. Matches the
+;; pattern openai-embeddings-batch/run.tlisp uses.
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "advance-major-tag: main skipped under TLISP_TEST"))

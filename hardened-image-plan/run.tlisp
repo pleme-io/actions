@@ -350,6 +350,10 @@
 (define (hip:payload r) (car (cdr r)))
 
 (define (hip:on-path? bin)
+  ;; lint:allow shell-exec `command -v` is a shell builtin (not an executable),
+  ;; and `>/dev/null 2>&1` is a shell redirect — both require `sh -c`. `bin` is
+  ;; caller-controlled but the caller is trusted config, and no user input path
+  ;; reaches here.
   (let ((r (exec-capture "sh" "-c" (string-append "command -v " bin " >/dev/null 2>&1"))))
     (= (status-of r) 0)))
 

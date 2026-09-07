@@ -36,40 +36,47 @@
   (log-error (string-append "regen-drift: " msg))
   (exit code))
 
-(when (equal? program "") (die 3 "PROGRAM is required"))
-(when (equal? committed "") (die 3 "COMMITTED is required"))
+(define (main)
+  (when (equal? program "") (die 3 "PROGRAM is required"))
+  (when (equal? committed "") (die 3 "COMMITTED is required"))
 
-;; A missing committed file is exit 3, never a pass. "Nothing to compare
-;; against" and "matches what it should be" are different answers, and only one
-;; of them means the artifact is correct.
-(when (not (path-exists? committed))
-  (die 3 (string-append "the committed artifact " committed " does not exist — "
-                        "nothing to compare against is not the same as no drift")))
+  ;; A missing committed file is exit 3, never a pass. "Nothing to compare
+  ;; against" and "matches what it should be" are different answers, and only one
+  ;; of them means the artifact is correct.
+  (when (not (path-exists? committed))
+    (die 3 (string-append "the committed artifact " committed " does not exist — "
+                          "nothing to compare against is not the same as no drift")))
 
-(define generated
-  (let ((r (proc:must (cons program args))))
+  (let* ((generated
+           (let ((r (proc:must (cons program args))))
+             (cond
+               ((erro:err? r)
+                 (die 3 (string-append "the generator failed: " program " "
+                                       (string-join " " args))))
+               (else (erro:value r)))))
+         (current (read-file committed)))
+
+    (append-output (string-append "drifted=" (if (equal? generated current) "false" "true")))
+
     (cond
-      ((erro:err? r)
-        (die 3 (string-append "the generator failed: " program " "
-                              (string-join " " args))))
-      (else (erro:value r)))))
+      ((equal? generated current)
+        (log-info (string-append "regen-drift: " committed " matches its generator"))
+        (exit 0))
+      (regenerate?
+        (write-file committed generated)
+        (log-info (string-append "regen-drift: rewrote " committed " from its generator"))
+        (exit 0))
+      (else
+        (log-error (string-append "regen-drift: " committed " is STALE versus its generator"))
+        (when (not (equal? reason ""))
+          (reduce (fn (a l) (log-error l) a) 0 (string-split reason "\n")))
+        (log-error (string-append "regenerate with: " program " " (string-join " " args)
+                                  " > " committed))
+        (exit 1)))))
 
-(define current (read-file committed))
-
-(append-output (string-append "drifted=" (if (equal? generated current) "false" "true")))
-
-(cond
-  ((equal? generated current)
-    (log-info (string-append "regen-drift: " committed " matches its generator"))
-    (exit 0))
-  (regenerate?
-    (write-file committed generated)
-    (log-info (string-append "regen-drift: rewrote " committed " from its generator"))
-    (exit 0))
-  (else
-    (log-error (string-append "regen-drift: " committed " is STALE versus its generator"))
-    (when (not (equal? reason ""))
-      (reduce (fn (a l) (log-error l) a) 0 (string-split reason "\n")))
-    (log-error (string-append "regenerate with: " program " " (string-join " " args)
-                              " > " committed))
-    (exit 1)))
+;; Gate the main on TLISP_TEST so `tlisp-test` can load this unit to reach the
+;; helpers under test without also running the generator. Matches the pattern
+;; openai-embeddings-batch/run.tlisp uses.
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (main)
+  (log-info "regen-drift: main skipped under TLISP_TEST"))
