@@ -60,9 +60,11 @@
 # it are caught" is the honest claim.
 ansible-collection-build/run.tlisp	append-output
 cargo-publish-crate/run.tlisp	append-output
+ci-triage/run.tlisp	any-line-matches?
 derive-version-from-tag/run.tlisp	append-output
 detect-repo-type/run.tlisp	append-output
 gem-publish/run.tlisp	extract-quoted-value
+gemset-gate/run.tlisp	append-output
 git-commit-tag/run.tlisp	append-output
 helm-publish/run.tlisp	helm-published?
 npm-publish/run.tlisp	npm-published?
