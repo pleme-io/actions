@@ -119,6 +119,19 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script-file: ${{ steps.src.outputs.path }}
+        # `.` as the tatara-script working-directory input resolves against
+        # the composite-action step's implicit cwd, which is $GITHUB_WORKSPACE
+        # everywhere EXCEPT when this action is invoked as a step inside
+        # another composite (as it is via substrate/.github/workflows/pre-
+        # merge-gate.yml → the `publishability` job → this action). In that
+        # nesting the effective cwd is the outer action's dir, not the
+        # workspace, and `git ls-files -s -z -- .` finds no repo and returns
+        # empty stdout — the scan then reports "0 tracked file(s)" over a
+        # perfectly populated checkout, and the min-files floor turns the
+        # vacuous scan into a hard exit-1. Passing the workspace path
+        # explicitly makes the working-dir load-bearing rather than
+        # convention-based.
+        working-directory: ${{ github.workspace }}
       env:
         PATHS: ${{ inputs.paths }}
         FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
