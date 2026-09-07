@@ -119,9 +119,9 @@
   (cond
     ((not (path-exists? path)) 0)
     (else
-      ;; lint:allow shell-exec `<` is a shell redirect (not an argv option),
-      ;; so `sh -c` is the shape here. Path is single-quoted; no injection surface.
-      (let ((r (exec-capture "sh" "-c" (string-append "wc -c < '" path "'"))))
+      (let ((r
+              ;; lint:allow shell-exec `<` is a shell redirect (not an argv option), so `sh -c` is the shape. Path single-quoted; no injection surface.
+              (exec-capture "sh" "-c" (string-append "wc -c < '" path "'"))))
         (if (= (status-of r) 0)
           (eab:parse-int (string-trim (stdout-of r)) 0)
           0)))))

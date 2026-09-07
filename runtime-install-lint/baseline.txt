@@ -55,6 +55,7 @@
 # supply-chain toolchain. An unpinned scanner or attestor makes a verdict we
 # cannot reproduce -- "0 CVE" asserted by a binary we cannot name.
 ./image-scan/action.yml
+./install-syft/action.yml
 ./sbom-generate/action.yml
 ./slsa-attest/run.tlisp
 ./cyclonedx-merge/run.tlisp

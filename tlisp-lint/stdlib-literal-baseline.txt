@@ -39,7 +39,7 @@
 # fragments, computes it, or duplicates a stdlib function containing no long
 # literal. The historical instance and anything shaped like it are caught. That
 # is the claim — nothing wider.
-checked-run/run.tlisp	could not start '
+checked-run/run.tlisp	checked-run: could not start '
 grafana-annotation/run.tlisp	' is not an integer
 helm-publish/run.tlisp	Too Many Requests
 python-publish/run.tlisp	Too Many Requests
