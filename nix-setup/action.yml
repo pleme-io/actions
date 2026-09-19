@@ -1,0 +1,80 @@
+name: 'pleme-io · nix-setup'
+description: >-
+  Install Nix on the runner with the fleet nix.conf: `sandbox = relaxed`,
+  `access-tokens` for github.com when a token is passed, and any extra lines.
+  The one Nix install step for every pleme-io workflow and action, so the
+  installer pin and the nix.conf live in one place.
+branding: { icon: 'download', color: 'blue' }
+
+# WHY THIS EXISTS. The install step below was written inline twice, in
+# nix-build/action.yml and nix-flake-check/action.yml, with byte-identical
+# nix.conf. pleme-io/engenho's test.yml (improvement plan T0.1) needed it a
+# third time: its native-backend tests run a real `nix build`, and without Nix
+# on the runner they fail with `could not run nix ... No such file or
+# directory` (engenho run 35418242848). A third copy is a primitive, not a
+# paste, so the shape lives here.
+#
+# WHAT IT OWNS, and why each line is load-bearing:
+#
+#   sandbox = relaxed   REQUIRED, not a loosening. pleme-io Rust flakes
+#                       evaluate gen's `cargo-build-spec-ifd`, which sets
+#                       `__noChroot`; the installer's Linux default
+#                       (`sandbox = true`) refuses it outright:
+#                         error: derivation '…-cargo-build-spec-ifd.drv' has
+#                         '__noChroot' set, but that's not allowed when
+#                         'sandbox' is 'true'
+#                       `relaxed` exempts ONLY a derivation that opts in via
+#                       `__noChroot`; every other build stays sandboxed.
+#
+#   github-token        Written to nix.conf as `access-tokens`, so nix's own
+#                       GitHub fetcher can read PRIVATE flake inputs. Without
+#                       it a private input fails as a plain HTTP 404, which
+#                       reads like a bad rev rather than "you are anonymous".
+#                       The same token is also handed to the installer's own
+#                       `github-token` input, which writes an access-tokens
+#                       line of its own; both lines come from this ONE input,
+#                       so they cannot disagree about which token wins. Unset,
+#                       the installer falls back to `github.token`, exactly as
+#                       a bare `uses:` of the installer does.
+#
+#   installer pin       A commit SHA, not @main: an unpinned third-party action
+#                       is arbitrary code from a moving branch running with the
+#                       job's token. The SHA is the v22 already pinned by
+#                       caixa-render and manifest-list-join in this repo. Bump
+#                       it HERE; every consumer moves with it.
+#
+# TIER-HONEST. This is still a per-job install: theory/NIX-HARDENING.md §VI
+# wants Nix baked into the runner image, and runtime-install-lint flags a bare
+# nix-installer-action in a consumer's workflow for that reason. This action
+# does not satisfy that rule; it makes the eventual swap one edit instead of
+# one per repo.
+inputs:
+  github-token:
+    description: >-
+      Token nix uses for github.com (`access-tokens`). Needed only for PRIVATE
+      flake inputs, and then it must be able to read the OTHER repo: the
+      auto-provided GITHUB_TOKEN is scoped to the running repo and still gets a
+      404, so pass an org-scoped PAT (BOT_PAT). Empty means the installer's
+      default, `github.token`.
+    required: false
+    default: ""
+  extra-conf:
+    description: >-
+      Extra nix.conf lines, appended after the ones this action writes. A
+      passthrough on purpose: nix.conf is the vocabulary, so e.g.
+      `max-jobs`/`cores` (memory) or `min-free`/`max-free` (disk) need no new
+      input here.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix (DeterminateSystems)
+      uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      with:
+        github-token: ${{ inputs.github-token || github.token }}
+        extra-conf: |
+          sandbox = relaxed
+          ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+          ${{ inputs.extra-conf }}
