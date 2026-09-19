@@ -257,6 +257,31 @@ jobs:
         run: |
           [ "$CHANGED" = "false" ] || { echo "expected changed=false got $CHANGED"; exit 1; }
 
+  smoke-nix-setup-nextest:
+    name: Smoke — nix-setup nextest on PATH, not in the runner profile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # A value other than "true"/"false" must fail the step, not mean "no
+      # nextest". It fails before the installer runs, so this costs no install.
+      - id: refused
+        continue-on-error: true
+        uses: ./nix-setup
+        with:
+          nextest: "yes"
+      - id: nix
+        uses: ./nix-setup
+        with:
+          nextest: "true"
+      # The four checks, and why each exists, are in the script's header. No
+      # shell here: the assertions are tlisp, run without the stdlib.
+      - uses: ./tatara-script
+        with:
+          script-file: nix-setup/smoke.tlisp
+        env:
+          REFUSAL_OUTCOME: ${{ steps.refused.outcome }}
+          NEXTEST_BIN: ${{ steps.nix.outputs.nextest-bin }}
+
   exec-arg-budget:
     name: No action inlines more tlisp than exec can carry
     runs-on: ubuntu-latest

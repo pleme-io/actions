@@ -61,6 +61,11 @@ runs:
   steps:
     # ── nix.conf, brought in line with the nix-flake-check sibling ────────
     #
+    # MOVED 2026-09-19: this step installs through pleme-io/actions/nix-setup,
+    # which owns the installer pin and the nix.conf below. The inline copy
+    # used the installer at @main; nix-setup pins a commit SHA. The history
+    # that follows is why nix-build needs that nix.conf at all.
+    #
     # This step used to be a bare `uses:` with no `extra-conf`, which made
     # nix-build unusable for the two cases its sibling had already solved.
     # Both failures name the wrong layer, so they are recorded here rather
@@ -91,13 +96,11 @@ runs:
     # passes nothing renders an empty line. This action had NO consumers at
     # the time of the change (searched org-wide 2026-08-07), so the sandbox
     # half could not regress anyone either.
-    - name: Install Nix (DeterminateSystems)
-      uses: DeterminateSystems/nix-installer-action@main
+    - name: Install Nix (pleme-io/actions/nix-setup)
+      uses: pleme-io/actions/nix-setup@main
       with:
-        extra-conf: |
-          sandbox = relaxed
-          ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
-          ${{ inputs.extra-conf }}
+        github-token: ${{ inputs.github-token }}
+        extra-conf: ${{ inputs.extra-conf }}
     - id: src
       shell: bash
       run: |

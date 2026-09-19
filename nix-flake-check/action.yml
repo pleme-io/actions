@@ -88,12 +88,15 @@ runs:
     # Migrating those jobs onto Linux ARC runners is what exposed it. Real
     # consequence of the migration, so it is fixed HERE, in the shared action,
     # rather than in each consumer that trips over it.
-    - name: Install Nix (DeterminateSystems)
-      uses: DeterminateSystems/nix-installer-action@main
+    #
+    # MOVED 2026-09-19: the install goes through pleme-io/actions/nix-setup,
+    # which writes exactly this nix.conf (sandbox = relaxed, plus
+    # access-tokens when a token is passed) and pins the installer to a
+    # commit SHA where the inline copy used @main.
+    - name: Install Nix (pleme-io/actions/nix-setup)
+      uses: pleme-io/actions/nix-setup@main
       with:
-        extra-conf: |
-          sandbox = relaxed
-          ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+        github-token: ${{ inputs.github-token }}
 
     - name: Load run.tlisp
       id: src

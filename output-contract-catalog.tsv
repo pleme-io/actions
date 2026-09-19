@@ -245,7 +245,7 @@ nix-cachix-push	tatara-script	run.tlisp	1	1
 nix-flake-check	tatara-script	run.tlisp	0	0
 nix-flake-update	tatara-script	run.tlisp	2	2
 nix-image	tatara-script	run.tlisp	4	8
-nix-setup	own-runner	-	0	0
+nix-setup	own-runner	-	0	1
 no-cve-suppression	tatara-script	run.tlisp	3	3
 notion-db-row-add	tatara-script	run.tlisp	1	1
 notion-page-create	tatara-script	run.tlisp	1	1

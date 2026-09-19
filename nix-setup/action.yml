@@ -12,7 +12,8 @@ branding: { icon: 'download', color: 'blue' }
 # third time: its native-backend tests run a real `nix build`, and without Nix
 # on the runner they fail with `could not run nix ... No such file or
 # directory` (engenho run 35418242848). A third copy is a primitive, not a
-# paste, so the shape lives here.
+# paste, so the shape lives here. nix-build and nix-flake-check install
+# through this action since 2026-09-19.
 #
 # WHAT IT OWNS, and why each line is load-bearing:
 #
@@ -43,11 +44,24 @@ branding: { icon: 'download', color: 'blue' }
 #                       caixa-render and manifest-list-join in this repo. Bump
 #                       it HERE; every consumer moves with it.
 #
+#   nextest             substrate's pinned cargo-nextest, the build its
+#                       rust-auto-release test gate runs, realised with
+#                       `nix build --out-link` into RUNNER_TEMP and put on PATH.
+#                       engenho wrote this as `nix profile install
+#                       github:pleme-io/substrate#cargo-nextest` after this
+#                       action, four times (test.yml, and deep-test.yml's
+#                       cross-os, property-stress and coverage). That installs
+#                       into the runner user's profile, state that outlives the
+#                       job on a runner that is not thrown away, and it differs
+#                       from the release gate, which reads an absolute store
+#                       path. The out-link is a GC root for as long as the job
+#                       runs, and nothing outside RUNNER_TEMP changes.
+#
 # TIER-HONEST. This is still a per-job install: theory/NIX-HARDENING.md §VI
 # wants Nix baked into the runner image, and runtime-install-lint flags a bare
 # nix-installer-action in a consumer's workflow for that reason. This action
 # does not satisfy that rule; it makes the eventual swap one edit instead of
-# one per repo.
+# one per repo. The same holds for nextest: a per-job fetch, from one place.
 inputs:
   github-token:
     description: >-
@@ -66,10 +80,37 @@ inputs:
       input here.
     required: false
     default: ""
+  nextest:
+    description: >-
+      "true" also realises github:pleme-io/substrate#cargo-nextest (the build
+      substrate's rust-auto-release test gate runs) into RUNNER_TEMP, puts its
+      bin directory on PATH for the rest of the job, and writes the binary's
+      path to the `nextest-bin` output. The runner's Nix profile is not
+      touched. Any value other than "true" or "false" fails the step, so a
+      typo cannot silently mean "no nextest".
+    required: false
+    default: "false"
+
+outputs:
+  nextest-bin:
+    description: >-
+      Absolute path of the cargo-nextest binary when `nextest` is "true", empty
+      otherwise. For a step that must not pick up a different nextest from its
+      own PATH, e.g. inside `nix develop` with a devShell that ships one.
+    value: ${{ steps.nextest.outputs.bin }}
 
 runs:
   using: composite
   steps:
+    - name: Refuse a nextest value that is neither "true" nor "false"
+      if: inputs.nextest != 'true' && inputs.nextest != 'false'
+      shell: bash
+      env:
+        NEXTEST: ${{ inputs.nextest }}
+      run: |
+        echo "::error title=nix-setup::nextest must be \"true\" or \"false\", got \"${NEXTEST}\""
+        exit 1
+
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       with:
@@ -78,3 +119,18 @@ runs:
           sandbox = relaxed
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
           ${{ inputs.extra-conf }}
+
+    # The out-link is both the GC root and the PATH entry. The last line runs
+    # the binary once, so the log records which nextest the job got and a
+    # realised path that does not execute fails here rather than at the first
+    # test step.
+    - name: Realise substrate's cargo-nextest (out-link, not the profile)
+      id: nextest
+      if: inputs.nextest == 'true'
+      shell: bash
+      run: |
+        link="${RUNNER_TEMP}/nix-setup-cargo-nextest"
+        nix build --out-link "$link" github:pleme-io/substrate#cargo-nextest
+        echo "${link}/bin" >> "$GITHUB_PATH"
+        echo "bin=${link}/bin/cargo-nextest" >> "$GITHUB_OUTPUT"
+        "${link}/bin/cargo-nextest" nextest --version

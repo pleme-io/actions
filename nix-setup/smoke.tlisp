@@ -1,0 +1,56 @@
+;; nix-setup/smoke.tlisp — what `nextest: "true"` promises, checked on a real
+;; runner. .github/workflows/ci.yml job smoke-nix-setup-nextest runs this after
+;; calling ./nix-setup twice: once with nextest "yes" (continue-on-error, its
+;; outcome passed in as REFUSAL_OUTCOME) and once with nextest "true" (its
+;; nextest-bin output passed in as NEXTEST_BIN).
+;;
+;; Checks:
+;;   refusal   a value other than "true"/"false" failed the step, rather than
+;;             meaning "no nextest"
+;;   path      `cargo-nextest` resolves on PATH, runs, and reports the same
+;;             version as NEXTEST_BIN (the GITHUB_PATH line; a version match is
+;;             a proxy for "the same binary", not proof of it)
+;;   output    NEXTEST_BIN is an absolute path that runs
+;;   profile   the runner user's Nix profile holds no cargo-nextest, the
+;;             state `nix profile install` used to leave behind
+;;
+;; TIER: a smoke run of the composite on ubuntu-latest, not a type. It proves
+;; the steps work on the runner image of the day. The profile check reads
+;; ~/.nix-profile, where `nix profile install` writes for a non-root user.
+;;
+;; Exit codes: 0 every check holds · 1 one does not.
+
+;; The `nextest --version` output of `prog`, or "" when it does not run. This
+;; file runs WITHOUT the stdlib (script-file mode), so the exec result alist is
+;; read with alist-get rather than status-of / stdout-of.
+(define (sm:version-of prog)
+  (try
+    (let ((r (exec-capture prog "nextest" "--version")))
+      (if (= (alist-get r "status" -1) 0) (string-trim (alist-get r "stdout" "")) ""))
+    (catch (e) "")))
+
+(define (sm:runs? prog) (string-starts-with? (sm:version-of prog) "cargo-nextest"))
+
+(define sm:bin (env-get "NEXTEST_BIN" ""))
+(define sm:profile-copy (string-append (env-get "HOME" "") "/.nix-profile/bin/cargo-nextest"))
+(define sm:refusal (env-get "REFUSAL_OUTCOME" ""))
+
+(define sm:failures
+  (filter
+    (fn (x) (not (equal? x "")))
+    (list
+      (if (equal? sm:refusal "failure") ""
+        (string-append "refusal: nextest \"yes\" gave outcome '" sm:refusal "', not 'failure'"))
+      (if (and (sm:runs? "cargo-nextest") (equal? (sm:version-of "cargo-nextest") (sm:version-of sm:bin))) ""
+        "path: cargo-nextest on PATH does not run, or is not the version nix-setup realised")
+      (if (and (string-starts-with? sm:bin "/") (sm:runs? sm:bin)) ""
+        (string-append "output: nextest-bin '" sm:bin "' is not an absolute path that runs"))
+      (if (path-exists? sm:profile-copy)
+        (string-append "profile: " sm:profile-copy " exists; the runner profile was written")
+        ""))))
+
+(print-line (string-append "nextest on PATH: " (sm:version-of "cargo-nextest")))
+(print-line (string-append "nextest-bin: " sm:bin))
+(for-each (fn (f) (print-line (string-append "FAIL " f))) sm:failures)
+(print-line (string-append "checks: 4 · failures: " (string-format "{}" (length sm:failures))))
+(exit (if (null? sm:failures) 0 1))
