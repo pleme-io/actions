@@ -85,6 +85,31 @@
     (assert (equal? (car r) "error") "refused even when a key shadows the name")
     (assert (string-contains? (nth 1 r) "unsupported expression function") "says why")))
 
+(deftest "an operator outside the grammar is refused, not silently dropped"
+  ;; The tokenizer returned only what MATCHED, so a character no alternative
+  ;; covered vanished: `a > 3` tokenized as (`a` `3`) and parsed as the single
+  ;; value `a`. The linter then answered for an expression it had never read —
+  ;; the one failure a "refuse rather than guess" tool must not have, because
+  ;; a confidently-wrong oracle is worse than no oracle.
+  (let ((r (jsl:eval "needs.x.result > 3" (list (list "needs.x.result" "success")))))
+    (assert (equal? (car r) "error") "refused")
+    (assert (string-contains? (nth 1 r) "unsupported operator") "says why")
+    (assert (string-contains? (nth 1 r) ">") "names the operator it refused"))
+  ;; Two-character operators too, and in the middle of an otherwise valid
+  ;; expression, where the dropped token used to leave a well-formed remainder.
+  (let ((r (jsl:eval "a >= 3 && b" (list (list "a" "true") (list "b" "true")))))
+    (assert (equal? (car r) "error") "refused")
+    (assert (string-contains? (nth 1 r) "unsupported operator") "says why")))
+
+(deftest "the anti-guess arm does not disturb the supported grammar"
+  ;; Every shape the grammar DOES implement must tokenize exactly as before —
+  ;; the catch-all is last, so it can only ever claim what nothing else did.
+  (assert (equal? (jsl:eval "!cancelled()" (list (list "cancelled()" "false"))) "true") "! and a status fn")
+  (assert (equal? (jsl:eval "a != 'x'" (list (list "a" "y"))) "true") "!= before !")
+  (assert (equal? (jsl:eval "(a || b) && !c"
+                    (list (list "a" "false") (list "b" "true") (list "c" "false"))) "true")
+    "parens, || and && intact"))
+
 (deftest "the status functions resolve from the case"
   (assert (equal? (jsl:eval "always()" (list (list "always()" "true"))) "true") "always() true")
   (assert (equal? (jsl:eval "always()" (list (list "always()" "false"))) "false") "always() false"))

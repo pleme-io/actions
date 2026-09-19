@@ -33,7 +33,15 @@
 ;; leftmost-longest, so `!=` must precede `!` and `always()` must precede the
 ;; bare-identifier arm or it tokenizes as `always` followed by `(` `)`.
 (define jsl:token-re
-  "'[^']*'|!=|==|&&|\\|\\||[A-Za-z_][A-Za-z0-9_.-]*\\(\\)|[A-Za-z_][A-Za-z0-9_.-]*|[()!]")
+  "'[^']*'|!=|==|&&|\\|\\||[A-Za-z_][A-Za-z0-9_.-]*\\(\\)|[A-Za-z_][A-Za-z0-9_.-]*|[()!]|\\S")
+
+;; The trailing `|\\S` is the anti-guess arm, and it is load-bearing.
+;; `re-find-all` returns only what MATCHES, so without it any character no
+;; other alternative covers was silently DROPPED: `a > 3` tokenized as
+;; (`a` `3`), parsed as the single value `a`, and the linter returned a
+;; confident verdict for an expression it had never read. A tool whose whole
+;; promise is "refuse rather than guess" cannot afford a lexer that guesses.
+;; With the arm, `>` becomes a token, and jsl:primary refuses it by name.
 
 ;; `if:` may or may not be wrapped in ${{ }}; GitHub accepts both.
 (define (jsl:unwrap s)
@@ -114,6 +122,15 @@
     ((and (not (null? (cdr ts))) (equal? (car (cdr ts)) "("))
       (jsl:err (string-append "unsupported expression function: " (car ts)
                  "(…) — this linter evaluates a deliberate subset and will not guess at the rest")))
+    ;; Anything that is neither a quoted literal nor an identifier is an
+    ;; operator or a stray character this grammar does not implement — `>`,
+    ;; `<`, `>=`, `+`, `,`. It reaches here only because the tokenizer's
+    ;; anti-guess arm turned it into a token instead of dropping it. Name it,
+    ;; rather than letting it fall through to a context lookup that would
+    ;; report "context path not declared: >".
+    ((not (re-match? "^('[^']*'|[A-Za-z_])" (car ts)))
+      (jsl:err (string-append "unsupported operator `" (car ts)
+                 "` — this linter evaluates a deliberate subset and will not guess at the rest")))
     (else
       (let ((r (jsl:lookup ctx (car ts))))
         (cond
@@ -168,6 +185,15 @@
       (let ((r (jsl:or-expr (jsl:tokens expr) ctx)))
         (cond
           ((jsl:err? r) (list "error" (nth 1 r)))
+          ;; Trailing tokens mean the parse STOPPED somewhere. When the token
+          ;; it stopped at is an operator this grammar does not implement, say
+          ;; so by name — `a >= 3 && b` parses `a` fine and halts at `>`, and
+          ;; "trailing tokens" would describe the symptom while hiding the
+          ;; cause. Either way it is a refusal, never a verdict.
+          ((and (not (null? (nth 1 r)))
+                (not (re-match? "^('[^']*'|[A-Za-z_])" (car (nth 1 r)))))
+            (list "error" (string-append "unsupported operator `" (car (nth 1 r))
+                            "` — this linter evaluates a deliberate subset and will not guess at the rest")))
           ((not (null? (nth 1 r)))
             (list "error" (string-append "trailing tokens after a complete expression: "
                             (string-format "{}" (nth 1 r)))))
