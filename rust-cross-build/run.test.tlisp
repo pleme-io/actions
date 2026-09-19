@@ -209,3 +209,22 @@
           (equal? (xbuild-test:value-after "--target" argv) (car (cdr (cdr row))))
           (string-append "--target names the triple: " (xbuild-test:label row)))))
     xbuild-test:rows))
+
+;; ── the sha256 sidecar ─────────────────────────────────────────────────────
+
+(deftest "the sidecar reproduces shasum -a 256 byte for byte"
+  ;; The line every verifier of these artifacts parses: lowercase hex, TWO
+  ;; spaces, then the BASENAME and a newline. Pinned against a known vector
+  ;; (sha256 of "hello\n"), so a change to either half is caught here rather
+  ;; than by a consumer whose checksum check silently stops matching.
+  (let ((f "/tmp/xbuild-sidecar-probe.txt"))
+    (write-file f "hello\n")
+    (assert
+      (equal? (xbuild:sha256-sidecar f "engenho-x86_64-unknown-linux-gnu")
+        "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  engenho-x86_64-unknown-linux-gnu\n")
+      "hex, two spaces, basename, newline")
+    ;; The NAME is recorded, never the path it was read from — the property the
+    ;; deleted `cd dist` existed to get.
+    (assert
+      (not (string-contains? (xbuild:sha256-sidecar f "artifact.tar.gz") "/tmp/"))
+      "records the name, not the path")))

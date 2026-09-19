@@ -84,6 +84,16 @@
       " --no-default-features"
       "")))
 
+;; The sidecar's CONTENT, as a pure function of the file and the name to
+;; record, so the format can be pinned by a test without running a build.
+;;
+;; `shasum -a 256 <file>` writes "<lowercase hex><two spaces><name>\n", and
+;; every verifier of these artifacts parses that. The name recorded is the
+;; BASENAME — the shell version achieved that by `cd dist` first, which is the
+;; only reason it needed a subshell at all.
+(define (xbuild:sha256-sidecar path name)
+  (string-append (sha256-file path) "  " name "\n"))
+
 (define (xbuild:main)
   (let*
     ((bin (env-required "BIN"))
@@ -115,22 +125,24 @@
       (when (not (= cp-status 0))
         (log-error (string-append "could not copy " src-path " -> " dst-path))
         (exit cp-status)))
-    ;; sha256 sidecar — note we cd into dist so the file in the sum has
-    ;; the basename only (matches the bash `(cd dist && shasum ...)` shape).
-    (let
-      ((sha-status
-         (exec-check
-           "sh"
-           "-c"
-           (string-append
-             "cd dist && shasum -a 256 \""
-             dst-name
-             "\" > \""
-             dst-name
-             ".sha256\""))))
-      (when (not (= sha-status 0))
-        (log-error "shasum failed")
-        (exit sha-status)))
+    ;; sha256 sidecar, computed IN PROCESS.
+    ;;
+    ;; This was `sh -c "cd dist && shasum -a 256 \"$dst\" > …"` — a shell
+    ;; command built by pasting `dst-name` into a string. Three things were
+    ;; wrong with it and only one was about safety: a name containing a quote
+    ;; or `$` changed the command; the `>` redirect meant the exit status
+    ;; reported the REDIRECT, so a shasum that failed after truncating the file
+    ;; still had to be caught by hand; and it needed `shasum` on PATH, which is
+    ;; not the same binary everywhere.
+    ;;
+    ;; `sha256-file` is a tatara-script builtin, so there is no shell, no
+    ;; quoting, no `cd`, and no external tool. The sidecar keeps the exact
+    ;; `shasum -a 256` format — lowercase hex, TWO spaces, the BASENAME (not
+    ;; the path, which is why the old code cd'd) — so every existing verifier
+    ;; still reads it.
+    (write-file
+      (string-append dst-path ".sha256")
+      (xbuild:sha256-sidecar dst-path dst-name))
     (log-info (string-append "staged " dst-path " + " dst-path ".sha256"))))
 
 (if (equal? (env-get "TLISP_TEST" "") "")
