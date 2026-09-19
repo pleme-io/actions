@@ -92,7 +92,9 @@
     ((equal? (car ts) "true") (list "true" (cdr ts)))
     ((equal? (car ts) "false") (list "false" (cdr ts)))
     ;; A status function is resolved from the case like any other context key,
-    ;; so a table can model a rerun-after-failure without special syntax.
+    ;; so a table can model a rerun-after-failure without special syntax. The
+    ;; one exception, success() while a needed job did not run, is supplied
+    ;; by jsl:job-ctx below rather than by the case.
     ((jsl:member? jsl:status-fns (car ts))
       (let ((r (jsl:lookup ctx (car ts))))
         (cond
@@ -216,47 +218,130 @@
 (define (jsl:j-needs j) (nth 2 j))
 
 ;; ── selection ──────────────────────────────────────────────────────────────
-;; A job runs iff its `if:` is true AND every job it needs also ran — UNLESS its
-;; condition calls always(), which is precisely what lifts a job out of the
-;; skipped-because-my-dependency-skipped rule. cargo-auto-release's own
-;; "Registry catch-up" job documents that always() is load-bearing there for
-;; exactly this reason, so modelling it is not optional fidelity.
+;; GitHub's rule, which this models. A job `if:` that names NO status function
+;; is evaluated as `success() && (<if>)`, and a job-level success() is false
+;; while any job it needs was skipped, so a plain condition is skipped with its
+;; dependency. A condition that names ANY of the four (always(), success(),
+;; failure(), cancelled()) gets no implicit success() and is evaluated exactly
+;; as written: "A default status check of success() is applied unless you
+;; include one of these functions" (GitHub docs, status check functions).
+;;
+;; CORRECTED 2026-09-19. This lifted needs-propagation only for a condition
+;; whose TEXT contained `always()`. substrate's rust-auto-release `bump` reads
+;; `!cancelled() && (needs.test.result == 'success' || (waived &&
+;; needs.test.result == 'skipped'))`, which GitHub runs past a skipped `test`.
+;; The linter skipped it, so the waived row could not be asserted until a no-op
+;; `always() &&` was prepended for the linter's sake. Reading GitHub's rule
+;; instead of the text has two further consequences:
+;;
+;;   - A status function is recognised as a TOKEN, so `x == 'always()'`, the
+;;     name inside a string literal, lifts nothing. The substring test did.
+;;   - An EXPLICIT success() means what the implicit one means: false while a
+;;     needed job did not run, whatever the case declares. Once naming
+;;     success() lifts the needs rule, reading it from the case alone would
+;;     select `if: success()` past a skipped dependency, which GitHub never
+;;     does. When every need ran, the case still supplies it, because whether
+;;     they SUCCEEDED is a fact this linter does not model.
+;;
+;; Needs are DIRECT needs, as written. Whether GitHub's job-level status
+;; checks also consult indirect ancestors is not modelled.
+
+(define (jsl:status-fn? tok) (jsl:member? jsl:status-fns tok))
+
+(define (jsl:any-status-fn? ts)
+  (cond
+    ((null? ts) #f)
+    ((jsl:status-fn? (car ts)) #t)
+    (else (jsl:any-status-fn? (cdr ts)))))
+
+(define (jsl:names-status-fn? cond-str) (jsl:any-status-fn? (jsl:tokens cond-str)))
+
+;; Every element of `needs` is in `sel`. Also answers "are all needs decided".
 (define (jsl:needs-met? needs sel)
   (cond
     ((null? needs) #t)
     ((jsl:member? sel (car needs)) (jsl:needs-met? (cdr needs) sel))
     (else #f)))
 
-;; Fixed-point over the job list: re-scan until no new job selects, so order in
-;; the file never changes the verdict.
-(define (jsl:select-pass jobs ctx sel errs)
+;; The context one job's condition is read in: success() is false while any of
+;; its needs did not run, and comes from the case otherwise. The prepended
+;; pair wins because jsl:lookup returns the first match.
+(define (jsl:job-ctx j ctx sel)
   (cond
-    ((null? jobs) (list sel errs))
+    ((jsl:needs-met? (jsl:j-needs j) sel) ctx)
+    (else (concat (list (list "success()" "false")) ctx))))
+
+;; -> "run" | "skip" | ("error" msg), given the jobs selected so far.
+(define (jsl:decide j ctx sel)
+  (let*
+    ((cond-str (jsl:j-if j))
+      (v (jsl:eval cond-str (jsl:job-ctx j ctx sel))))
+    (cond
+      ((and (list? v) (equal? (car v) "error")) v)
+      ((not (jsl:truthy? v)) "skip")
+      ((jsl:names-status-fn? cond-str) "run")
+      ((jsl:needs-met? (jsl:j-needs j) sel) "run")
+      (else "skip"))))
+
+;; A job is decided ONCE, when every job it needs has been decided, which is
+;; the order GitHub evaluates in: a job waits for its needs. This replaced a
+;; re-scan to a fixed point, which was sound only while selection could not
+;; shrink as more jobs selected. A condition reading success() can: a fixed
+;; point would decide `if: !success()` before its need was selected, select
+;; it, and never revisit it, so the verdict would depend on file order.
+;;
+;; State: (decided selected errors). One pass decides every job whose needs
+;; are all decided; passes repeat until one decides nothing.
+(define (jsl:decide-pass jobs ctx state)
+  (cond
+    ((null? jobs) state)
     (else
       (let*
         ((j (car jobs))
           (id (jsl:j-id j))
-          (cond-str (jsl:j-if j))
-          (v (jsl:eval cond-str ctx)))
+          (decided (nth 0 state))
+          (sel (nth 1 state))
+          (errs (nth 2 state)))
         (cond
-          ((and (list? v) (equal? (car v) "error"))
-            (jsl:select-pass (cdr jobs) ctx sel
-              (concat errs (list (string-append id ": " (nth 1 v))))))
-          ((jsl:member? sel id) (jsl:select-pass (cdr jobs) ctx sel errs))
-          ((and (jsl:truthy? v)
-             (or (string-contains? cond-str "always()")
-               (jsl:needs-met? (jsl:j-needs j) sel)))
-            (jsl:select-pass (cdr jobs) ctx (concat sel (list id)) errs))
-          (else (jsl:select-pass (cdr jobs) ctx sel errs)))))))
+          ((jsl:member? decided id) (jsl:decide-pass (cdr jobs) ctx state))
+          ((not (jsl:needs-met? (jsl:j-needs j) decided)) (jsl:decide-pass (cdr jobs) ctx state))
+          (else
+            (let*
+              ((d (jsl:decide j ctx sel))
+                (now (concat decided (list id))))
+              (jsl:decide-pass (cdr jobs) ctx
+                (cond
+                  ((list? d) (list now sel (concat errs (list (string-append id ": " (nth 1 d))))))
+                  ((equal? d "run") (list now (concat sel (list id)) errs))
+                  (else (list now sel errs)))))))))))
 
-(define (jsl:select-fix jobs ctx sel errs rounds)
-  (let ((r (jsl:select-pass jobs ctx sel (list))))
+(define (jsl:decide-all jobs ctx state)
+  (let ((next (jsl:decide-pass jobs ctx state)))
     (cond
-      ((= rounds 0) (list (nth 0 r) (concat errs (nth 1 r))))
-      ((= (length (nth 0 r)) (length sel)) (list (nth 0 r) (concat errs (nth 1 r))))
-      (else (jsl:select-fix jobs ctx (nth 0 r) (nth 1 r) (- rounds 1))))))
+      ((= (length (nth 0 next)) (length (nth 0 state))) next)
+      (else (jsl:decide-all jobs ctx next)))))
 
-(define (jsl:selected jobs ctx) (jsl:select-fix jobs ctx (list) (list) 12))
+;; A job never decided needs a job that does not exist, or waits on a needs
+;; cycle. GitHub rejects both workflows, so each is an error here, never a
+;; quiet skip that would surface only as NEVER.
+(define (jsl:undecided-errs jobs decided ids)
+  (map
+    (fn (j)
+      (let ((unknown (jsl:minus (jsl:j-needs j) ids)))
+        (string-append (jsl:j-id j) ": "
+          (cond
+            ((not (null? unknown))
+              (string-append "needs " (string-format "{}" unknown) ", not a job in this workflow"))
+            (else "waits on a job that is never decided: a needs cycle, or an unknown need upstream")))))
+    (filter (fn (j) (not (jsl:member? decided (jsl:j-id j)))) jobs)))
+
+;; -> (selected-ids errors)
+(define (jsl:selected jobs ctx)
+  (let*
+    ((final (jsl:decide-all jobs ctx (list (list) (list) (list))))
+      (decided (nth 0 final)))
+    (list (nth 1 final)
+      (concat (nth 2 final) (jsl:undecided-errs jobs decided (map jsl:j-id jobs))))))
 
 ;; ── the case table ─────────────────────────────────────────────────────────
 ;; TSV: <name> \t <k=v;k=v> \t <expect-run csv> \t <expect-skip csv>

@@ -59,10 +59,21 @@ which is a distinct state from `false`.
 
 Modelled: `!` `&&` `||` `==` `!=`, parentheses, string literals, `true`/`false`,
 context paths, the four status functions, an absent `if:`, `${{ }}` wrapping,
-and **needs-propagation** — a job whose dependency skipped is itself skipped
-unless its condition calls `always()`. That last rule is not optional detail:
-`cargo-auto-release`'s own catch-up job documents `always()` as load-bearing for
-exactly that reason.
+and **needs-propagation**, GitHub's rule: a condition that names no status
+function gets an implicit `success()`, so it is skipped with any job it needs; a
+condition that names **any** of `always()`, `success()`, `failure()`,
+`cancelled()` gets none and is evaluated as written. A status function counts
+only as a token of the expression, never as text inside a string literal. An
+explicit `success()` is `false` while a needed job did not run, whatever the case
+declares; once every need ran, the case supplies it, because whether they
+succeeded is not modelled. Each job is decided once, after all of its needs, so
+the verdict never depends on the order jobs appear in the file. A need that is
+not a job, or a needs cycle, is an error.
+
+Until 2026-09-19 only `always()` lifted needs-propagation. substrate's
+rust-auto-release `bump` (`!cancelled() && (…test passed or was waived…)`) runs
+past a skipped `test` on GitHub, so it carried a no-op `always() &&` for this
+linter alone.
 
 **Refused, deliberately:** `contains()`, `startsWith()`, `fromJSON()`, `hashFiles()`
 and every other function. They are an error naming the construct, never a
@@ -71,16 +82,19 @@ would otherwise evaluate the call as that value and be confidently wrong.
 
 **Not modelled:** matrix expansion, `continue-on-error`, reusable-workflow
 `with:` propagation into a called workflow's own conditions, concurrency
-cancellation. A job selected here can still be skipped at runtime by something
-in that list.
+cancellation, and any ancestor beyond a job's direct `needs:` (whether GitHub's
+job-level status checks consult indirect ancestors is not modelled). A job
+selected here can still be skipped at runtime by something in that list.
 
 This evaluates the workflow **as written**. It is not a runner and does not
 prove a job succeeds — only that it is reachable and selected when it should be.
 
 ## Verification
 
-14 unit tests (`run.test.tlisp`), and all three finding classes red-run against
-the real `cargo-auto-release.yml`:
+21 unit tests (`run.test.tlisp`). One of them checks the fixture
+`cases/waived-gate.yml` against `cases/waived-gate.cases.tsv`; under the
+always()-only model its `gate-waived` row reports `bump` NOT-RUN. All three
+finding classes were red-run against the real `cargo-auto-release.yml`:
 
 - every case private → `ship` and `drip` both reported `NEVER` — the
   graphql-synthesizer situation, caught mechanically

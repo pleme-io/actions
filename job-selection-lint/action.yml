@@ -2,12 +2,12 @@ name: 'pleme-io · job-selection-lint'
 description: >-
   Assert WHICH JOBS RUN for a table of inputs. Evaluates each job''s `if:`
   against synthetic contexts and compares the selected set to what the table
-  declares, modelling needs-propagation and always(). Catches the class no other
-  layer can: a job that is skipped when it should have run, which is
-  indistinguishable from success on a green tick. Its headline check is
-  `never-selects` — a job that fires in NO declared case, i.e. a step that can
-  never run at all. Refuses to evaluate expression constructs outside its
-  supported subset rather than guessing at them.
+  declares, modelling needs-propagation and the status functions that lift it.
+  Catches the class no other layer can: a job that is skipped when it should
+  have run, which is indistinguishable from success on a green tick. Its
+  headline check is `never-selects` — a job that fires in NO declared case,
+  i.e. a step that can never run at all. Refuses to evaluate expression
+  constructs outside its supported subset rather than guessing at them.
 branding:
   icon: 'git-merge'
   color: 'red'

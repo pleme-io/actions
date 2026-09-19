@@ -109,3 +109,68 @@
   (let ((c (jsl:ctx-of "a=;b=true")))
     (assert (= (length c) 2) "both pairs kept")
     (assert (equal? (jsl:eval "!a" c) "true") "an empty value is falsy, not an error")))
+
+;; ── status functions and a skipped dependency ──────────────────────────────
+;; GitHub adds an implicit success() to a condition that names no status
+;; function, and none to one that names any of the four. These pin that rule,
+;; and the two things that follow from it, against jsl:selected directly.
+
+(define (sel-of jobs ctx) (nth 0 (jsl:selected jobs ctx)))
+
+;; `dep` never selects, so `j` sits behind a skipped dependency.
+(define (behind-skipped cond-str) (list (list "dep" "false" (list)) (list "j" cond-str (list "dep"))))
+
+(define ctx-status
+  (list
+    (list "always()" "true")
+    (list "success()" "true")
+    (list "failure()" "true")
+    (list "cancelled()" "false")
+    (list "x" "y")))
+
+(deftest "a job past a skipped dependency runs when its condition names ANY status function"
+  (assert (jsl:member? (sel-of (behind-skipped "always()") ctx-status) "j") "always()")
+  (assert (jsl:member? (sel-of (behind-skipped "!cancelled() && x == 'y'") ctx-status) "j")
+    "!cancelled(): the substrate bump gate's shape, which the always()-only model skipped")
+  (assert (jsl:member? (sel-of (behind-skipped "failure()") ctx-status) "j") "failure()"))
+
+(deftest "a condition naming no status function is skipped with its dependency"
+  (assert (not (jsl:member? (sel-of (behind-skipped "x == 'y'") ctx-status) "j"))
+    "true on its own, but the implicit success() fails on the skipped need"))
+
+(deftest "an explicit success() is false while a need is skipped, whatever the case declares"
+  (assert (not (jsl:member? (sel-of (behind-skipped "success()") ctx-status) "j"))
+    "the case says success()=true; the skipped need overrides it")
+  (assert (jsl:member? (sel-of (list (list "dep" "" (list)) (list "j" "success()" (list "dep"))) ctx-status) "j")
+    "every need ran: success() comes from the case"))
+
+(deftest "a status function named inside a string literal lifts nothing"
+  (let ((c (list (list "x" "always()"))))
+    (assert (equal? (jsl:eval "x == 'always()'" c) "true") "the condition itself is true")
+    (assert (not (jsl:member? (sel-of (behind-skipped "x == 'always()'") c) "j"))
+      "but it names no status function, so the skipped need still skips it")))
+
+(deftest "the verdict does not depend on the order jobs appear in"
+  ;; `!success()` shrinks as its need selects. Deciding a job only once its
+  ;; needs are decided is what keeps it from being read before `dep` ran.
+  (let ((dep (list "dep" "" (list)))
+        (j (list "j" "!success()" (list "dep"))))
+    (assert (equal? (sel-of (list j dep) ctx-status) (list "dep")) "dependent listed first")
+    (assert (equal? (sel-of (list dep j) ctx-status) (list "dep")) "dependency listed first")))
+
+(deftest "a need that is not a job, and a needs cycle, are errors rather than quiet skips"
+  (let ((ghost (nth 1 (jsl:selected (list (list "a" "" (list "ghost"))) (list))))
+        (cycle (nth 1 (jsl:selected (list (list "a" "" (list "b")) (list "b" "" (list "a"))) (list)))))
+    (assert (= (length ghost) 1) "one error for the unknown need")
+    (assert (string-contains? (car ghost) "not a job") "names it")
+    (assert (= (length cycle) 2) "both jobs on the cycle")
+    (assert (string-contains? (car cycle) "never decided") "says why")))
+
+(deftest "the waived-gate fixture selects every row as its table declares"
+  ;; job-selection-lint/cases/waived-gate.{yml,cases.tsv}: rows gate-waived,
+  ;; gate-failed and bot-actor-skips-bump fail under the always()-only model.
+  (assert
+    (= (jsl:check-pair "job-selection-lint/cases/waived-gate.yml"
+         "job-selection-lint/cases/waived-gate.cases.tsv")
+      0)
+    "0 violations"))

@@ -1,0 +1,20 @@
+# Case table for waived-gate.yml (a fixture; see its header).
+#
+# TAB-separated: <name> <context k=v;k=v> <expect-run csv> <expect-skip csv>
+#
+# Rows 2, 3 and 4 are the ones the always()-only model got wrong. Row 2 is
+# the waived gate substrate's rust-auto-release could not assert without a
+# no-op always(). Row 3 runs a failure() job past a skipped need. Row 4
+# holds an explicit success() to the implicit one: announce must skip while
+# bump is skipped, although the case says success()=true.
+
+gate-passed	inputs.require-tests=true;needs.test.result=success;github.actor=human;needs.bump.outputs.bumped=true;success()=true;failure()=false;cancelled()=false	test,bump,ship,announce	report
+
+gate-waived	inputs.require-tests=false;needs.test.result=skipped;github.actor=human;needs.bump.outputs.bumped=true;success()=true;failure()=false;cancelled()=false	bump,ship,announce	test,report
+
+gate-failed	inputs.require-tests=true;needs.test.result=failure;github.actor=human;needs.bump.outputs.bumped=;success()=false;failure()=true;cancelled()=false	test,report	bump,ship,announce
+
+bot-actor-skips-bump	inputs.require-tests=true;needs.test.result=success;github.actor=github-actions[bot];needs.bump.outputs.bumped=;success()=true;failure()=false;cancelled()=false	test	bump,ship,announce,report
+
+# An operator cancel that lands after test passed must not tag.
+cancelled-after-gate	inputs.require-tests=true;needs.test.result=success;github.actor=human;needs.bump.outputs.bumped=;success()=false;failure()=false;cancelled()=true	test	bump,ship,announce,report

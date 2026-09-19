@@ -1,0 +1,65 @@
+# Fixture for job-selection-lint/run.test.tlisp, paired with
+# waived-gate.cases.tsv. Nothing runs it. It is the shape of substrate's
+# rust-auto-release test -> bump gate, cut down to the jobs whose selection
+# depends on WHICH status function a condition names. `on:` and the jobs'
+# `runs-on`/`steps` exist only so the file is a valid workflow.
+name: waived-gate
+
+on:
+  workflow_call:
+    inputs:
+      require-tests:
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    if: inputs.require-tests
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+
+  # `!cancelled()` names a status function, so GitHub adds no implicit
+  # success() and this runs past a SKIPPED `test`. The explicit clause then
+  # admits a passed gate or a waived one, never a failed one.
+  bump:
+    needs: test
+    if: >-
+      !cancelled()
+      && github.actor != 'github-actions[bot]'
+      && (
+        needs.test.result == 'success'
+        || (inputs.require-tests == false && needs.test.result == 'skipped')
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.bump.outputs.bumped }}
+    steps:
+      - id: bump
+        run: echo "bumped=true" >> "$GITHUB_OUTPUT"
+
+  # No status function: the implicit success() skips this whenever bump did.
+  ship:
+    needs: bump
+    if: needs.bump.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+
+  # An explicit success() is the implicit one written out, so it is false
+  # while bump is skipped, whatever the case declares for success().
+  announce:
+    needs: bump
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+
+  # failure() lifts the needs rule too: this reports a failed gate although
+  # bump, one of its needs, was skipped.
+  report:
+    needs: [test, bump]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
