@@ -22,9 +22,10 @@ steps:
 
 | Name | Required | Default | Description |
 |---|---|---|---|
-| `binary-name` | yes | — | Cargo binary name (used for target/<triple>/release/<name> and the staged artifact basename) |
+| `binary-name` | yes | — | Cargo binary name. Always passed as --bin <name>, so only that binary is built; also names target/<triple>/release/<name> and the staged artifact basename |
 | `features` | no | `` | Space-separated cargo features; empty = no --features flag |
 | `no-default-features` | no | `false` | When 'true', pass --no-default-features |
+| `package` | no | `` | Cargo package that owns the binary; empty = no -p flag. In a workspace, pass it to keep other members' dependency features out of this binary (--bin alone narrows targets, not resolver-2 feature unification) |
 | `suffix` | yes | — | Artifact suffix appended to <binary-name> (e.g. linux-x86_64) |
 | `target` | yes | — | Rust target triple (e.g. x86_64-unknown-linux-gnu) |
 

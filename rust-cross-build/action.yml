@@ -6,8 +6,12 @@ branding:
 
 inputs:
   binary-name:
-    description: "Cargo binary name (used for target/<triple>/release/<name> and the staged artifact basename)"
+    description: "Cargo binary name. Always passed as --bin <name>, so only that binary is built; also names target/<triple>/release/<name> and the staged artifact basename"
     required: true
+  package:
+    description: "Cargo package that owns the binary; empty = no -p flag. In a workspace, pass it to keep other members' dependency features out of this binary (--bin alone narrows targets, not resolver-2 feature unification)"
+    required: false
+    default: ""
   target:
     description: "Rust target triple (e.g. x86_64-unknown-linux-gnu)"
     required: true
@@ -45,5 +49,6 @@ runs:
         BIN:         ${{ inputs.binary-name }}
         TARGET:      ${{ inputs.target }}
         SUFFIX:      ${{ inputs.suffix }}
+        PACKAGE:     ${{ inputs.package }}
         FEATURES:    ${{ inputs.features }}
         NO_DEFAULTS: ${{ inputs.no-default-features }}

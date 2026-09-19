@@ -1,7 +1,7 @@
 ;; rust-cross-build/run.tlisp — cargo build + stage artifact.
 ;;
-;; cargo build --release --target $TARGET [--features $FEATURES]
-;;                                        [--no-default-features]
+;; cargo build --release --target $TARGET [-p $PACKAGE] --bin $BIN
+;;             [--features $FEATURES] [--no-default-features]
 ;;
 ;; Then copies target/<TARGET>/release/<BIN> -> dist/<BIN>-<SUFFIX>
 ;; and emits a sha256 sidecar at dist/<BIN>-<SUFFIX>.sha256.
@@ -10,40 +10,68 @@
 ;;   BIN          — cargo binary name
 ;;   TARGET       — rust target triple
 ;;   SUFFIX       — artifact suffix (e.g. "linux-x86_64")
+;;   PACKAGE      — optional cargo package; empty = no -p flag
 ;;   FEATURES     — optional space-separated cargo features
 ;;   NO_DEFAULTS  — "true" to pass --no-default-features
 ;;
 ;; Pre-condition: rust toolchain + target already installed (caller
 ;; does dtolnay/rust-toolchain@stable and any cross-linker setup).
+;;
+;; ── ★ WHY --bin IS UNCONDITIONAL (2026-09-19) ───────────────────────────
+;; This used to run a bare `cargo build --release --target T`. In a workspace
+;; that builds EVERY member's EVERY binary, while the stage step below copies
+;; exactly one: target/<T>/release/<BIN>. So the build compiled and linked
+;; things nothing shipped, and a failure in any of them failed the leg.
+;; engenho's release is the case that surfaced it (engenho
+;; docs/IMPROVEMENT-PLAN.md T0.8): its engenho-mcp aarch64 legs die on
+;; openssl-sys.
+;;
+;; --bin is safe for every caller whose build currently succeeds: the stage
+;; step already REQUIRES target/<T>/release/<BIN> to exist, and only a [[bin]]
+;; target named BIN produces that file. The flag asks the build for exactly
+;; what the stage consumes — no more.
+;;
+;; ── --bin ALONE DOES NOT NARROW FEATURES; -p DOES ──────────────────────
+;; --bin narrows the TARGETS built. It does not narrow the PACKAGES selected,
+;; and resolver-2 unifies features across every selected package. Measured
+;; 2026-09-19, cargo 1.98.1, a three-member virtual workspace where only
+;; member b turns on dep/boom (a compile_error!): `cargo build --bin a` still
+;; compiled dep WITH boom and failed; `cargo build -p a --bin a` succeeded.
+;; So a workspace caller that needs a dependency feature kept OUT of its
+;; binary must pass `package`. engenho is exactly that caller: with the whole
+;; workspace selected, reqwest's native-tls (and so openssl-sys) reaches
+;; engenho-mcp through engenho-kube-client; with `-p engenho-mcp`,
+;; `cargo tree -i openssl-sys` finds no openssl-sys at all.
+;;
+;; -p is still NOT defaulted. Defaulting it to BIN would change every caller
+;; whose binary name is not its package name, so it is opt-in: added only
+;; when PACKAGE is non-empty.
 
-(define bin (env-required "BIN"))
+;; The whole argv, as data. Pure: every input is a parameter, nothing is read
+;; from the environment, so run.test.tlisp drives it row by row.
+(define (xbuild:cargo-argv bin target package features no-defaults)
+  (let*
+    ((base (list "cargo" "build" "--release" "--target" target))
+      (with-package (if (equal? package "") base (append base (list "-p" package))))
+      (with-bin (append with-package (list "--bin" bin)))
+      (with-features
+        (if (equal? features "")
+          with-bin
+          (append with-bin (list "--features" features)))))
+    (if no-defaults
+      (append with-features (list "--no-default-features"))
+      with-features)))
 
-(define target (env-required "TARGET"))
-
-(define suffix (env-required "SUFFIX"))
-
-(define features (env-get "FEATURES" ""))
-
-(define no-defaults (equal? (env-get "NO_DEFAULTS" "false") "true"))
-
-;; ---------- build ---------- ;;
-
-(define base-args (list "cargo" "build" "--release" "--target" target))
-
-(define with-features
-  (if (equal? features "")
-    base-args
-    (append base-args (list "--features" features))))
-
-(define final-args
-  (if no-defaults
-    (append with-features (list "--no-default-features"))
-    with-features))
-
-(log-info
+(define (xbuild:describe bin target package features no-defaults)
   (string-append
     "building "
     bin
+    (if (equal? package "")
+      ""
+      (string-append
+        " (package "
+        package
+        ")"))
     " for "
     target
     (if (equal? features "")
@@ -56,46 +84,55 @@
       " --no-default-features"
       "")))
 
-(define build-status (apply exec-check final-args))
+(define (xbuild:main)
+  (let*
+    ((bin (env-required "BIN"))
+      (target (env-required "TARGET"))
+      (suffix (env-required "SUFFIX"))
+      (package (string-trim (env-get "PACKAGE" "")))
+      (features (env-get "FEATURES" ""))
+      (no-defaults (equal? (env-get "NO_DEFAULTS" "false") "true"))
+      (src-path (string-append "target/" target "/release/" bin))
+      (dst-name (string-append bin "-" suffix))
+      (dst-path (string-append "dist/" dst-name)))
+    ;; ---------- build ---------- ;;
+    (log-info (xbuild:describe bin target package features no-defaults))
+    (let
+      ((build-status (apply exec-check (xbuild:cargo-argv bin target package features no-defaults))))
+      (when (not (= build-status 0))
+        (log-error
+          (string-append
+            "cargo build failed (status "
+            (string-format "{}" build-status)
+            ")"))
+        (exit build-status)))
+    ;; ---------- stage ---------- ;;
+    (exec-check
+      "mkdir"
+      "-p"
+      "dist")
+    (let ((cp-status (exec-check "cp" src-path dst-path)))
+      (when (not (= cp-status 0))
+        (log-error (string-append "could not copy " src-path " -> " dst-path))
+        (exit cp-status)))
+    ;; sha256 sidecar — note we cd into dist so the file in the sum has
+    ;; the basename only (matches the bash `(cd dist && shasum ...)` shape).
+    (let
+      ((sha-status
+         (exec-check
+           "sh"
+           "-c"
+           (string-append
+             "cd dist && shasum -a 256 \""
+             dst-name
+             "\" > \""
+             dst-name
+             ".sha256\""))))
+      (when (not (= sha-status 0))
+        (log-error "shasum failed")
+        (exit sha-status)))
+    (log-info (string-append "staged " dst-path " + " dst-path ".sha256"))))
 
-(when (not (= build-status 0))
-  (log-error (string-append "cargo build failed (status " (string-format "{}" build-status) ")"))
-  (exit build-status))
-
-;; ---------- stage ---------- ;;
-
-(define src-path (string-append "target/" target "/release/" bin))
-
-(define dst-name (string-append bin "-" suffix))
-
-(define dst-path (string-append "dist/" dst-name))
-
-(exec-check
-  "mkdir"
-  "-p"
-  "dist")
-
-(define cp-status (exec-check "cp" src-path dst-path))
-
-(when (not (= cp-status 0))
-  (log-error (string-append "could not copy " src-path " -> " dst-path))
-  (exit cp-status))
-
-;; sha256 sidecar — note we cd into dist so the file in the sum has
-;; the basename only (matches the bash `(cd dist && shasum ...)` shape).
-(define sha-status
-  (exec-check
-    "sh"
-    "-c"
-    (string-append
-      "cd dist && shasum -a 256 \""
-      dst-name
-      "\" > \""
-      dst-name
-      ".sha256\"")))
-
-(when (not (= sha-status 0))
-  (log-error "shasum failed")
-  (exit sha-status))
-
-(log-info (string-append "staged " dst-path " + " dst-path ".sha256"))
+(if (equal? (env-get "TLISP_TEST" "") "")
+  (xbuild:main)
+  (log-info "TLISP_TEST=1 — action loaded; main skipped (the test harness drives it)"))

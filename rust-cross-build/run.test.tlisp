@@ -1,0 +1,211 @@
+;; Tests for rust-cross-build's cargo argv — the surface engenho plan item
+;; T0.8 changed. Every row is one caller shape, and the whole argv is pinned,
+;; so a regression to the old bare `cargo build --release --target T` (no
+;; --bin: every workspace binary built and linked) fails row by row.
+;;
+;; The unit is loaded with TLISP_TEST=1, so its main never runs and no BIN /
+;; TARGET / SUFFIX is needed; xbuild:cargo-argv takes every input as a
+;; parameter.
+
+;; ── THE CASE TABLE ────────────────────────────────────────────────────────
+;; (label bin target package features no-defaults expected-argv)
+;;
+;; Add a row for any new caller shape. The per-property deftests below run
+;; over EVERY row, so a row is checked against the invariants as well as
+;; against its own expected argv.
+(define xbuild-test:rows
+  (list
+    (list
+      "single-crate caller, no package: --bin only, no -p"
+      "guardrail"
+      "x86_64-unknown-linux-gnu"
+      ""
+      ""
+      #f
+      (list
+        "cargo"
+        "build"
+        "--release"
+        "--target"
+        "x86_64-unknown-linux-gnu"
+        "--bin"
+        "guardrail"))
+    (list
+      "workspace caller passing package: -p then --bin"
+      "engenho-mcp"
+      "aarch64-unknown-linux-gnu"
+      "engenho-mcp"
+      ""
+      #f
+      (list
+        "cargo"
+        "build"
+        "--release"
+        "--target"
+        "aarch64-unknown-linux-gnu"
+        "-p"
+        "engenho-mcp"
+        "--bin"
+        "engenho-mcp"))
+    (list
+      "package differs from the binary name: both are passed as given"
+      "tool"
+      "x86_64-unknown-linux-musl"
+      "tool-cli"
+      ""
+      #f
+      (list
+        "cargo"
+        "build"
+        "--release"
+        "--target"
+        "x86_64-unknown-linux-musl"
+        "-p"
+        "tool-cli"
+        "--bin"
+        "tool"))
+    (list
+      "features ride after --bin as ONE argv element"
+      "mado"
+      "aarch64-apple-darwin"
+      ""
+      "gpu metal"
+      #f
+      (list
+        "cargo"
+        "build"
+        "--release"
+        "--target"
+        "aarch64-apple-darwin"
+        "--bin"
+        "mado"
+        "--features"
+        "gpu metal"))
+    (list
+      "per-leg features + no-default-features (pangea-operator cross legs)"
+      "pangea-operator"
+      "aarch64-unknown-linux-gnu"
+      ""
+      "graphql grpc executor_magma"
+      #t
+      (list
+        "cargo"
+        "build"
+        "--release"
+        "--target"
+        "aarch64-unknown-linux-gnu"
+        "--bin"
+        "pangea-operator"
+        "--features"
+        "graphql grpc executor_magma"
+        "--no-default-features"))
+    (list
+      "every optional input at once"
+      "engenho-mcp"
+      "x86_64-unknown-linux-gnu"
+      "engenho-mcp"
+      "mcp"
+      #t
+      (list
+        "cargo"
+        "build"
+        "--release"
+        "--target"
+        "x86_64-unknown-linux-gnu"
+        "-p"
+        "engenho-mcp"
+        "--bin"
+        "engenho-mcp"
+        "--features"
+        "mcp"
+        "--no-default-features"))))
+
+;; ── row accessors + list helpers (prefixed: no stdlib name is shadowed) ───
+(define (xbuild-test:label row) (car row))
+
+(define (xbuild-test:bin row) (car (cdr row)))
+
+(define (xbuild-test:package row) (car (cdr (cdr (cdr row)))))
+
+(define (xbuild-test:expected row) (car (cdr (cdr (cdr (cdr (cdr (cdr row))))))))
+
+(define (xbuild-test:argv row)
+  (xbuild:cargo-argv
+    (car (cdr row))
+    (car (cdr (cdr row)))
+    (car (cdr (cdr (cdr row))))
+    (car (cdr (cdr (cdr (cdr row)))))
+    (car (cdr (cdr (cdr (cdr (cdr row))))))))
+
+;; How many times `x` occurs in `xs`.
+(define (xbuild-test:count x xs) (length (filter (lambda (e) (equal? e x)) xs)))
+
+;; The element right after the first `flag` in `xs`, or "" when `flag` is
+;; absent or last. "" is never a legal bin or package, so it cannot pass as one.
+(define (xbuild-test:value-after flag xs)
+  (cond
+    ((null? xs) "")
+    ((null? (cdr xs)) "")
+    ((equal? (car xs) flag) (car (cdr xs)))
+    (else (xbuild-test:value-after flag (cdr xs)))))
+
+(deftest "the table is not empty (a vacuous table would pass every property below)"
+  (assert (>= (length xbuild-test:rows) 6) "six caller shapes are pinned"))
+
+(deftest "every row: the argv is exactly the expected one"
+  (for-each
+    (lambda (row)
+      (assert
+        (equal? (xbuild-test:argv row) (xbuild-test:expected row))
+        (string-append "argv mismatch: " (xbuild-test:label row))))
+    xbuild-test:rows))
+
+(deftest "every row: --bin appears exactly once and names the binary"
+  ;; T0.8. Without --bin, cargo builds every binary of every workspace member
+  ;; while the stage step copies one, so a failure in any of the others fails
+  ;; the leg.
+  (for-each
+    (lambda (row)
+      (let ((argv (xbuild-test:argv row)))
+        (assert
+          (= (xbuild-test:count "--bin" argv) 1)
+          (string-append "--bin exactly once: " (xbuild-test:label row)))
+        (assert
+          (equal? (xbuild-test:value-after "--bin" argv) (xbuild-test:bin row))
+          (string-append "--bin names the binary: " (xbuild-test:label row)))))
+    xbuild-test:rows))
+
+(deftest "every row: -p appears if and only if a package was given"
+  ;; -p is what bounds resolver-2 feature unification (--bin does not; see the
+  ;; measurement in run.tlisp), so a workspace caller like engenho-mcp needs
+  ;; it to keep openssl-sys out. But defaulting it to the binary name would
+  ;; change every caller whose binary is not its package's name, so -p is
+  ;; opt-in.
+  (for-each
+    (lambda (row)
+      (let ((argv (xbuild-test:argv row)) (package (xbuild-test:package row)))
+        (if (equal? package "")
+          (assert
+            (= (xbuild-test:count "-p" argv) 0)
+            (string-append "no package, no -p: " (xbuild-test:label row)))
+          (begin
+            (assert
+              (= (xbuild-test:count "-p" argv) 1)
+              (string-append "-p exactly once: " (xbuild-test:label row)))
+            (assert
+              (equal? (xbuild-test:value-after "-p" argv) package)
+              (string-append "-p names the package: " (xbuild-test:label row)))))))
+    xbuild-test:rows))
+
+(deftest "every row: it is a release build for the named target"
+  (for-each
+    (lambda (row)
+      (let ((argv (xbuild-test:argv row)))
+        (assert
+          (equal? (car argv) "cargo")
+          (string-append "argv[0] is cargo: " (xbuild-test:label row)))
+        (assert (member? "--release" argv) (string-append "--release: " (xbuild-test:label row)))
+        (assert
+          (equal? (xbuild-test:value-after "--target" argv) (car (cdr (cdr row))))
+          (string-append "--target names the triple: " (xbuild-test:label row)))))
+    xbuild-test:rows))

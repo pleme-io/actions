@@ -97,9 +97,13 @@ jobs:
       # files of slack again. THE LESSON IS THE DRIFT, not the number: a floor
       # stated once and never re-measured is a ratchet that quietly unwinds, so
       # re-measure it whenever you add a suite rather than trusting this comment.
+      #
+      # RE-MEASURED 2026-09-19, same way: 62 files on main, all green, so the
+      # floor had drifted to 6 below reality. rust-cross-build/run.test.tlisp
+      # makes 63. 56 -> 61, two files of slack.
       - uses: ./tlisp-test
         with:
-          min-files: "56"
+          min-files: "61"
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files
