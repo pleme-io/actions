@@ -1195,7 +1195,31 @@ runs:
         # tatara-lisp actions run NATIVELY on a pure-nix runner: the baked binary
         # short-circuits the FHS release download a nix image can't execve, and
         # skips the api.github.com/releases/latest call entirely.
-        if command -v tatara-script >/dev/null 2>&1; then
+        # An EXPLICIT version pin beats whatever is baked into the image.
+        #
+        # `version` resolves a tag at :1231/:1288 — but only if control reaches
+        # there, and the PATH fast path below used to exit first. So a caller
+        # that pinned a tag got the image's binary and no warning: the pin read
+        # as honoured and was not. Measured 2026-09-19: engenho's backward-replay
+        # job pins `version: v0.3.58` and still died on `unbound symbol
+        # `status-of``, a primitive native since 550e33a, which IS in v0.3.58.
+        #
+        # DEFAULT_VERSION is this action's own default. A caller that left it
+        # alone has expressed no preference, so the fast path still applies —
+        # that is what lets tatara-lisp actions run natively on a pure-nix
+        # runner, where the FHS release download cannot execve. A caller that
+        # named a different tag has expressed one, and it wins; on a nix runner
+        # that resolves through the nix fallback further down, not the FHS
+        # download.
+        #
+        # Blast radius, measured across the locally-cloned fleet: 7 of 53
+        # tatara-script call sites pin a version, and all 7 pin v0.3.58.
+        DEFAULT_VERSION="v0.2.5"
+        if [ -n "${INPUT_VERSION}" ] && [ "${INPUT_VERSION}" != "${DEFAULT_VERSION}" ]; then
+          if command -v tatara-script >/dev/null 2>&1; then
+            echo "::notice title=tatara-script::version pinned to ${INPUT_VERSION}; not using $(command -v tatara-script) from PATH"
+          fi
+        elif command -v tatara-script >/dev/null 2>&1; then
           # The baked binary is accepted only if it can do what the caller
           # said it needs. `tatara-script symbols <substring>` lists the
           # primitives THIS binary binds, so the probe reads the running
