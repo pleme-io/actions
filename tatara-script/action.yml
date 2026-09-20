@@ -5,6 +5,23 @@ branding:
   color: 'green'
 
 inputs:
+  require-symbols:
+    description: >-
+      Space-separated tatara-lisp primitives the script needs, e.g.
+      "status-of stdout-of". When set, a tatara-script ALREADY ON PATH is
+      accepted only if it binds every one of them; otherwise this action
+      installs the pinned release instead.
+      WHY IT EXISTS: the PATH fast path below prefers whatever binary is baked
+      into the runner image, and nothing asserted what that binary could do.
+      Measured 2026-09-19 on pleme-io/engenho: `ci/replay-backward.tlisp` died
+      with "unbound symbol `status-of`" although `status-of` has been native
+      since tatara-lisp 550e33a, which IS an ancestor of v0.3.58, the latest
+      release, with zero unreleased commits. The script was right and the
+      interpreter was old — and the job reported it as a script error, which
+      sends the reader to the wrong file.
+      Leave empty to keep the previous behaviour exactly.
+    required: false
+    default: ""
   script-file:
     description: >-
       Path to a .tlisp file to execute, as an ALTERNATIVE to `script`. When
@@ -1168,6 +1185,7 @@ runs:
       env:
         INPUT_VERSION: ${{ inputs.version }}
         GH_TOKEN: ${{ github.token }}
+        REQUIRE_SYMBOLS: ${{ inputs.require-symbols }}
       run: |
         set -euo pipefail
 
@@ -1178,9 +1196,26 @@ runs:
         # short-circuits the FHS release download a nix image can't execve, and
         # skips the api.github.com/releases/latest call entirely.
         if command -v tatara-script >/dev/null 2>&1; then
-          echo "Using pre-installed tatara-script: $(command -v tatara-script)"
-          echo "bin-dir=$(dirname "$(command -v tatara-script)")" >> "$GITHUB_OUTPUT"
-          exit 0
+          # The baked binary is accepted only if it can do what the caller
+          # said it needs. `tatara-script symbols <substring>` lists the
+          # primitives THIS binary binds, so the probe reads the running
+          # interpreter rather than trusting a version string (there is no
+          # --version flag to trust anyway).
+          MISSING=""
+          for sym in ${REQUIRE_SYMBOLS}; do
+            if ! tatara-script symbols "$sym" 2>/dev/null | grep -qx "$sym"; then
+              MISSING="${MISSING} $sym"
+            fi
+          done
+          if [ -z "${MISSING}" ]; then
+            echo "Using pre-installed tatara-script: $(command -v tatara-script)"
+            echo "bin-dir=$(dirname "$(command -v tatara-script)")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Say which capability is missing and from which binary. Without
+          # this the script fails later with "unbound symbol X", which reads
+          # as a bug in the script rather than an old interpreter.
+          echo "::notice title=tatara-script::pre-installed $(command -v tatara-script) does not bind:${MISSING} — installing the pinned release instead"
         fi
 
         OS=$(uname -s)
