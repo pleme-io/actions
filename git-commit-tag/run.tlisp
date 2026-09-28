@@ -22,7 +22,20 @@
 
 (define tag (string-append tag-prefix version))
 
-(define commit-message (string-replace template "{version}" version))
+;; `{version}` and `{tag}` are the two placeholders. `{tag}` was written by
+;; pleme-io/substrate's auto-bump and never substituted, so its releases would
+;; have read "release: pleme-io/substrate {tag}" (2026-09-28).
+(define commit-message
+  (string-replace (string-replace template "{version}" version) "{tag}" tag))
+
+;; A TAG-ONLY release (COMMIT=false): the repo's release is the tag itself and
+;; there is no version file to write, so there is nothing to stage and nothing
+;; to commit, and "nothing to commit" is not a failure there. Everywhere else
+;; (the default) it IS one, and stays one: it means the version write never
+;; landed (the 2026-06-03 bug the commit guard below exists for). substrate's
+;; auto-bump failed on every push from at least 2026-09-23 to 2026-09-28 on
+;; exactly this, because it is a tag-only repo run through the commit path.
+(define do-commit (not (equal? (env-get "COMMIT" "true") "false")))
 
 ;; ── ★ THE D2 CO-OUTPUTS ARE AN INVARIANT, NOT CALLER POLICY ─────────────
 ;; A bump that rewrote Cargo.lock ALSO regenerated Cargo.gen.lock and
@@ -160,14 +173,17 @@
 ;; file fails on its own — exec-check returns the status without raising
 ;; — and the existing paths (Cargo.toml, Cargo.lock when present) still
 ;; stage.
-(for-each (lambda (p) (exec-check "git" "add" p)) add-paths)
-
 ;; Commit. exec-check RETURNS the exit code (it does NOT raise on a
 ;; non-zero child), so a bare call would silently proceed to tagging
 ;; even when the commit failed — e.g. an empty commit because nothing
 ;; staged — landing the tag on an un-bumped HEAD (the 2026-06-03
-;; version-skew bug). exec-or-die aborts loudly instead.
-(exec-or-die (list "git" "commit" "-m" commit-message))
+;; version-skew bug). exec-or-die aborts loudly instead. A tag-only
+;; release skips staging and committing and tags HEAD (see do-commit).
+(if do-commit
+  (begin
+    (for-each (lambda (p) (exec-check "git" "add" p)) add-paths)
+    (exec-or-die (list "git" "commit" "-m" commit-message)))
+  (log-info (string-append "tag-only release: tagging HEAD as " tag ", committing nothing")))
 
 ;; Annotated tag — must succeed, else the release ships without its tag.
 (exec-or-die (list "git" "tag" "-a" tag "-m" commit-message))

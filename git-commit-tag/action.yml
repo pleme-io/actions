@@ -13,9 +13,13 @@ inputs:
     required: false
     default: "v"
   commit-message-template:
-    description: "Commit message template; '{version}' is substituted with the version input"
+    description: "Commit message template; '{version}' is substituted with the version input and '{tag}' with the tag name (prefix + version)"
     required: false
     default: "release: workspace v{version}"
+  commit:
+    description: "'true' (default): stage add-paths and commit, then tag that commit; nothing staged is an ERROR (it means the version write did not land). 'false': a TAG-ONLY release, for a repo whose release is a tag and nothing else (no version file, e.g. pleme-io/substrate): tag HEAD, commit nothing."
+    required: false
+    default: "true"
   add-paths:
     description: "Space-separated git pathspecs to stage. Default fits a Rust workspace."
     required: false
@@ -60,6 +64,7 @@ runs:
         VERSION: ${{ inputs.version }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
         COMMIT_MESSAGE_TEMPLATE: ${{ inputs.commit-message-template }}
+        COMMIT: ${{ inputs.commit }}
         ADD_PATHS: ${{ inputs.add-paths }}
         IDENTITY_NAME: ${{ inputs.identity-name }}
         IDENTITY_EMAIL: ${{ inputs.identity-email }}
