@@ -49,6 +49,9 @@ jobs:
         with:
           version: ${{ steps.next.outputs.version }}
           commit-message-template: "release: pleme-io/actions {tag}"
+          # This repo's release IS the tag (no version file): tag HEAD. The
+          # commit path refused the empty commit on every push since 2026-09-19.
+          commit: "false"
 
       - name: Push the tag
         if: steps.next.outputs.skip == 'false'
