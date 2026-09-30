@@ -45,6 +45,15 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script-file: ${{ steps.src.outputs.script-file }}
+        # run.tlisp calls `sha256-file` (dc70ad7, 2026-09-19), which the
+        # action's frozen default v0.2.5 does not bind: every tatara-lisp
+        # release-binaries run since v0.3.59 died with "unbound symbol
+        # `sha256-file`", and since that workflow is what publishes new
+        # tatara-script binaries, the failure could never fix itself. Pin the
+        # newest published release that binds it, and require the symbol so a
+        # runner-image binary without it is not taken on the PATH fast path.
+        version: v0.3.58
+        require-symbols: sha256-file
       env:
         BIN:         ${{ inputs.binary-name }}
         TARGET:      ${{ inputs.target }}
