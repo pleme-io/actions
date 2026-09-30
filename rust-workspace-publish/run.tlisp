@@ -998,9 +998,17 @@
           (all-waited (append waited newly-waited))
           (all-failed (append failed newly-failed)))
         (cond
+          ;; Zero progress is only a cycle when nothing is PARKED. A member
+          ;; deferred behind a sibling that was parked for capacity cannot
+          ;; ship until that sibling does, so it parks with it (the
+          ;; capacity-blocked branch below) instead of aborting. tatara-lisp
+          ;; v0.4.1 (run 36661644833): `tatara-cilium` parked on capacity,
+          ;; `tatara` deferred on it three passes running, and the run failed
+          ;; "circular dep or stuck registry index", neither of which was true.
           ((and
              (null? newly-shipped)
              (null? newly-waited)
+             (null? all-waited)
              (= (length deferred) (length pending)))
             ;; Zero progress. Whether that is fatal depends entirely on whether
             ;; the PREVIOUS pass shipped anything — see drive-passes-from.

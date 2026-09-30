@@ -545,3 +545,38 @@
           "red — a run that never published anything is a genuine cycle/stuck index")
         (assert (null? slept)
           "no backoff burned on a run that has proven nothing can ship")))))
+
+;; ─────────────────────────────────────────────────────────────────────
+;; Defect 6 — a member behind a capacity-parked sibling parks, not aborts
+;; ─────────────────────────────────────────────────────────────────────
+;; tatara-lisp v0.4.1 (run 36661644833): `tatara-cilium` was parked on
+;; crates.io capacity, `tatara` (which needs it) deferred on every pass, and
+;; the driver aborted "no progress across two consecutive passes … circular
+;; dep or stuck registry index" — red, and wrong on both counts.
+
+(deftest "drive-passes: a dependent of a capacity-parked sibling parks with it, green"
+  (let ((dependent-tries 0))
+    (let
+      ((ops
+         (list
+           (cons
+             "publish-one"
+             (lambda (name attempt)
+               (cond
+                 ((equal? name "parked") (list "wait" name))
+                 ((equal? name "dependent")
+                   (set! dependent-tries (+ dependent-tries 1))
+                   (list "defer" name))
+                 (else (list "done" name)))))
+           (cons "settle" (lambda (secs) #t)))))
+      (let ((code
+          (drive-passes-with
+            ops
+            (list "leaf" "parked" "dependent")
+            (list) (list) (list) (list)
+            1)))
+        (assert (= code 0)
+          "green — capacity parking is not a failed run, and neither is waiting on it")
+        (assert (<= dependent-tries 2)
+          "no retry storm against a sibling that cannot ship this run")))))
+
