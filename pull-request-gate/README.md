@@ -113,7 +113,7 @@ quote is data, not code.
 
 ## References
 
-- Skill: `pleme-io-action-vocabulary` (catalog conventions)
+- Skill: `pleme-io-pattern-core` (catalog conventions)
 - Skill: `pleme-io-pattern-core` (canonical action shape)
 - Skill: `pleme-io-github-posture` (fleet posture reconciler)
 - Incident: SafeSkill / OyaAIProd drive-by — pleme-io/kotoba#1 (closed, locked, blocked 2026-05-28)

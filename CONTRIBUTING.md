@@ -94,7 +94,7 @@ No version bumps, no release commands, no manual publish steps.
 ## Authoring resources
 
 - [Pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md) — the 5-canonical-section shape
-- [Action-vocabulary skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-action-vocabulary/SKILL.md) — full 192-primitive catalog
+- [Pattern-core skill](https://github.com/pleme-io/blackmatter-pleme/blob/main/skills/pleme-io-pattern-core/SKILL.md) — full 192-primitive catalog
 - [Stdlib helpers](./_tlisp-stdlib/stdlib.tlisp) — 25+ helpers (env, exec, JSON/YAML/TOML, HTTP, registry probes, config-resolve)
 - [Closest sibling](./README.md) — find one that matches your shape + clone it
 
