@@ -7,9 +7,9 @@
 #
 # actions                369
 # routing tatara-script  350
-# distinct keys written  351
+# distinct keys written  353
 # dynamic key expansions 8
-# inner union (generated)359
+# inner union (generated)361
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -240,7 +240,7 @@ netlify-deploy	tatara-script	run.tlisp	1	1
 newrelic-deploy-marker	tatara-script	run.tlisp	1	1
 next-tag	tatara-script	run.tlisp	4	4
 nix-attic-push	tatara-script	run.tlisp	1	1
-nix-build	tatara-script	run.tlisp	1	1
+nix-build	tatara-script	run.tlisp	3	3
 nix-cachix-push	tatara-script	run.tlisp	1	1
 nix-flake-check	tatara-script	run.tlisp	0	0
 nix-flake-update	tatara-script	run.tlisp	2	2
@@ -354,7 +354,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	359
+tatara-script	own-runner	-	0	361
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -752,6 +752,8 @@ next-tag	skip	static	declared	forwarded
 next-tag	tag	static	declared	forwarded
 next-tag	version	static	declared	forwarded
 nix-attic-push	pushed	static	declared	forwarded
+nix-build	cache-push-reason	static	declared	forwarded
+nix-build	cache-pushed	static	declared	forwarded
 nix-build	out-path	static	declared	forwarded
 nix-cachix-push	pushed	static	declared	forwarded
 nix-flake-update	changed	static	declared	forwarded

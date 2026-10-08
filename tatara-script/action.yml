@@ -211,6 +211,12 @@ outputs:
   cache-hit:
     description: "Forwarded (key: cache-hit) — super-cache-restore warm-path hit flag"
     value: ${{ steps.exec.outputs.cache-hit }}
+  cache-push-reason:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: cache-push-reason)"
+    value: ${{ steps.exec.outputs.cache-push-reason }}
+  cache-pushed:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: cache-pushed)"
+    value: ${{ steps.exec.outputs.cache-pushed }}
   cache-to:
     description: "Forwarded (key: cache-to) — bigorna a --cache-to token fronting the sui store ('' when no cache front)"
     value: ${{ steps.exec.outputs.cache-to }}
