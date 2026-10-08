@@ -1,5 +1,5 @@
 name: 'pleme-io · nix-build'
-description: 'Build a flake output (universal). Optionally pushes to cachix/attic afterward.'
+description: 'Build a flake output (universal). With cache-push, pushes the built closure into a sui cache store on the runner afterward; a failed push is a warning, never a failed build.'
 branding: { icon: 'package', color: 'blue' }
 
 inputs:
@@ -51,10 +51,39 @@ inputs:
       would mean a new input every time a caller needs the next setting.
     required: false
     default: ""
+  cache-push:
+    description: >-
+      When "true", run `sui cache push --recursive` over every built output
+      path after a successful build. Default "false" leaves the action
+      unchanged.
+    required: false
+    default: "false"
+  cache-store-path:
+    description: >-
+      The push target: the sui cache store directory on the runner, passed as
+      `--store-path`, which `sui cache serve` on that host publishes. Empty
+      omits the flag and sui uses its own default (/var/cache/sui). There is
+      no remote-URL target: sui refuses `--cache-url` because cache push only
+      writes a local store.
+    required: false
+    default: ""
+  cache-signing-key:
+    description: >-
+      The ed25519 signing secret key contents, from a secret
+      (`secrets.SUI_SIGNING_KEY`). Written to a 0600 file under RUNNER_TEMP,
+      passed as `--signing-key`, removed after the push, and never logged.
+    required: false
+    default: ""
 
 outputs:
   out-path:
     value: ${{ steps.run.outputs.out-path }}
+  cache-pushed:
+    description: '"true" when the sui cache push succeeded, otherwise "false".'
+    value: ${{ steps.run.outputs.cache-pushed }}
+  cache-push-reason:
+    description: 'Why cache-pushed is "false": disabled, sui not on PATH, no output paths, build failed, or the push exit status and stderr.'
+    value: ${{ steps.run.outputs.cache-push-reason }}
 
 runs:
   using: composite
@@ -120,3 +149,6 @@ runs:
       env:
         FLAKE_REF: ${{ inputs.flake-ref }}
         SYSTEM: ${{ inputs.system }}
+        CACHE_PUSH: ${{ inputs.cache-push }}
+        CACHE_STORE_PATH: ${{ inputs.cache-store-path }}
+        CACHE_SIGNING_KEY: ${{ inputs.cache-signing-key }}

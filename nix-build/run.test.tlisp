@@ -1,0 +1,65 @@
+(define (never-run argv) (error "runner must not be called"))
+
+(define (failing-run argv) (push-result 1 "error: cannot open /var/cache/sui\nhint: check perms\n"))
+
+(define (ok-run argv) (push-result 0 ""))
+
+(deftest "build argv is unchanged by the cache inputs"
+  (assert
+    (equal? (build-argv ".#default" "") (list "build" "--print-out-paths" "--no-link" ".#default"))
+    "no system")
+  (assert
+    (equal?
+      (build-argv ".#x" "x86_64-linux")
+      (list "build" "--print-out-paths" "--no-link" "--system" "x86_64-linux" ".#x"))
+    "with system"))
+
+(deftest "push disabled never runs sui and reports disabled"
+  (assert (not (cache-push-enabled? "false")) "false is off")
+  (assert (not (cache-push-enabled? "")) "unset is off")
+  (assert (not (cache-push-enabled? "yes")) "only the literal true is on")
+  (assert (cache-push-enabled? "true") "true is on")
+  (assert
+    (equal? (cache-push-step #f #t (list "/nix/store/aaa-x") (list) never-run) (list "false" "disabled"))
+    "disabled short-circuits before the runner"))
+
+(deftest "push enabled builds the sui cache push argv"
+  (assert
+    (equal?
+      (cache-push-argv
+        (list "/nix/store/aaa-x" "/nix/store/bbb-y")
+        "/var/cache/sui"
+        "/tmp/k.key")
+      (list
+        "cache"
+        "push"
+        "--recursive"
+        "--store-path"
+        "/var/cache/sui"
+        "--signing-key"
+        "/tmp/k.key"
+        "/nix/store/aaa-x"
+        "/nix/store/bbb-y"))
+    "full argv")
+  (assert
+    (equal? (cache-push-argv (list "/nix/store/aaa-x") "" "") (list "cache" "push" "--recursive" "/nix/store/aaa-x"))
+    "empty optional inputs are omitted, not passed empty")
+  (assert
+    (equal? (out-paths "/nix/store/aaa-x\n/nix/store/bbb-y\n") (list "/nix/store/aaa-x" "/nix/store/bbb-y"))
+    "every printed output path is pushed")
+  (assert
+    (equal? (cache-push-step #t #t (list "/nix/store/aaa-x") (list) ok-run) (list "true" ""))
+    "success reports pushed"))
+
+(deftest "a push failure is a warning verdict, never a step failure"
+  (define v (cache-push-step #t #t (list "/nix/store/aaa-x") (list) failing-run))
+  (assert (equal? (car v) "false") "cache-pushed=false")
+  (assert
+    (equal? (car (cdr v)) "sui cache push exited 1: error: cannot open /var/cache/sui hint: check perms")
+    "reason carries the exit status and stderr separately, on one output line")
+  (assert
+    (equal? (cache-push-step #t #f (list "/nix/store/aaa-x") (list) never-run) (list "false" "sui not on PATH"))
+    "a missing sui binary is a verdict, not a crash")
+  (assert
+    (equal? (cache-push-step #t #t (list) (list) never-run) (list "false" "no output paths"))
+    "nothing built means nothing pushed"))

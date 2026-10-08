@@ -1,27 +1,104 @@
 ;; nix-build/run.tlisp — auto-migrated from shell to tlisp+stdlib
 
-(define ref (env-get "FLAKE_REF" ".#default"))
+(define (build-argv ref sys)
+  (let ((base (list "build" "--print-out-paths" "--no-link")))
+    (append (if (equal? sys "") base (append base (list "--system" sys))) (list ref))))
 
-(define sys (env-get "SYSTEM" ""))
+(define (out-paths stdout)
+  (filter (lambda (p) (not (equal? p ""))) (map string-trim (string-split (string-trim stdout) "\n"))))
 
-(define base (list "build" "--print-out-paths" "--no-link"))
+(define (cache-push-enabled? raw) (equal? (string-trim raw) "true"))
 
-(define with-sys (if (equal? sys "") base (append base (list "--system" sys))))
+(define (opt-flag flag value) (if (equal? value "") (list) (list flag value)))
 
-(define args (append with-sys (list ref)))
+(define (cache-push-argv paths store-path key-file)
+  (append
+    (list "cache" "push" "--recursive")
+    (opt-flag "--store-path" store-path)
+    (opt-flag "--signing-key" key-file)
+    paths))
 
-(log-info (string-append "==> nix " (string-join " " args)))
+(define (push-result status stderr) (list status stderr))
 
-(define r (apply exec-capture (cons "nix" args)))
+(define (push-status r) (car r))
+
+(define (push-stderr r) (car (cdr r)))
+
+(define (push-verdict r)
+  (if (= (push-status r) 0)
+    (list "true" "")
+    (list
+      "false"
+      (string-append
+        "sui cache push exited "
+        (string-format "{}" (push-status r))
+        ": "
+        (string-replace (string-trim (push-stderr r)) "\n" " ")))))
+
+(define (cache-push-step enabled? sui-present? paths argv runner)
+  (cond
+    ((not enabled?) (list "false" "disabled"))
+    ((null? paths) (list "false" "no output paths"))
+    ((not sui-present?) (list "false" "sui not on PATH"))
+    (else (push-verdict (runner argv)))))
+
+(define (emit-push verdict)
+  (append-output (string-append "cache-pushed=" (car verdict)))
+  (append-output (string-append "cache-push-reason=" (car (cdr verdict))))
+  (cond
+    ((equal? (car verdict) "true") (log-info "sui cache push: pushed"))
+    ((equal? (car (cdr verdict)) "disabled") #f)
+    (else (log-info (string-append "::warning::sui cache push failed: " (car (cdr verdict)))))))
+
+(define (sui-runner argv)
+  (let ((r (apply exec-capture (cons "sui" argv))))
+    (push-result (status-of r) (stderr-of r))))
+
+(define (path-dirs) (string-split (env-get "PATH" "") ":"))
+
+(define (on-path? name)
+  (not (null? (filter (lambda (d) (path-exists? (string-append d "/" name))) (path-dirs)))))
+
+(define (materialize-signing-key key)
+  (if (equal? key "")
+    ""
+    (let ((file (string-append (env-get "RUNNER_TEMP" "/tmp") "/nix-build-sui-signing.key")))
+      (write-file file "")
+      (exec-capture "chmod" "600" file)
+      (write-file file key)
+      file)))
+
+(define (push-built paths)
+  (let* ((enabled? (cache-push-enabled? (env-get "CACHE_PUSH" "false")))
+         (key-file (if enabled? (materialize-signing-key (env-get "CACHE_SIGNING_KEY" "")) ""))
+         (argv
+           (cache-push-argv
+             paths
+             (env-get "CACHE_STORE_PATH" "")
+             key-file))
+         (verdict (cache-push-step enabled? (on-path? "sui") paths argv sui-runner)))
+    (if (not (equal? key-file "")) (exec-capture "rm" "-f" key-file) #f)
+    (emit-push verdict)))
+
+(define (main)
+  (let* ((args (build-argv (env-get "FLAKE_REF" ".#default") (env-get "SYSTEM" "")))
+         (_ (log-info (string-append "==> nix " (string-join " " args))))
+         (r (apply exec-capture (cons "nix" args))))
+    (cond
+      ((= (status-of r) 0)
+        (let ((path (string-trim (stdout-of r))))
+          (log-info (string-append "built: " path))
+          (append-output (string-append "out-path=" path))
+          (push-built (out-paths path))
+          0))
+      (else
+        (log-error "nix build failed")
+        (log-info (stderr-of r))
+        (append-output "out-path=")
+        (append-output "cache-pushed=false")
+        (append-output "cache-push-reason=build failed")
+        1))))
 
 (cond
-  ((= (status-of r) 0)
-    (let ((path (string-trim (stdout-of r))))
-      (log-info (string-append "built: " path))
-      (append-output (string-append "out-path=" path))
-      (exit 0)))
-  (else
-    (log-error "nix build failed")
-    (log-info (stderr-of r))
-    (append-output "out-path=")
-    (exit 1)))
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — nix-build helpers loaded; main skipped"))
+  (else (exit (main))))
