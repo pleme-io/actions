@@ -889,3 +889,20 @@
     "removing whitespace must not let a DOTLESS key match a dotted one")
   (assert (not (line-assigns-field? "notversion = true" "version"))
     "a prefixed key must not match"))
+
+(deftest "runtime:pin-of-action-yml reads a step pin and defaults to v0.2.5"
+  (assert (equal? (runtime:pin-of-action-yml "      with:\n        version: v0.3.58\n") "v0.3.58") "pinned")
+  (assert (equal? (runtime:pin-of-action-yml "  version:\n    description: x\n") runtime:default) "an input named version is not a pin")
+  (assert (equal? (runtime:pin-of-action-yml "") "v0.2.5") "unpinned"))
+
+(deftest "runtime:required-symbols-of-action-yml splits the declared symbols"
+  (assert (equal? (runtime:required-symbols-of-action-yml "        require-symbols: sha256-file blake3-file\n") (list "sha256-file" "blake3-file")) "two symbols")
+  (assert (null? (runtime:required-symbols-of-action-yml "x: y\n")) "none declared"))
+
+(deftest "runtime:primitives reads the committed list for a pin"
+  (assert (name-member-rt? "sha256" (runtime:primitives "v0.2.5")) "v0.2.5 binds sha256")
+  (assert (not (name-member-rt? "sha256-file" (runtime:primitives "v0.2.5"))) "v0.2.5 does not bind sha256-file")
+  (assert (name-member-rt? "sha256-file" (runtime:primitives "v0.3.58")) "v0.3.58 binds sha256-file")
+  (assert (null? (runtime:primitives "v9.9.9")) "an uncommitted pin has no list"))
+
+(define (name-member-rt? x xs) (if (null? xs) #f (if (equal? (car xs) x) #t (name-member-rt? x (cdr xs)))))

@@ -83,6 +83,16 @@ interpreter to not offer a `string-replace` + `write-file` pair at all.
 | `http-200?` | `(http-200? URL)` | True iff GET returns HTTP 200 |
 | `cargo-published?` | `(cargo-published? NAME VERSION)` | True iff `(name, version)` is on crates.io |
 
+### Runtime pins
+
+An action runs on the tatara-script release its `action.yml` pins (`version: vX.Y.Z` on the tatara-script step), or `runtime:default` (v0.2.5) when unpinned. `tlisp-test` runs each suite only on its unit's pin, and `tlisp-lint`'s runtime-skew layer rejects a call to a primitive that pin does not bind. Each `PRIMITIVES-<tag>.txt` here is derived from the `register_fn` sites in `tatara-lisp-script/src` at that tag; commit one before pinning a new release.
+
+| Fn | Signature | Purpose |
+|---|---|---|
+| `runtime:pin-of-action-yml` | `(… TEXT)` | The first `version: vX.Y.Z` in an action.yml, else `runtime:default` |
+| `runtime:required-symbols-of-action-yml` | `(… TEXT)` | The `require-symbols:` list, `()` when absent |
+| `runtime:primitives` | `(runtime:primitives TAG)` | The committed primitive list for TAG, `()` when none is committed |
+
 ## Adoption template for an action's `action.yml`
 
 ```yaml

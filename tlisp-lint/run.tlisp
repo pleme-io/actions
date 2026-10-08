@@ -1061,6 +1061,105 @@
                       "parentheses is what the running interpreter itself "
                       "reported.")))))))))))
 
+;; ── Layer 7: runtime skew ──────────────────────────────────────────────
+
+(define (skew-code-walk pieces in-str acc)
+  (cond
+    ((null? pieces) acc)
+    (in-str (skew-code-walk (cdr pieces) #f acc))
+    ((string-contains? (car pieces) ";")
+      (string-append acc " " (car (string-split (car pieces) ";"))))
+    (else (skew-code-walk (cdr pieces) #t (string-append acc " " (car pieces))))))
+
+(define (skew-code-of-line line) (skew-code-walk (string-split line "\"") #f ""))
+
+(define (skew-code-of text)
+  (string-join "\n" (map skew-code-of-line (string-split text "\n"))))
+
+(define (skew-calls? code sym)
+  (let ((open (string-append "(" sym)))
+    (or (string-contains? code (string-append open " "))
+        (string-contains? code (string-append open ")"))
+        (string-contains? code (string-append open "\n"))
+        (string-ends-with? code open))))
+
+(define (skew-findings code pin required defined universe)
+  (let ((bound (runtime:primitives pin)) (base (runtime:primitives runtime:default)))
+    (define (walk syms acc)
+      (cond
+        ((null? syms) (reverse acc))
+        (else
+          (let ((s (car syms)))
+            (walk (cdr syms)
+              (cond
+                ((name-member? s base) acc)
+                ((name-member? s defined) acc)
+                ((not (skew-calls? code s)) acc)
+                ((not (name-member? s bound)) (cons (string-append "unbound-on-pin\t" s) acc))
+                ((not (name-member? s required)) (cons (string-append "not-required\t" s) acc))
+                (else acc)))))))
+    (walk universe (list))))
+
+(define (skew-universe)
+  (distinct
+    (flatten
+      (map
+        (lambda (p)
+          (runtime:primitives
+            (string-replace (string-replace (path-basename p) "PRIMITIVES-" "") ".txt" "")))
+        (glob (string-append runtime:primitives-dir "/PRIMITIVES-*.txt"))))))
+
+(define (skew-errors-for action-dir universe)
+  (let ((yml (string-append action-dir "/action.yml")))
+    (cond
+      ((not (path-exists? yml)) 0)
+      (else
+        (let ((parts (composed-parts-of yml action-dir)))
+          (cond
+            ((null? parts) 0)
+            (else
+              (let* ((text (read-file yml))
+                     (pin (runtime:pin-of-action-yml text))
+                     (required (runtime:required-symbols-of-action-yml text))
+                     (defined (flatten (map define-names-in parts)))
+                     (code (skew-code-of (concat-files parts "")))
+                     (found (skew-findings code pin required defined universe)))
+                (cond
+                  ((null? (runtime:primitives pin))
+                    (log-error
+                      (string-append action-dir ": pins tatara-script " pin
+                        " but " (runtime:primitives-path pin)
+                        " is not committed, so its calls cannot be checked"))
+                    1)
+                  ((null? found) 0)
+                  (else
+                    (for-each
+                      (lambda (row)
+                        (log-error
+                          (string-append action-dir ": `" (row-field row 1) "` "
+                            (if (equal? (row-field row 0) "unbound-on-pin")
+                              (string-append "is not bound by tatara-script " pin
+                                ", the release this action runs on. Define it in the stdlib from "
+                                pin " primitives, or pin a release that binds it and list it in require-symbols")
+                              (string-append "is newer than " runtime:default
+                                " and missing from require-symbols, so a baked older binary on PATH is accepted and dies on it")))))
+                      found)
+                    1))))))))))
+
+(define (runtime-skew-errors)
+  (let ((universe (skew-universe)))
+    (cond
+      ((null? universe)
+        (log-info (string-append "  runtime-skew check skipped (no " runtime:primitives-dir "/PRIMITIVES-*.txt)"))
+        0)
+      (else
+        (let ((dirs (action-dirs)))
+          (log-info
+            (string-append "  runtime-skew: " (string-format "{}" (length dirs))
+              " actions checked against " (string-format "{}" (length universe))
+              " known primitives"))
+          (reduce (lambda (acc d) (+ acc (skew-errors-for d universe))) 0 dirs))))))
+
 (define (lint-main)
   (log-info
     (string-append
@@ -1076,7 +1175,8 @@
          (stdlib-shadow-errors)
          (stdlib-literal-errors)
          (crash-certain-errors)
-         (shell-exec-errors))))
+         (shell-exec-errors)
+         (runtime-skew-errors))))
     (append-output (string-append "files-scanned=" (string-format "{}" file-count)))
     (append-output (string-append "errors-found=" (string-format "{}" total-errors)))
     (cond

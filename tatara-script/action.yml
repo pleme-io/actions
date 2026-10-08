@@ -340,6 +340,9 @@ outputs:
   deferred:
     description: "Forwarded (key: deferred) — written by 1 action dir(s): cargo-publish-crate"
     value: ${{ steps.exec.outputs.deferred }}
+  deferred-files:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: deferred-files)"
+    value: ${{ steps.exec.outputs.deferred-files }}
   delivered:
     description: "Forwarded (key: delivered) — written by 2 action dir(s): discord-notify, slack-notify"
     value: ${{ steps.exec.outputs.delivered }}

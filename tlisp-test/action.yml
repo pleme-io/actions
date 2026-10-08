@@ -15,11 +15,21 @@ inputs:
       repo that genuinely has no tlisp tests.
     required: false
     default: "1"
+  tatara-version:
+    description: >-
+      The tatara-script release the suite runs on. Only units whose action.yml
+      pins this release (an unpinned unit runs on v0.2.5) are run; every other
+      unit is listed as deferred, to be run by a step that sets its pin.
+    required: false
+    default: "v0.2.5"
 
 outputs:
   test-files:
     description: "Number of *.test.tlisp files discovered."
     value: ${{ steps.run.outputs.test-files }}
+  deferred-files:
+    description: "Number of *.test.tlisp files whose unit pins a different tatara-script release."
+    value: ${{ steps.run.outputs.deferred-files }}
   failed-files:
     description: "Number of test files with a failing (deftest ...)."
     value: ${{ steps.run.outputs.failed-files }}
@@ -43,5 +53,7 @@ runs:
       uses: pleme-io/actions/tatara-script@main
       with:
         script-file: ${{ steps.src.outputs.script-file }}
+        version: ${{ inputs.tatara-version }}
       env:
         MIN_FILES: ${{ inputs.min-files }}
+        TLISP_RUNTIME: ${{ inputs.tatara-version }}

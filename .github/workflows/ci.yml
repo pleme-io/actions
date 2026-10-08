@@ -104,6 +104,10 @@ jobs:
       - uses: ./tlisp-test
         with:
           min-files: "61"
+      - uses: ./tlisp-test
+        with:
+          tatara-version: v0.3.58
+          min-files: "1"
 
   enforce-no-shell:
     name: Enforce ★★ NO-SHELL directive across action.yml files

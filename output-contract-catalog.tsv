@@ -7,9 +7,9 @@
 #
 # actions                369
 # routing tatara-script  350
-# distinct keys written  353
+# distinct keys written  354
 # dynamic key expansions 8
-# inner union (generated)361
+# inner union (generated)362
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -354,7 +354,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	361
+tatara-script	own-runner	-	0	362
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -362,7 +362,7 @@ terraform-apply	tatara-script	run.tlisp	1	1
 terraform-plan	tatara-script	run.tlisp	2	2
 tfsec	tatara-script	run.tlisp	1	1
 tlisp-lint	tatara-script	run.tlisp	2	2
-tlisp-test	tatara-script	run.tlisp	2	2
+tlisp-test	tatara-script	run.tlisp	3	3
 toc-update	tatara-script	run.tlisp	1	1
 trivy-fs-scan	tatara-script	run.tlisp	3	3
 turbo-build	tatara-script	run.tlisp	1	1
@@ -985,6 +985,7 @@ terraform-plan	plan-path	static	declared	forwarded
 tfsec	findings-count	static	declared	forwarded
 tlisp-lint	errors-found	static	declared	forwarded
 tlisp-lint	files-scanned	static	declared	forwarded
+tlisp-test	deferred-files	static	declared	forwarded
 tlisp-test	failed-files	static	declared	forwarded
 tlisp-test	test-files	static	declared	forwarded
 toc-update	changed	static	declared	forwarded

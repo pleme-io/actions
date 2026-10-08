@@ -2447,3 +2447,46 @@
               (erro:err (erro:new "num/bad-int"
                 (string-append "'" s "' is not an integer") (list "input" s))))
             (else r)))))))
+
+(define runtime:default "v0.2.5")
+
+(define runtime:primitives-dir "_tlisp-stdlib")
+
+(define (runtime:line-value line key)
+  (let ((t (string-trim line)))
+    (if (string-starts-with? t (string-append key ":"))
+      (string-trim (string-replace t (string-append key ":") ""))
+      "")))
+
+(define (runtime:first-value lines key accept?)
+  (cond
+    ((null? lines) "")
+    (else
+      (let ((v (runtime:line-value (car lines) key)))
+        (if (and (not (equal? v "")) (accept? v))
+          v
+          (runtime:first-value (cdr lines) key accept?))))))
+
+(define (runtime:tag? v) (re-match? "^v[0-9]+\\.[0-9]+\\.[0-9]+$" v))
+
+(define (runtime:pin-of-action-yml text)
+  (let ((v (runtime:first-value (string-split text "\n") "version" runtime:tag?)))
+    (if (equal? v "") runtime:default v)))
+
+(define (runtime:required-symbols-of-action-yml text)
+  (filter
+    (lambda (s) (not (equal? s "")))
+    (string-split
+      (runtime:first-value (string-split text "\n") "require-symbols" (lambda (v) #t))
+      " ")))
+
+(define (runtime:primitives-path version)
+  (string-append runtime:primitives-dir "/PRIMITIVES-" version ".txt"))
+
+(define (runtime:primitives version)
+  (let ((p (runtime:primitives-path version)))
+    (if (path-exists? p)
+      (filter
+        (lambda (l) (and (not (equal? l "")) (not (string-starts-with? l "#"))))
+        (map string-trim (string-split (read-file p) "\n")))
+      (list))))

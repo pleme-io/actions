@@ -525,3 +525,40 @@
     (write-file cleanf "(proc:must (list \"git\" \"--version\"))\n")
     (assert (not (shell-fails? cleanf))
       "an unbaselined file with no shell must not fail")))
+
+(define skew-universe-fixture (list "sha256-file" "blake3-file" "exec-with-env"))
+
+(deftest "runtime skew: a v0.2.5 unit calling sha256-file is unbound on its pin"
+  (assert
+    (equal?
+      (skew-findings (skew-code-of "(define (s p) (sha256-file p))") "v0.2.5" (list) (list) skew-universe-fixture)
+      (list "unbound-on-pin\tsha256-file"))
+    "the rust-cross-build defect, unpinned"))
+
+(deftest "runtime skew: a pinned unit must still list the symbol in require-symbols"
+  (assert
+    (equal?
+      (skew-findings (skew-code-of "(sha256-file p)") "v0.3.58" (list) (list) skew-universe-fixture)
+      (list "not-required\tsha256-file"))
+    "pin without require-symbols")
+  (assert
+    (null? (skew-findings (skew-code-of "(sha256-file p)") "v0.3.58" (list "sha256-file") (list) skew-universe-fixture))
+    "pin and require-symbols together are clean"))
+
+(deftest "runtime skew: a stdlib definition of the symbol satisfies it"
+  (assert
+    (null? (skew-findings (skew-code-of "(sha256-file p)") "v0.2.5" (list) (list "sha256-file") skew-universe-fixture))
+    "defined in the composition"))
+
+(deftest "runtime skew: comments, strings and longer names are not calls"
+  (assert
+    (null?
+      (skew-findings
+        (skew-code-of ";; (sha256-file p)\n(log-info \"(sha256-file x)\")\n(sha256-file-ish p)")
+        "v0.2.5" (list) (list) skew-universe-fixture))
+    "only a real call head counts"))
+
+(deftest "runtime skew: a symbol bound by v0.2.5 is never a finding"
+  (assert
+    (null? (skew-findings (skew-code-of "(sha256 s)") "v0.2.5" (list) (list) (list "sha256")))
+    "sha256 is a v0.2.5 primitive"))

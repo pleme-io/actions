@@ -141,11 +141,41 @@
 
 (define min-files (parse-int (env-get "MIN_FILES" "1") 1))
 
-(define test-files (find-test-files))
+(define runtime-version
+  (let ((v (string-trim (env-get "TLISP_RUNTIME" ""))))
+    (if (equal? v "") runtime:default v)))
+
+(define (unit-runtime test-file)
+  (let ((yml (path-join (dirname-of (unit-of test-file)) "action.yml")))
+    (if (path-exists? yml)
+      (runtime:pin-of-action-yml (read-file yml))
+      runtime:default)))
+
+(define all-test-files (find-test-files))
+
+(define test-files
+  (filter (lambda (f) (equal? (unit-runtime f) runtime-version)) all-test-files))
+
+(define deferred-files
+  (filter (lambda (f) (not (equal? (unit-runtime f) runtime-version))) all-test-files))
 
 (define discovered (length test-files))
 
-(log-info (string-append "tlisp-test: " (string-format "{}" discovered) " test file(s)"))
+(log-info
+  (string-append
+    "tlisp-test: "
+    (string-format "{}" discovered)
+    " test file(s) on tatara-script "
+    runtime-version
+    ", "
+    (string-format "{}" (length deferred-files))
+    " deferred to their pinned release"))
+
+(for-each
+  (lambda (f) (log-info (string-append "  deferred: " f " (pins " (unit-runtime f) ")")))
+  (filter (lambda (f) (not (equal? (unit-runtime f) runtime:default))) deferred-files))
+
+(append-output (string-append "deferred-files=" (string-format "{}" (length deferred-files))))
 
 ;; ── THE ZERO-DENOMINATOR GATE ────────────────────────────────────────────
 ;; Without this, a discovery failure is INDISTINGUISHABLE FROM SUCCESS: `find`
