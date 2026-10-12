@@ -1,0 +1,20 @@
+(deftest "node lists parse from words, commas, newlines and JSON, first occurrence wins"
+  (assert (equal? (parse-nodes "plo rio") (list "plo" "rio")) "spaces")
+  (assert (equal? (parse-nodes "plo, rio,\nzek") (list "plo" "rio" "zek")) "commas and newlines")
+  (assert (equal? (parse-nodes "[\"plo\",\"rio\"]") (list "plo" "rio")) "JSON array")
+  (assert (equal? (parse-nodes "rio plo rio") (list "rio" "plo")) "duplicates collapse")
+  (assert (equal? (parse-nodes "") (list)) "empty is an empty list, never a row named empty")
+  (assert (equal? (parse-nodes "[]") (list)) "empty JSON array"))
+
+(deftest "each row names the node and the toplevel ref built for it"
+  (assert
+    (equal? (ref-of "." "nixosConfigurations.NODE.config.system.build.toplevel" "plo")
+      ".#nixosConfigurations.plo.config.system.build.toplevel")
+    "default template")
+  (assert
+    (equal?
+      (json-stringify (matrix-of "." "nixosConfigurations.NODE.config.system.build.toplevel" (list "plo" "rio")))
+      "{\"include\":[{\"flake-ref\":\".#nixosConfigurations.plo.config.system.build.toplevel\",\"node\":\"plo\"},{\"flake-ref\":\".#nixosConfigurations.rio.config.system.build.toplevel\",\"node\":\"rio\"}]}")
+    "matrix JSON")
+  (assert (equal? (json-stringify (matrix-of "." "x.NODE" (list))) "{\"include\":[]}") "empty include")
+  (assert (equal? (ref-of "github:o/r" "darwinConfigurations.NODE.system" "ryn") "github:o/r#darwinConfigurations.ryn.system") "template and flake are the caller's"))

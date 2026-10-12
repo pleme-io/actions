@@ -140,10 +140,17 @@
       (exit 0))
     #t)
 
+(define runner-labels
+  (filter (lambda (w) (not (equal? w ""))) (re-split "[\\s,\\[\\]\"]+" (env-get "RUNNER_LABELS" ""))))
+
+(set! violations
+  (concat violations
+    (map (lambda (l) (string-append "runner-labels input -> " l)) (filter metered-label? runner-labels))))
+
 (define files (concat (glob (string-append workflows-dir "/*.yml"))
                       (glob (string-append workflows-dir "/*.yaml"))))
 
-(if (= (length files) 0)
+(if (and (= (length files) 0) (= (length violations) 0))
     (begin (print-line "runner-policy: no workflow files found — nothing to check.") (exit 0))
     #t)
 

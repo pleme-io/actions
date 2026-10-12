@@ -1,0 +1,87 @@
+name: 'pleme-io · nix-node-matrix'
+description: >-
+  Turn a list of fleet node names into the GitHub Actions job matrix that
+  builds each node's system closure, one row per node, so a fleet repo builds
+  its machines as parallel jobs instead of hand-writing one job per node. Each
+  row carries `node` and `flake-ref` (default template
+  nixosConfigurations.NODE.config.system.build.toplevel). `auto` enumerates the
+  flake's configurations of one system with nix eval.
+branding:
+  icon: 'grid'
+  color: 'blue'
+
+inputs:
+  nodes:
+    description: >-
+      Node names separated by spaces, commas or newlines, a JSON array of
+      names, or `auto` to enumerate every configuration whose
+      pkgs.stdenv.hostPlatform.system equals `system`. Duplicates collapse,
+      first occurrence wins.
+    required: true
+  flake:
+    description: "Flake the refs point into."
+    required: false
+    default: "."
+  attr-template:
+    description: "Attribute path per node; NODE is replaced by the node name."
+    required: false
+    default: "nixosConfigurations.NODE.config.system.build.toplevel"
+  configurations:
+    description: "Attribute set `auto` enumerates."
+    required: false
+    default: "nixosConfigurations"
+  system:
+    description: "System `auto` keeps."
+    required: false
+    default: "x86_64-linux"
+  github-token:
+    description: "Token for nix access-tokens when `auto` evaluates a flake with private inputs."
+    required: false
+    default: ""
+
+outputs:
+  matrix:
+    description: 'Matrix JSON {"include":[{"node":…,"flake-ref":…}]}; consume with fromJSON.'
+    value: ${{ steps.run.outputs.matrix }}
+  nodes:
+    description: "JSON array of the node names, in matrix order."
+    value: ${{ steps.run.outputs.nodes }}
+  count:
+    description: "Number of rows. Gate the consuming job on it: an empty include fails the job."
+    value: ${{ steps.run.outputs.count }}
+  reason:
+    description: "ok | empty | eval-failed"
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.nodes == 'auto'
+      uses: pleme-io/actions/nix-setup@main
+      with:
+        github-token: ${{ inputs.github-token }}
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/nix-node-matrix.tlisp"
+        {
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - name: Build the node matrix
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        NODES: ${{ inputs.nodes }}
+        FLAKE: ${{ inputs.flake }}
+        ATTR_TEMPLATE: ${{ inputs.attr-template }}
+        CONFIGURATIONS: ${{ inputs.configurations }}
+        SYSTEM: ${{ inputs.system }}

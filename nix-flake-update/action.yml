@@ -1,5 +1,10 @@
 name: 'pleme-io · nix-flake-update'
-description: 'Run `nix flake update` + open PR if flake.lock changed. Idempotent — exits 0 with no PR when lock is current. Specific case of dependency-update for nix-only repos.'
+description: >-
+  Run `nix flake update`, build every caller-supplied verify ref against the
+  new lock, and only then publish it: `push` commits straight to the target
+  branch (pleme-io repos), `pr` force-pushes a branch and opens a PR, `none`
+  only reports. Idempotent: an unchanged lock exits 0 and publishes nothing; a
+  verify ref that fails to build publishes nothing and fails the step.
 branding:
   icon: 'refresh-cw'
   color: 'blue'
@@ -9,29 +14,88 @@ inputs:
     description: "Space-separated flake inputs to update (empty = all)"
     required: false
     default: ""
+  mode:
+    description: >-
+      push | pr | none. Empty derives it from open-pr ("true" = pr,
+      anything else = none), so callers written before this input keep their
+      behaviour.
+    required: false
+    default: ""
   open-pr:
-    description: "Open a PR when flake.lock changed"
+    description: "Legacy switch read only when mode is empty: open a PR when flake.lock changed"
     required: false
     default: "true"
   pr-branch:
-    description: "Branch name for the PR"
+    description: "Branch name for pr mode"
     required: false
     default: "chore/flake-lock-update"
+  branch:
+    description: "Target branch for push mode, and the PR base in pr mode. Empty = the repository default branch."
+    required: false
+    default: ""
+  verify:
+    description: >-
+      Space-separated flake refs built with `nix build --no-link` after the
+      update and before anything is published, e.g.
+      ".#checks.x86_64-linux.promotion-gate". Empty verifies nothing.
+    required: false
+    default: ""
+  github-token:
+    description: >-
+      Token for the checkout and the push, for gh in pr mode, and for nix's
+      access-tokens so PRIVATE flake inputs resolve. Pass an org-scoped PAT
+      (BOT_PAT): the auto-provided GITHUB_TOKEN cannot read other private
+      repos, and a push made with it triggers no workflow on the new commit.
+      Empty = github.token.
+    required: false
+    default: ""
+  commit-message:
+    description: "Commit subject for the lock change"
+    required: false
+    default: "flake: nix flake update"
+  author-name:
+    description: "Commit author name. Empty = the github-actions bot identity."
+    required: false
+    default: ""
+  author-email:
+    description: "Commit author email, read only with author-name."
+    required: false
+    default: ""
 
 outputs:
+  mode:
+    description: "The resolved mode: push, pr or none."
+    value: ${{ steps.upd.outputs.mode }}
   changed:
+    description: '"true" when flake.lock changed.'
     value: ${{ steps.upd.outputs.changed }}
+  verified:
+    description: '"true" when every verify ref built (or none was given), "false" when one failed, "" when nothing changed.'
+    value: ${{ steps.upd.outputs.verified }}
+  pushed:
+    description: '"true" when the lock commit reached the remote.'
+    value: ${{ steps.upd.outputs.pushed }}
+  commit-sha:
+    description: "The lock commit, when one was made."
+    value: ${{ steps.upd.outputs.commit-sha }}
   pr-url:
+    description: "The PR, in pr mode."
     value: ${{ steps.upd.outputs.pr-url }}
+  reason:
+    description: "unchanged | published | report-only | update-failed | verify-failed | push-rejected | pr-failed | bad-mode"
+    value: ${{ steps.upd.outputs.reason }}
 
 runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
       with:
-        token: ${{ secrets.BOT_PAT || github.token }}
+        token: ${{ inputs.github-token || github.token }}
+        ref: ${{ inputs.branch }}
 
-    - uses: DeterminateSystems/nix-installer-action@main
+    - uses: pleme-io/actions/nix-setup@main
+      with:
+        github-token: ${{ inputs.github-token }}
 
     - id: src
       shell: bash
@@ -39,7 +103,6 @@ runs:
         set -euo pipefail
         out="${RUNNER_TEMP}/nix-flake-update.tlisp"
         {
-          # stdlib read in-checkout, at the SAME ref as the tlisp below -- never fetched.
           cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
           echo
           cat ${{ github.action_path }}/run.tlisp
@@ -52,7 +115,13 @@ runs:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
         INPUTS_TO_UPDATE: ${{ inputs.inputs-to-update }}
+        MODE: ${{ inputs.mode }}
         OPEN_PR: ${{ inputs.open-pr }}
         PR_BRANCH: ${{ inputs.pr-branch }}
+        TARGET_BRANCH: ${{ inputs.branch || github.event.repository.default_branch }}
+        VERIFY: ${{ inputs.verify }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        AUTHOR_NAME: ${{ inputs.author-name }}
+        AUTHOR_EMAIL: ${{ inputs.author-email }}
         REPO: ${{ github.repository }}
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ inputs.github-token || github.token }}

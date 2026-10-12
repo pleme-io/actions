@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                369
-# routing tatara-script  350
-# distinct keys written  354
+# actions                371
+# routing tatara-script  352
+# distinct keys written  358
 # dynamic key expansions 8
-# inner union (generated)362
+# inner union (generated)366
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -211,6 +211,7 @@ k8s-rollout-wait	tatara-script	run.tlisp	1	1
 kafka-publish	tatara-script	run.tlisp	1	1
 keycloak-realm-import	tatara-script	run.tlisp	1	1
 kics-scan	tatara-script	run.tlisp	1	1
+kijun-lint	tatara-script	run.tlisp	4	4
 ko-build	tatara-script	run.tlisp	1	1
 kube-namespace-diagnostics	tatara-script	run.tlisp	2	2
 kube-tls-fixture	tatara-script	run.tlisp	2	2
@@ -243,8 +244,9 @@ nix-attic-push	tatara-script	run.tlisp	1	1
 nix-build	tatara-script	run.tlisp	3	3
 nix-cachix-push	tatara-script	run.tlisp	1	1
 nix-flake-check	tatara-script	run.tlisp	0	0
-nix-flake-update	tatara-script	run.tlisp	2	2
+nix-flake-update	tatara-script	run.tlisp	7	7
 nix-image	tatara-script	run.tlisp	4	8
+nix-node-matrix	tatara-script	run.tlisp	4	4
 nix-setup	own-runner	-	0	1
 no-cve-suppression	tatara-script	run.tlisp	3	3
 notion-db-row-add	tatara-script	run.tlisp	1	1
@@ -354,7 +356,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	362
+tatara-script	own-runner	-	0	366
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -712,6 +714,10 @@ k8s-rollout-wait	rolled-out	static	declared	forwarded
 kafka-publish	published	static	declared	forwarded
 keycloak-realm-import	imported	static	declared	forwarded
 kics-scan	findings-count	static	declared	forwarded
+kijun-lint	exit-code	static	declared	forwarded
+kijun-lint	ran	static	declared	forwarded
+kijun-lint	reason	static	declared	forwarded
+kijun-lint	report-path	static	declared	forwarded
 ko-build	image	static	declared	forwarded
 kube-namespace-diagnostics	containers-inspected	static	declared	forwarded
 kube-namespace-diagnostics	pods-inspected	static	declared	forwarded
@@ -757,7 +763,12 @@ nix-build	cache-pushed	static	declared	forwarded
 nix-build	out-path	static	declared	forwarded
 nix-cachix-push	pushed	static	declared	forwarded
 nix-flake-update	changed	static	declared	forwarded
+nix-flake-update	commit-sha	static	declared	forwarded
+nix-flake-update	mode	static	declared	forwarded
 nix-flake-update	pr-url	static	declared	forwarded
+nix-flake-update	pushed	static	declared	forwarded
+nix-flake-update	reason	static	declared	forwarded
+nix-flake-update	verified	static	declared	forwarded
 nix-image	built	static	declared	forwarded
 nix-image	result	static	declared	forwarded
 nix-image	tarball-aarch64	dynamic:tarball-	declared	forwarded
@@ -766,6 +777,10 @@ nix-image	tarball-arm64	dynamic:tarball-	declared	forwarded
 nix-image	tarball-x86_64	dynamic:tarball-	declared	forwarded
 nix-image	tarballs	static	declared	forwarded
 nix-image	via-service	static	declared	forwarded
+nix-node-matrix	count	static	declared	forwarded
+nix-node-matrix	matrix	static	declared	forwarded
+nix-node-matrix	nodes	static	declared	forwarded
+nix-node-matrix	reason	static	declared	forwarded
 no-cve-suppression	baselined	static	declared	forwarded
 no-cve-suppression	files-scanned	static	declared	forwarded
 no-cve-suppression	violations	static	declared	forwarded

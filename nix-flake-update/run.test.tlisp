@@ -1,0 +1,43 @@
+(deftest "mode resolves from the explicit input, then the legacy open-pr switch"
+  (assert (equal? (resolve-mode "push" "true") "push") "explicit push wins over open-pr")
+  (assert (equal? (resolve-mode " pr " "false") "pr") "explicit pr, trimmed")
+  (assert (equal? (resolve-mode "none" "true") "none") "explicit none")
+  (assert (equal? (resolve-mode "" "true") "pr") "legacy open-pr=true is pr")
+  (assert (equal? (resolve-mode "" "false") "none") "legacy open-pr=false is none")
+  (assert (equal? (resolve-mode "force" "true") "") "an unknown mode is refused, never guessed"))
+
+(deftest "inputs and verify refs split on any whitespace"
+  (assert (equal? (update-argv "") (list "nix" "flake" "update")) "empty updates every input")
+  (assert (equal? (update-argv " blue  substrate ") (list "nix" "flake" "update" "blue" "substrate")) "named inputs")
+  (assert
+    (equal? (words ".#checks.x86_64-linux.a\n.#checks.x86_64-linux.b")
+      (list ".#checks.x86_64-linux.a" ".#checks.x86_64-linux.b"))
+    "newline-separated verify refs"))
+
+(deftest "the first verify ref that fails to build is named, and nothing after it runs"
+  (define (build ref) (if (equal? ref "bad") 1 0))
+  (assert (equal? (first-failing-ref (list "a" "b") build) "") "all green")
+  (assert (equal? (first-failing-ref (list "a" "bad" "c") build) "bad") "names the failing ref")
+  (assert (equal? (first-failing-ref (list) build) "") "no refs verifies vacuously, by design")
+  (assert (equal? (verify-argv ".#x") (list "nix" "build" "--no-link" ".#x")) "verify builds without a link"))
+
+(deftest "push mode pushes HEAD to the target branch; pr mode force-pushes the PR branch"
+  (assert (equal? (push-argv "main") (list "git" "push" "origin" "HEAD:refs/heads/main")) "no force on the target branch")
+  (assert
+    (equal? (pr-push-argv "chore/flake-lock-update")
+      (list "git" "push" "--force" "origin" "HEAD:refs/heads/chore/flake-lock-update"))
+    "the PR branch is the action's own")
+  (assert (equal? (nth 5 (pr-create-argv "o/r" "main" "h" "m")) "--base") "PR base is passed")
+  (assert (equal? (nth 6 (pr-create-argv "o/r" "main" "h" "m")) "main") "PR base is the target branch"))
+
+(deftest "an author override rides on the commit; no override leaves the bot identity"
+  (assert (equal? (commit-argv "" "" "m") (list "git" "commit" "-m" "m")) "bot identity")
+  (assert
+    (equal? (commit-argv "n" "e" "m") (list "git" "-c" "user.name=n" "-c" "user.email=e" "commit" "-m" "m"))
+    "override"))
+
+(deftest "every verdict carries all seven outputs and its exit code"
+  (define v (verdict "push" "true" "false" "false" "" "" "verify-failed" 1))
+  (assert (= (length v) 8) "seven outputs plus the code")
+  (assert (equal? (nth 6 v) "verify-failed") "reason")
+  (assert (= (nth 7 v) 1) "a failed verify fails the step"))

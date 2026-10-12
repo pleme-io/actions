@@ -120,6 +120,16 @@ runs:
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
           ${{ inputs.extra-conf }}
 
+    - name: Carry the fleet nix.conf to a runner whose Nix was already installed
+      if: runner.environment == 'self-hosted'
+      shell: bash
+      env:
+        PLEME_NIX_CONF: |
+          sandbox = relaxed
+          ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+          ${{ inputs.extra-conf }}
+      run: printf 'NIX_CONFIG<<PLEME_NIX_CONF_EOF\n%s\nPLEME_NIX_CONF_EOF\n' "$PLEME_NIX_CONF" >> "$GITHUB_ENV"
+
     # The out-link is both the GC root and the PATH entry. The last line runs
     # the binary once, so the log records which nextest the job got and a
     # realised path that does not execute fails here rather than at the first

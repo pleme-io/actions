@@ -1,0 +1,25 @@
+(deftest "a ref that does not exist yet is a skip; any other evaluation error is a failure"
+  (assert (equal? (probe-verdict 0 "") "present") "evaluates")
+  (assert
+    (equal? (probe-verdict 1 "error: flake 'github:pleme-io/blue' does not provide attribute 'packages.x86_64-linux.kijun'") "ref-absent")
+    "missing attribute")
+  (assert (equal? (probe-verdict 1 "error: cannot find flake 'flake:kijun' in the flake registries") "ref-absent") "missing flake")
+  (assert (equal? (probe-verdict 1 "error: unable to download 'https://api.github.com/repos/pleme-io/nope': HTTP error 404") "ref-absent") "missing repo")
+  (assert (equal? (probe-verdict 1 "error: syntax error, unexpected '}'") "eval-failed") "a broken kijun is not hidden as absent"))
+
+(deftest "the probe and the run address the same attribute"
+  (assert (equal? (probe-argv "github:pleme-io/blue#kijun") (list "nix" "eval" "--raw" "github:pleme-io/blue#kijun.drvPath")) "probe")
+  (assert (equal? (with-attr "github:pleme-io/kijun") "github:pleme-io/kijun#default") "a bare flake means its default")
+  (assert
+    (equal? (run-argv "github:pleme-io/blue#kijun" "check --json" ".")
+      (list "nix" "run" "github:pleme-io/blue#kijun" "--" "check" "--json" "."))
+    "default command shape appends the path"))
+
+(deftest "the command shape is the caller's"
+  (assert (equal? (kijun-args "lint --format=json {path} --strict" "nix") (list "lint" "--format=json" "nix" "--strict")) "placeholder")
+  (assert (equal? (kijun-args "  check   --json " "src") (list "check" "--json" "src")) "whitespace"))
+
+(deftest "findings fail only when asked to"
+  (assert (equal? (run-verdict 0 #t) (list "clean" 0)) "clean")
+  (assert (equal? (run-verdict 3 #t) (list "findings" 1)) "findings fail")
+  (assert (equal? (run-verdict 3 #f) (list "findings" 0)) "report only"))

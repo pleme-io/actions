@@ -32,6 +32,14 @@ inputs:
       is the authoritative source; override only in a test harness.
     required: false
     default: ""
+  runner-labels:
+    description: >-
+      A runner label set the caller routes jobs to, as a JSON array or words,
+      for a reusable workflow whose runs-on is an input and so invisible to the
+      file scan. On a private repo a metered GitHub-hosted label in it fails
+      the check. Empty checks nothing extra.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -42,3 +50,4 @@ runs:
       env:
         WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
         REPO_PRIVATE: ${{ inputs.private != '' && inputs.private || github.event.repository.private }}
+        RUNNER_LABELS: ${{ inputs.runner-labels }}

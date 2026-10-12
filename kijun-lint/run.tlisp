@@ -1,0 +1,69 @@
+(define (words s)
+  (filter (lambda (w) (not (equal? w ""))) (re-split "\\s+" (string-trim s))))
+
+(define (with-attr ref) (if (string-contains? ref "#") ref (string-append ref "#default")))
+
+(define (probe-argv ref) (list "nix" "eval" "--raw" (string-append (with-attr ref) ".drvPath")))
+
+(define absent-signatures
+  (list "does not provide attribute" "cannot find flake" "HTTP error 404" "does not exist" "Not Found"))
+
+(define (absent? stderr) (> (length (filter (lambda (s) (string-contains? stderr s)) absent-signatures)) 0))
+
+(define (probe-verdict status stderr)
+  (cond
+    ((= status 0) "present")
+    ((absent? stderr) "ref-absent")
+    (else "eval-failed")))
+
+(define (kijun-args args path)
+  (let ((ws (words args)))
+    (if (> (length (filter (lambda (w) (string-contains? w "{path}")) ws)) 0)
+      (map (lambda (w) (string-replace w "{path}" path)) ws)
+      (append ws (list path)))))
+
+(define (run-argv ref args path) (append (list "nix" "run" (with-attr ref) "--") (kijun-args args path)))
+
+(define (run-verdict status fail?)
+  (cond
+    ((= status 0) (list "clean" 0))
+    (fail? (list "findings" 1))
+    (else (list "findings" 0))))
+
+(define (first-line s) (string-trim (car (string-split (string-append (string-trim s) "\n") "\n"))))
+
+(define (emit ran reason code report)
+  (append-output (string-append "ran=" ran))
+  (append-output (string-append "reason=" reason))
+  (append-output (string-append "exit-code=" code))
+  (append-output (string-append "report-path=" report)))
+
+(define (main)
+  (let* ((ref (env-get "FLAKE_REF" "github:pleme-io/blue#kijun"))
+         (probe (apply exec-capture (probe-argv ref)))
+         (seen (probe-verdict (status-of probe) (stderr-of probe))))
+    (cond
+      ((equal? seen "ref-absent")
+        (print-line (string-append "::notice title=kijun-lint::" (with-attr ref) " does not exist yet, so kijun was skipped: " (first-line (stderr-of probe))))
+        (emit "false" "ref-absent" "" "")
+        0)
+      ((equal? seen "eval-failed")
+        (log-error (string-append "kijun ref " (with-attr ref) " failed to evaluate"))
+        (log-info (stderr-of probe))
+        (emit "false" "eval-failed" "" "")
+        1)
+      (else
+        (let* ((report (let ((p (env-get "REPORT_PATH" ""))) (if (equal? p "") (string-append (env-get "RUNNER_TEMP" "/tmp") "/kijun-report.json") p)))
+               (argv (run-argv ref (env-get "KIJUN_ARGS" "check --json") (env-get "LINT_PATH" ".")))
+               (_ (log-info (string-append "==> " (string-join " " argv))))
+               (r (apply exec-capture argv))
+               (v (run-verdict (status-of r) (equal? (string-trim (env-get "FAIL_ON_FINDINGS" "true")) "true"))))
+          (write-file report (stdout-of r))
+          (print-line (stdout-of r))
+          (cond ((not (= (status-of r) 0)) (log-info (stderr-of r))) (else #f))
+          (emit "true" (car v) (string-format "{}" (status-of r)) report)
+          (car (cdr v)))))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — kijun-lint helpers loaded; main skipped"))
+  (else (exit (main))))

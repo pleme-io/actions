@@ -1,0 +1,84 @@
+name: 'pleme-io · kijun-lint'
+description: >-
+  Lint a repo's Nix with kijun, the blue Nix linter, run from a flake ref with
+  `nix run`. The command shape is an input, so a change in kijun's CLI is a
+  caller value, not an action edit. A ref that does not exist yet (the flake or
+  its attribute is absent) skips with a notice and outputs ran=false instead of
+  failing; any other evaluation error fails.
+branding:
+  icon: 'check-square'
+  color: 'blue'
+
+inputs:
+  flake-ref:
+    description: "Flake ref of the kijun package. A ref without # gets #default."
+    required: false
+    default: "github:pleme-io/blue#kijun"
+  args:
+    description: >-
+      Arguments after `nix run REF --`, split on whitespace. The token {path}
+      is replaced by `path`; without it, `path` is appended.
+    required: false
+    default: "check --json"
+  path:
+    description: "What kijun checks."
+    required: false
+    default: "."
+  report-path:
+    description: "Where kijun's stdout is written. Empty = RUNNER_TEMP/kijun-report.json."
+    required: false
+    default: ""
+  fail-on-findings:
+    description: '"true" fails the step when kijun exits non-zero; anything else only reports.'
+    required: false
+    default: "true"
+  github-token:
+    description: "Token for nix access-tokens, when the kijun flake or the linted flake's inputs are private."
+    required: false
+    default: ""
+
+outputs:
+  ran:
+    description: '"true" when kijun ran, "false" when the ref was absent or could not be evaluated.'
+    value: ${{ steps.run.outputs.ran }}
+  reason:
+    description: "clean | findings | ref-absent | eval-failed"
+    value: ${{ steps.run.outputs.reason }}
+  exit-code:
+    description: "kijun's exit status, empty when it did not run."
+    value: ${{ steps.run.outputs.exit-code }}
+  report-path:
+    description: "File holding kijun's stdout, empty when it did not run."
+    value: ${{ steps.run.outputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: pleme-io/actions/nix-setup@main
+      with:
+        github-token: ${{ inputs.github-token }}
+
+    - name: Load stdlib + run.tlisp
+      id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/kijun-lint.tlisp"
+        {
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - name: Run kijun
+      id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        FLAKE_REF: ${{ inputs.flake-ref }}
+        KIJUN_ARGS: ${{ inputs.args }}
+        LINT_PATH: ${{ inputs.path }}
+        REPORT_PATH: ${{ inputs.report-path }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}

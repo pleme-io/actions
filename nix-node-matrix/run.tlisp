@@ -1,0 +1,63 @@
+(define (dedupe xs)
+  (define (go rest seen)
+    (cond
+      ((null? rest) (list))
+      ((member? (car rest) seen) (go (cdr rest) seen))
+      (else (cons (car rest) (go (cdr rest) (cons (car rest) seen))))))
+  (go xs (list)))
+
+(define (member? x xs) (> (length (filter (lambda (y) (equal? x y)) xs)) 0))
+
+(define (parse-nodes raw)
+  (let ((t (string-trim raw)))
+    (cond
+      ((string-starts-with? t "[") (dedupe (filter (lambda (n) (not (equal? n ""))) (map string-trim (json-parse t)))))
+      (else (dedupe (filter (lambda (n) (not (equal? n ""))) (re-split "[\\s,]+" t)))))))
+
+(define (ref-of flake template node) (string-append flake "#" (string-replace template "NODE" node)))
+
+(define (row-of flake template node) (list (list "node" node) (list "flake-ref" (ref-of flake template node))))
+
+(define (matrix-of flake template nodes) (list (list "include" (map (lambda (n) (row-of flake template n)) nodes))))
+
+(define (eval-raw ref)
+  (let ((r (exec-capture "nix" "eval" "--raw" ref)))
+    (if (= (status-of r) 0) (string-trim (stdout-of r)) "")))
+
+(define (auto-nodes flake configurations system)
+  (let ((names (exec-capture "nix" "eval" "--json" (string-append flake "#" configurations) "--apply" "builtins.attrNames")))
+    (cond
+      ((not (= (status-of names) 0))
+        (log-error (string-append "nix eval of " flake "#" configurations " failed: " (string-trim (stderr-of names))))
+        #f)
+      (else
+        (filter
+          (lambda (n)
+            (equal? (eval-raw (string-append flake "#" configurations "." n ".pkgs.stdenv.hostPlatform.system")) system))
+          (json-parse (stdout-of names)))))))
+
+(define (emit nodes reason flake template)
+  (append-output (string-append "matrix=" (json-stringify (matrix-of flake template nodes))))
+  (append-output (string-append "nodes=" (json-stringify nodes)))
+  (append-output (string-append "count=" (string-format "{}" (length nodes))))
+  (append-output (string-append "reason=" reason)))
+
+(define (main)
+  (let* ((flake (env-get "FLAKE" "."))
+         (template (env-get "ATTR_TEMPLATE" "nixosConfigurations.NODE.config.system.build.toplevel"))
+         (raw (string-trim (env-get "NODES" "")))
+         (nodes
+           (if (equal? raw "auto")
+             (auto-nodes flake (env-get "CONFIGURATIONS" "nixosConfigurations") (env-get "SYSTEM" "x86_64-linux"))
+             (parse-nodes raw))))
+    (cond
+      ((equal? nodes #f) (emit (list) "eval-failed" flake template) 1)
+      ((null? nodes) (log-info "no nodes selected; the matrix is empty") (emit nodes "empty" flake template) 0)
+      (else
+        (log-info (string-append "node matrix: " (string-join " " nodes)))
+        (emit nodes "ok" flake template)
+        0))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — nix-node-matrix helpers loaded; main skipped"))
+  (else (exit (main))))

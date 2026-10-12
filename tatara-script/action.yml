@@ -292,6 +292,9 @@ outputs:
   commit-count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: commit-count)"
     value: ${{ steps.exec.outputs.commit-count }}
+  commit-sha:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: commit-sha)"
+    value: ${{ steps.exec.outputs.commit-sha }}
   commits-scanned:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: commits-scanned)"
     value: ${{ steps.exec.outputs.commits-scanned }}
@@ -421,6 +424,9 @@ outputs:
   event-id:
     description: "Forwarded (key: event-id) — written by 1 action dir(s): google-calendar-event-create"
     value: ${{ steps.exec.outputs.event-id }}
+  exit-code:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: exit-code)"
+    value: ${{ steps.exec.outputs.exit-code }}
   failed-count:
     description: "Forwarded (key: failed-count) — written by 1 action dir(s): cargo-publish-each-member"
     value: ${{ steps.exec.outputs.failed-count }}
@@ -607,6 +613,9 @@ outputs:
   missing-count:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: missing-count)"
     value: ${{ steps.exec.outputs.missing-count }}
+  mode:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: mode)"
+    value: ${{ steps.exec.outputs.mode }}
   model:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: model)"
     value: ${{ steps.exec.outputs.model }}
@@ -646,6 +655,9 @@ outputs:
   node-group:
     description: "Forwarded (key: node-group) — breathe-runner node-group"
     value: ${{ steps.exec.outputs.node-group }}
+  nodes:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: nodes)"
+    value: ${{ steps.exec.outputs.nodes }}
   ok:
     description: "Forwarded (key: ok) — aldrava-lint catalog-parsed-cleanly flag"
     value: ${{ steps.exec.outputs.ok }}
