@@ -1,0 +1,62 @@
+name: 'pleme-io · sui-cache-push'
+description: 'Push built store paths (and their closures) into a remote sui binary cache over HTTP, signed with the uploader key the origin trusts. The pleme-io cache plane is sui; this replaces nix-cachix-push and nix-attic-push. A failed push is a warning unless required is "true".'
+branding: { icon: 'upload-cloud', color: 'blue' }
+
+inputs:
+  paths:
+    description: 'Store paths to push, separated by whitespace or newlines (e.g. the out-path output of nix-build).'
+    required: true
+  cache-url:
+    description: 'The sui origin, e.g. http://rio:5000. Empty falls back to the runner environment SUI_CACHE_URL, which the fleet runner pools export.'
+    required: false
+    default: ''
+  signing-key-file:
+    description: 'Path of the uploader ed25519 secret key the origin lists with --upload-key. Empty falls back to signing-key, then to the runner environment SUI_CACHE_SIGNING_KEY_FILE.'
+    required: false
+    default: ''
+  signing-key:
+    description: 'The uploader secret key contents, from a secret. Written to a 0600 file under RUNNER_TEMP, removed after the push, never logged.'
+    required: false
+    default: ''
+  recursive:
+    description: 'Push each path''s whole closure ("true") or only the named paths.'
+    required: false
+    default: 'true'
+  required:
+    description: 'The literal "true" fails the step when the push fails or cannot run; otherwise it is a warning.'
+    required: false
+    default: 'false'
+
+outputs:
+  pushed:
+    description: '"true" when sui cache push succeeded for every path.'
+    value: ${{ steps.run.outputs.pushed }}
+  reason:
+    description: 'Why pushed is "false": no paths, no cache url, no signing key, sui not on PATH, or the push exit status and stderr.'
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/sui-cache-push.tlisp"
+        {
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        PUSH_PATHS: ${{ inputs.paths }}
+        CACHE_URL: ${{ inputs.cache-url }}
+        SIGNING_KEY_FILE: ${{ inputs.signing-key-file }}
+        SIGNING_KEY: ${{ inputs.signing-key }}
+        RECURSIVE: ${{ inputs.recursive }}
+        REQUIRED: ${{ inputs.required }}

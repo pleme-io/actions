@@ -2490,3 +2490,39 @@
         (lambda (l) (and (not (equal? l "")) (not (string-starts-with? l "#"))))
         (map string-trim (string-split (read-file p) "\n")))
       (list))))
+
+(define (sui-cache:opt-flag flag value) (if (equal? value "") (list) (list flag value)))
+
+(define (sui-cache:on-path? name)
+  (not
+    (null?
+      (filter
+        (lambda (d) (path-exists? (string-append d "/" name)))
+        (string-split (env-get "PATH" "") ":")))))
+
+(define (sui-cache:result status stderr) (list status stderr))
+
+(define (sui-cache:verdict r)
+  (if (= (car r) 0)
+    (list "true" "")
+    (list
+      "false"
+      (string-append
+        "sui cache push exited "
+        (string-format "{}" (car r))
+        ": "
+        (string-replace (string-trim (car (cdr r))) "\n" " ")))))
+
+(define (sui-cache:run argv)
+  (let ((r (apply exec-capture (cons "sui" argv))))
+    (print-line (stdout-of r))
+    (sui-cache:result (status-of r) (stderr-of r))))
+
+(define (sui-cache:materialize-key key name)
+  (if (equal? key "")
+    ""
+    (let ((file (string-append (env-get "RUNNER_TEMP" "/tmp") "/" name ".key")))
+      (write-file file "")
+      (exec-capture "chmod" "600" file)
+      (write-file file key)
+      file)))

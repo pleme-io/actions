@@ -1,5 +1,5 @@
 name: 'pleme-io · buildkit-cache-warm'
-description: 'Pre-warm buildkit''s registry-mounted layer cache for an image. Useful for cold-start CD runners or fan-out builds.'
+description: 'RETIRED: pleme-io caching software is sui (use sui-dockerfile-node-cache); refuses unless allow-legacy is "true". Pre-warm buildkit''s registry-mounted layer cache for an image. Useful for cold-start CD runners or fan-out builds.'
 branding: { icon: 'zap', color: 'blue' }
 
 inputs:
@@ -9,6 +9,10 @@ inputs:
     description: "Where the warmed cache lives (default: ${image}:buildcache)"
     required: false
     default: ""
+  allow-legacy:
+    description: 'The literal "true" runs this retired buildkit registry cache anyway. Anything else refuses and points at sui-dockerfile-node-cache.'
+    required: false
+    default: 'false'
 
 outputs:
   warmed:
@@ -17,6 +21,11 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: pleme-io/actions/legacy-cache-guard@main
+      with:
+        action: buildkit-cache-warm
+        replacement: sui-dockerfile-node-cache
+        allow-legacy: ${{ inputs.allow-legacy }}
     - uses: docker/setup-buildx-action@v3
     - uses: docker/login-action@v3
       with:

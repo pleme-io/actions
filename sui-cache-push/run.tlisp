@@ -1,0 +1,63 @@
+(define (first-set values)
+  (cond
+    ((null? values) "")
+    ((equal? (string-trim (car values)) "") (first-set (cdr values)))
+    (else (string-trim (car values)))))
+
+(define (store-paths raw)
+  (filter
+    (lambda (p) (not (equal? p "")))
+    (map string-trim (string-split (string-replace (string-replace raw "\n" " ") "\t" " ") " "))))
+
+(define (push-argv paths url key-file recursive?)
+  (append
+    (list "cache" "push")
+    (if recursive? (list "--recursive") (list))
+    (list "--cache-url" url "--signing-key" key-file)
+    paths))
+
+(define (push-plan paths url key-file sui-present?)
+  (cond
+    ((null? paths) (list "false" "no paths"))
+    ((equal? url "") (list "false" "no cache url: set cache-url or the runner's SUI_CACHE_URL"))
+    ((equal? key-file "") (list "false" "no signing key: set signing-key-file, signing-key or the runner's SUI_CACHE_SIGNING_KEY_FILE"))
+    ((not sui-present?) (list "false" "sui not on PATH"))
+    (else (list "run" ""))))
+
+(define (push-exit verdict required?)
+  (cond
+    ((equal? (car verdict) "true") 0)
+    (required? 1)
+    (else 0)))
+
+(define (emit verdict required?)
+  (append-output (string-append "pushed=" (car verdict)))
+  (append-output (string-append "reason=" (car (cdr verdict))))
+  (cond
+    ((equal? (car verdict) "true") (log-info "sui cache push: pushed"))
+    (required? (print-line (string-append "::error title=sui-cache-push::" (car (cdr verdict)))))
+    (else (print-line (string-append "::warning title=sui-cache-push::" (car (cdr verdict)))))))
+
+(define (main)
+  (let* ((paths (store-paths (env-get "PUSH_PATHS" "")))
+         (url (first-set (list (env-get "CACHE_URL" "") (env-get "SUI_CACHE_URL" ""))))
+         (materialized (sui-cache:materialize-key (env-get "SIGNING_KEY" "") "sui-cache-push-signing"))
+         (key-file
+           (first-set
+             (list (env-get "SIGNING_KEY_FILE" "") materialized (env-get "SUI_CACHE_SIGNING_KEY_FILE" ""))))
+         (required? (equal? (string-trim (env-get "REQUIRED" "false")) "true"))
+         (recursive? (not (equal? (string-trim (env-get "RECURSIVE" "true")) "false")))
+         (plan (push-plan paths url key-file (sui-cache:on-path? "sui")))
+         (verdict
+           (if (equal? (car plan) "run")
+             (begin
+               (log-info (string-append "==> sui cache push to " url ": " (string-format "{}" (length paths)) " path(s)"))
+               (sui-cache:verdict (sui-cache:run (push-argv paths url key-file recursive?))))
+             plan)))
+    (if (not (equal? materialized "")) (exec-capture "rm" "-f" materialized) #f)
+    (emit verdict required?)
+    (push-exit verdict required?)))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — sui-cache-push helpers loaded; main skipped"))
+  (else (exit (main))))

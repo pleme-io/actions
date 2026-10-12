@@ -1,0 +1,23 @@
+(define (legacy-allowed? raw) (equal? (string-trim raw) "true"))
+
+(define (guard-verdict allow action replacement)
+  (if (legacy-allowed? allow)
+    (list
+      0
+      (string-append
+        "::warning title=" action " is retired::running it because allow-legacy is true; pleme-io caching software is sui, use pleme-io/actions/" replacement))
+    (list
+      1
+      (string-append
+        "::error title=" action " is retired::pleme-io caching software is sui. Use pleme-io/actions/" replacement
+        " instead, or set allow-legacy: \"true\" to run " action " anyway."))))
+
+(define (main)
+  (let ((v (guard-verdict (env-get "ALLOW_LEGACY" "false") (env-get "GUARDED_ACTION" "") (env-get "REPLACEMENT" ""))))
+    (print-line (car (cdr v)))
+    (append-output (string-append "allowed=" (if (= (car v) 0) "true" "false")))
+    (car v)))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — legacy-cache-guard helpers loaded; main skipped"))
+  (else (exit (main))))

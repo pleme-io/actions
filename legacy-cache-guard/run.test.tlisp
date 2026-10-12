@@ -1,0 +1,17 @@
+(deftest "only the literal true opts in"
+  (assert (legacy-allowed? "true") "true")
+  (assert (legacy-allowed? " true ") "trimmed")
+  (assert (not (legacy-allowed? "false")) "false")
+  (assert (not (legacy-allowed? "")) "unset")
+  (assert (not (legacy-allowed? "yes")) "yes is not true"))
+
+(deftest "a refusal exits 1 and names the sui replacement"
+  (let ((v (guard-verdict "false" "nix-cachix-push" "sui-cache-push")))
+    (assert (= (car v) 1) "refused")
+    (assert (string-contains? (car (cdr v)) "::error") "error annotation")
+    (assert (string-contains? (car (cdr v)) "pleme-io/actions/sui-cache-push") "names the replacement")))
+
+(deftest "an opt-in exits 0 with a warning"
+  (let ((v (guard-verdict "true" "nix-attic-push" "sui-cache-push")))
+    (assert (= (car v) 0) "allowed")
+    (assert (string-contains? (car (cdr v)) "::warning") "warning annotation")))

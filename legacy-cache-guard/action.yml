@@ -1,0 +1,43 @@
+name: 'pleme-io · legacy-cache-guard'
+description: 'Refuse a retired cache action unless the caller opts in. pleme-io caching software is sui; the refusal names the sui action that replaces it.'
+branding: { icon: 'shield', color: 'red' }
+
+inputs:
+  action:
+    description: 'Name of the retired action being guarded, e.g. nix-cachix-push.'
+    required: true
+  replacement:
+    description: 'The pleme-io/actions entry that replaces it, e.g. sui-cache-push.'
+    required: true
+  allow-legacy:
+    description: 'The literal "true" runs the retired action anyway, with a warning. Anything else refuses.'
+    required: false
+    default: 'false'
+
+outputs:
+  allowed:
+    description: '"true" when the caller opted in and the retired action may run.'
+    value: ${{ steps.run.outputs.allowed }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/legacy-cache-guard.tlisp"
+        {
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        GUARDED_ACTION: ${{ inputs.action }}
+        REPLACEMENT: ${{ inputs.replacement }}
+        ALLOW_LEGACY: ${{ inputs.allow-legacy }}

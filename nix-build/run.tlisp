@@ -9,31 +9,16 @@
 
 (define (cache-push-enabled? raw) (equal? (string-trim raw) "true"))
 
-(define (opt-flag flag value) (if (equal? value "") (list) (list flag value)))
-
 (define (cache-push-argv paths store-path key-file)
   (append
     (list "cache" "push" "--recursive")
-    (opt-flag "--store-path" store-path)
-    (opt-flag "--signing-key" key-file)
+    (sui-cache:opt-flag "--store-path" store-path)
+    (sui-cache:opt-flag "--signing-key" key-file)
     paths))
 
-(define (push-result status stderr) (list status stderr))
+(define (push-result status stderr) (sui-cache:result status stderr))
 
-(define (push-status r) (car r))
-
-(define (push-stderr r) (car (cdr r)))
-
-(define (push-verdict r)
-  (if (= (push-status r) 0)
-    (list "true" "")
-    (list
-      "false"
-      (string-append
-        "sui cache push exited "
-        (string-format "{}" (push-status r))
-        ": "
-        (string-replace (string-trim (push-stderr r)) "\n" " ")))))
+(define (push-verdict r) (sui-cache:verdict r))
 
 (define (cache-push-step enabled? sui-present? paths argv runner)
   (cond
@@ -50,33 +35,16 @@
     ((equal? (car (cdr verdict)) "disabled") #f)
     (else (log-info (string-append "::warning::sui cache push failed: " (car (cdr verdict)))))))
 
-(define (sui-runner argv)
-  (let ((r (apply exec-capture (cons "sui" argv))))
-    (push-result (status-of r) (stderr-of r))))
-
-(define (path-dirs) (string-split (env-get "PATH" "") ":"))
-
-(define (on-path? name)
-  (not (null? (filter (lambda (d) (path-exists? (string-append d "/" name))) (path-dirs)))))
-
-(define (materialize-signing-key key)
-  (if (equal? key "")
-    ""
-    (let ((file (string-append (env-get "RUNNER_TEMP" "/tmp") "/nix-build-sui-signing.key")))
-      (write-file file "")
-      (exec-capture "chmod" "600" file)
-      (write-file file key)
-      file)))
-
 (define (push-built paths)
   (let* ((enabled? (cache-push-enabled? (env-get "CACHE_PUSH" "false")))
-         (key-file (if enabled? (materialize-signing-key (env-get "CACHE_SIGNING_KEY" "")) ""))
+         (key-file
+           (if enabled? (sui-cache:materialize-key (env-get "CACHE_SIGNING_KEY" "") "nix-build-sui-signing") ""))
          (argv
            (cache-push-argv
              paths
              (env-get "CACHE_STORE_PATH" "")
              key-file))
-         (verdict (cache-push-step enabled? (on-path? "sui") paths argv sui-runner)))
+         (verdict (cache-push-step enabled? (sui-cache:on-path? "sui") paths argv sui-cache:run)))
     (if (not (equal? key-file "")) (exec-capture "rm" "-f" key-file) #f)
     (emit-push verdict)))
 

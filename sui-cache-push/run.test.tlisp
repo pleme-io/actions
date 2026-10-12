@@ -1,0 +1,34 @@
+(deftest "paths split on any whitespace and drop blanks"
+  (assert
+    (equal? (store-paths "/nix/store/a-x\n/nix/store/b-y  /nix/store/c-z\n")
+      (list "/nix/store/a-x" "/nix/store/b-y" "/nix/store/c-z"))
+    "mixed separators")
+  (assert (null? (store-paths "  \n ")) "blank is empty"))
+
+(deftest "the first non-empty source wins"
+  (assert (equal? (first-set (list "" " http://rio:5000 " "http://other")) "http://rio:5000") "input over env")
+  (assert (equal? (first-set (list "" "")) "") "nothing set"))
+
+(deftest "the argv always names the remote and the uploader key"
+  (assert
+    (equal?
+      (push-argv (list "/nix/store/a-x") "http://rio:5000" "/run/k" #t)
+      (list "cache" "push" "--recursive" "--cache-url" "http://rio:5000" "--signing-key" "/run/k" "/nix/store/a-x"))
+    "recursive")
+  (assert
+    (equal?
+      (push-argv (list "/nix/store/a-x") "http://rio:5000" "/run/k" #f)
+      (list "cache" "push" "--cache-url" "http://rio:5000" "--signing-key" "/run/k" "/nix/store/a-x"))
+    "named paths only"))
+
+(deftest "a push never runs without paths, url, key and sui"
+  (assert (equal? (car (push-plan (list) "u" "k" #t)) "false") "no paths")
+  (assert (equal? (car (push-plan (list "p") "" "k" #t)) "false") "no url")
+  (assert (equal? (car (push-plan (list "p") "u" "" #t)) "false") "no key")
+  (assert (equal? (car (push-plan (list "p") "u" "k" #f)) "false") "no sui")
+  (assert (equal? (car (push-plan (list "p") "u" "k" #t)) "run") "all present"))
+
+(deftest "a failed push fails the step only when required"
+  (assert (= (push-exit (list "true" "") #t) 0) "pushed")
+  (assert (= (push-exit (list "false" "x") #f) 0) "advisory")
+  (assert (= (push-exit (list "false" "x") #t) 1) "required"))
