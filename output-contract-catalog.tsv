@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                371
-# routing tatara-script  352
-# distinct keys written  358
+# actions                373
+# routing tatara-script  354
+# distinct keys written  359
 # dynamic key expansions 8
-# inner union (generated)366
+# inner union (generated)367
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -217,6 +217,7 @@ kube-namespace-diagnostics	tatara-script	run.tlisp	2	2
 kube-tls-fixture	tatara-script	run.tlisp	2	2
 kubectl-apply	tatara-script	run.tlisp	1	1
 kustomize-render	tatara-script	run.tlisp	1	1
+legacy-cache-guard	tatara-script	run.tlisp	1	1
 license-finder	tatara-script	run.tlisp	1	1
 license-header-check	tatara-script	run.tlisp	2	2
 lighthouse-ci	tatara-script	run.tlisp	1	1
@@ -343,6 +344,7 @@ storybook-deploy	tatara-script	run.tlisp	1	1
 stripe-product-sync	tatara-script	run.tlisp	1	1
 stripe-webhook-test	tatara-script	run.tlisp	1	1
 substrate-bump	tatara-script	run.tlisp	2	2
+sui-cache-push	tatara-script	run.tlisp	2	2
 sui-dockerfile-node-cache	tatara-script	run.tlisp	5	5
 sui-remote-build	tatara-script	run.tlisp	9	9
 sui-service-up	tatara-script	run.tlisp	7	7
@@ -356,7 +358,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	366
+tatara-script	own-runner	-	0	367
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -725,6 +727,7 @@ kube-tls-fixture	secret-names	static	declared	forwarded
 kube-tls-fixture	secrets-created	static	declared	forwarded
 kubectl-apply	applied-count	static	declared	forwarded
 kustomize-render	output-path	static	declared	forwarded
+legacy-cache-guard	allowed	static	declared	forwarded
 license-finder	violations	static	declared	forwarded
 license-header-check	files-scanned	static	declared	forwarded
 license-header-check	missing-count	static	declared	forwarded
@@ -932,6 +935,8 @@ stripe-product-sync	synced-count	static	declared	forwarded
 stripe-webhook-test	sent	static	declared	forwarded
 substrate-bump	bumped	static	declared	forwarded
 substrate-bump	new-version	static	declared	forwarded
+sui-cache-push	pushed	static	declared	forwarded
+sui-cache-push	reason	static	declared	forwarded
 sui-dockerfile-node-cache	cache-hit	static	declared	forwarded
 sui-dockerfile-node-cache	daemon-used	static	declared	forwarded
 sui-dockerfile-node-cache	docker-ran	static	declared	forwarded

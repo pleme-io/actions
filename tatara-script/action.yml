@@ -112,6 +112,9 @@ outputs:
   advanced:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: advanced)"
     value: ${{ steps.exec.outputs.advanced }}
+  allowed:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: allowed)"
+    value: ${{ steps.exec.outputs.allowed }}
   annotation-id:
     description: "Forwarded (key: annotation-id) — written by 1 action dir(s): grafana-annotation"
     value: ${{ steps.exec.outputs.annotation-id }}
