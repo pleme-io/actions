@@ -1389,10 +1389,10 @@ runs:
             echo "::warning::No .sha256 published at $URL.sha256 — refusing to execute the unverified binary"
           fi
 
-          if [ -n "$SUM_OK" ]; then
-            chmod +x "$BIN_DIR/tatara-script"
+          if [ -n "$SUM_OK" ] && chmod +x "$BIN_DIR/tatara-script" && "$BIN_DIR/tatara-script" --help >/dev/null 2>&1; then
             echo "Installed tatara-script from binary release (checksum verified)"
           else
+            if [ -n "$SUM_OK" ]; then echo "::notice::the release binary does not run on this host (a NixOS runner has no generic dynamic loader)"; fi
             # Remove the unverified bytes so nothing downstream can reach them
             # via $BIN_DIR, which is placed on PATH unconditionally below.
             rm -f "$BIN_DIR/tatara-script"
