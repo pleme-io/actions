@@ -1,0 +1,40 @@
+(define (files-of alist) (lambda (p) (not (equal? (assoc-get p alist) #f))))
+
+(define (reader-of alist) (lambda (p) (assoc-get p alist)))
+
+(define (assoc-get k alist)
+  (cond
+    ((null? alist) #f)
+    ((equal? (car (car alist)) k) (car (cdr (car alist))))
+    (else (assoc-get k (cdr alist)))))
+
+(define host
+  (list (list "/run/t/token" "ghs_abc\n") (list "/run/t/expires-at" "10000\n")))
+
+(define (app now) (resolve "app" "" "/run/t" (files-of host) (reader-of host) now 600))
+
+(deftest "a fresh host-minted token is presented, trimmed, with its expiry"
+  (assert (equal? (app 1000) (list "app" "ghs_abc" "10000" "")) "fresh"))
+
+(deftest "a token close to expiry is never presented"
+  (assert (equal? (car (app 9500)) "none") "500s left is under 600s")
+  (assert (equal? (car (cdr (app 9500))) "") "no token")
+  (assert (equal? (car (app 20000)) "none") "expired"))
+
+(deftest "no host token means anonymous, never an error"
+  (assert (equal? (car (resolve "app" "" "" (files-of host) (reader-of host) 1000 600)) "none") "dir unset")
+  (assert (equal? (car (resolve "app" "" "/run/x" (files-of host) (reader-of host) 1000 600)) "none") "dir empty")
+  (let ((half (list (list "/run/t/token" "ghs_abc"))))
+    (assert (equal? (car (resolve "app" "" "/run/t" (files-of half) (reader-of half) 1000 600)) "none") "no expires-at")))
+
+(deftest "an unreadable expiry reads as expired"
+  (let ((bad (list (list "/run/t/token" "ghs_abc") (list "/run/t/expires-at" "soon"))))
+    (assert (equal? (car (resolve "app" "" "/run/t" (files-of bad) (reader-of bad) 1000 600)) "none") "not a number")))
+
+(deftest "the PAT fallback is opt-in and refuses an empty PAT"
+  (assert (equal? (resolve "pat" "p" "/run/t" (files-of host) (reader-of host) 1000 600) (list "pat" "p" "" "")) "pat")
+  (assert (equal? (car (resolve "pat" "" "/run/t" (files-of host) (reader-of host) 1000 600)) "error") "empty pat"))
+
+(deftest "none presents nothing and an unknown source is an error"
+  (assert (equal? (resolve "none" "p" "/run/t" (files-of host) (reader-of host) 1000 600) (list "none" "" "" "")) "none")
+  (assert (equal? (car (resolve "bot" "p" "/run/t" (files-of host) (reader-of host) 1000 600)) "error") "typo"))

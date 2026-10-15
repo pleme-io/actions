@@ -1,0 +1,56 @@
+(define (int-or s fallback)
+  (let ((r (num:parse-int s)))
+    (if (erro:ok? r) (erro:value r) fallback)))
+
+(define (app-verdict dir present? read now-s min-left)
+  (cond
+    ((equal? dir "")
+      (list "none" "" "" "no host-minted App token on this runner (GITHUB_APP_TOKEN_DIR unset); nix reads public repos anonymously"))
+    ((not (and (present? (string-append dir "/token")) (present? (string-append dir "/expires-at"))))
+      (list "none" "" "" (string-append "no App token in " dir " yet; nix reads public repos anonymously")))
+    (else
+      (let* ((expires (int-or (read (string-append dir "/expires-at")) 0))
+             (left (- expires now-s)))
+        (if (< left min-left)
+          (list "none" "" "" (string-append "the App token in " dir " expires within " (string-format "{}" min-left) "s; not presented"))
+          (list "app" (string-trim (read (string-append dir "/token"))) (string-format "{}" expires) ""))))))
+
+(define (resolve source pat dir present? read now-s min-left)
+  (cond
+    ((equal? source "app") (app-verdict dir present? read now-s min-left))
+    ((equal? source "pat")
+      (if (equal? pat "")
+        (list "error" "" "" "source pat needs the pat input, and it is empty")
+        (list "pat" pat "" "")))
+    ((equal? source "none") (list "none" "" "" ""))
+    (else (list "error" "" "" (string-append "source must be app, pat or none, got " source)))))
+
+(define (main)
+  (let* ((v (resolve
+              (string-trim (env-get "SOURCE" "app"))
+              (env-get "PAT" "")
+              (env-get "GITHUB_APP_TOKEN_DIR" "")
+              path-exists?
+              read-file
+              (/ (now-ms) 1000)
+              (int-or (env-get "MIN_REMAINING_SECONDS" "600") 600)))
+         (resolved (car v))
+         (token (car (cdr v)))
+         (expires (car (cdr (cdr v))))
+         (why (car (cdr (cdr (cdr v))))))
+    (cond
+      ((equal? resolved "error")
+        (log-error why)
+        1)
+      (else
+        (if (equal? token "") #f (print-line (string-append "::add-mask::" token)))
+        (if (equal? why "") #f (print-line (string-append "::notice title=github-token::" why)))
+        (append-output (string-append "token=" token))
+        (append-output (string-append "source=" resolved))
+        (append-output (string-append "expires-at=" expires))
+        (log-info (string-append "github-token: " resolved))
+        0))))
+
+(cond
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — github-token helpers loaded; main skipped"))
+  (else (exit (main))))

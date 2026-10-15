@@ -1,0 +1,57 @@
+name: 'pleme-io · github-token'
+description: >-
+  Resolve the GitHub token a job presents for cross-repo reads and pushes. The
+  default source, app, reads the short-lived installation token the runner
+  host mints from the fleet App (GITHUB_APP_TOKEN_DIR, pleme.nixos.githubRunners);
+  where there is none, or it is near expiry, the output is empty and nix reads
+  public repos anonymously. A long-lived PAT is the opt-in source pat, never
+  the default.
+branding: { icon: 'key', color: 'purple' }
+
+inputs:
+  source:
+    description: "app (host-minted App token, the default), pat (the pat input), or none."
+    required: false
+    default: "app"
+  pat:
+    description: "The PAT presented only when source is pat, e.g. secrets.BOT_PAT."
+    required: false
+    default: ""
+  min-remaining-seconds:
+    description: "A host token expiring sooner than this is not presented."
+    required: false
+    default: "600"
+
+outputs:
+  token:
+    description: "The token, masked; empty when there is none to present."
+    value: ${{ steps.run.outputs.token }}
+  source:
+    description: "app | pat | none: what the token is."
+    value: ${{ steps.run.outputs.source }}
+  expires-at:
+    description: "Epoch seconds the app token expires; empty for pat and none."
+    value: ${{ steps.run.outputs.expires-at }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/github-token.tlisp"
+        {
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        SOURCE: ${{ inputs.source }}
+        PAT: ${{ inputs.pat }}
+        MIN_REMAINING_SECONDS: ${{ inputs.min-remaining-seconds }}

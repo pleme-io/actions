@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                373
-# routing tatara-script  354
-# distinct keys written  359
+# actions                374
+# routing tatara-script  355
+# distinct keys written  361
 # dynamic key expansions 8
-# inner union (generated)367
+# inner union (generated)369
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -167,6 +167,7 @@ git-credentials	tatara-script	run.tlisp	1	1
 git-path-commit-count	tatara-script	run.tlisp	1	1
 git-push-with-token	own-runner	-	0	0
 gitea-mirror-push	tatara-script	run.tlisp	1	1
+github-token	tatara-script	run.tlisp	3	3
 gitlab-mirror-push	tatara-script	run.tlisp	1	1
 go-build	tatara-script	run.tlisp	1	1
 go-test	tatara-script	run.tlisp	1	1
@@ -358,7 +359,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	367
+tatara-script	own-runner	-	0	369
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -659,6 +660,9 @@ git-commit-tag	tag	static	declared	forwarded
 git-credentials	result	static	declared	forwarded
 git-path-commit-count	count	static	declared	forwarded
 gitea-mirror-push	pushed	static	declared	forwarded
+github-token	expires-at	static	declared	forwarded
+github-token	source	static	declared	forwarded
+github-token	token	static	declared	forwarded
 gitlab-mirror-push	pushed	static	declared	forwarded
 go-build	binaries	static	declared	forwarded
 go-test	passed	static	declared	forwarded

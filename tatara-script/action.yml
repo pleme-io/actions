@@ -430,6 +430,9 @@ outputs:
   exit-code:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: exit-code)"
     value: ${{ steps.exec.outputs.exit-code }}
+  expires-at:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: expires-at)"
+    value: ${{ steps.exec.outputs.expires-at }}
   failed-count:
     description: "Forwarded (key: failed-count) — written by 1 action dir(s): cargo-publish-each-member"
     value: ${{ steps.exec.outputs.failed-count }}
@@ -997,6 +1000,9 @@ outputs:
   snapshots-count:
     description: "Forwarded (key: snapshots-count) — written by 1 action dir(s): percy-snapshot"
     value: ${{ steps.exec.outputs.snapshots-count }}
+  source:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: source)"
+    value: ${{ steps.exec.outputs.source }}
   source-hash:
     description: "Forwarded (key: source-hash) — ferrite-check content-addressed source/cache key"
     value: ${{ steps.exec.outputs.source-hash }}
