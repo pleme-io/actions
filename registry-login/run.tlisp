@@ -71,6 +71,23 @@
       (list "ghcr-token" (env-get "GHCR_TOKEN" ""))
       (list "github-token" (env-get "GITHUB_TOKEN" "")))))
 
+(define (rl:ghcr-incapable? host pair)
+  (and (equal? host "ghcr.io") (string-prefix? (rl:token-of pair) "github_pat_")))
+
+(define (rl:capable host rungs)
+  (filter
+    (lambda (p)
+      (cond
+        ((rl:ghcr-incapable? host p)
+          (log-error
+            (string-append
+              "registry-login: rung `"
+              (rl:label-of p)
+              "` is a fine-grained PAT, which ghcr.io accepts at login and refuses at push (403 does not match expected scopes); skipped"))
+          #f)
+        (else #t)))
+    rungs))
+
 (define (rl:fail reason)
   (log-error (string-append "registry-login: " reason))
   (append-output "result=false")
@@ -133,8 +150,8 @@
     ((registry (env-required "REGISTRY"))
       (client (env-get "CLIENT" "docker"))
       (user (env-required "USERNAME"))
-      (rungs (rl:candidates))
-      (host (rl:host registry)))
+      (host (rl:host registry))
+      (rungs (rl:capable host (rl:candidates))))
     (cond
       ((null? rungs)
         (rl:fail "no credential — APP_TOKEN, BOT_PAT, GHCR_TOKEN and GITHUB_TOKEN are all empty"))
