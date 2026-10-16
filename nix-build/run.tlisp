@@ -4,6 +4,24 @@
   (let ((base (list "build" "--print-out-paths" "--no-link")))
     (append (if (equal? sys "") base (append base (list "--system" sys))) (list ref))))
 
+(define (eval-first-enabled? raw) (equal? (string-trim raw) "true"))
+
+(define (eval-argv ref sys)
+  (let ((base (list "eval" "--raw")))
+    (append (if (equal? sys "") base (append base (list "--system" sys))) (list (string-append ref ".drvPath")))))
+
+(define (drv-installable drv) (string-append (string-trim drv) "^*"))
+
+(define (resolve-installable ref sys)
+  (cond
+    ((not (eval-first-enabled? (env-get "EVAL_FIRST" "false"))) (list 0 ref ""))
+    (else
+      (log-info (string-append "==> nix " (string-join " " (eval-argv ref sys))))
+      (let ((r (apply exec-capture (cons "nix" (eval-argv ref sys)))))
+        (if (= (status-of r) 0)
+          (list 0 (drv-installable (stdout-of r)) "")
+          (list 1 "" (stderr-of r)))))))
+
 (define (out-paths stdout)
   (filter (lambda (p) (not (equal? p ""))) (map string-trim (string-split (string-trim stdout) "\n"))))
 
@@ -48,24 +66,31 @@
     (if (not (equal? key-file "")) (exec-capture "rm" "-f" key-file) #f)
     (emit-push verdict)))
 
+(define (fail-build stderr)
+  (log-error "nix build failed")
+  (log-info stderr)
+  (append-output "out-path=")
+  (append-output "cache-pushed=false")
+  (append-output "cache-push-reason=build failed")
+  1)
+
 (define (main)
-  (let* ((args (build-argv (env-get "FLAKE_REF" ".#default") (env-get "SYSTEM" "")))
-         (_ (log-info (string-append "==> nix " (string-join " " args))))
-         (r (apply exec-capture (cons "nix" args))))
+  (let* ((sys (env-get "SYSTEM" ""))
+         (resolved (resolve-installable (env-get "FLAKE_REF" ".#default") sys)))
     (cond
-      ((= (status-of r) 0)
-        (let ((path (string-trim (stdout-of r))))
-          (log-info (string-append "built: " path))
-          (append-output (string-append "out-path=" path))
-          (push-built (out-paths path))
-          0))
+      ((not (= (car resolved) 0)) (fail-build (car (cdr (cdr resolved)))))
       (else
-        (log-error "nix build failed")
-        (log-info (stderr-of r))
-        (append-output "out-path=")
-        (append-output "cache-pushed=false")
-        (append-output "cache-push-reason=build failed")
-        1))))
+        (let* ((args (build-argv (car (cdr resolved)) sys))
+               (_ (log-info (string-append "==> nix " (string-join " " args))))
+               (r (apply exec-capture (cons "nix" args))))
+          (cond
+            ((= (status-of r) 0)
+              (let ((path (string-trim (stdout-of r))))
+                (log-info (string-append "built: " path))
+                (append-output (string-append "out-path=" path))
+                (push-built (out-paths path))
+                0))
+            (else (fail-build (stderr-of r)))))))))
 
 (cond
   ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — nix-build helpers loaded; main skipped"))

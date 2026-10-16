@@ -51,6 +51,16 @@ inputs:
       would mean a new input every time a caller needs the next setting.
     required: false
     default: ""
+  eval-first:
+    description: >-
+      When "true", evaluate `<flake-ref>.drvPath` in its own nix process and
+      then build `<drv>^*`, so the evaluator's heap is released before the
+      build starts. A nixosConfiguration toplevel holds 10-13 GB through a
+      single `nix build`, and on a runner host without swap that plus any
+      local compile trips earlyoom (exit 143). Default "false" keeps the
+      single `nix build`.
+    required: false
+    default: "false"
   cache-push:
     description: >-
       When "true", run `sui cache push --recursive` over every built output
@@ -149,6 +159,7 @@ runs:
       env:
         FLAKE_REF: ${{ inputs.flake-ref }}
         SYSTEM: ${{ inputs.system }}
+        EVAL_FIRST: ${{ inputs.eval-first }}
         CACHE_PUSH: ${{ inputs.cache-push }}
         CACHE_STORE_PATH: ${{ inputs.cache-store-path }}
         CACHE_SIGNING_KEY: ${{ inputs.cache-signing-key }}

@@ -63,3 +63,12 @@
   (assert
     (equal? (cache-push-step #t #t (list) (list) never-run) (list "false" "no output paths"))
     "nothing built means nothing pushed"))
+
+(deftest "eval-first evaluates the drvPath and builds the derivation's outputs"
+  (assert (not (eval-first-enabled? "")) "unset is off")
+  (assert (eval-first-enabled? "true") "true is on")
+  (assert
+    (equal? (eval-argv ".#nixosConfigurations.plo.config.system.build.toplevel" "")
+      (list "eval" "--raw" ".#nixosConfigurations.plo.config.system.build.toplevel.drvPath"))
+    "eval argv")
+  (assert (equal? (drv-installable "/nix/store/aaa-x.drv\n") "/nix/store/aaa-x.drv^*") "drv installable"))
