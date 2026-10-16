@@ -59,6 +59,10 @@ inputs:
     description: "Positional arguments passed to the script (forwarded as $@ after the script file)"
     required: false
     default: ""
+  stdlib:
+    description: "When 'true', the fleet tlisp stdlib (_tlisp-stdlib/stdlib.tlisp, e.g. proc:must) is prepended to the script, so a repo-local .tlisp can use it without its own concatenation step. Default 'false' keeps every existing caller unchanged."
+    required: false
+    default: "false"
   working-directory:
     description: >-
       Directory to run the script from. Defaults to "." — the repo root —
@@ -1459,6 +1463,7 @@ runs:
         TATARA_SCRIPT_SRC: ${{ inputs.script-file != '' && '' || inputs.script }}
         TATARA_SCRIPT_FILE: ${{ inputs.script-file }}
         TATARA_SCRIPT_ARGS: ${{ inputs.args }}
+        TATARA_SCRIPT_STDLIB: ${{ inputs.stdlib }}
       run: |
         set -uo pipefail
         if [ -n "${TATARA_SCRIPT_FILE:-}" ]; then
@@ -1480,6 +1485,11 @@ runs:
           fi
           TMP=$(mktemp -t tatara-action-XXXXXX.tlisp)
           printf '%s\n' "$TATARA_SCRIPT_SRC" > "$TMP"
+        fi
+        if [ "${TATARA_SCRIPT_STDLIB:-false}" = "true" ]; then
+          WITH_STDLIB=$(mktemp -t tatara-action-stdlib-XXXXXX.tlisp)
+          { cat "$GITHUB_ACTION_PATH/../_tlisp-stdlib/stdlib.tlisp"; echo; cat "$TMP"; } > "$WITH_STDLIB"
+          TMP="$WITH_STDLIB"
         fi
         # shellcheck disable=SC2086 — splitting on whitespace is intentional
         rc=0
