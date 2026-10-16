@@ -72,3 +72,10 @@
       (list "eval" "--raw" ".#nixosConfigurations.plo.config.system.build.toplevel.drvPath"))
     "eval argv")
   (assert (equal? (drv-installable "/nix/store/aaa-x.drv\n") "/nix/store/aaa-x.drv^*") "drv installable"))
+
+(deftest "max-silent-time is passed to nix build only when set"
+  (assert (equal? (build-argv-with ".#x" "" "") (build-argv ".#x" "")) "unset leaves argv unchanged")
+  (assert
+    (equal? (build-argv-with ".#x" "" "10800")
+      (list "build" "--max-silent-time" "10800" "--print-out-paths" "--no-link" ".#x"))
+    "set adds the flag"))

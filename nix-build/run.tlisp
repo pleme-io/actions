@@ -4,6 +4,14 @@
   (let ((base (list "build" "--print-out-paths" "--no-link")))
     (append (if (equal? sys "") base (append base (list "--system" sys))) (list ref))))
 
+(define (silence-flag raw)
+  (let ((v (string-trim raw)))
+    (if (equal? v "") (list) (list "--max-silent-time" v))))
+
+(define (build-argv-with ref sys silence)
+  (let ((argv (build-argv ref sys)))
+    (append (list (car argv)) (silence-flag silence) (cdr argv))))
+
 (define (eval-first-enabled? raw) (equal? (string-trim raw) "true"))
 
 (define (eval-argv ref sys)
@@ -80,7 +88,7 @@
     (cond
       ((not (= (car resolved) 0)) (fail-build (car (cdr (cdr resolved)))))
       (else
-        (let* ((args (build-argv (car (cdr resolved)) sys))
+        (let* ((args (build-argv-with (car (cdr resolved)) sys (env-get "MAX_SILENT_TIME" "")))
                (_ (log-info (string-append "==> nix " (string-join " " args))))
                (r (apply exec-capture (cons "nix" args))))
           (cond

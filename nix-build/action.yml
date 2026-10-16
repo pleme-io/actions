@@ -61,6 +61,14 @@ inputs:
       single `nix build`.
     required: false
     default: "false"
+  max-silent-time:
+    description: >-
+      Seconds a build may print nothing before nix kills it, passed as
+      `--max-silent-time` (honoured for a trusted runner user). Empty keeps the
+      daemon's setting. rio's is 3600, which onnxruntime's test phase exceeds
+      on a cache miss.
+    required: false
+    default: ""
   cache-push:
     description: >-
       When "true", run `sui cache push --recursive` over every built output
@@ -160,6 +168,7 @@ runs:
         FLAKE_REF: ${{ inputs.flake-ref }}
         SYSTEM: ${{ inputs.system }}
         EVAL_FIRST: ${{ inputs.eval-first }}
+        MAX_SILENT_TIME: ${{ inputs.max-silent-time }}
         CACHE_PUSH: ${{ inputs.cache-push }}
         CACHE_STORE_PATH: ${{ inputs.cache-store-path }}
         CACHE_SIGNING_KEY: ${{ inputs.cache-signing-key }}
