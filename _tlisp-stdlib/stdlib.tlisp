@@ -2237,6 +2237,13 @@
 (define (proc:shell? name)
   (any-line-matches? proc:shells (lambda (s) (equal? s name))))
 
+(define (proc:on-path? name)
+  (not
+    (null?
+      (filter
+        (lambda (d) (path-exists? (string-append d "/" name)))
+        (string-split (env-get "PATH" "") ":")))))
+
 ;; Run `argv` (a list). Returns (ok <result-alist>) if the process RAN — at
 ;; any exit status — or (err <error>) if it could not be started.
 ;;
@@ -2493,12 +2500,7 @@
 
 (define (sui-cache:opt-flag flag value) (if (equal? value "") (list) (list flag value)))
 
-(define (sui-cache:on-path? name)
-  (not
-    (null?
-      (filter
-        (lambda (d) (path-exists? (string-append d "/" name)))
-        (string-split (env-get "PATH" "") ":")))))
+(define (sui-cache:on-path? name) (proc:on-path? name))
 
 (define (sui-cache:result status stderr) (list status stderr))
 

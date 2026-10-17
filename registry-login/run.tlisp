@@ -113,7 +113,29 @@
         user
         "--password"
         token))
-    (else (exec-check "docker" "login" host "--username" user "--password" token))))
+    ((proc:on-path? "docker")
+      (exec-check "docker" "login" host "--username" user "--password" token))
+    (else
+      (exec-check
+        "nix"
+        "shell"
+        "nixpkgs#skopeo"
+        "--command"
+        "skopeo"
+        "login"
+        "--authfile"
+        (rl:docker-config-path)
+        host
+        "--username"
+        user
+        "--password"
+        token))))
+
+(define (rl:docker-config-path)
+  (let ((d (env-get "DOCKER_CONFIG" "")))
+    (if (equal? d "")
+      (string-append (env-get "HOME" "") "/.docker/config.json")
+      (string-append d "/config.json"))))
 
 ;; Walk the ladder. Returns the winning label, or "" when every rung failed.
 ;; `first?` distinguishes "the preferred rung won" from "we degraded", because
