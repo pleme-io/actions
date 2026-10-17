@@ -75,6 +75,9 @@
 
 (define govulncheck-flake "github:NixOS/nixpkgs/61b7c44c4073f0b827768aff0049561b5110ea5a#govulncheck")
 
+(define (concat-lists lists)
+  (if (null? lists) (list) (append (car lists) (concat-lists (cdr lists)))))
+
 (define (non-empty-lines text)
   (filter (lambda (l) (not (equal? l ""))) (map string-trim (string-split text "\n"))))
 
@@ -144,7 +147,7 @@
                 #f
                 (let* ((drop-file (string-append work "/unreached.tsv"))
                        (raw-file (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-raw.json")))
-                  (write-file drop-file (string-join (apply append pairs) "\n"))
+                  (write-file drop-file (string-join "\n" (concat-lists pairs)))
                   (write-file raw-file (read-file trivy-file))
                   (let ((filtered (capture-or-fail "filtering trivy findings by reachability"
                                     (exec-capture "jq" "--rawfile" "d" drop-file
@@ -155,7 +158,7 @@
                       (begin
                         (write-file trivy-file filtered)
                         (log-info (string-append "go-reachability: govulncheck (binary mode) reports these unreached; trivy's module-level matches for them are dropped: "
-                          (string-join (apply append pairs) ", ")))
+                          (string-join ", " (concat-lists pairs))))
                         #t))))))))))))
 
 (define (main)
