@@ -20,15 +20,26 @@
 
 (define (drv-installable drv) (string-append (string-trim drv) "^*"))
 
+(define (eval-only-enabled? raw) (equal? (string-trim raw) "true"))
+
+(define (eval-command argv stack-kib)
+  (let ((kib (string-trim stack-kib)))
+    (if (equal? kib "")
+      (cons "nix" argv)
+      (append (list "bash" "-c" "ulimit -S -s \"$0\" && exec \"$@\"" kib "nix") argv))))
+
+(define (eval-wanted? first only) (or (eval-first-enabled? first) (eval-only-enabled? only)))
+
 (define (resolve-installable ref sys)
   (cond
-    ((not (eval-first-enabled? (env-get "EVAL_FIRST" "false"))) (list 0 ref ""))
+    ((not (eval-wanted? (env-get "EVAL_FIRST" "false") (env-get "EVAL_ONLY" "false"))) (list 0 ref ""))
     (else
-      (log-info (string-append "==> nix " (string-join " " (eval-argv ref sys))))
-      (let ((r (apply exec-capture (cons "nix" (eval-argv ref sys)))))
-        (if (= (status-of r) 0)
-          (list 0 (drv-installable (stdout-of r)) "")
-          (list 1 "" (stderr-of r)))))))
+      (let ((cmd (eval-command (eval-argv ref sys) (env-get "EVAL_STACK_KIB" ""))))
+        (log-info (string-append "==> " (string-join " " cmd)))
+        (let ((r (apply exec-capture cmd)))
+          (if (= (status-of r) 0)
+            (list 0 (drv-installable (stdout-of r)) "")
+            (list 1 "" (stderr-of r))))))))
 
 (define (out-paths stdout)
   (filter (lambda (p) (not (equal? p ""))) (map string-trim (string-split (string-trim stdout) "\n"))))
@@ -87,6 +98,13 @@
          (resolved (resolve-installable (env-get "FLAKE_REF" ".#default") sys)))
     (cond
       ((not (= (car resolved) 0)) (fail-build (car (cdr (cdr resolved)))))
+      ((eval-only-enabled? (env-get "EVAL_ONLY" "false"))
+        (log-info (string-append "evaluated: " (car (cdr resolved))))
+        (append-output (string-append "drv=" (car (cdr resolved))))
+        (append-output "out-path=")
+        (append-output "cache-pushed=false")
+        (append-output "cache-push-reason=disabled")
+        0)
       (else
         (let* ((args (build-argv-with (car (cdr resolved)) sys (env-get "MAX_SILENT_TIME" "")))
                (_ (log-info (string-append "==> nix " (string-join " " args))))

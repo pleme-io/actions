@@ -73,6 +73,22 @@
     "eval argv")
   (assert (equal? (drv-installable "/nix/store/aaa-x.drv\n") "/nix/store/aaa-x.drv^*") "drv installable"))
 
+(deftest "eval-stack-kib runs the evaluation under that soft stack limit, and only when set"
+  (assert
+    (equal? (eval-command (list "eval" "--raw" ".#x.drvPath") "") (list "nix" "eval" "--raw" ".#x.drvPath"))
+    "unset leaves the evaluation command unchanged")
+  (assert
+    (equal? (eval-command (list "eval" "--raw" ".#x.drvPath") " 8192 ")
+      (list "bash" "-c" "ulimit -S -s \"$0\" && exec \"$@\"" "8192" "nix" "eval" "--raw" ".#x.drvPath"))
+    "set lowers only the soft limit, the hard limit stays what the host gives"))
+
+(deftest "eval-only evaluates without eval-first and never builds"
+  (assert (not (eval-wanted? "false" "false")) "neither is set")
+  (assert (eval-wanted? "true" "false") "eval-first alone")
+  (assert (eval-wanted? "false" "true") "eval-only alone still evaluates")
+  (assert (not (eval-only-enabled? "")) "unset is off")
+  (assert (eval-only-enabled? "true") "true is on"))
+
 (deftest "max-silent-time is passed to nix build only when set"
   (assert (equal? (build-argv-with ".#x" "" "") (build-argv ".#x" "")) "unset leaves argv unchanged")
   (assert

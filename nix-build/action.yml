@@ -61,6 +61,25 @@ inputs:
       single `nix build`.
     required: false
     default: "false"
+  eval-only:
+    description: >-
+      When "true", evaluate `<flake-ref>.drvPath` (as eval-first does), report
+      it as the `drv` output and stop: nothing is built or pushed. A cheap gate
+      that a configuration still evaluates, independent of a build queue.
+      Default "false".
+    required: false
+    default: "false"
+  eval-stack-kib:
+    description: >-
+      Soft stack limit in KiB the evaluation runs under (`ulimit -S -s`), with
+      the hard limit left as the host gives it. Set it to the soft limit of the
+      process that will evaluate this ref in production: sentinela runs under
+      systemd's default (8192 KiB soft, unlimited hard), while the private
+      pool's runners carry LimitSTACK=infinity, so an evaluation that overflows
+      on the node passes here unless this is set. Applies to eval-first and
+      eval-only; empty leaves the evaluation as it was.
+    required: false
+    default: ""
   max-silent-time:
     description: >-
       Seconds a build may print nothing before nix kills it, passed as
@@ -96,6 +115,9 @@ inputs:
 outputs:
   out-path:
     value: ${{ steps.run.outputs.out-path }}
+  drv:
+    description: 'The evaluated derivation installable (`<drv>^*`), set by eval-only.'
+    value: ${{ steps.run.outputs.drv }}
   cache-pushed:
     description: '"true" when the sui cache push succeeded, otherwise "false".'
     value: ${{ steps.run.outputs.cache-pushed }}
@@ -168,6 +190,8 @@ runs:
         FLAKE_REF: ${{ inputs.flake-ref }}
         SYSTEM: ${{ inputs.system }}
         EVAL_FIRST: ${{ inputs.eval-first }}
+        EVAL_ONLY: ${{ inputs.eval-only }}
+        EVAL_STACK_KIB: ${{ inputs.eval-stack-kib }}
         MAX_SILENT_TIME: ${{ inputs.max-silent-time }}
         CACHE_PUSH: ${{ inputs.cache-push }}
         CACHE_STORE_PATH: ${{ inputs.cache-store-path }}
