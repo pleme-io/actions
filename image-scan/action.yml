@@ -53,6 +53,10 @@ inputs:
     description: "Path to an OpenVEX/CSAF document passed to trivy as --vex. For a finding that is REAL in the SBOM but NOT REACHABLE in this artifact -- a published, machine-readable claim with a justification, which an auditor can read and dispute. NOT the same as ignore-file: an ignore hides a finding, a VEX answers it. Empty (default) keeps the prior behaviour exactly."
     required: false
     default: ""
+  go-reachability:
+    description: "true = judge each Go binary's findings with govulncheck -mode=binary: a trivy match govulncheck reports as not_affected (symbols not linked) is dropped from the verdict. Needs local-archive and nix on the runner; any govulncheck failure fails the scan. The unfiltered trivy JSON is kept as image-scan-trivy-raw.json."
+    required: false
+    default: "false"
   ignore-file:
     description: "Path to a .trivyignore-format file of named, tracked exceptions (never a blanket severity loosening — each entry should carry its own justification). Empty = none."
     required: false
@@ -264,6 +268,7 @@ runs:
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
         IGNORE_FILE: ${{ inputs.ignore-file }}
         VEX_FILE: ${{ inputs.vex }}
+        GO_REACHABILITY: ${{ inputs.go-reachability }}
         TRIVY_USERNAME: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.actor || '' }}
         TRIVY_PASSWORD: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.token || '' }}
 
@@ -319,7 +324,10 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: trivy-report-${{ steps.sanitize.outputs.name }}-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/image-scan-trivy-output.json
+        path: |
+          ${{ runner.temp }}/image-scan-trivy-output.json
+          ${{ runner.temp }}/image-scan-trivy-raw.json
+          ${{ runner.temp }}/image-scan-go-reachability/*.openvex.json
         retention-days: 14
         if-no-files-found: ignore
 

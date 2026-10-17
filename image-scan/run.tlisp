@@ -73,6 +73,91 @@
 
 ;; ── main: every side effect lives here ───────────────────────────
 
+(define govulncheck-flake "github:NixOS/nixpkgs/61b7c44c4073f0b827768aff0049561b5110ea5a#govulncheck")
+
+(define (non-empty-lines text)
+  (filter (lambda (l) (not (equal? l ""))) (map string-trim (string-split text "\n"))))
+
+(define (capture-or-fail what r)
+  (if (= (status-of r) 0)
+    (stdout-of r)
+    (begin
+      (log-error (string-append "go-reachability: " what " failed (exit "
+        (string-format "{}" (status-of r)) "): " (stderr-of r)))
+      #f)))
+
+(define (go-binary-targets trivy-file)
+  (let ((r (exec-capture "jq" "-r"
+             ".Results[]? | select(.Type == \"gobinary\" and ((.Vulnerabilities // []) | length > 0)) | .Target"
+             trivy-file)))
+    (let ((out (capture-or-fail "listing gobinary targets" r)))
+      (if out (non-empty-lines out) #f))))
+
+(define (unpack-image-rootfs archive work)
+  (let* ((layers-dir (string-append work "/archive"))
+         (rootfs (string-append work "/rootfs")))
+    (exec-capture "mkdir" "-p" layers-dir rootfs)
+    (if (not (capture-or-fail "unpacking the image archive" (exec-capture "tar" "-xf" archive "-C" layers-dir)))
+      #f
+      (let ((layers (capture-or-fail "reading manifest.json"
+                      (exec-capture "jq" "-r" ".[0].Layers[]" (string-append layers-dir "/manifest.json")))))
+        (if (not layers)
+          #f
+          (begin
+            (for-each
+              (lambda (layer) (exec-capture "tar" "-xf" (string-append layers-dir "/" layer) "-C" rootfs))
+              (non-empty-lines layers))
+            rootfs))))))
+
+(define (govulncheck-bin)
+  (let ((out (capture-or-fail "building govulncheck"
+               (exec-capture "nix" "build" "--no-link" "--print-out-paths" govulncheck-flake))))
+    (if out (string-append (string-trim out) "/bin/govulncheck") #f)))
+
+(define (unreached-ids govulncheck rootfs target)
+  (let* ((vex-file (string-append rootfs "/../" (string-replace target "/" "_") ".openvex.json"))
+         (r (exec-capture govulncheck "-mode=binary" "-format" "openvex" (string-append rootfs "/" target))))
+    (if (not (capture-or-fail (string-append "govulncheck on " target) r))
+      #f
+      (begin
+        (write-file vex-file (stdout-of r))
+        (let ((ids (capture-or-fail (string-append "reading govulncheck's verdict for " target)
+                     (exec-capture "jq" "-r" "--arg" "t" target
+                       ".statements[]? | select(.status == \"not_affected\") | .vulnerability | ([.name] + (.aliases // []))[] | \"\\($t)\\t\\(.)\""
+                       vex-file))))
+          (if ids (non-empty-lines ids) #f))))))
+
+(define (apply-go-reachability! trivy-file archive)
+  (let ((targets (go-binary-targets trivy-file))
+        (work (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-go-reachability")))
+    (cond
+      ((not targets) #f)
+      ((null? targets) (log-info "go-reachability: no Go binary carries a finding") #t)
+      ((equal? archive "") (log-error "go-reachability needs local-archive (the binaries are read from the image tarball)") #f)
+      (else
+        (let ((rootfs (unpack-image-rootfs archive work))
+              (gvc (govulncheck-bin)))
+          (if (or (not rootfs) (not gvc))
+            #f
+            (let ((pairs (map (lambda (t) (unreached-ids gvc rootfs t)) targets)))
+              (if (not (null? (filter (lambda (p) (not p)) pairs)))
+                #f
+                (let* ((drop-file (string-append work "/unreached.tsv"))
+                       (raw-file (string-append (env-get "RUNNER_TEMP" "/tmp") "/image-scan-trivy-raw.json")))
+                  (write-file drop-file (string-join (apply append pairs) "\n"))
+                  (write-file raw-file (read-file trivy-file))
+                  (let ((filtered (capture-or-fail "filtering trivy findings by reachability"
+                                    (exec-capture "jq" "--rawfile" "d" drop-file
+                                      "($d | split(\"\\n\") | map(select(length > 0))) as $drop | (.Results[]? | select(.Type == \"gobinary\")) |= (.Target as $t | .Vulnerabilities |= ((. // []) | map(select((\"\\($t)\\t\\(.VulnerabilityID)\") as $k | $drop | index($k) | not)))) "
+                                      raw-file))))
+                    (if (not filtered)
+                      #f
+                      (begin
+                        (write-file trivy-file filtered)
+                        (log-info (string-append "go-reachability: govulncheck (binary mode) reports these unreached; trivy's module-level matches for them are dropped: "
+                          (string-join (apply append pairs) ", ")))
+                        #t))))))))))))
+
 (define (main)
   (let*
     ((image (env-required "IMAGE_REF"))
@@ -189,6 +274,11 @@
                    (env-get "RUNNER_TEMP" "/tmp")
                    "/image-scan-trivy-output.json")))
               (write-file trivy-output-file out)
+              (if (equal? (env-get "GO_REACHABILITY" "false") "true")
+                (if (not (apply-go-reachability! trivy-output-file local-archive))
+                  (begin (append-output "severity=SCAN_FAILED") (append-output "vuln-count=0") (exit 1))
+                  #t)
+                #t)
 
               ;; Pull the MAX severity from the json via a real jq parse over
               ;; .Results[].Vulnerabilities[].Severity -- trivy's actual
