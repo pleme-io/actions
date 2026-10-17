@@ -32,6 +32,13 @@ inputs:
       is the authoritative source; override only in a test harness.
     required: false
     default: ""
+  reusables-as-private:
+    description: >-
+      Check the workflow_call files in workflows-dir as if the repo were
+      private, whatever its own visibility: a public library of reusable
+      workflows runs inside each private caller's billing context.
+    required: false
+    default: "false"
   runner-labels:
     description: >-
       A runner label set the caller routes jobs to, as a JSON array or words,
@@ -51,3 +58,4 @@ runs:
         WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
         REPO_PRIVATE: ${{ inputs.private != '' && inputs.private || github.event.repository.private }}
         RUNNER_LABELS: ${{ inputs.runner-labels }}
+        REUSABLES_AS_PRIVATE: ${{ inputs.reusables-as-private }}

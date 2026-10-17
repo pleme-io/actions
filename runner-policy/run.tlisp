@@ -42,10 +42,17 @@
       (string-contains? s "macos-")
       (string-contains? s "windows-")))
 
-;; An expression that names repository.private is routing correctly BY
-;; CONSTRUCTION — it cannot resolve to a metered label on a private repo.
+(define (private-arm-metered? s)
+  (re-match? "repository\\.private\\s*&&\\s*\\(\\s*[^()']*\\|\\|\\s*'(ubuntu|macos|windows)-" s))
+
 (define (routes-by-visibility? s)
-  (string-contains? s "repository.private"))
+  (and (string-contains? s "repository.private")
+       (not (private-arm-metered? s))))
+
+(define reusables-as-private (string-contains? (env-get "REUSABLES_AS_PRIVATE" "false") "true"))
+
+(define (reusable-file? path)
+  (string-contains? (read-file path) "workflow_call"))
 
 (define (waived? lines idx)
   ;; Look back up to 6 lines for the typed waiver. Bounded deliberately: an
@@ -134,7 +141,7 @@
           (walk (+ i 1)))))
   (walk 0))
 
-(if (not is-private)
+(if (and (not is-private) (not reusables-as-private))
     (begin
       (print-line "runner-policy: repo is PUBLIC — GitHub-hosted minutes are free here, nothing to enforce.")
       (exit 0))
@@ -147,8 +154,10 @@
   (concat violations
     (map (lambda (l) (string-append "runner-labels input -> " l)) (filter metered-label? runner-labels))))
 
-(define files (concat (glob (string-append workflows-dir "/*.yml"))
-                      (glob (string-append workflows-dir "/*.yaml"))))
+(define all-files (concat (glob (string-append workflows-dir "/*.yml"))
+                          (glob (string-append workflows-dir "/*.yaml"))))
+
+(define files (if is-private all-files (filter reusable-file? all-files)))
 
 (if (and (= (length files) 0) (= (length violations) 0))
     (begin (print-line "runner-policy: no workflow files found — nothing to check.") (exit 0))
@@ -162,12 +171,15 @@
 
 (if (> (length violations) 0)
     (begin
-      (eprint-line "runner-policy: FAIL — this repo is PRIVATE and declares metered GitHub-hosted runners.")
+      (eprint-line (if is-private
+                       "runner-policy: FAIL — this repo is PRIVATE and declares metered GitHub-hosted runners."
+                       "runner-policy: FAIL — these reusable workflows run in a PRIVATE caller's billing context and can resolve to metered GitHub-hosted runners."))
       (eprint-line "")
       (for-each (lambda (v) (eprint-line (string-append "  " v))) violations)
       (eprint-line "")
-      (eprint-line "Route on visibility instead:")
-      (eprint-line "  runs-on: ${{ github.event.repository.private && (vars.PRIVATE_BUILDER_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}")
+      (eprint-line "Route on visibility, with the self-hosted pool as the private arm's fallback")
+      (eprint-line "(org variables do not reach private repos on the Free plan, so vars.* reads empty there):")
+      (eprint-line "  runs-on: ${{ github.event.repository.private && (vars.PRIVATE_BUILDER_RUNNER || 'pleme-private') || 'ubuntu-latest' }}")
       (eprint-line "")
       (eprint-line "If the leg genuinely cannot route (the self-hosted pool is linux-only, so a darwin")
       (eprint-line "binary has no alternative), put the typed waiver on the line above:")

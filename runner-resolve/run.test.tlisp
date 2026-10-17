@@ -17,17 +17,17 @@
     (equal?
       (rr:resolve-runner
         ""
-        "the self-hosted builder pool"
+        "pleme-private"
         "ubuntu-latest")
-      "the self-hosted builder pool")
+      "pleme-private")
     "file beats default when override is empty")
   (assert
     (equal?
       (rr:resolve-runner
         "   "
-        "  the self-hosted builder pool  "
+        "  pleme-private  "
         "ubuntu-latest")
-      "the self-hosted builder pool")
+      "pleme-private")
     "whitespace-only override treated as empty; file value trimmed"))
 
 (deftest "rr:resolve-runner — effective-default wins when nothing else is set"
@@ -69,7 +69,7 @@
       (rr:effective-default
         "gpu-runner"
         "true"
-        "the self-hosted builder pool"
+        "pleme-private"
         "ubuntu-24.04")
       "gpu-runner")
     "explicit default beats private visibility default")
@@ -78,7 +78,7 @@
       (rr:effective-default
         "gpu-runner"
         "false"
-        "the self-hosted builder pool"
+        "pleme-private"
         "ubuntu-24.04")
       "gpu-runner")
     "explicit default beats public visibility default too"))
@@ -90,9 +90,9 @@
       (rr:effective-default
         ""
         "true"
-        "the self-hosted builder pool"
+        "pleme-private"
         "ubuntu-24.04")
-      "the self-hosted builder pool")
+      "pleme-private")
     "the actual billing-safe fix: a private repo with no explicit default lands on one cluster, never a metered runner"))
 
 (deftest
@@ -102,7 +102,7 @@
       (rr:effective-default
         ""
         "false"
-        "the self-hosted builder pool"
+        "pleme-private"
         "ubuntu-24.04")
       "ubuntu-24.04")
     "public repos keep their free GitHub-hosted minutes, untouched"))
@@ -110,7 +110,7 @@
 (deftest
   "rr:effective-default — unset/unrecognized visibility fails toward public (never private)"
   (assert
-    (equal? (rr:effective-default "" "" "the self-hosted builder pool" "ubuntu-24.04") "ubuntu-24.04")
+    (equal? (rr:effective-default "" "" "pleme-private" "ubuntu-24.04") "ubuntu-24.04")
     "an empty IS_PRIVATE context (e.g. a non-repository-scoped event) never silently routes onto the self-hosted pool"))
 
 (deftest
@@ -130,11 +130,11 @@
 (deftest "the motivating scenario — missing org vars resolves via config-path alone"
   (let ((override "")
      ;; unset vars.* forwards as ""
-     (file-runner "the self-hosted builder pool")
+     (file-runner "pleme-private")
      ;; read from .github/runner.yml
      (default "ubuntu-latest"))
     (assert
-      (equal? (rr:resolve-runner override file-runner default) "the self-hosted builder pool")
+      (equal? (rr:resolve-runner override file-runner default) "pleme-private")
       "resolves the committed runner with zero vars.* involved")
     (assert
       (equal? (rr:resolve-provenance override file-runner "default") "file")
@@ -146,9 +146,9 @@
 ;; any ordering dependency between test forms.
 
 (deftest "rr:read-file-runner — reads a real committed config file"
-  (write-file "/tmp/runner-resolve-fixture.yml" "runner: the self-hosted builder pool\n")
+  (write-file "/tmp/runner-resolve-fixture.yml" "runner: pleme-private\n")
   (assert
-    (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture.yml") "the self-hosted builder pool")
+    (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture.yml") "pleme-private")
     "reads the runner: field from a real YAML file via real yq"))
 
 (deftest "rr:read-file-runner — honestly empty when the file is absent"
