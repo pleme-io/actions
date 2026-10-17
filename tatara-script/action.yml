@@ -398,6 +398,9 @@ outputs:
   drifted:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: drifted)"
     value: ${{ steps.exec.outputs.drifted }}
+  drv:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: drv)"
+    value: ${{ steps.exec.outputs.drv }}
   drv-path:
     description: "Forwarded (key: drv-path) — ferrite-check resolved .drv store path"
     value: ${{ steps.exec.outputs.drv-path }}
