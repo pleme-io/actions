@@ -13,7 +13,11 @@
   (assert
     (equal? (run-argv "github:pleme-io/blue#kijun" "check --json" ".")
       (list "nix" "run" "github:pleme-io/blue#kijun" "--" "check" "--json" "."))
-    "default command shape appends the path"))
+    "a shape without the placeholder appends the path")
+  (assert
+    (equal? (run-argv "github:pleme-io/blue#kijun" "check --json --root {path}" ".")
+      (list "nix" "run" "github:pleme-io/blue#kijun" "--" "check" "--json" "--root" "."))
+    "the default shape hands kijun its root by flag"))
 
 (deftest "the command shape is the caller's"
   (assert (equal? (kijun-args "lint --format=json {path} --strict" "nix") (list "lint" "--format=json" "nix" "--strict")) "placeholder")

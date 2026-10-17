@@ -54,7 +54,7 @@
         1)
       (else
         (let* ((report (let ((p (env-get "REPORT_PATH" ""))) (if (equal? p "") (string-append (env-get "RUNNER_TEMP" "/tmp") "/kijun-report.json") p)))
-               (argv (run-argv ref (env-get "KIJUN_ARGS" "check --json") (env-get "LINT_PATH" ".")))
+               (argv (run-argv ref (env-get "KIJUN_ARGS" "check --json --root {path}") (env-get "LINT_PATH" ".")))
                (_ (log-info (string-append "==> " (string-join " " argv))))
                (r (apply exec-capture argv))
                (v (run-verdict (status-of r) (equal? (string-trim (env-get "FAIL_ON_FINDINGS" "true")) "true"))))

@@ -19,7 +19,7 @@ inputs:
       Arguments after `nix run REF --`, split on whitespace. The token {path}
       is replaced by `path`; without it, `path` is appended.
     required: false
-    default: "check --json"
+    default: "check --json --root {path}"
   path:
     description: "What kijun checks."
     required: false
