@@ -52,13 +52,3 @@
   (assert
     (not (gate-rejects? "CRITICAL" "none"))
     "fail-on=none never rejects, even a CRITICAL image"))
-
-(deftest "concat-lists flattens govulncheck's per-binary verdict lists into one list of strings"
-  (let ((pairs (list (list "nix/store/a-github/bin/p\tGO-2026-5932" "nix/store/a-github/bin/p\tCVE-2026-1")
-                     (list)
-                     (list "nix/store/b-aws/bin/p\tGO-2026-5932"))))
-    (assert (= (length (concat-lists pairs)) 3) "three verdict lines across three binaries")
-    (assert (equal? (string-join "\n" (concat-lists pairs))
-              "nix/store/a-github/bin/p\tGO-2026-5932\nnix/store/a-github/bin/p\tCVE-2026-1\nnix/store/b-aws/bin/p\tGO-2026-5932")
-      "joins to the tsv the jq filter reads")
-    (assert (null? (concat-lists (list))) "no binaries, no lines")))

@@ -54,7 +54,7 @@ inputs:
     required: false
     default: ""
   go-reachability:
-    description: "true = judge each Go binary's findings with govulncheck -mode=binary: a trivy match govulncheck reports as not_affected (symbols not linked) is dropped from the verdict. Needs local-archive and nix on the runner; any govulncheck failure fails the scan. The unfiltered trivy JSON is kept as image-scan-trivy-raw.json."
+    description: "true = judge each Go binary's findings with substrate's go-reachability primitive (github:pleme-io/substrate#go-reachability, the same one mkHardenedImageSet's grype-scan app runs with goReachability): govulncheck -mode=binary reads each flagged binary, and a trivy match it reports as not_affected (symbols not linked) is dropped from the verdict. A stripped binary gives govulncheck no symbols, so its findings stand. Needs local-archive and nix on the runner; any failure fails the scan. The unfiltered trivy JSON is kept as image-scan-trivy-raw.json."
     required: false
     default: "false"
   ignore-file:
