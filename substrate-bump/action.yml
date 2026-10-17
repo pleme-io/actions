@@ -26,6 +26,7 @@ runs:
   using: composite
   steps:
     - name: Install Nix (DeterminateSystems)
+      if: runner.environment == 'github-hosted'
       uses: DeterminateSystems/nix-installer-action@main
 
     # Load stdlib + run.tlisp into an output so the redistributable
