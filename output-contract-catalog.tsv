@@ -6,7 +6,7 @@
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
 # actions                374
-# routing tatara-script  355
+# routing tatara-script  357
 # distinct keys written  362
 # dynamic key expansions 8
 # inner union (generated)370
@@ -126,7 +126,7 @@ defaction-render	own-runner	-	0	2
 deno-deploy	tatara-script	run.tlisp	1	1
 dependabot-trigger	tatara-script	run.tlisp	1	1
 dependency-update	tatara-script	run.tlisp	3	3
-derive-version-from-tag	own-runner	-	0	1
+derive-version-from-tag	tatara-script	-	0	1
 detect-repo-type	tatara-script	run.tlisp	2	2
 devcontainer-build	tatara-script	run.tlisp	1	1
 discord-notify	tatara-script	run.tlisp	1	1
@@ -165,7 +165,7 @@ git-cliff	tatara-script	run.tlisp	1	1
 git-commit-tag	tatara-script	run.tlisp	1	1
 git-credentials	tatara-script	run.tlisp	1	1
 git-path-commit-count	tatara-script	run.tlisp	1	1
-git-push-with-token	own-runner	-	0	0
+git-push-with-token	tatara-script	-	0	0
 gitea-mirror-push	tatara-script	run.tlisp	1	1
 github-token	tatara-script	run.tlisp	3	3
 gitlab-mirror-push	tatara-script	run.tlisp	1	1

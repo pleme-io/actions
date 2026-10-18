@@ -25,10 +25,13 @@ inputs:
     default: ""
 
 runs:
-  using: docker
-  image: docker://ghcr.io/pleme-io/action-git-push-with-token:latest
-  env:
-    GIT_PUSH_TOKEN:     ${{ inputs.token }}
-    BRANCH:             ${{ inputs.branch }}
-    PUSH_TAGS:          ${{ inputs.push-tags }}
-    REGENERABLE_PATHS:  ${{ inputs.regenerable-paths }}
+  using: composite
+  steps:
+    - uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ github.action_path }}/run.tlisp
+      env:
+        GIT_PUSH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.branch }}
+        PUSH_TAGS: ${{ inputs.push-tags }}
+        REGENERABLE_PATHS: ${{ inputs.regenerable-paths }}

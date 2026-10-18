@@ -13,9 +13,14 @@ inputs:
 outputs:
   version:
     description: "Derived version (ref-name with leading 'v' stripped); set by run.tlisp via $GITHUB_OUTPUT"
+    value: ${{ steps.run.outputs.version }}
 
 runs:
-  using: docker
-  image: docker://ghcr.io/pleme-io/action-derive-version-from-tag:latest
-  env:
-    REF_NAME: ${{ inputs.ref-name }}
+  using: composite
+  steps:
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ github.action_path }}/run.tlisp
+      env:
+        REF_NAME: ${{ inputs.ref-name }}
