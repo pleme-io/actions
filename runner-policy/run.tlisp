@@ -153,7 +153,9 @@
                     (for-each
                       (lambda (vi)
                         (define vl (nth vi lines))
-                        (if (and (metered-label? vl)
+                        (if (and (or (metered-label? vl)
+                                     (and (re-match? "\\}\\}\\s*-" value)
+                                          (re-match? "\\b(ubuntu|macos|windows)\\b" vl)))
                                  (not (routes-by-visibility? vl))
                                  (not (waived? lines vi)))
                             (add! (string-format "{}:{}  matrix runner -> {}" label (+ vi 1) (string-trim vl)))

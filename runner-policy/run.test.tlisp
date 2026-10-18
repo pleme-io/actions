@@ -33,6 +33,10 @@
   (assert (= (length (check-text "x/upstream.yml" upstream-wf)) 3) "reusable + hosted label + cachix")
   (assert (= (length (check-text "x/routed.yml" routed-wf)) 0) "visibility-routed and waived"))
 
+(deftest "check-text — a matrix word completed by a suffix in runs-on is a hosted label"
+  (assert (= (length (check-text "x/buck2.yml" "jobs:\n  b:\n    strategy:\n      matrix:\n        os: [ubuntu, macos]\n    runs-on: ${{matrix.os}}-latest\n")) 1)
+          "os: [ubuntu, macos] with -latest"))
+
 (deftest "batches — every name lands in exactly one batch"
   (assert (equal? (batches (list 1 2 3 4 5) 2) (list (list 1 2) (list 3 4) (list 5))) "uneven tail")
   (assert (equal? (batches (list) 25) (list)) "empty"))
