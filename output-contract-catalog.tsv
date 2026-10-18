@@ -309,7 +309,7 @@ renovate-trigger	tatara-script	run.tlisp	1	1
 replicate-run	tatara-script	run.tlisp	1	1
 restic-backup	tatara-script	run.tlisp	1	1
 retool-workflow-run	tatara-script	run.tlisp	1	1
-runner-policy	tatara-script	-	0	0
+runner-policy	tatara-script	run.tlisp	0	0
 runner-resolve	tatara-script	run.tlisp	2	2
 runtime-install-lint	tatara-script	run.tlisp	3	3
 rust-cross-build	tatara-script	run.tlisp	0	0
