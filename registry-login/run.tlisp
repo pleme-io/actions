@@ -116,20 +116,11 @@
     ((proc:on-path? "docker")
       (exec-check "docker" "login" host "--username" user "--password" token))
     (else
-      (exec-check
-        "nix"
-        "shell"
-        "nixpkgs#skopeo"
-        "--command"
-        "skopeo"
-        "login"
-        "--authfile"
-        (rl:docker-config-path)
-        host
-        "--username"
-        user
-        "--password"
-        token))))
+      (env-set "INPUT_DEST_USER" user)
+      (env-set "INPUT_DEST_PASS" token)
+      (apply exec-check
+        (concat (oci:doca-argv "login")
+                (list "--registry" host "--authfile" (rl:docker-config-path)))))))
 
 (define (rl:docker-config-path)
   (let ((d (env-get "DOCKER_CONFIG" "")))
