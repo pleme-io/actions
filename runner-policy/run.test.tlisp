@@ -40,3 +40,12 @@
 (deftest "batches — every name lands in exactly one batch"
   (assert (equal? (batches (list 1 2 3 4 5) 2) (list (list 1 2) (list 3 4) (list 5))) "uneven tail")
   (assert (equal? (batches (list) 25) (list)) "empty"))
+
+(deftest "dead-labels — a self-hosted label no pool carries is named once known-labels is set"
+  (set! known-labels (list "pleme-private" "pleme-eval-heavy" "camelot-builder-pleme-eks" "rio" "plo"))
+  (assert (equal? (dead-labels "camelot-builder-pleme-eks-arm64") (list "camelot-builder-pleme-eks-arm64")) "dead literal")
+  (assert (equal? (dead-labels "[self-hosted, pleme-private]") (list)) "live flow list")
+  (assert (equal? (dead-labels "${{ github.event.repository.private && 'pleme-private' || 'ubuntu-latest' }}") (list)) "routed expression")
+  (assert (equal? (dead-labels "${{ github.event.repository.private && 'camelot-builder-pleme' || 'ubuntu-latest' }}") (list "camelot-builder-pleme")) "dead label inside an expression")
+  (assert (equal? (dead-labels "${{ fromJSON(inputs.runner-labels) }}") (list)) "an input is not a literal")
+  (set! known-labels (list)))

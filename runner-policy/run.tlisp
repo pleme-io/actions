@@ -127,6 +127,32 @@
         (define hit (filter (lambda (m) (string-contains? l m)) retired-cache-markers))
         (if (> (length hit) 0) (nth 0 hit) ""))))
 
+(define (label-words s)
+  (filter (lambda (w) (not (equal? w ""))) (re-split "[\\s,\\[\\]\"']+" s)))
+
+(define known-labels (label-words (env-get "KNOWN_LABELS" "")))
+
+(define builtin-labels (list "self-hosted" "linux" "Linux" "x64" "X64"))
+
+(define (runs-on-literals value)
+  (if (string-contains? value "${{")
+      (apply concat
+             (cons (quote ())
+                   (map label-words (re-find-all "'[^']*'" value))))
+      (label-words value)))
+
+(define (has? xs x) (> (length (filter (lambda (y) (equal? y x)) xs)) 0))
+
+(define (dead-labels value)
+  (if (= (length known-labels) 0)
+      (quote ())
+      (filter (lambda (l)
+                (and (not (metered-label? l))
+                     (not (has? builtin-labels l))
+                     (not (has? known-labels l))
+                     (re-match? "^[A-Za-z0-9_.-]+$" l)))
+              (runs-on-literals value))))
+
 (define (check-text label text)
   (define lines (string-split text "\n"))
   (define n (length lines))
@@ -161,11 +187,18 @@
                             (add! (string-format "{}:{}  matrix runner -> {}" label (+ vi 1) (string-trim vl)))
                             #t))
                       (matrix-value-lines lines (nth 1 matrix-ref)))
-                    (if (and (metered-label? value)
-                             (not (routes-by-visibility? value))
-                             (not (waived? lines i)))
-                        (add! (string-format "{}:{}  runs-on -> {}" label (+ i 1) value))
-                        #t)))
+                    (begin
+                      (if (and (metered-label? value)
+                               (not (routes-by-visibility? value))
+                               (not (waived? lines i)))
+                          (add! (string-format "{}:{}  runs-on -> {}" label (+ i 1) value))
+                          #t)
+                      (for-each
+                        (lambda (d)
+                          (if (waived? lines i)
+                              #t
+                              (add! (string-format "{}:{}  runs-on -> {}, a label no runner pool carries" label (+ i 1) d))))
+                        (dead-labels value)))))
               #t)
           (walk (+ i 1)))))
   (walk 0)
