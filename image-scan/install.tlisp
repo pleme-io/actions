@@ -262,33 +262,47 @@
 
 ;; Run the verified installer, elevating only when that is a real
 ;; requirement. Returns #t on a clean exit. Defect (5).
+(define job-bindir (string-append workdir "/image-scan-bin"))
+
+(define (export-path! dir)
+  (let ((gh-path (env-get "GITHUB_PATH" "")))
+    (cond
+      ((equal? gh-path "") #t)
+      (else
+        (write-file gh-path
+          (string-append (if (path-exists? gh-path) (read-file gh-path) "") dir "\n"))))))
+
 (define (run-installer)
   (let* ((uid (current-uid))
           (elev (elevation uid (hash:cmd-present? "sudo"))))
     (cond
-      ((equal? elev (quote blocked))
-        (log-error
-          (string-append
-            "::error::running as uid "
-            uid
-            " with no sudo on PATH, so trivy cannot be installed into "
-            bindir
-            ". Run this job as root, provide sudo, or bake trivy into the "
-            "runner image."))
+      ((not (equal? elev (quote blocked))) (install-into! elev))
+      ((or (string-contains? job-bindir "\n") (string-contains? job-bindir ":"))
+        (log-error "::error::RUNNER_TEMP contains a newline or colon; refusing to put it on PATH.")
         #f)
       (else
-        (let* ((argv (install-argv elev staged-script bindir trivy-tag))
-                (status (apply exec-check argv)))
-          (cond
-            ((= status 0) #t)
-            (else
-              (log-error
-                (string-append
-                  "::error::the pinned trivy installer exited "
-                  (string-format "{}" status)
-                  ". Nothing was installed, so no scan from this job would be "
-                  "trustworthy."))
-              #f)))))))
+        (log-info
+          (string-append
+            "uid " uid " has no sudo, so trivy goes into the job-owned " job-bindir
+            " instead of " bindir ", exported on GITHUB_PATH for the scan steps"))
+        (mkdir-p job-bindir)
+        (set! bindir job-bindir)
+        (export-path! job-bindir)
+        (env-set "PATH" (string-append job-bindir ":" (env-get "PATH" "")))
+        (install-into! (quote none))))))
+
+(define (install-into! elev)
+  (let ((status (apply exec-check (install-argv elev staged-script bindir trivy-tag))))
+    (cond
+      ((= status 0) #t)
+      (else
+        (log-error
+          (string-append
+            "::error::the pinned trivy installer exited "
+            (string-format "{}" status)
+            ". Nothing was installed, so no scan from this job would be "
+            "trustworthy."))
+        #f))))
 
 ;; THE assertion the old body never made: the trivy the SCAN STEP will
 ;; resolve is the trivy we pinned. Checks the bare name, not an absolute
