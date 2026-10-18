@@ -35,3 +35,9 @@
   (assert
     (equal? (gc:pick "" "repo-scoped") "repo-scoped")
     "and the fallback token is the one actually used"))
+
+(deftest "the runner host's App token outranks every secret"
+  (assert (equal? (gc:rung "app" "bot" "gh") "app") "app rung named first")
+  (assert (equal? (gc:rung "" "bot" "gh") "bot-pat") "no app token keeps the old ladder")
+  (assert (equal? (gc:rung "" "" "") "none") "nothing resolves to none")
+  (assert (equal? (gc:pick "app" (gc:pick "bot" "gh")) "app") "the app token is the one used"))

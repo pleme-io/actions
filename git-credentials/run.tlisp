@@ -59,6 +59,11 @@
     ((not (equal? gh "")) "github-token")
     (else "none")))
 
+(define (gc:rung app bot gh)
+  (cond
+    ((not (equal? app "")) "app")
+    (else (gc:which bot gh))))
+
 ;; Install the rewrite. Returns #t on success. The unset is best-effort by
 ;; design: a runner with no extraheader set (a job that never ran
 ;; actions/checkout) makes `--unset-all` exit non-zero, which is not a
@@ -77,12 +82,13 @@
 
 (define (gc:run)
   (let*
-    ((bot (env-get "BOT_PAT" ""))
+    ((app (env-get "APP_TOKEN" ""))
+      (bot (env-get "BOT_PAT" ""))
       (gh (env-get "GITHUB_TOKEN" ""))
       (host (env-get "GIT_HOST" "github.com"))
       (req (equal? (env-get "REQUIRED" "false") "true"))
-      (token (gc:pick bot gh))
-      (which (gc:which bot gh)))
+      (token (gc:pick app (gc:pick bot gh)))
+      (which (gc:rung app bot gh)))
     (cond
       ((equal? token "")
         ;; Never log a token; log only WHICH rung was taken.
@@ -92,7 +98,7 @@
               (string-append
                 "git-credentials: no credential resolved for "
                 host
-                " — BOT_PAT and GITHUB_TOKEN are both empty, and required=true. "
+                " — no runner-host App token, and BOT_PAT and GITHUB_TOKEN are both empty, and required=true. "
                 "A public repo should receive the org BOT_PAT; a PRIVATE repo on "
                 "the Free plan does not, and must set a repo-level BOT_PAT."))
             (append-output "result=false")

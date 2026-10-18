@@ -40,6 +40,8 @@ outputs:
 runs:
   using: composite
   steps:
+    - id: app
+      uses: pleme-io/actions/github-token@main
     - id: src
       shell: bash
       run: |
@@ -57,6 +59,7 @@ runs:
       with:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
+        APP_TOKEN: ${{ steps.app.outputs.source == 'app' && steps.app.outputs.token || '' }}
         BOT_PAT: ${{ inputs.bot-pat }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         GIT_HOST: ${{ inputs.host }}
