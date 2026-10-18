@@ -1,0 +1,38 @@
+(deftest "external-reusable — a third-party reusable workflow is named, pleme-io's and local ones are not"
+  (assert (equal? (external-reusable "    uses: dtolnay/.github/.github/workflows/check_install.yml@master")
+                  "dtolnay/.github/.github/workflows/check_install.yml@master")
+          "dtolnay reusable")
+  (assert (equal? (external-reusable "    uses: pleme-io/substrate/.github/workflows/pre-merge-gate.yml@main") "")
+          "pleme-io reusable")
+  (assert (equal? (external-reusable "    uses: ./.github/workflows/local.yml") "")
+          "local reusable")
+  (assert (equal? (external-reusable "      - uses: actions/checkout@v4") "")
+          "a step action is not a reusable workflow")
+  (assert (equal? (external-reusable "    # uses: dtolnay/.github/.github/workflows/x.yml@master") "")
+          "a comment is not a call"))
+
+(deftest "retired-cache — every retired plane is named, comments and sui are not"
+  (assert (equal? (retired-cache "      extraSubstituters: \"http://sui.camelot-build.svc\"") "camelot-build.svc")
+          "dead in-cluster sui")
+  (assert (equal? (retired-cache "      - uses: cachix/cachix-action@v15") "cachix/cachix-action")
+          "cachix")
+  (assert (equal? (retired-cache "      - uses: DeterminateSystems/magic-nix-cache-action@main") "magic-nix-cache")
+          "magic-nix-cache")
+  (assert (equal? (retired-cache "      - uses: pleme-io/actions/sui-cache-push@main") "")
+          "sui is the cache")
+  (assert (equal? (retired-cache "  # was http://sui.camelot-build.svc") "")
+          "a comment is history"))
+
+(define upstream-wf
+  "on:\n  schedule: [cron: \"0 1 * * *\"]\njobs:\n  install:\n    uses: dtolnay/.github/.github/workflows/check_install.yml@master\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: cachix/cachix-action@v15\n")
+
+(define routed-wf
+  "jobs:\n  build:\n    runs-on: ${{ github.event.repository.private && 'pleme-private' || 'ubuntu-latest' }}\n  rel:\n    # runner-policy: allow darwin release binary\n    runs-on: macos-14\n")
+
+(deftest "check-text — one violation per offending line, routed and waived lines pass"
+  (assert (= (length (check-text "x/upstream.yml" upstream-wf)) 3) "reusable + hosted label + cachix")
+  (assert (= (length (check-text "x/routed.yml" routed-wf)) 0) "visibility-routed and waived"))
+
+(deftest "batches — every name lands in exactly one batch"
+  (assert (equal? (batches (list 1 2 3 4 5) 2) (list (list 1 2) (list 3 4) (list 5))) "uneven tail")
+  (assert (equal? (batches (list) 25) (list)) "empty"))

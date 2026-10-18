@@ -99,93 +99,185 @@
                   (scan (+ i 1) acc (if (string-contains? l ":") #f in-block)))))))
   (scan 0 '() #f))
 
-(define violations '())
+(define (comment-line? l) (re-match? "^\\s*#" l))
 
-(define (check-file path)
-  (define text (read-file path))
+(define (external-reusable l)
+  (if (comment-line? l)
+      ""
+      (begin
+        (define caps (re-captures "^\\s*(?:-\\s+)?uses:\\s*['\"]?(([A-Za-z0-9_.-]+)/[A-Za-z0-9_.-]+/\\.github/workflows/[^'\"\\s]+)" l))
+        (if (and (> (length caps) 2) (not (equal? (nth 2 caps) "pleme-io")))
+            (nth 1 caps)
+            ""))))
+
+(define retired-cache-markers
+  (list "camelot-build.svc"
+        "cachix/cachix-action"
+        "magic-nix-cache"
+        "nix-cachix-push"
+        "nix-attic-push"
+        "attic push"
+        "flakehub-cache-action"
+        "cache.flakehub.com"))
+
+(define (retired-cache l)
+  (if (comment-line? l)
+      ""
+      (begin
+        (define hit (filter (lambda (m) (string-contains? l m)) retired-cache-markers))
+        (if (> (length hit) 0) (nth 0 hit) ""))))
+
+(define (check-text label text)
   (define lines (string-split text "\n"))
   (define n (length lines))
+  (define found '())
+  (define (add! msg) (set! found (concat found (list msg))))
   (define (walk i)
     (if (>= i n)
         #t
         (begin
           (define line (nth i lines))
+          (define ext (external-reusable line))
+          (if (and (not (equal? ext "")) (not (waived? lines i)))
+              (add! (string-format "{}:{}  external reusable workflow (runs on its own hosted runners) -> {}" label (+ i 1) ext))
+              #t)
+          (define cache (retired-cache line))
+          (if (and (not (equal? cache "")) (not (waived? lines i)))
+              (add! (string-format "{}:{}  retired cache plane (sui is the only cache) -> {}" label (+ i 1) cache))
+              #t)
           (if (re-match? "^\\s*runs-on\\s*:" line)
               (begin
                 (define value (string-trim (nth 1 (string-split line "runs-on:"))))
                 (define matrix-ref (re-captures "matrix\\.([A-Za-z_][A-Za-z0-9_-]*)" value))
                 (if (> (length matrix-ref) 1)
-                    ;; matrix-sourced: judge each candidate value at ITS OWN line,
-                    ;; so a waiver next to one entry does not excuse the others.
                     (for-each
                       (lambda (vi)
                         (define vl (nth vi lines))
                         (if (and (metered-label? vl)
                                  (not (routes-by-visibility? vl))
                                  (not (waived? lines vi)))
-                            (set! violations
-                                  (concat violations
-                                          (list (string-format "{}:{}  matrix runner -> {}"
-                                                               path (+ vi 1) (string-trim vl)))))
+                            (add! (string-format "{}:{}  matrix runner -> {}" label (+ vi 1) (string-trim vl)))
                             #t))
                       (matrix-value-lines lines (nth 1 matrix-ref)))
                     (if (and (metered-label? value)
                              (not (routes-by-visibility? value))
                              (not (waived? lines i)))
-                        (set! violations
-                              (concat violations
-                                      (list (string-format "{}:{}  runs-on -> {}"
-                                                           path (+ i 1) value))))
+                        (add! (string-format "{}:{}  runs-on -> {}" label (+ i 1) value))
                         #t)))
               #t)
           (walk (+ i 1)))))
-  (walk 0))
+  (walk 0)
+  (distinct found))
 
-(if (and (not is-private) (not reusables-as-private))
-    (begin
-      (print-line "runner-policy: repo is PUBLIC — GitHub-hosted minutes are free here, nothing to enforce.")
-      (exit 0))
-    #t)
+(define (check-file path) (check-text path (read-file path)))
 
-(define runner-labels
-  (filter (lambda (w) (not (equal? w ""))) (re-split "[\\s,\\[\\]\"]+" (env-get "RUNNER_LABELS" ""))))
+(define (workflow-files dir)
+  (concat (glob (string-append dir "/*.yml")) (glob (string-append dir "/*.yaml"))))
 
-(set! violations
-  (concat violations
-    (map (lambda (l) (string-append "runner-labels input -> " l)) (filter metered-label? runner-labels))))
+(define (lines-of s) (filter (lambda (l) (not (equal? (string-trim l) ""))) (string-split s "\n")))
 
-(define all-files (concat (glob (string-append workflows-dir "/*.yml"))
-                          (glob (string-append workflows-dir "/*.yaml"))))
+(define (batches xs size)
+  (if (= (length xs) 0)
+      '()
+      (cons (take (if (< (length xs) size) (length xs) size) xs)
+            (batches (drop (if (< (length xs) size) (length xs) size) xs) size))))
 
-(define files (if is-private all-files (filter reusable-file? all-files)))
+(define (workflows-query org names)
+  (define idx 0)
+  (define parts
+    (map (lambda (name)
+           (set! idx (+ idx 1))
+           (string-append "r" (string-format "{}" idx) ": repository(owner: \"" org "\", name: \"" name
+                          "\") { name object(expression: \"HEAD:.github/workflows\") { ... on Tree { entries { name object { ... on Blob { text } } } } } }"))
+         names))
+  (string-append "query { " (string-join " " parts) " }"))
 
-(if (and (= (length files) 0) (= (length violations) 0))
-    (begin (print-line "runner-policy: no workflow files found — nothing to check.") (exit 0))
-    #t)
+(define workflows-jq
+  ".data[] | select(. != null) | .name as $n | (.object.entries // [])[] | select(.name | test(\"\\\\.ya?ml$\")) | [$n, .name, (.object.text // \"\")] | @json")
 
-(for-each check-file files)
+(define (gh-or-die args)
+  (define r (apply exec-capture (cons "gh" args)))
+  (if (= (status-of r) 0)
+      (stdout-of r)
+      (begin
+        (eprint-line (string-append "runner-policy: gh " (string-join " " args) " failed: " (stderr-of r)))
+        (exit 2))))
 
-;; Two jobs can reference the SAME matrix variable, so the same value line is
-;; reachable twice; report each offending line once.
-(define violations (distinct violations))
+(define (sweep org)
+  (define names (lines-of (gh-or-die (list "repo" "list" org "--visibility" "private" "--no-archived"
+                                           "-L" "5000" "--json" "name" "--jq" ".[].name"))))
+  (if (= (length names) 0)
+      (begin (eprint-line (string-append "runner-policy: sweep listed 0 private repos in " org "; a blind read, not a pass."))
+             (exit 2))
+      #t)
+  (define rows
+    (apply concat
+           (cons (quote ())
+                 (map (lambda (batch)
+                        (map json-parse
+                             (lines-of (gh-or-die (list "api" "graphql" "-f" (string-append "query=" (workflows-query org batch))
+                                                        "--jq" workflows-jq)))))
+                      (batches names 25)))))
+  (print-line (string-format "runner-policy: sweep of {}: {} private repos, {} with workflows, {} workflow files."
+                             org (length names) (length (distinct (map (lambda (c) (nth 0 c)) rows))) (length rows)))
+  (apply concat
+         (cons (quote ())
+               (map (lambda (c) (check-text (string-append (nth 0 c) "/" (nth 1 c)) (nth 2 c))) rows))))
 
-(if (> (length violations) 0)
-    (begin
-      (eprint-line (if is-private
-                       "runner-policy: FAIL — this repo is PRIVATE and declares metered GitHub-hosted runners."
-                       "runner-policy: FAIL — these reusable workflows run in a PRIVATE caller's billing context and can resolve to metered GitHub-hosted runners."))
-      (eprint-line "")
-      (for-each (lambda (v) (eprint-line (string-append "  " v))) violations)
-      (eprint-line "")
-      (eprint-line "Route on visibility, with the self-hosted pool as the private arm's fallback")
-      (eprint-line "(org variables do not reach private repos on the Free plan, so vars.* reads empty there):")
-      (eprint-line "  runs-on: ${{ github.event.repository.private && (vars.PRIVATE_BUILDER_RUNNER || 'pleme-private') || 'ubuntu-latest' }}")
-      (eprint-line "")
-      (eprint-line "If the leg genuinely cannot route (the self-hosted pool is linux-only, so a darwin")
-      (eprint-line "binary has no alternative), put the typed waiver on the line above:")
-      (eprint-line "  # runner-policy: allow <reason>")
-      (exit 1))
-    (begin
-      (print-line (string-format "runner-policy: ok — {} workflow file(s), no metered runner on a private repo."
-                                 (length files)))
-      (exit 0)))
+(define (report violations scope)
+  (if (> (length violations) 0)
+      (begin
+        (eprint-line scope)
+        (eprint-line "")
+        (for-each (lambda (v) (eprint-line (string-append "  " v))) violations)
+        (eprint-line "")
+        (eprint-line "Route on visibility, with the self-hosted pool as the private arm's fallback")
+        (eprint-line "(org variables do not reach private repos on the Free plan, so vars.* reads empty there):")
+        (eprint-line "  runs-on: ${{ github.event.repository.private && (vars.PRIVATE_BUILDER_RUNNER || 'pleme-private') || 'ubuntu-latest' }}")
+        (eprint-line "")
+        (eprint-line "A third-party reusable workflow runs on the runners IT names: vendor its steps, or")
+        (eprint-line "keep an upstream file out of .github/workflows (e.g. .github/workflows-upstream/).")
+        (eprint-line "Nix caching is sui only: the runner host's substituter and pleme-io/actions/sui-cache-push.")
+        (eprint-line "")
+        (eprint-line "If the leg genuinely cannot route (the self-hosted pool is linux-only, so a darwin")
+        (eprint-line "binary has no alternative), put the typed waiver on the line above:")
+        (eprint-line "  # runner-policy: allow <reason>")
+        (exit 1))
+      #t))
+
+(define (main)
+  (define sweep-org (string-trim (env-get "SWEEP_ORG" "")))
+  (if (not (equal? sweep-org ""))
+      (begin
+        (define violations (sweep sweep-org))
+        (define repos (distinct (map (lambda (v) (nth 0 (string-split v "/"))) violations)))
+        (report violations
+                (string-format "runner-policy: FAIL — {} violation(s) across {} private repo(s) of {}."
+                               (length violations) (length repos) sweep-org))
+        (print-line (string-format "runner-policy: ok — no private {} repo declares a metered runner, a third-party reusable or a retired cache." sweep-org))
+        (exit 0))
+      #t)
+  (if (and (not is-private) (not reusables-as-private))
+      (begin
+        (print-line "runner-policy: repo is PUBLIC — GitHub-hosted minutes are free here, nothing to enforce.")
+        (exit 0))
+      #t)
+  (define runner-labels
+    (filter (lambda (w) (not (equal? w ""))) (re-split "[\\s,\\[\\]\"]+" (env-get "RUNNER_LABELS" ""))))
+  (define label-violations
+    (map (lambda (l) (string-append "runner-labels input -> " l)) (filter metered-label? runner-labels)))
+  (define all-files (workflow-files workflows-dir))
+  (define files (if is-private all-files (filter reusable-file? all-files)))
+  (if (and (= (length files) 0) (= (length label-violations) 0))
+      (begin (print-line "runner-policy: no workflow files found — nothing to check.") (exit 0))
+      #t)
+  (define violations
+    (distinct (apply concat (cons label-violations (map check-file files)))))
+  (report violations
+          (if is-private
+              "runner-policy: FAIL — this repo is PRIVATE and declares metered GitHub-hosted runners, third-party reusables or a retired cache."
+              "runner-policy: FAIL — these reusable workflows run in a PRIVATE caller's billing context and can resolve to metered GitHub-hosted runners."))
+  (print-line (string-format "runner-policy: ok — {} workflow file(s), no metered runner on a private repo." (length files)))
+  (exit 0))
+
+(if (equal? (env-get "TLISP_TEST" "") "1") #t (main))

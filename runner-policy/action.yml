@@ -6,8 +6,11 @@ description: >-
   minutes, or through an org self-hosted pool — never a metered runner on a private
   repo. Checks BOTH shapes, the literal `runs-on: ubuntu-latest` and the
   matrix-supplied form where `runs-on` interpolates a `matrix.os` value; the
-  second is the one a grep for `runs-on: ubuntu-*` silently misses. No-op on
-  public repos.
+  second is the one a grep for `runs-on: ubuntu-*` silently misses. Also fails a
+  third-party reusable workflow call (it runs on the runners its owner names) and
+  a retired cache plane (cachix, attic, magic-nix-cache, the dead in-cluster sui):
+  sui is the only cache. With sweep-org it checks every private repo of an org at
+  its default branch, the fleet gate. No-op on public repos.
 
   NOTE: this description spells the matrix form in prose ON PURPOSE. GitHub
   evaluates expression syntax (dollar-brace-brace) inside an action manifest's
@@ -48,13 +51,33 @@ inputs:
     required: false
     default: ""
 
+  sweep-org:
+    description: >-
+      An org whose every PRIVATE repo is checked at its default branch instead of
+      workflows-dir: the fleet gate. Reads through the gh CLI with the token input.
+    required: false
+    default: ""
+  token:
+    description: "Token gh reads the swept org with; needs metadata and contents read on every private repo."
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/runner-policy.tlisp"
+        cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp" "${{ github.action_path }}/run.tlisp" > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
     - uses: pleme-io/actions/tatara-script@main
       with:
-        script-file: ${{ github.action_path }}/run.tlisp
+        script-file: ${{ steps.src.outputs.script-file }}
       env:
+        SWEEP_ORG: ${{ inputs.sweep-org }}
+        GH_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
         WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
         REPO_PRIVATE: ${{ inputs.private != '' && inputs.private || github.event.repository.private }}
         RUNNER_LABELS: ${{ inputs.runner-labels }}
