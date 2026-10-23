@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                374
+# actions                375
 # routing tatara-script  357
 # distinct keys written  362
 # dynamic key expansions 8
@@ -314,6 +314,7 @@ runner-resolve	tatara-script	run.tlisp	2	2
 runtime-install-lint	tatara-script	run.tlisp	3	3
 rust-cross-build	tatara-script	run.tlisp	0	0
 rust-gate	tatara-script	run.tlisp	4	4
+rust-toolchain	own-runner	-	0	0
 rust-workspace-bump	tatara-script	run.tlisp	3	3
 rust-workspace-publish	tatara-script	run.tlisp	5	5
 s3-mirror	tatara-script	run.tlisp	1	1
