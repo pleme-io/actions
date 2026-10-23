@@ -67,7 +67,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: pleme-io/actions/rust-toolchain@main
 
     - name: Load run.tlisp
       id: src

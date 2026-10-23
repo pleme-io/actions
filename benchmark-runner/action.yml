@@ -24,7 +24,7 @@ runs:
       with: { fetch-depth: 0 }
     - name: Install Rust (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
     - name: Install uv (if pyproject.toml)
       if: hashFiles('pyproject.toml') != ''
       uses: astral-sh/setup-uv@v3

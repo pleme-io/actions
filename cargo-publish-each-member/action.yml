@@ -39,7 +39,7 @@ runs:
     - uses: DeterminateSystems/nix-installer-action@main
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-edit
       shell: bash

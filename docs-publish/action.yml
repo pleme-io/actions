@@ -31,7 +31,7 @@ runs:
 
     - name: Install Rust (if needed)
       if: hashFiles('Cargo.toml') != '' && inputs.force-tool != 'mkdocs' && inputs.force-tool != 'typedoc'
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install uv (if Python/mkdocs)
       if: hashFiles('mkdocs.yml') != '' || inputs.force-tool == 'mkdocs'

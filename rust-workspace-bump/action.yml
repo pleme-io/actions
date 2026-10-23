@@ -41,7 +41,7 @@ runs:
       uses: DeterminateSystems/nix-installer-action@main
 
     - name: Install Rust toolchain (cargo + rustc)
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-edit (provides `cargo set-version`)
       shell: bash

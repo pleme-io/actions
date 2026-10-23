@@ -61,7 +61,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: pleme-io/actions/rust-toolchain@main
       with:
         toolchain: ${{ inputs.rust-toolchain }}
         components: rustfmt, clippy

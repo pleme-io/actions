@@ -31,7 +31,7 @@ runs:
     # out (cargo has to have something to build) and checkout v4 CLEANS the
     # destination, which would discard whatever earlier steps generated. The
     # loader below reads only from github.action_path, which is always present.
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: pleme-io/actions/rust-toolchain@main
       with:
         targets: ${{ inputs.target }}
     # Only the wasm-pack path needs Nix. It used to run on every invocation,

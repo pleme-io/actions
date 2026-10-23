@@ -36,7 +36,7 @@ runs:
 
     - name: Install Rust (if needed)
       if: hashFiles('Cargo.toml') != ''
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-audit (if Rust)
       if: hashFiles('Cargo.toml') != ''

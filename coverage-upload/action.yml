@@ -27,7 +27,7 @@ runs:
 
     - name: Install Rust (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install tarpaulin (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''

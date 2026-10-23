@@ -23,7 +23,7 @@ runs:
     - uses: DeterminateSystems/nix-installer-action@main
     - name: Install Rust (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
-      uses: dtolnay/rust-toolchain@stable
+      uses: pleme-io/actions/rust-toolchain@main
     - name: Install cargo-mutants
       if: hashFiles('Cargo.toml') != ''
       shell: bash
