@@ -24,7 +24,14 @@ let
     else
       throw "rust-toolchain: '${toolchain}' is not stable, beta, nightly or an exact stable version such as 1.89.0";
 in
-base.override {
-  extensions = split components;
-  targets = split targets;
+pkgs.symlinkJoin {
+  name = "pleme-rust-toolchain";
+  paths = [
+    (base.override {
+      extensions = split components;
+      targets = split targets;
+    })
+    pkgs.stdenv.cc
+    pkgs.pkg-config
+  ];
 }
