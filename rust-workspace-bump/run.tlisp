@@ -365,7 +365,7 @@
 (define (refresh-lock) (exec-capture "cargo" "update" "--workspace"))
 
 ;; Cargo.gen.lock D2 gate — `ensure-gen-lock-fresh` lives in the stdlib
-;; (shared with cargo-bump): regen via `nix run github:pleme-io/gen -- build .`
+;; (shared with cargo-bump): regen via `nix run github:pleme-io/substrate#gen -- build .`
 ;; on EVERY bump of a delta repo; FATAL (caller-side) when the regen can't
 ;; restore the tie. 2026-06-03: 11 fleet repos' mains went stale exactly this
 ;; way and bricked every consumer flake eval.

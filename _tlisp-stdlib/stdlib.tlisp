@@ -655,7 +655,7 @@
     "nixpkgs#rustc"
     "--command" "nix"
     "run"
-    "github:pleme-io/gen"
+    "github:pleme-io/substrate#gen"
     "--" "build"
     ".")))
 
