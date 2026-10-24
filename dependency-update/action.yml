@@ -17,6 +17,14 @@ inputs:
     description: "PR title template"
     required: false
     default: "chore(deps): refresh lockfile"
+  token-source:
+    description: "github-token source: app (the runner host's App token, the default), pat (the pat input) or none. Without a token the checkout uses github.token."
+    required: false
+    default: "app"
+  pat:
+    description: "PAT presented only when token-source is pat."
+    required: false
+    default: ""
 
 outputs:
   changed:
@@ -29,9 +37,14 @@ outputs:
 runs:
   using: composite
   steps:
+    - id: token
+      uses: pleme-io/actions/github-token@main
+      with:
+        source: ${{ inputs.token-source }}
+        pat: ${{ inputs.pat }}
     - uses: actions/checkout@v4
       with:
-        token: ${{ secrets.BOT_PAT || github.token }}
+        token: ${{ steps.token.outputs.token || github.token }}
 
     - name: Install Rust (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''

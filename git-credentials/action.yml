@@ -1,7 +1,7 @@
 name: 'pleme-io · git-credentials'
 description: 'Route github.com fetches through a resolved PAT so a build can clone PRIVATE pleme-io git dependencies. The git twin of registry-login: the BOT_PAT > GITHUB_TOKEN priority order and the load-bearing extraheader-unset live here, ONCE, instead of being hand-repeated in every reusable that builds Rust/Go with private deps. On the Free plan BOT_PAT reaches PUBLIC repos only, so a private caller passes it empty and the fallback lands on the repo-scoped GITHUB_TOKEN — the two approved tracks, expressed once.'
 branding:
-  icon: 'key'
+  icon: 'lock'
   color: 'blue'
 
 inputs:

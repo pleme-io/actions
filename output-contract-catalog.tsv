@@ -167,7 +167,7 @@ git-credentials	tatara-script	run.tlisp	1	1
 git-path-commit-count	tatara-script	run.tlisp	1	1
 git-push-with-token	tatara-script	-	0	0
 gitea-mirror-push	tatara-script	run.tlisp	1	1
-github-token	tatara-script	run.tlisp	3	3
+github-token	tatara-script	run.tlisp	3	5
 gitlab-mirror-push	tatara-script	run.tlisp	1	1
 go-build	tatara-script	run.tlisp	1	1
 go-test	tatara-script	run.tlisp	1	1

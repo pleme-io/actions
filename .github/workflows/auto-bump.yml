@@ -31,10 +31,15 @@ jobs:
     # Skip when the bot itself pushed (avoids re-fire loops).
     if: github.actor != 'github-actions[bot]'
     steps:
+      - id: token
+        uses: pleme-io/actions/github-token@main
+        with:
+          source: ${{ vars.TOKEN_SOURCE || 'app' }}
+          pat: ${{ secrets.BOT_PAT }}
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.token.outputs.token || secrets.GITHUB_TOKEN }}
 
       - name: Compute the next tag from content changes
         id: next
@@ -57,5 +62,5 @@ jobs:
         if: steps.next.outputs.skip == 'false'
         uses: ./git-push-with-token
         with:
-          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.token.outputs.token || secrets.GITHUB_TOKEN }}
           push-tags: "true"

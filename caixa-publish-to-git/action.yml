@@ -14,6 +14,14 @@ inputs:
   push-tag:
     required: false
     default: "true"
+  token-source:
+    description: "github-token source: app (the runner host's App token, the default), pat (the pat input) or none. Without a token the checkout uses github.token."
+    required: false
+    default: "app"
+  pat:
+    description: "PAT presented only when token-source is pat."
+    required: false
+    default: ""
 
 outputs:
   tag:
@@ -24,10 +32,15 @@ outputs:
 runs:
   using: composite
   steps:
+    - id: token
+      uses: pleme-io/actions/github-token@main
+      with:
+        source: ${{ inputs.token-source }}
+        pat: ${{ inputs.pat }}
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        token: ${{ secrets.BOT_PAT || github.token }}
+        token: ${{ steps.token.outputs.token || github.token }}
     - id: src
       shell: bash
       run: |

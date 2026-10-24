@@ -6,7 +6,7 @@ description: >-
   where there is none, or it is near expiry, the output is empty and nix reads
   public repos anonymously. A long-lived PAT is the opt-in source pat, never
   the default.
-branding: { icon: 'key', color: 'purple' }
+branding: { icon: 'lock', color: 'purple' }
 
 inputs:
   source:
@@ -32,6 +32,12 @@ outputs:
   expires-at:
     description: "Epoch seconds the app token expires; empty for pat and none."
     value: ${{ steps.run.outputs.expires-at }}
+  app-token:
+    description: "The token only when source resolved to app, else empty: the app-token rung of registry-login."
+    value: ${{ steps.run.outputs.source == 'app' && steps.run.outputs.token || '' }}
+  pat:
+    description: "The token only when source resolved to pat, else empty: the bot-pat rung of git-credentials and registry-login, so a dead PAT never outranks GITHUB_TOKEN unless asked for."
+    value: ${{ steps.run.outputs.source == 'pat' && steps.run.outputs.token || '' }}
 
 runs:
   using: composite

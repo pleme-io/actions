@@ -201,9 +201,14 @@ jobs:
       # match the sibling jobs in this file and to exercise the checked-out
       # copy. BOT_PAT is an org secret with ALL-repo visibility and is already
       # used by this repo's auto-bump.yml.
+      - id: token
+        uses: ./github-token
+        with:
+          source: ${{ vars.TOKEN_SOURCE || 'app' }}
+          pat: ${{ secrets.BOT_PAT }}
       - uses: ./git-credentials
         with:
-          bot-pat: ${{ secrets.BOT_PAT }}
+          bot-pat: ${{ steps.token.outputs.pat }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install pleme-doc-gen
         run: cargo install --locked --git https://github.com/pleme-io/pleme-doc-gen pleme-doc-gen
