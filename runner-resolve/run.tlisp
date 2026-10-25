@@ -101,6 +101,20 @@
     ((not (equal? (string-trim file-runner) "")) "file")
     (else default-provenance)))
 
+;; A public repository's pull request from a fork runs code the org did not
+;; write. A self-hosted runner holds fleet trust (a trusted nix user, the
+;; sui uploader key), so for such a head the visibility tier and the
+;; repo-committed file never resolve: the untrusted default (hosted) does.
+;; An explicit override still wins; the caller named it.
+(define (rr:untrusted-head? is-private is-fork-pr)
+  (and (not (rr:is-private? is-private)) (equal? (string-trim is-fork-pr) "true")))
+
+(define (rr:guarded runner provenance untrusted? override untrusted-default)
+  (cond
+    ((not untrusted?) (list runner provenance))
+    ((not (equal? (string-trim override) "")) (list runner provenance))
+    (else (list (string-trim untrusted-default) "untrusted-head"))))
+
 ;; ── File I/O — reads the optional repo-committed config. Honestly
 ;; empty ("") when config-path is blank, the file is absent, or the
 ;; file has no `runner:` field — never a guessed value. yaml-read-field
@@ -127,8 +141,16 @@
       (file-runner (rr:read-file-runner config-path))
       (effective-default (rr:effective-default default is-private private-default public-default))
       (default-provenance (rr:effective-default-provenance default))
-      (runner (rr:resolve-runner override file-runner effective-default))
-      (provenance (rr:resolve-provenance override file-runner default-provenance)))
+      (untrusted? (rr:untrusted-head? is-private (env-get "IS_FORK_PR" "false")))
+      (guarded
+        (rr:guarded
+          (rr:resolve-runner override file-runner effective-default)
+          (rr:resolve-provenance override file-runner default-provenance)
+          untrusted?
+          override
+          (env-get "UNTRUSTED_RUNNER_DEFAULT" "ubuntu-24.04")))
+      (runner (car guarded))
+      (provenance (car (cdr guarded))))
     (append-output (string-append "runner=" runner))
     (append-output (string-append "provenance=" provenance))
     (log-info

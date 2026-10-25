@@ -26,6 +26,11 @@ inputs:
     required: false
     default: "ubuntu-24.04"
 
+  untrusted-runner-default:
+    description: "The runner for a PUBLIC repository's pull request from a fork, whatever public-runner-default or the config file say: a self-hosted runner holds fleet trust, so code from outside the org runs on GitHub-hosted minutes. Only an explicit override outranks it."
+    required: false
+    default: "ubuntu-24.04"
+
 outputs:
   runner:
     description: "The resolved runs-on label."
@@ -63,3 +68,5 @@ runs:
         IS_PRIVATE: ${{ github.event.repository.private }}
         PRIVATE_RUNNER_DEFAULT: ${{ inputs.private-runner-default }}
         PUBLIC_RUNNER_DEFAULT: ${{ inputs.public-runner-default }}
+        UNTRUSTED_RUNNER_DEFAULT: ${{ inputs.untrusted-runner-default }}
+        IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}

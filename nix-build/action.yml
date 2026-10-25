@@ -88,13 +88,25 @@ inputs:
       on a cache miss.
     required: false
     default: ""
+  plan:
+    description: >-
+      When not "false", run `nix build --dry-run` on the same installable
+      first and report how many derivations this runner must build and how
+      many paths it substitutes (outputs `will-build`, `will-fetch`, and the
+      first 15 names in the log). "false" skips the dry run.
+    required: false
+    default: "true"
   cache-push:
     description: >-
-      When "true", run `sui cache push --recursive` over every built output
-      path after a successful build. Default "false" leaves the action
-      unchanged.
+      "auto" (default): when the runner exports SUI_CACHE_URL and
+      SUI_CACHE_SIGNING_KEY_FILE (the fleet runner pools with an uploader
+      key, nix lib/sui-cache.nix uploaders), push the outputs of every
+      derivation this run built to that sui origin, so the next run on any
+      fleet runner substitutes them. On a runner without them (GitHub-hosted)
+      nothing is pushed. "true": the older local-store push,
+      `sui cache push --recursive` into `cache-store-path`. "false": no push.
     required: false
-    default: "false"
+    default: "auto"
   cache-store-path:
     description: >-
       The push target: the sui cache store directory on the runner, passed as
@@ -113,6 +125,12 @@ inputs:
     default: ""
 
 outputs:
+  will-build:
+    description: 'Derivations the dry-run plan said this runner must build. Empty when plan is "false" or the dry run failed.'
+    value: ${{ steps.run.outputs.will-build }}
+  will-fetch:
+    description: 'Store paths the dry-run plan said this runner substitutes. Empty when plan is "false" or the dry run failed.'
+    value: ${{ steps.run.outputs.will-fetch }}
   out-path:
     value: ${{ steps.run.outputs.out-path }}
   drv:
@@ -193,6 +211,7 @@ runs:
         EVAL_ONLY: ${{ inputs.eval-only }}
         EVAL_STACK_KIB: ${{ inputs.eval-stack-kib }}
         MAX_SILENT_TIME: ${{ inputs.max-silent-time }}
+        PLAN: ${{ inputs.plan }}
         CACHE_PUSH: ${{ inputs.cache-push }}
         CACHE_STORE_PATH: ${{ inputs.cache-store-path }}
         CACHE_SIGNING_KEY: ${{ inputs.cache-signing-key }}

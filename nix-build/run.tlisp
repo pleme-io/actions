@@ -44,7 +44,95 @@
 (define (out-paths stdout)
   (filter (lambda (p) (not (equal? p ""))) (map string-trim (string-split (string-trim stdout) "\n"))))
 
+(define (plan-enabled? raw) (not (equal? (string-trim raw) "false")))
+
+(define (plan-argv installable sys)
+  (let ((base (list "build" "--dry-run" "--no-link")))
+    (append (if (equal? sys "") base (append base (list "--system" sys))) (list installable))))
+
+(define (plan-header line)
+  (cond
+    ((string-contains? line "will be built") "build")
+    ((string-contains? line "will be fetched") "fetch")
+    ((string-starts-with? line "  /nix/store/") "")
+    (else "none")))
+
+(define (plan-step state line)
+  (let ((h (plan-header line)) (mode (car state)) (built (car (cdr state))) (fetched (car (cdr (cdr state)))))
+    (cond
+      ((equal? h "build") (list "build" built fetched))
+      ((equal? h "fetch") (list "fetch" built fetched))
+      ((equal? h "none") (list "none" built fetched))
+      ((equal? mode "build") (list mode (cons (string-trim line) built) fetched))
+      ((equal? mode "fetch") (list mode built (+ fetched 1)))
+      (else state))))
+
+(define (plan-parse text)
+  (let ((final (reduce plan-step (list "none" (list) 0) (string-split text "\n"))))
+    (list (reverse (car (cdr final))) (car (cdr (cdr final))))))
+
+(define (plan-name drv)
+  (let ((base (string-replace (string-replace drv "/nix/store/" "") ".drv" "")))
+    (let ((parts (string-split base "-")))
+      (if (null? (cdr parts)) base (string-join "-" (cdr parts))))))
+
+(define (run-plan installable sys)
+  (cond
+    ((not (plan-enabled? (env-get "PLAN" "true"))) (list (list) -1))
+    (else
+      (let ((r (apply exec-capture (cons "nix" (plan-argv installable sys)))))
+        (if (= (status-of r) 0)
+          (plan-parse (string-append (stdout-of r) "\n" (stderr-of r)))
+          (begin (log-info "::warning title=nix-build::dry-run plan failed; building without a plan") (list (list) -1)))))))
+
+(define (emit-plan plan)
+  (let ((built (car plan)) (fetched (car (cdr plan))))
+    (cond
+      ((< fetched 0)
+        (append-output "will-build=")
+        (append-output "will-fetch="))
+      (else
+        (append-output (string-append "will-build=" (string-format "{}" (length built))))
+        (append-output (string-append "will-fetch=" (string-format "{}" fetched)))
+        (log-info
+          (string-append
+            "plan: "
+            (string-format "{}" (length built))
+            " derivation(s) to build, "
+            (string-format "{}" fetched)
+            " path(s) to substitute"))
+        (for-each (lambda (d) (log-info (string-append "  build " (plan-name d)))) (take-n built 15))))))
+
 (define (cache-push-enabled? raw) (equal? (string-trim raw) "true"))
+
+(define (cache-push-auto? raw) (equal? (string-trim raw) "auto"))
+
+(define (fleet-push-argv paths url key-file)
+  (append (list "cache" "push" "--cache-url" url "--signing-key" key-file) paths))
+
+(define (fleet-push-step paths url key-file sui-present? runner)
+  (cond
+    ((or (equal? url "") (equal? key-file "")) (list "false" "no fleet cache on this runner"))
+    ((null? paths) (list "false" "nothing built"))
+    ((not sui-present?) (list "false" "sui not on PATH"))
+    (else (push-verdict (runner (fleet-push-argv paths url key-file))))))
+
+(define (built-outputs drvs)
+  (if (null? drvs)
+    (list)
+    (let ((r (apply exec-capture (append (list "nix-store" "--query" "--outputs") drvs))))
+      (if (= (status-of r) 0) (filter path-exists? (out-paths (stdout-of r))) (list)))))
+
+(define (push-fleet plan paths)
+  (let* ((url (string-trim (env-get "SUI_CACHE_URL" "")))
+         (key-file (string-trim (env-get "SUI_CACHE_SIGNING_KEY_FILE" "")))
+         (targets (if (< (car (cdr plan)) 0) paths (built-outputs (car plan))))
+         (verdict (fleet-push-step targets url key-file (sui-cache:on-path? "sui") sui-cache:run)))
+    (if (equal? (car verdict) "true")
+      (log-info (string-append "pushed " (string-format "{}" (length targets)) " built path(s) to " url))
+      #f)
+    (emit-push
+      (if (equal? (car (cdr verdict)) "no fleet cache on this runner") (list "false" "disabled") verdict))))
 
 (define (cache-push-argv paths store-path key-file)
   (append
@@ -106,7 +194,9 @@
         (append-output "cache-push-reason=disabled")
         0)
       (else
-        (let* ((args (build-argv-with (car (cdr resolved)) sys (env-get "MAX_SILENT_TIME" "")))
+        (let* ((plan (run-plan (car (cdr resolved)) sys))
+               (_p (emit-plan plan))
+               (args (build-argv-with (car (cdr resolved)) sys (env-get "MAX_SILENT_TIME" "")))
                (_ (log-info (string-append "==> nix " (string-join " " args))))
                (r (apply exec-capture (cons "nix" args))))
           (cond
@@ -114,7 +204,9 @@
               (let ((path (string-trim (stdout-of r))))
                 (log-info (string-append "built: " path))
                 (append-output (string-append "out-path=" path))
-                (push-built (out-paths path))
+                (if (cache-push-auto? (env-get "CACHE_PUSH" "auto"))
+                  (push-fleet plan (out-paths path))
+                  (push-built (out-paths path)))
                 0))
             (else (fail-build (stderr-of r)))))))))
 

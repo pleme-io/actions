@@ -164,3 +164,20 @@
   (assert
     (equal? (rr:read-file-runner "/tmp/runner-resolve-fixture-no-field.yml") "")
     "file present but no runner: field -> empty, never a stale/guessed value"))
+
+(deftest "a fork pull request on a public repo never resolves to a self-hosted default"
+  (assert (rr:untrusted-head? "false" "true") "public + fork is untrusted")
+  (assert (not (rr:untrusted-head? "true" "true")) "a private repo is not guarded here")
+  (assert (not (rr:untrusted-head? "false" "false")) "a push or same-repo PR is trusted")
+  (assert
+    (equal? (rr:guarded "pleme-public-build" "visibility-default" #t "" "ubuntu-24.04") (list "ubuntu-24.04" "untrusted-head"))
+    "visibility tier is replaced by the hosted default")
+  (assert
+    (equal? (rr:guarded "pleme-public-build" "file" #t "" "ubuntu-24.04") (list "ubuntu-24.04" "untrusted-head"))
+    "the committed file is replaced too, a fork can edit it")
+  (assert
+    (equal? (rr:guarded "x" "override" #t "x" "ubuntu-24.04") (list "x" "override"))
+    "an explicit override still wins")
+  (assert
+    (equal? (rr:guarded "pleme-public-build" "visibility-default" #f "" "ubuntu-24.04") (list "pleme-public-build" "visibility-default"))
+    "a trusted head is unchanged"))

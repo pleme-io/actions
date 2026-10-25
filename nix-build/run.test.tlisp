@@ -95,3 +95,52 @@
     (equal? (build-argv-with ".#x" "" "10800")
       (list "build" "--max-silent-time" "10800" "--print-out-paths" "--no-link" ".#x"))
     "set adds the flag"))
+
+(define sample-plan
+  (string-append
+    "these 3 derivations will be built:\n"
+    "  /nix/store/1ab0j1ndzv9w3yhvc1nin6cr1avi5frw-rust_serde-1.0.0.drv\n"
+    "  /nix/store/2ab0j1ndzv9w3yhvc1nin6cr1avi5frw-rust_tokio-1.4.0.drv\n"
+    "  /nix/store/3ab0j1ndzv9w3yhvc1nin6cr1avi5frw-pangea-operator.tar.gz.drv\n"
+    "these 2 paths will be fetched (1.00 MiB download, 4.00 MiB unpacked):\n"
+    "  /nix/store/4ab0j1ndzv9w3yhvc1nin6cr1avi5frw-glibc-2.40\n"
+    "  /nix/store/5ab0j1ndzv9w3yhvc1nin6cr1avi5frw-bash-5.3\n"))
+
+(deftest "the dry-run plan counts what will be built and what will be substituted"
+  (define plan (plan-parse sample-plan))
+  (assert (= (length (car plan)) 3) "three derivations to build")
+  (assert (= (car (cdr plan)) 2) "two paths to fetch")
+  (assert
+    (equal? (car (car plan)) "/nix/store/1ab0j1ndzv9w3yhvc1nin6cr1avi5frw-rust_serde-1.0.0.drv")
+    "drv paths keep their order")
+  (assert (equal? (plan-name (car (car plan))) "rust_serde-1.0.0") "name drops the store hash")
+  (assert
+    (equal? (plan-parse "this derivation will be built:\n  /nix/store/aaa-x.drv\n") (list (list "/nix/store/aaa-x.drv") 0))
+    "the singular header is a header too")
+  (assert (equal? (plan-parse "") (list (list) 0)) "nothing to do is an empty plan, not a failure"))
+
+(deftest "plan is on unless the literal false"
+  (assert (plan-enabled? "true") "true")
+  (assert (plan-enabled? "") "unset")
+  (assert (not (plan-enabled? "false")) "false")
+  (assert
+    (equal? (plan-argv ".#x" "") (list "build" "--dry-run" "--no-link" ".#x"))
+    "the plan asks the same installable"))
+
+(deftest "auto push is a quiet no-op without the runner's fleet cache"
+  (assert (cache-push-auto? "auto") "auto")
+  (assert (not (cache-push-auto? "true")) "true keeps the local-store push")
+  (assert
+    (equal? (fleet-push-step (list "/nix/store/aaa-x") "" "" #t never-run) (list "false" "no fleet cache on this runner"))
+    "a hosted runner has no SUI_CACHE_URL, so nothing runs")
+  (assert
+    (equal? (fleet-push-step (list) "http://rio:5000" "/k" #t never-run) (list "false" "nothing built"))
+    "a fully substituted build pushes nothing")
+  (assert
+    (equal?
+      (fleet-push-argv (list "/nix/store/aaa-x") "http://rio:5000" "/run/secrets/k")
+      (list "cache" "push" "--cache-url" "http://rio:5000" "--signing-key" "/run/secrets/k" "/nix/store/aaa-x"))
+    "the push names the origin and the key file, never the key")
+  (assert
+    (equal? (fleet-push-step (list "/nix/store/aaa-x") "http://rio:5000" "/k" #t ok-run) (list "true" ""))
+    "a fleet runner pushes what it built"))

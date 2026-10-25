@@ -1181,6 +1181,12 @@ outputs:
   warmed:
     description: "Forwarded (key: warmed) — sui-warm-hydrate real-warm flag (false until TieredBackend + warm-set RPC)"
     value: ${{ steps.exec.outputs.warmed }}
+  will-build:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: will-build)"
+    value: ${{ steps.exec.outputs.will-build }}
+  will-fetch:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: will-fetch)"
+    value: ${{ steps.exec.outputs.will-fetch }}
   worker:
     description: "Forwarded (key: worker) — sui-remote-build execution plane (reapi|local; local until the REAPI worker ships)"
     value: ${{ steps.exec.outputs.worker }}
