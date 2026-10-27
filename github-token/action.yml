@@ -17,6 +17,22 @@ inputs:
     description: "The PAT presented only when source is pat, e.g. secrets.BOT_PAT."
     required: false
     default: ""
+  app-id:
+    description: "With app-private-key, a job on a runner whose host mints no token mints one itself from this App (actions/create-github-app-token), scoped to the repository owner's whole installation. Empty (the default) changes nothing."
+    required: false
+    default: ""
+  app-private-key:
+    description: "The App's private key, e.g. secrets.PUBLISH_APP_KEY. Used only with app-id, only when source is app, and only where GITHUB_APP_TOKEN_DIR is unset."
+    required: false
+    default: ""
+  app-permission-contents:
+    description: "contents permission the job-minted token requests: read or write."
+    required: false
+    default: "read"
+  app-permission-packages:
+    description: "packages permission the job-minted token requests: read or write."
+    required: false
+    default: "read"
   min-remaining-seconds:
     description: "A host token expiring sooner than this is not presented."
     required: false
@@ -42,6 +58,16 @@ outputs:
 runs:
   using: composite
   steps:
+    - id: mint
+      if: inputs.source == 'app' && inputs.app-id != '' && inputs.app-private-key != '' && env.GITHUB_APP_TOKEN_DIR == ''
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ github.repository_owner }}
+        permission-contents: ${{ inputs.app-permission-contents }}
+        permission-packages: ${{ inputs.app-permission-packages }}
+        permission-metadata: read
     - id: src
       shell: bash
       run: |
@@ -61,3 +87,4 @@ runs:
         SOURCE: ${{ inputs.source }}
         PAT: ${{ inputs.pat }}
         MIN_REMAINING_SECONDS: ${{ inputs.min-remaining-seconds }}
+        MINTED_TOKEN: ${{ steps.mint.outputs.token }}

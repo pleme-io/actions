@@ -25,15 +25,26 @@
     ((equal? source "none") (list "none" "" "" ""))
     (else (list "error" "" "" (string-append "source must be app, pat or none, got " source)))))
 
+(define (with-minted source v minted now-s)
+  (if (and (equal? source "app") (equal? (car v) "none") (not (equal? minted "")))
+    (list "app" minted (string-format "{}" (+ now-s 3600)) "")
+    v))
+
 (define (main)
-  (let* ((v (resolve
-              (string-trim (env-get "SOURCE" "app"))
-              (env-get "PAT" "")
-              (env-get "GITHUB_APP_TOKEN_DIR" "")
-              path-exists?
-              read-file
-              (/ (now-ms) 1000)
-              (int-or (env-get "MIN_REMAINING_SECONDS" "600") 600)))
+  (let* ((source (string-trim (env-get "SOURCE" "app")))
+         (now-s (/ (now-ms) 1000))
+         (v (with-minted
+              source
+              (resolve
+                source
+                (env-get "PAT" "")
+                (env-get "GITHUB_APP_TOKEN_DIR" "")
+                path-exists?
+                read-file
+                now-s
+                (int-or (env-get "MIN_REMAINING_SECONDS" "600") 600))
+              (string-trim (env-get "MINTED_TOKEN" ""))
+              now-s))
          (resolved (car v))
          (token (car (cdr v)))
          (expires (car (cdr (cdr v))))

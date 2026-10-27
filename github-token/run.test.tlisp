@@ -38,3 +38,19 @@
 (deftest "none presents nothing and an unknown source is an error"
   (assert (equal? (resolve "none" "p" "/run/t" (files-of host) (reader-of host) 1000 600) (list "none" "" "" "")) "none")
   (assert (equal? (car (resolve "bot" "p" "/run/t" (files-of host) (reader-of host) 1000 600)) "error") "typo"))
+
+(deftest "a job-minted App token is presented as app where the host has none"
+  (let ((none (resolve "app" "" "" (files-of host) (reader-of host) 1000 600)))
+    (assert (equal? (with-minted "app" none "ghs_job" 1000) (list "app" "ghs_job" "4600" "")) "minted")))
+
+(deftest "a host-minted token outranks a job-minted one"
+  (assert (equal? (car (cdr (with-minted "app" (app 1000) "ghs_job" 1000))) "ghs_abc") "host first"))
+
+(deftest "a job-minted token never overrides pat, none or an error"
+  (assert (equal? (with-minted "pat" (list "pat" "p" "" "") "ghs_job" 1000) (list "pat" "p" "" "")) "pat")
+  (assert (equal? (with-minted "none" (list "none" "" "" "") "ghs_job" 1000) (list "none" "" "" "")) "none")
+  (assert (equal? (car (with-minted "app" (list "error" "" "" "x") "ghs_job" 1000)) "error") "error"))
+
+(deftest "no job-minted token leaves the host verdict alone"
+  (let ((none (resolve "app" "" "" (files-of host) (reader-of host) 1000 600)))
+    (assert (equal? (with-minted "app" none "" 1000) none) "empty minted")))
