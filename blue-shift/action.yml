@@ -1,0 +1,61 @@
+name: 'pleme-io · blue-shift'
+description: >-
+  Read each blue file's blueshift rung with `blue shift --json` and hold the
+  project to a floor (dynamic, annotated, checked, restricted). A file below
+  the floor is an error annotation at its first untyped declaration. With the
+  default floor (dynamic) the step only reports. blue docs/BUILD-ASSURANCE.md §4.
+branding: { icon: 'trending-up', color: 'blue' }
+
+inputs:
+  floor:
+    description: 'The lowest rung every file must reach: dynamic, annotated, checked or restricted.'
+    required: false
+    default: 'dynamic'
+  paths:
+    description: 'Files to read, one per line. Empty reads every tracked .b file.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Directory to run in.'
+    required: false
+    default: '.'
+  blue-path:
+    description: 'BLUE_PATH for project bidamas, colon-separated.'
+    required: false
+    default: ''
+  blue:
+    description: 'The blue flake blue-setup installs when blue is not on PATH. It needs `blue shift --json`.'
+    required: false
+    default: 'github:pleme-io/blue'
+  github-token:
+    description: 'Passed to blue-setup for private flakes.'
+    required: false
+    default: ''
+
+outputs:
+  lowest:
+    description: 'The lowest rung among the files read.'
+    value: ${{ steps.run.outputs.lowest }}
+  below-floor:
+    description: 'Files below the floor.'
+    value: ${{ steps.run.outputs.below-floor }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      run: if command -v blue >/dev/null; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.found != 'true'
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        blue: ${{ inputs.blue }}
+        github-token: ${{ inputs.github-token }}
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_FLOOR: ${{ inputs.floor }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        BLUE_PATH: ${{ inputs.blue-path }}
+      run: blue run "${{ github.action_path }}/run.b"

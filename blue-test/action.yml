@@ -1,0 +1,55 @@
+name: 'pleme-io · blue-test'
+description: >-
+  Run `blue test` on each target (a file, or a directory whose .b files hold
+  test blocks). Each failing test becomes an error annotation; the step summary
+  lists each target with its counts. Fails when any target fails.
+branding: { icon: 'check-circle', color: 'blue' }
+
+inputs:
+  paths:
+    description: 'Targets, one per line. Empty tests the working directory.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Directory to run in.'
+    required: false
+    default: '.'
+  blue-path:
+    description: 'BLUE_PATH for project bidamas, colon-separated.'
+    required: false
+    default: ''
+  blue:
+    description: 'The blue flake blue-setup installs when blue is not on PATH.'
+    required: false
+    default: 'github:pleme-io/blue'
+  github-token:
+    description: 'Passed to blue-setup for private flakes.'
+    required: false
+    default: ''
+
+outputs:
+  passed:
+    description: 'Tests passed across all targets.'
+    value: ${{ steps.run.outputs.passed }}
+  failed:
+    description: 'Tests failed across all targets.'
+    value: ${{ steps.run.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      run: if command -v blue >/dev/null; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.found != 'true'
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        blue: ${{ inputs.blue }}
+        github-token: ${{ inputs.github-token }}
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_PATHS: ${{ inputs.paths }}
+        BLUE_PATH: ${{ inputs.blue-path }}
+      run: blue run "${{ github.action_path }}/run.b"

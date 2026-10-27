@@ -1,0 +1,49 @@
+name: 'pleme-io · blue-setup'
+description: >-
+  Put the pinned blue toolchain on PATH, substituted from the fleet sui cache
+  when the runner has one and cache.nixos.org otherwise. The bootstrap for every
+  blue action: each one runs this when `blue` is not already on PATH, so a job
+  pays for it once. Its own logic is the install, so it is the one blue action
+  with no run.b.
+branding: { icon: 'download-cloud', color: 'blue' }
+
+inputs:
+  blue:
+    description: 'The blue flake to install, e.g. github:pleme-io/blue or github:pleme-io/blue/<rev>.'
+    required: false
+    default: 'github:pleme-io/blue'
+  substituters:
+    description: 'Extra substituters, space-separated. Empty falls back to the runner environment SUI_CACHE_URL, which the fleet runner pools export.'
+    required: false
+    default: ''
+  trusted-public-keys:
+    description: 'Keys the extra substituters sign with. The defaults are the fleet sui origin and the CI uploader.'
+    required: false
+    default: 'rio-sui-1:L+8OL041A0ivcB0bglTAhREd0NqAlVRxwS4JbugFEKA= pleme-ci-sui-1:hpt2BYmOZ1bxbmtRlvQhXNCAQnrFUGso/ZLp9yOv/FA='
+  github-token:
+    description: 'Token nix uses to fetch private flakes; passed to nix-setup.'
+    required: false
+    default: ''
+
+outputs:
+  blue-path:
+    description: 'The installed blue binary.'
+    value: ${{ steps.install.outputs.blue-path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: pleme-io/actions/nix-setup@main
+      with:
+        github-token: ${{ inputs.github-token }}
+        extra-conf: |
+          extra-substituters = ${{ inputs.substituters || env.SUI_CACHE_URL }}
+          extra-trusted-public-keys = ${{ inputs.trusted-public-keys }}
+    - id: install
+      shell: bash
+      env:
+        BLUE_FLAKE: ${{ inputs.blue }}
+      run: |
+        out="$(nix build --no-link --print-out-paths "${BLUE_FLAKE}#default")"
+        echo "${out}/bin" >> "$GITHUB_PATH"
+        echo "blue-path=${out}/bin/blue" >> "$GITHUB_OUTPUT"
