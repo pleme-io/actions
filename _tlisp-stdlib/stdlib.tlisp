@@ -768,6 +768,22 @@
 (define (cargo-publish-rate-limited? log)
   (any-line-matches? (string-split log "\n") cargo-publish-rate-limited-line?))
 
+;; The registry itself failed: cargo's "failed to get a 200 OK response, got
+;; 5xx", or the Heroku error page crates.io serves while it is down. Nothing
+;; about the crate is wrong, so the publish is retried after a back-off.
+;; Before this arm a 503 fell through to 'failed and every dependent of the
+;; crate was left unpublished (engenho 0.53.139, run 40508058506).
+(define (cargo-publish-server-error-line? line)
+  (or
+    (string-contains? line "got 500")
+    (string-contains? line "got 502")
+    (string-contains? line "got 503")
+    (string-contains? line "got 504")
+    (string-contains? line "<title>Application Error</title>")))
+
+(define (cargo-publish-server-error? log)
+  (any-line-matches? (string-split log "\n") cargo-publish-server-error-line?))
+
 (define (cargo-publish-dep-missing-line? line)
   ;; cargo emits "no matching package named `X` found" when a workspace
   ;; dep isn't yet on the registry — i.e. the dep wasn't published
@@ -787,6 +803,7 @@
 ;;   'already-uploaded  — same (name, version) already on registry
 ;;   'conflict          — name owned by someone else / 401 / 403
 ;;   'rate-limited      — 429, back off and retry
+;;   'server-error      — the registry answered 5xx; back off and retry
 ;;   'dep-missing       — workspace dep not yet on registry; defer
 ;;   'failed            — unrecognized failure, surface to operator
 (define (classify-cargo-publish-outcome log status)
@@ -795,6 +812,7 @@
     ((cargo-publish-already-uploaded? log) 'already-uploaded)
     ((cargo-publish-conflict? log) 'conflict)
     ((cargo-publish-rate-limited? log) 'rate-limited)
+    ((cargo-publish-server-error? log) 'server-error)
     ((cargo-publish-dep-missing? log) 'dep-missing)
     (else 'failed)))
 

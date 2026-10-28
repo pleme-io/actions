@@ -305,6 +305,21 @@
            "echo \"riding rate limit ${w}s\" >&2; sleep \"$w\"; echo rode"))))
     (string-trim (stdout-of r))))
 
+;; The wait before retry `attempt` after a registry 5xx: 30 s per attempt,
+;; at most 5 minutes. "rode" when it fits in the job budget and the wait was
+;; slept, "wait" (park for the next run) when it does not or in drip mode.
+(define (server-error-backoff-secs attempt)
+  (min 300 (* 30 (+ attempt 1))))
+
+(define (server-error-decision attempt)
+  (let ((secs (server-error-backoff-secs attempt)))
+    (cond
+      ((equal? publish-mode "drip") "wait")
+      ((> (+ (now) secs) budget-deadline) "wait")
+      (else
+        (exec-capture "sleep" (string-format "{}" secs))
+        "rode"))))
+
 ;; -------------------------------------------------------------- ;;
 ;; Rename on conflict                                              ;;
 ;; -------------------------------------------------------------- ;;
@@ -549,13 +564,14 @@
 ;;
 ;; Returns one of:
 ;;   'published   'already-uploaded   'dep-missing   'rate-limited
-;;   'conflict    'failed
+;;   'server-error   'conflict    'failed
 (define (classify-cargo-publish-outcome-with-siblings log members code)
   (cond
     ((= code 0) 'published)
     ((cargo-publish-already-uploaded? log) 'already-uploaded)
     ((sibling-dep-missing? log members) 'dep-missing)
     ((cargo-publish-rate-limited? log) 'rate-limited)
+    ((cargo-publish-server-error? log) 'server-error)
     ((cargo-publish-conflict? log) 'conflict)
     (else 'failed)))
 
@@ -748,6 +764,25 @@
                       "(cron if the caller declares `on: schedule`, "
                       "otherwise a push or `workflow_dispatch`)"))
                   (list "wait" name)))))
+          ((equal? outcome 'server-error)
+            (cond
+              ((equal? (server-error-decision attempt) "rode")
+                (log-info
+                  (string-append
+                    "registry answered 5xx for '"
+                    name
+                    "' — retrying after "
+                    (string-format "{}" (server-error-backoff-secs attempt))
+                    "s"))
+                (publish-one-in siblings name (+ attempt 1)))
+              (else
+                (log-info
+                  (string-append
+                    "registry answered 5xx for '"
+                    name
+                    "' and the job budget is spent — parking it; it resumes "
+                    "on the next run of this workflow"))
+                (list "wait" name))))
           ((equal? outcome 'conflict)
             (log-info (string-append "name conflict on '" name "', renaming"))
             (cond

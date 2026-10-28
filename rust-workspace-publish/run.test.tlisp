@@ -153,6 +153,38 @@
       'failed)
     "genuinely unknown stays failed"))
 
+(define crates-io-503-log
+  (string-append
+    "   Uploading engenho-controllers v0.53.139 (/home/runner/work/engenho/engenho/engenho-controllers)\n"
+    "error: failed to publish engenho-controllers v0.53.139 to registry at https://crates.io\n"
+    "\n"
+    "Caused by:\n"
+    "  failed to get a 200 OK response, got 503\n"
+    "  headers:\n"
+    "  \tserver: Heroku\n"
+    "  body:\n"
+    "      <title>Application Error</title>\n"))
+
+(deftest "a registry 5xx is a server error, retried, never a permanent failure"
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings crates-io-503-log tatara-workspace-members 101)
+      'server-error)
+    "crates.io 503 (engenho run 40508058506) => server-error")
+  (assert
+    (equal? (classify-cargo-publish-outcome crates-io-503-log 101) 'server-error)
+    "the stdlib classifier agrees")
+  (assert
+    (equal?
+      (classify-cargo-publish-outcome-with-siblings
+        "error: failed to get a 200 OK response, got 502"
+        tatara-workspace-members
+        101)
+      'server-error)
+    "502 => server-error")
+  (assert (equal? (server-error-backoff-secs 0) 30) "first back-off is 30s")
+  (assert (equal? (server-error-backoff-secs 40) 300) "back-off is capped at 5 minutes"))
+
 (deftest "requirement-name-on-line: extracts the crate name cargo names"
   (assert
     (equal?
