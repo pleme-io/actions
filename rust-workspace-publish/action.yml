@@ -21,6 +21,10 @@ inputs:
     description: "Maximum number of conflict-rename retry iterations. Default 20 covers a 15-crate workspace with safety margin."
     required: false
     default: "20"
+  ride-budget-minutes:
+    description: "How long a full-mode ship rides crates.io's publish rate limit before it parks the rest for the next run. An integer from 1 to 330; anything else stops the step before it publishes. 30 by default; a workspace whose members outnumber what 30 minutes of refill admits (engenho: 32 members at about one per three minutes) raises it so one release ships whole."
+    required: false
+    default: "30"
   publish-mode:
     description: "full (default) = bump+ship on push, riding crates.io's new-crate rate limit in-job (capped at 30m); drip = a cron tick that publishes only what current capacity allows and defers the rest (never sleeps in-job). The two compose to bootstrap a large workspace hands-off, never red."
     required: false
@@ -82,3 +86,4 @@ runs:
         RENAME_PREFIX: ${{ inputs.rename-prefix }}
         MAX_RENAME_RETRIES: ${{ inputs.max-rename-retries }}
         PUBLISH_MODE: ${{ inputs.publish-mode }}
+        RIDE_BUDGET_MINUTES: ${{ inputs.ride-budget-minutes }}

@@ -25,9 +25,30 @@
 ;; converts to a cron deferral instead of an in-job sleep, and the */15
 ;; drip finishes the long tail cheaply. (now) is unix seconds;
 ;; budget-deadline is the absolute epoch past which 429s defer to cron.
-(define budget-secs 1800)
+(define (ride-budget-secs raw)
+  (let ((r (num:parse-int raw)))
+    (cond
+      ((erro:err? r)
+        (erro:err (erro:new "ride/not-an-integer"
+          (string-append "ride-budget-minutes '" raw "' is not an integer") (list "input" raw))))
+      ((< (erro:value r) 1)
+        (erro:err (erro:new "ride/below-one"
+          (string-append "ride-budget-minutes " raw " is below 1") (list "input" raw))))
+      ((> (erro:value r) 330)
+        (erro:err (erro:new "ride/past-the-job-wall"
+          (string-append "ride-budget-minutes " raw " passes 330, inside GitHub's 360-minute job limit") (list "input" raw))))
+      (else (erro:ok (* 60 (erro:value r)))))))
 
-;; 30m
+(define ride-budget-raw (env-get "RIDE_BUDGET_MINUTES" "30"))
+
+(define budget-secs
+  (let ((r (ride-budget-secs ride-budget-raw)))
+    (cond
+      ((erro:ok? r) (erro:value r))
+      (else
+        (log-error (erro:message (erro:value r)))
+        (exit 2)))))
+
 (define job-start (now))
 
 (define budget-deadline (+ job-start budget-secs))

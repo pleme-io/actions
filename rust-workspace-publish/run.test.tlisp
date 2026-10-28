@@ -612,3 +612,15 @@
         (assert (<= dependent-tries 2)
           "no retry storm against a sibling that cannot ship this run")))))
 
+
+(deftest "ride-budget-secs: minutes become seconds, 30 is the default's 1800"
+  (assert (equal? (ride-budget-secs "30") (erro:ok 1800)) "30 minutes")
+  (assert (equal? (ride-budget-secs "150") (erro:ok 9000)) "150 minutes")
+  (assert (equal? budget-secs 1800) "an unset input rides 30 minutes"))
+
+(deftest "ride-budget-secs: a value that is not 1..330 minutes is refused, never defaulted"
+  (assert (erro:err? (ride-budget-secs "")) "empty")
+  (assert (erro:err? (ride-budget-secs "thirty")) "words")
+  (assert (erro:err? (ride-budget-secs "0")) "zero")
+  (assert (erro:err? (ride-budget-secs "331")) "past the job wall")
+  (assert (erro:ok? (ride-budget-secs "330")) "the last legal minute"))
