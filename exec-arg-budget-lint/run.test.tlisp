@@ -33,22 +33,64 @@
 
 ;; ── who is a subject ─────────────────────────────────────────────
 
-;; An action already on `script-file:` passes a PATH, so its size can never
-;; reach the arg space. Exempting it is the gate recognising its own
-;; destination, not a hole in it.
-(deftest "only inlining actions are subjects"
+(deftest "a step output fed to script: is a subject, a script-file path is not"
   (assert
     (eab:inlines? "cat stdlib.tlisp\n  script: ${{ steps.src.outputs.script }}")
     "concatenates stdlib and inlines")
   (assert
     (not (eab:inlines? "cat stdlib.tlisp\n  script-file: ${{ steps.src.outputs.script-file }}"))
-    "already converted — exempt")
+    "already converted")
   (assert
     (not (eab:inlines? "  script: echo hi"))
-    "inlines something, but not the stdlib")
+    "a short literal script is not a step output")
   (assert
     (not (eab:inlines? "name: something with no tlisp at all"))
     "not a tlisp action"))
+
+(deftest "the helmworks bump-drift shape is a subject (run 40631065859)"
+  (assert
+    (eab:inlines? "          {\n            echo 'script<<TLISP_EOF'\n            cat .pleme-actions/_tlisp-stdlib/stdlib.tlisp\n")
+    "a script<< heredoc into GITHUB_OUTPUT")
+  (assert
+    (eab:inlines? "        env:\n          SRC: ${{ steps.src.outputs.script }}")
+    "a script output as an env value"))
+
+(deftest "command substitution of a tlisp file is a subject"
+  (assert
+    (eab:inlines? "  SRC: $(cat ../_tlisp-stdlib/stdlib.tlisp)")
+    "into an env value")
+  (assert
+    (eab:inlines? "  run: tatara-script -e \"$(cat run.tlisp)\"")
+    "into an argument"))
+
+(deftest "a commented-out shape is not a subject"
+  (assert
+    (not (eab:inlines? "      #   MODE=write tatara-script $(cat _tlisp-stdlib/stdlib.tlisp run.tlisp)"))
+    "a comment line")
+  (assert
+    (not (eab:inlines? "    # heredoc marker and pass the result as script<< here"))
+    "a comment naming the shape"))
+
+(deftest "the size guard input is typed: true, false, or refused"
+  (assert (equal? (eab:guard-mode "true") "on") "true")
+  (assert (equal? (eab:guard-mode "false") "off") "false")
+  (assert (equal? (eab:guard-mode "maybe") "invalid") "anything else")
+  (assert (equal? (eab:guard-mode "") "invalid") "empty"))
+
+(deftest "the size guard warns at the threshold and is silent when off"
+  (assert (equal? (eab:size-verdict "on" 123658 98304) "warn") "the stdlib after 491ac2c")
+  (assert (equal? (eab:size-verdict "on" 98304 98304) "warn") "the threshold is inclusive")
+  (assert (equal? (eab:size-verdict "on" 98303 98304) "ok") "one byte below")
+  (assert (equal? (eab:size-verdict "off" 200000 98304) "off") "off never warns"))
+
+(deftest "the tatara-script marker tracks the stdlib's first line"
+  (assert
+    (eab:marker-held? ";; pleme-io · _tlisp-stdlib/stdlib.tlisp\n;; more" "contains(inputs.script, ';; pleme-io · _tlisp-stdlib/stdlib.tlisp')")
+    "held")
+  (assert
+    (not (eab:marker-held? ";; renamed header\n" "contains(inputs.script, ';; pleme-io · _tlisp-stdlib/stdlib.tlisp')"))
+    "drifted")
+  (assert (not (eab:marker-held? "" "anything")) "an empty stdlib holds no marker"))
 
 ;; A .test.tlisp is run separately by `tatara-script --test` and is never
 ;; concatenated into an action's exec'd script. Counting it would invent

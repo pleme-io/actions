@@ -5,11 +5,11 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                375
+# actions                380
 # routing tatara-script  357
-# distinct keys written  364
+# distinct keys written  366
 # dynamic key expansions 8
-# inner union (generated)372
+# inner union (generated)374
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -60,6 +60,11 @@ bandit	tatara-script	run.tlisp	1	1
 banned-tool-lint	tatara-script	run.tlisp	4	4
 benchmark-runner	own-runner	-	0	2
 bigorna	tatara-script	run.tlisp	7	7
+blue-build-plan	own-runner	-	0	3
+blue-check	own-runner	-	0	4
+blue-setup	own-runner	-	0	1
+blue-shift	own-runner	-	0	2
+blue-test	own-runner	-	0	2
 branch-protect-sync	tatara-script	run.tlisp	1	1
 breathe-band-lint	tatara-script	run.tlisp	4	4
 breathe-runner	tatara-script	run.tlisp	5	5
@@ -141,7 +146,7 @@ elasticsearch-snapshot	tatara-script	run.tlisp	1	1
 email-notify	tatara-script	run.tlisp	2	2
 envoy-config-validate	tatara-script	run.tlisp	1	1
 esp-idf-build	tatara-script	run.tlisp	1	1
-exec-arg-budget-lint	tatara-script	run.tlisp	6	6
+exec-arg-budget-lint	tatara-script	run.tlisp	8	8
 fastlane-deploy	tatara-script	run.tlisp	1	1
 fastly-cache-purge	tatara-script	run.tlisp	1	1
 ferrite-check	tatara-script	run.tlisp	11	11
@@ -360,7 +365,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	372
+tatara-script	own-runner	-	0	374
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -606,6 +611,8 @@ exec-arg-budget-lint	min-headroom	static	declared	forwarded
 exec-arg-budget-lint	near-limit	static	declared	forwarded
 exec-arg-budget-lint	reason	static	declared	forwarded
 exec-arg-budget-lint	scanned	static	declared	forwarded
+exec-arg-budget-lint	size-guard	static	declared	forwarded
+exec-arg-budget-lint	stdlib-bytes	static	declared	forwarded
 exec-arg-budget-lint	violations	static	declared	forwarded
 fastlane-deploy	deployed	static	declared	forwarded
 fastly-cache-purge	purged	static	declared	forwarded

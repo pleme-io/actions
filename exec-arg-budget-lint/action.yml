@@ -1,5 +1,5 @@
 name: 'pleme-io · exec-arg-budget-lint'
-description: 'Fail when a composite action inlines more tlisp than the kernel can exec, and report how close every other action is. An action that concatenates the shared stdlib and passes it as `script:` sends it step output -> action input -> environment variable -> exec arg space, where Linux caps ONE argv/env string at MAX_ARG_STRLEN = 131072 bytes. Over that, bash never starts, nothing tlisp-related is logged, and the run dies with "Argument list too long" attributed to the action rather than to its size. The ceiling is SHARED and SHRINKING: every byte added to the stdlib comes out of every inlining action`s budget at once, so this reports min-headroom as well as violations. TIER: CI-caught, not unrepresentable — the destination is converting every action to `script-file:` (a path has no size), and `inlining` counts that sweep down to zero.'
+description: 'Fail when any action.yml or workflow passes tlisp through an input, env value or argument instead of a file, and warn when the shared stdlib nears the exec ceiling. An input, env value or argument is one exec string, and Linux caps one at MAX_ARG_STRLEN = 131072 bytes; over that, bash never starts and the run dies with "Argument list too long" attributed to the caller rather than to the stdlib commit that grew it (helmworks run 40631065859, after actions 491ac2c). Subjects: ./*/action.yml and .github/workflows/*.yml|yaml. Shapes refused: a heredoc that writes a script step output, a script input fed from a step output, a script step output used as an env value, and command substitution of a .tlisp file. The fix is always the same: write the unit to a file and pass `script-file:` (with `stdlib: "true"` for the shared stdlib). It also checks that tatara-script still carries the stdlib marker it uses to refuse an inline stdlib.'
 branding:
   icon: 'alert-triangle'
   color: 'red'
@@ -18,16 +18,24 @@ inputs:
     required: false
     default: "8000"
   fail-on-violation:
-    description: "When true (default), an over-budget action is exit 1."
+    description: "When true (default), an inline caller, an over-budget action or a marker drift is exit 1."
     required: false
     default: "true"
+  stdlib-size-guard:
+    description: "true (default) or false. When true, the run warns once the stdlib reaches stdlib-warn-bytes. false turns the warning off. Any other value is refused (exit 1, reason=bad-input)."
+    required: false
+    default: "true"
+  stdlib-warn-bytes:
+    description: "Stdlib size in BYTES at which the size guard warns. Default 98304 (96 KiB, 75% of the 131072 ceiling)."
+    required: false
+    default: "98304"
 
 outputs:
   scanned:
     description: "action.yml files found. The denominator — a discovery change that finds nothing reports 0 here rather than 0 violations that read as clean."
     value: ${{ steps.run.outputs.scanned }}
   inlining:
-    description: "How many actions still use the `script:` form. This is the sweep's progress counter: at 0 the class is unrepresentable and this action has no subjects left."
+    description: "How many action.yml and workflow files pass tlisp inline. Any value above 0 fails."
     value: ${{ steps.run.outputs.inlining }}
   violations:
     description: "How many exceed the ceiling today."
@@ -39,8 +47,14 @@ outputs:
     description: "The tightest surviving margin in bytes — the size of the stdlib commit that breaks the fleet next."
     value: ${{ steps.run.outputs.min-headroom }}
   reason:
-    description: "ok | over-budget | no-actions | no-stdlib."
+    description: "ok | over-budget | inlining | marker-drift | bad-input | no-actions | no-stdlib."
     value: ${{ steps.run.outputs.reason }}
+  stdlib-bytes:
+    description: "The stdlib's size in bytes."
+    value: ${{ steps.run.outputs.stdlib-bytes }}
+  size-guard:
+    description: "ok | warn | off."
+    value: ${{ steps.run.outputs.size-guard }}
 
 runs:
   using: composite
@@ -70,3 +84,5 @@ runs:
         LIMIT: ${{ inputs.limit }}
         WARN_MARGIN: ${{ inputs.warn-margin }}
         FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        STDLIB_SIZE_GUARD: ${{ inputs.stdlib-size-guard }}
+        STDLIB_WARN_BYTES: ${{ inputs.stdlib-warn-bytes }}

@@ -318,3 +318,18 @@ jobs:
       # reported result=/severity=/vuln-count= all EMPTY — fail-closed, but the
       # stated reason was a scan that never ran.
       - uses: ./exec-arg-budget-lint
+        with:
+          stdlib-size-guard: "true"
+      - id: refused
+        uses: ./tatara-script
+        continue-on-error: true
+        with:
+          script: |
+            ;; pleme-io · _tlisp-stdlib/stdlib.tlisp
+            (print-line "an inline stdlib ran")
+      - name: tatara-script refuses an inline stdlib
+        if: steps.refused.outcome != 'failure'
+        shell: bash
+        run: |
+          echo "::error::tatara-script ran a script input that carries the stdlib; the refusal step did not fire"
+          exit 1

@@ -58,19 +58,49 @@
 ;;   violations   how many exceed the ceiling today
 ;;   near-limit   how many are within WARN_MARGIN of it
 ;;   min-headroom the tightest surviving margin, in bytes
-;;   reason       ok | over-budget | no-actions | no-stdlib
+;;   reason       ok | over-budget | inlining | marker-drift | bad-input |
+;;                no-actions | no-stdlib
+;;   stdlib-bytes the stdlib's size in bytes
+;;   size-guard   ok | warn | off
 
 ;; ── pure helpers (unit-tested via run.test.tlisp) ────────────────
 
-;; An action is a SUBJECT of this gate only if it inlines: it concatenates the
-;; stdlib AND passes the result as `script:`. An action already on `script-file:`
-;; passes a path and is exempt by construction — which is exactly the fix, so
-;; exempting it is the gate recognising its own destination rather than a hole.
+(define (eab:line-inlines? line)
+  (let ((t (string-trim line)))
+    (cond
+      ((string-starts-with? t "#") #f)
+      ((string-contains? t "script<<") #t)
+      ((string-contains? t "outputs.script }}") #t)
+      ((string-contains? t "outputs.script}}") #t)
+      ((and (string-starts-with? t "script:") (string-contains? t "${{ steps.")) #t)
+      ((and (string-contains? t "$(cat") (string-contains? t ".tlisp")) #t)
+      (else #f))))
+
+(define (eab:inline-lines manifest-text)
+  (filter eab:line-inlines? (string-split manifest-text "\n")))
+
 (define (eab:inlines? manifest-text)
-  (and
-    (string-contains? manifest-text "stdlib.tlisp")
-    (string-contains? manifest-text "script:")
-    (not (string-contains? manifest-text "script-file:"))))
+  (not (null? (eab:inline-lines manifest-text))))
+
+(define (eab:guard-mode s)
+  (cond
+    ((equal? s "true") "on")
+    ((equal? s "false") "off")
+    (else "invalid")))
+
+(define (eab:size-verdict mode stdlib-bytes warn-at)
+  (cond
+    ((equal? mode "off") "off")
+    ((>= stdlib-bytes warn-at) "warn")
+    (else "ok")))
+
+(define (eab:first-line text)
+  (let ((lines (string-split text "\n")))
+    (if (null? lines) "" (car lines))))
+
+(define (eab:marker-held? stdlib-text guard-text)
+  (let ((m (eab:first-line stdlib-text)))
+    (and (not (equal? m "")) (string-contains? guard-text m))))
 
 ;; The exec'd string is stdlib + a newline + the unit. One byte of separator,
 ;; and it is counted — an off-by-one here would under-report a budget whose
@@ -126,13 +156,15 @@
           (eab:parse-int (string-trim (stdout-of r)) 0)
           0)))))
 
-(define (eab:emit scanned inlining violations near min-headroom reason)
+(define (eab:emit scanned inlining violations near min-headroom reason stdlib-bytes size-guard)
   (append-output (string-append "scanned=" scanned))
   (append-output (string-append "inlining=" inlining))
   (append-output (string-append "violations=" violations))
   (append-output (string-append "near-limit=" near))
   (append-output (string-append "min-headroom=" min-headroom))
-  (append-output (string-append "reason=" reason)))
+  (append-output (string-append "reason=" reason))
+  (append-output (string-append "stdlib-bytes=" stdlib-bytes))
+  (append-output (string-append "size-guard=" size-guard)))
 
 (define (main)
   (let*
@@ -141,25 +173,32 @@
       (limit (eab:to-int limit-s 131072))
       (warn-margin (eab:to-int (env-get "WARN_MARGIN" "8000") 8000))
       (fail-on (env-get "FAIL_ON_VIOLATION" "true"))
-      (manifests (glob "./*/action.yml")))
+      (guard-raw (env-get "STDLIB_SIZE_GUARD" "true"))
+      (guard-mode (eab:guard-mode guard-raw))
+      (warn-at (eab:to-int (env-get "STDLIB_WARN_BYTES" "98304") 98304))
+      (actions (glob "./*/action.yml"))
+      (workflows (concat (glob "./.github/workflows/*.yml") (glob "./.github/workflows/*.yaml"))))
     (cond
+      ((equal? guard-mode "invalid")
+        (log-error
+          (string-append
+            "exec-arg-budget-lint: stdlib-size-guard must be true or false, got '" guard-raw "'"))
+        (eab:emit "0" "0" "0" "0" "0" "bad-input" "0" "off")
+        1)
       ((not (path-exists? stdlib-path))
         (log-error
           (string-append
             "exec-arg-budget-lint: no stdlib at " stdlib-path
             " — refusing to report a budget computed against a zero-byte prelude"))
-        (eab:emit "0" "0" "0" "0" "0" "no-stdlib")
+        (eab:emit "0" "0" "0" "0" "0" "no-stdlib" "0" guard-mode)
         1)
-      ;; A linter with no subjects is not a passing linter. Without this, a
-      ;; broken glob reports 0 violations and is indistinguishable from a clean
-      ;; repo — the exact vacuity this gate's own outputs exist to prevent.
-      ((null? manifests)
+      ((null? actions)
         (log-error
           "exec-arg-budget-lint: found NO action.yml files — a linter with no subjects is not a pass")
-        (eab:emit "0" "0" "0" "0" "0" "no-actions")
+        (eab:emit "0" "0" "0" "0" "0" "no-actions" "0" guard-mode)
         1)
       (else
-        (eab:run manifests (eab:size-of stdlib-path) limit warn-margin fail-on)))))
+        (eab:run actions workflows stdlib-path limit warn-margin fail-on guard-mode warn-at)))))
 
 (define (eab:to-int s fallback)
   ;; Was a `printf %d` SUBPROCESS — a whole process spawned to parse an integer,
@@ -176,18 +215,49 @@
   (let ((n (json-parse s)))
     (if (equal? n '()) fallback n)))
 
-(define (eab:run manifests stdlib-bytes limit warn-margin fail-on)
-  (log-info
-    (string-append
-      "exec-arg-budget-lint: stdlib is "
-      (string-format "{}" stdlib-bytes)
-      " bytes; a script may add at most "
-      (string-format "{}" (- limit (+ stdlib-bytes 1)))
-      " before exec fails"))
-  (let* ((rows (eab:rows manifests stdlib-bytes limit)))
-    (eab:report rows manifests stdlib-bytes limit warn-margin fail-on)))
+(define (eab:run actions workflows stdlib-path limit warn-margin fail-on guard-mode warn-at)
+  (let* ((stdlib-bytes (eab:size-of stdlib-path))
+          (size-verdict (eab:size-verdict guard-mode stdlib-bytes warn-at))
+          (marker-ok (eab:check-marker stdlib-path))
+          (manifests (concat actions workflows))
+          (inline-files (filter (fn (m) (eab:inlines? (read-file m))) manifests))
+          (rows (eab:rows actions stdlib-bytes limit)))
+    (log-info
+      (string-append
+        "exec-arg-budget-lint: stdlib is "
+        (string-format "{}" stdlib-bytes)
+        " bytes of the " (string-format "{}" limit) "-byte exec ceiling; "
+        (string-format "{}" (length actions)) " action.yml and "
+        (string-format "{}" (length workflows)) " workflow file(s) scanned"))
+    (eab:warn-size size-verdict stdlib-path stdlib-bytes limit warn-at)
+    (eab:report rows manifests inline-files marker-ok size-verdict stdlib-bytes limit warn-margin fail-on)))
 
-;; One row per (inlining action, unit file): (dir file bytes headroom).
+(define (eab:warn-size verdict stdlib-path stdlib-bytes limit warn-at)
+  (cond
+    ((equal? verdict "warn")
+      (print-line
+        (string-append
+          "::warning title=stdlib size::" stdlib-path " is "
+          (string-format "{}" stdlib-bytes) " bytes, "
+          (string-format "{}" (- limit stdlib-bytes)) " below the "
+          (string-format "{}" limit) "-byte exec ceiling (warns at "
+          (string-format "{}" warn-at) "). Any caller that still passes it as an input, env value or argument breaks when it crosses. Load it with script-file and stdlib: \"true\"; split the stdlib before it grows further.")))
+    ((equal? verdict "off")
+      (log-info "exec-arg-budget-lint: stdlib size guard is off (stdlib-size-guard: false)"))
+    (else #t)))
+
+(define (eab:check-marker stdlib-path)
+  (let ((guard "./tatara-script/action.yml"))
+    (cond
+      ((not (path-exists? guard)) #t)
+      ((eab:marker-held? (read-file stdlib-path) (read-file guard)) #t)
+      (else
+        (print-line
+          (string-append
+            "::error file=tatara-script/action.yml,title=stdlib marker drift::the first line of "
+            stdlib-path " no longer appears in tatara-script/action.yml, so its refusal of an inline stdlib matches nothing. Update the contains() marker in the 'Refuse the stdlib passed inline' step."))
+        #f))))
+
 (define (eab:rows manifests stdlib-bytes limit)
   (cond
     ((null? manifests) (list))
@@ -226,60 +296,52 @@
       (let ((rest (eab:min-headroom (cdr rows))) (h (eab:headroom-of (car rows))))
         (if (< h rest) h rest)))))
 
-(define (eab:report rows manifests stdlib-bytes limit warn-margin fail-on)
+(define (eab:report rows manifests inline-files marker-ok size-verdict stdlib-bytes limit warn-margin fail-on)
   (let*
     ((over (eab:over-rows rows))
       (near (eab:near-rows rows warn-margin))
       (scanned (string-format "{}" (length manifests)))
-      (ninline (eab:distinct-dirs rows))
+      (ninline (length inline-files))
       (inlining (string-format "{}" ninline))
       (nover (length over))
       (minh (string-format "{}" (eab:min-headroom rows))))
     (log-info
       (string-append
-        "exec-arg-budget-lint: " scanned " action(s) scanned, " inlining
-        " still inlining, " (string-format "{}" nover) " over budget, "
+        "exec-arg-budget-lint: " scanned " file(s) scanned, " inlining
+        " pass tlisp inline, " (string-format "{}" nover) " over budget, "
         (string-format "{}" (length near)) " within "
         (string-format "{}" warn-margin) " bytes of the ceiling"))
     (eab:log-rows over "OVER BUDGET — exec will fail with `Argument list too long`" stdlib-bytes limit)
     (eab:log-rows near "close to the ceiling — a stdlib growth of that many bytes breaks it" stdlib-bytes limit)
-    ;; Inlining is itself the violation now, not merely a thing with a budget.
-    ;;
-    ;; The budget check below stays as defence in depth, but it can only ever
-    ;; catch an action AFTER someone has already put a ~120KB stdlib into an
-    ;; exec argument, and whether that trips depends on a byte count nobody
-    ;; controls: every byte added to stdlib.tlisp spends every inlining action's
-    ;; headroom at once. Measured 2026-08-17 — a 1,785-byte stdlib commit took 11
-    ;; actions over simultaneously, and the nearest survivor had 51 bytes left.
-    ;; A threshold that far from the edit that crosses it is not a gate anyone
-    ;; can act on.
-    ;;
-    ;; `script-file` removes size from the question entirely, so the durable
-    ;; invariant is COUNT-ZERO rather than size-under-limit: no action inlines,
-    ;; full stop. It cannot be tipped by a stdlib edit because there is no
-    ;; threshold left to cross, and it is non-vacuous because the verdict carries
-    ;; the scanned denominator beside it — 0 inlining out of 0 scanned would
-    ;; report as a discovery failure, not as success.
-    (cond
-      ((> ninline 0)
-        (log-error
-          (string-append
-            "exec-arg-budget-lint: " inlining " action(s) still pass tlisp INLINE via `script:`. "
-            "Pass a path instead: write stdlib+run.tlisp to \"${RUNNER_TEMP}/<action>.tlisp\" "
-            "and hand tatara-script `script-file:`. Inline also pins a FIXED heredoc marker "
-            "(an injection point whenever content comes from outside) and echoes the whole "
-            "script into the step log, which is why a failing job's log matches greps on its "
-            "own comments instead of on errors.")))
-      (else #t))
+    (eab:log-inline inline-files)
     (eab:emit scanned inlining (string-format "{}" nover) (string-format "{}" (length near)) minh
       (cond
         ((> nover 0) "over-budget")
         ((> ninline 0) "inlining")
-        (else "ok")))
+        ((not marker-ok) "marker-drift")
+        (else "ok"))
+      (string-format "{}" stdlib-bytes)
+      size-verdict)
     (cond
-      ((and (> nover 0) (equal? fail-on "true")) 1)
-      ((and (> ninline 0) (equal? fail-on "true")) 1)
+      ((not (equal? fail-on "true")) 0)
+      ((> nover 0) 1)
+      ((> ninline 0) 1)
+      ((not marker-ok) 1)
       (else 0))))
+
+(define (eab:log-inline files)
+  (cond
+    ((null? files) #t)
+    (else
+      (let* ((f (car files))
+              (rel (if (string-starts-with? f "./") (string-replace f "./" "") f)))
+        (print-line
+          (string-append
+            "::error file=" rel ",title=tlisp passed inline::" rel
+            " passes a tlisp script through an input, env value or argument: "
+            (string-trim (car (eab:inline-lines (read-file f))))
+            " — write the unit to a file and pass script-file (with stdlib: \"true\" for the shared stdlib)."))
+        (eab:log-inline (cdr files))))))
 
 (define (eab:log-rows rows label stdlib-bytes limit)
   (cond

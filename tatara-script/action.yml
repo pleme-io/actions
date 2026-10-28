@@ -38,7 +38,7 @@ inputs:
     required: false
     default: ""
   script:
-    description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file)"
+    description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file). It reaches the runner as one environment variable (131072-byte cap), so it is for short scripts only; a script that carries _tlisp-stdlib/stdlib.tlisp is refused. Use script-file with stdlib: \"true\" instead."
     # NOT required: `script-file` above is a documented alternative and takes
     # precedence. Declaring this required made actionlint reject every
     # script-file-only caller ("missing input script"), which is a false
@@ -983,6 +983,9 @@ outputs:
   site-path:
     description: "Forwarded (key: site-path) — written by 6 action dir(s): docusaurus-build, hugo-build, mdbook-build …"
     value: ${{ steps.exec.outputs.site-path }}
+  size-guard:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: size-guard)"
+    value: ${{ steps.exec.outputs.size-guard }}
   skip:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: skip)"
     value: ${{ steps.exec.outputs.skip }}
@@ -1034,6 +1037,9 @@ outputs:
   status:
     description: "Forwarded from the script's GITHUB_OUTPUT (key: status)"
     value: ${{ steps.exec.outputs.status }}
+  stdlib-bytes:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: stdlib-bytes)"
+    value: ${{ steps.exec.outputs.stdlib-bytes }}
   steps-failed:
     description: "Forwarded (key: steps-failed) — action-pipeline: how many declared steps failed"
     value: ${{ steps.exec.outputs.steps-failed }}
@@ -1216,6 +1222,13 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Refuse the stdlib passed inline
+      if: inputs.script-file == '' && contains(inputs.script, ';; pleme-io · _tlisp-stdlib/stdlib.tlisp')
+      shell: bash
+      run: |
+        echo "::error title=stdlib passed inline::the script input carries _tlisp-stdlib/stdlib.tlisp. An input reaches the runner as one environment variable, which Linux caps at 131072 bytes, and the stdlib alone is close to that. Pass the unit as script-file and set stdlib: \"true\"."
+        exit 1
+
     # Install path: try the pre-built binary from the release page first
     # (fast), fall back to a Nix-based install (`nix profile install
     # github:pleme-io/tatara-lisp/<tag>#tatara-script`) if the asset 404s.
