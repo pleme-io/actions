@@ -1,0 +1,132 @@
+name: 'pleme-io · fleet-delivery'
+description: >-
+  Write a GitOps delivery record into the private fleet delivery repository,
+  where Flux on each engenho node follows the newest tag. Every record pins a
+  release by content: the nix closure's store path and narHash per system, the
+  chart from the release's own source, and the library chart at a locked rev.
+  mode closure builds a closure and reports it; record writes <app>/<stage>
+  from a closure built here; health waits until the stage runs the recorded
+  closure and answers, then records the result; promote copies a stage's
+  record to the next stage only when the earlier stage recorded it healthy.
+  Every write is one commit and one tag v1.<unix seconds>.0.
+branding: { icon: 'truck', color: 'blue' }
+
+inputs:
+  mode:
+    description: 'closure | record | health | promote.'
+    required: true
+  app:
+    description: 'The application, the record directory''s first segment, e.g. kensa.'
+    required: false
+    default: ''
+  stage:
+    description: 'The stage written (record, health, promote), e.g. ryn or plo.'
+    required: false
+    default: ''
+  from-stage:
+    description: 'promote: the stage whose healthy record is promoted.'
+    required: false
+    default: ''
+  flake:
+    description: 'The release source, pinned, e.g. github:pleme-io/kensa/<sha>.'
+    required: false
+    default: ''
+  attr:
+    description: 'The package attribute, e.g. kensa; nix resolves it for the runner''s own system, so a closure is built where it runs.'
+    required: false
+    default: ''
+  system:
+    description: 'promote: the system of store-path, e.g. x86_64-linux.'
+    required: false
+    default: ''
+  chart-path:
+    description: 'The chart directory inside the release source, e.g. deploy/kensa/chart.'
+    required: false
+    default: ''
+  library-flake:
+    description: 'The flake holding charts/pleme-lib, vendored into the chart; its locked rev is recorded.'
+    required: false
+    default: 'github:pleme-io/helmworks'
+  store-path:
+    description: 'promote: the target system''s closure (from mode closure).'
+    required: false
+    default: ''
+  nar-hash:
+    description: 'promote: that closure''s narHash.'
+    required: false
+    default: ''
+  substituter:
+    description: 'closure: a binary cache the closure must be readable from before it is reported, e.g. http://rio:5000. Empty: no check.'
+    required: false
+    default: ''
+  namespace:
+    description: 'health: the namespace the release runs in.'
+    required: false
+    default: ''
+  health-url:
+    description: 'health: a URL that must answer 2xx once the recorded closure runs. Empty: the pods'' readiness alone.'
+    required: false
+    default: ''
+  timeout-seconds:
+    description: 'health: how long to wait.'
+    required: false
+    default: '900'
+  repository:
+    description: 'The delivery repository, owner/name.'
+    required: false
+    default: 'pleme-io/fleet-delivery'
+  token:
+    description: 'A token with contents write on the delivery repository.'
+    required: false
+    default: ''
+  remote:
+    description: 'A git remote used instead of github.com/<repository> with the token, e.g. a local bare repository for a dry run.'
+    required: false
+    default: ''
+
+outputs:
+  store-path:
+    description: 'The closure''s store path.'
+    value: ${{ steps.run.outputs.store-path }}
+  nar-hash:
+    description: 'The closure''s narHash.'
+    value: ${{ steps.run.outputs.nar-hash }}
+  tag:
+    description: 'The delivery repository tag this step wrote.'
+    value: ${{ steps.run.outputs.tag }}
+  healthy:
+    description: 'health: true or false.'
+    value: ${{ steps.run.outputs.healthy }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      run: if command -v blue >/dev/null; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.found != 'true'
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        github-token: ${{ inputs.token }}
+    - id: run
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_APP: ${{ inputs.app }}
+        INPUT_STAGE: ${{ inputs.stage }}
+        INPUT_FROM_STAGE: ${{ inputs.from-stage }}
+        INPUT_FLAKE: ${{ inputs.flake }}
+        INPUT_ATTR: ${{ inputs.attr }}
+        INPUT_SYSTEM: ${{ inputs.system }}
+        INPUT_CHART_PATH: ${{ inputs.chart-path }}
+        INPUT_LIBRARY_FLAKE: ${{ inputs.library-flake }}
+        INPUT_STORE_PATH: ${{ inputs.store-path }}
+        INPUT_NAR_HASH: ${{ inputs.nar-hash }}
+        INPUT_SUBSTITUTER: ${{ inputs.substituter }}
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_HEALTH_URL: ${{ inputs.health-url }}
+        INPUT_TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_REMOTE: ${{ inputs.remote }}
+      run: blue run "${{ github.action_path }}/run.b"
