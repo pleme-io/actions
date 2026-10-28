@@ -57,18 +57,18 @@ def total(key, results)
 end
 
 def clean?(r)
-  get(r, :errors) == 0 and get(r, :canonical)
+  r[:errors] == 0 and r[:canonical]
 end
 
 def row(r)
-  "| #{mark(clean?(r))} | `#{get(r, :file)}` | #{get(r, :errors)} | #{get(r, :warnings)} | #{mark(get(r, :canonical))} |"
+  "| #{mark(clean?(r))} | `#{r[:file]}` | #{r[:errors]} | #{r[:warnings]} | #{mark(r[:canonical])} |"
 end
 
 def main()
   results = map(check_file, files)
   errors = total(:errors, results)
   warnings = total(:warnings, results)
-  unformatted = length(filter((r) -> not get(r, :canonical), results))
+  unformatted = length(filter((r) -> not r[:canonical], results))
   output("files", length(results))
   output("errors", errors)
   output("warnings", warnings)

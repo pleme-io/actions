@@ -21,11 +21,11 @@ def rungs()
 end
 
 def rank(rung)
-  hits = filter((i) -> nth(i, rungs) == rung, range(0, length(rungs)))
+  hits = filter((i) -> rungs[i] == rung, range(0, length(rungs)))
   if hits == []
     -1
   else
-    nth(0, hits)
+    hits[0]
   end
 end
 
@@ -44,7 +44,7 @@ def reading(file)
   first_held = if held == []
     nil
   else
-    nth(0, held)
+    held[0]
   end
   {
     file:,
@@ -65,18 +65,18 @@ def reading(file)
 end
 
 def below?(r, floor)
-  rank(get(r, :rung)) < rank(floor)
+  rank(r[:rung]) < rank(floor)
 end
 
 def row(r, floor)
-  "| #{mark(not below?(r, floor))} | `#{get(r, :file)}` | #{get(r, :rung)} | #{get(r, :typed)}/#{get(r, :total)} |"
+  "| #{mark(not below?(r, floor))} | `#{r[:file]}` | #{r[:rung]} | #{r[:typed]}/#{r[:total]} |"
 end
 
 def lowest(results)
   reduce(
     fn(acc, r)
-      if rank(get(r, :rung)) < rank(acc)
-        get(r, :rung)
+      if rank(r[:rung]) < rank(acc)
+        r[:rung]
       else
         acc
       end
@@ -97,12 +97,8 @@ def main()
     fn(r)
       annotate(
         "error",
-        "#{get(r, :file)} is #{get(r, :rung)}, below the floor #{floor}: #{get(r, :why)}",
-        [
-          ["file", get(r, :file)],
-          ["line", get(r, :line)],
-          ["title", "blueshift"]
-        ]
+        "#{r[:file]} is #{r[:rung]}, below the floor #{floor}: #{r[:why]}",
+        [["file", r[:file]], ["line", r[:line]], ["title", "blueshift"]]
       )
     end,
     short

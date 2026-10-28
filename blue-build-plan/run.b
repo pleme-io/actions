@@ -30,14 +30,14 @@ end
 
 def step(acc, line)
   h = header(line)
-  section = get(acc, :section)
+  section = acc[:section]
   path = trim(line)
   if not h.nil?
     assoc(acc, :section, h)
   elsif starts_with?(path, "/nix/store/") and section == :build
-    assoc(acc, :build, append(get(acc, :build), [path]))
+    assoc(acc, :build, append(acc[:build], [path]))
   elsif starts_with?(path, "/nix/store/") and section == :fetch
-    assoc(acc, :fetch, append(get(acc, :fetch), [path]))
+    assoc(acc, :fetch, append(acc[:fetch], [path]))
   else
     assoc(acc, :section, nil)
   end
@@ -48,7 +48,7 @@ def plan_of(text)
 end
 
 def name_of(path)
-  base = nth(3, split(path, "/")) or ""
+  base = split(path, "/")[3] or ""
   join(drop(1, split(base, "-")), "-")
 end
 
@@ -72,8 +72,8 @@ def main()
     fail("nix build --dry-run #{installable} failed: #{trim(stderr_of(cap))}")
   end
   plan = plan_of(stderr_of(cap))
-  build = get(plan, :build)
-  fetch = get(plan, :fetch)
+  build = plan[:build]
+  fetch = plan[:fetch]
   rust = filter((p) -> rust?(p, marks), build)
   output("will-build", length(build))
   output("will-fetch", length(fetch))

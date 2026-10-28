@@ -20,16 +20,16 @@ def count_in(line, word)
   if at.nil? or at == 0
     0
   else
-    to_int(replace(replace(nth(at - 1, fields), ",", ""), ":", "")) or 0
+    to_int(replace(replace(fields[at - 1], ",", ""), ":", "")) or 0
   end
 end
 
 def index_of(xs, word)
-  hits = filter((i) -> starts_with?(nth(i, xs), word), range(0, length(xs)))
+  hits = filter((i) -> starts_with?(xs[i], word), range(0, length(xs)))
   if hits == []
     nil
   else
-    nth(0, hits)
+    hits[0]
   end
 end
 
@@ -41,7 +41,7 @@ def totals_line(text)
   if hits == []
     ""
   else
-    nth(length(hits) - 1, hits)
+    hits[length(hits) - 1]
   end
 end
 
@@ -63,14 +63,14 @@ def run_target(target)
 end
 
 def row(r)
-  "| #{mark(get(r, :ok))} | `#{get(r, :target)}` | #{get(r, :passed)} | #{get(r, :failed)} |"
+  "| #{mark(r[:ok])} | `#{r[:target]}` | #{r[:passed]} | #{r[:failed]} |"
 end
 
 def main()
   results = map(run_target, targets)
-  passed = reduce((acc, r) -> acc + get(r, :passed), 0, results)
-  failed = reduce((acc, r) -> acc + get(r, :failed), 0, results)
-  broken = filter((r) -> not get(r, :ok), results)
+  passed = reduce((acc, r) -> acc + r[:passed], 0, results)
+  failed = reduce((acc, r) -> acc + r[:failed], 0, results)
+  broken = filter((r) -> not r[:ok], results)
   output("passed", passed)
   output("failed", failed)
   summary(
@@ -89,7 +89,7 @@ def main()
   )
   if broken != []
     fail(
-      "blue test: #{failed} failed in #{length(broken)} target(s): #{join(map((r) -> get(r, :target), broken), ", ")}"
+      "blue test: #{failed} failed in #{length(broken)} target(s): #{join(map((r) -> r[:target], broken), ", ")}"
     )
   end
 end
