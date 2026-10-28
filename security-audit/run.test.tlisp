@@ -1,0 +1,26 @@
+(define report
+  (list
+    (list "vulnerabilities" (list (list "count" 0)))
+    (list "warnings"
+      (list
+        (list "unmaintained"
+          (list
+            (list
+              (list "advisory" (list (list "id" "RUSTSEC-2024-0449")))
+              (list "package" (list (list "name" "unsafe-libyaml"))))))))))
+
+(define clean (list (list "vulnerabilities" (list (list "count" 0))) (list "warnings" (list))))
+
+(deftest "an unmaintained advisory is named by id and crate"
+  (assert (equal? (unmaintained-of report) (list "RUSTSEC-2024-0449 unsafe-libyaml")) "id and crate"))
+
+(deftest "a report with no warnings names nothing"
+  (assert (null? (unmaintained-of clean)) "no warnings")
+  (assert (null? (unmaintained-of (list))) "no warnings key"))
+
+(deftest "report mode passes and fail mode fails on an unmaintained crate"
+  (assert (= (unmaintained-exit (unmaintained-of report) "report") 0) "report passes")
+  (assert (= (unmaintained-exit (unmaintained-of report) "fail") 1) "fail fails"))
+
+(deftest "fail mode passes a tree with nothing unmaintained"
+  (assert (= (unmaintained-exit (unmaintained-of clean) "fail") 0) "clean passes"))

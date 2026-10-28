@@ -22,7 +22,7 @@ steps:
 | Name | Required | Default | Description |
 |---|---|---|---|
 | `fail-on-severity` | no | `medium` | Lowest severity that fails the build: low | medium | high | critical | none |
-| `ignore-list` | no | `` | Space-separated list of advisory IDs to ignore (e.g. RUSTSEC-2024-0001) |
+| `unmaintained` | no | `report` | What an unmaintained-crate advisory does: report (a warning each, the job passes) | fail |
 
 ## Outputs
 
@@ -31,6 +31,7 @@ steps:
 | `ecosystem` | Which auditor ran (cargo-audit / npm-audit / pip-audit / none) |
 | `severity` | Highest severity found (none / low / medium / high / critical) |
 | `vuln-count` | Total number of vulnerabilities found |
+| `unmaintained` | Comma-separated `<advisory-id> <crate>` for each unmaintained dependency (cargo-audit) |
 
 ## Configuration via `.pleme-io-release.toml`
 

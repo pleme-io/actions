@@ -62,6 +62,10 @@
 
 (define fail-rank (severity-rank fail-on))
 
+(define unmaintained-policy (env-get "UNMAINTAINED" "report"))
+
+(define unmaintained '())
+
 ;; ── helpers ──────────────────────────────────────────────────────
 
 (define (die-broken outcome detail)
@@ -143,10 +147,28 @@
       (else
         (list "npm-audit" (worst-bucket vulns) (alist-get vulns "total" 0))))))
 
+(define (unmaintained-of doc)
+  (let* ((w (alist-get doc "warnings" '()))
+         (rows (if (pair? w) (alist-get w "unmaintained" '()) '())))
+    (map
+      (lambda (row)
+        (string-append
+          (alist-get (alist-get row "advisory" '()) "id" "?")
+          " "
+          (alist-get (alist-get row "package" '()) "name" "?")))
+      (if (pair? rows) rows '()))))
+
+(define (unmaintained-exit ids policy)
+  (cond
+    ((null? ids) 0)
+    ((equal? policy "fail") 1)
+    (else 0)))
+
 (define (run-cargo-audit)
   (log-info "==> cargo audit")
   (let* ((doc (audit-json "cargo-audit" (list "cargo" "audit" "--json")))
          (v (alist-get doc "vulnerabilities" '())))
+    (set! unmaintained (unmaintained-of doc))
     (cond
       ((not (pair? v))
         (die-broken "unparseable" "cargo audit --json has no .vulnerabilities object"))
@@ -171,7 +193,7 @@
 
 ;; ── dispatch ─────────────────────────────────────────────────────
 
-(define result
+(define (audit)
   (cond
     ((path-exists? "Cargo.toml") (run-cargo-audit))
     ((path-exists? "package.json") (run-npm-audit))
@@ -180,27 +202,34 @@
       (die-broken "no-manifest"
         "no Cargo.toml, package.json or pyproject.toml at the repo root"))))
 
-(define ecosystem (car result))
-
-(define severity (car (cdr result)))
-
-(define vuln-count (car (cdr (cdr result))))
-
-(append-output "outcome=scanned")
-
-(append-output (string-append "ecosystem=" ecosystem))
-
-(append-output (string-append "severity=" severity))
-
-(append-output (string-append "vuln-count=" (string-format "{}" vuln-count)))
-
-(log-info
-  (string-append "result: " ecosystem " sev=" severity
-                 " count=" (string-format "{}" vuln-count)))
+(define (main)
+  (let* ((result (audit))
+         (ecosystem (car result))
+         (severity (car (cdr result)))
+         (vuln-count (car (cdr (cdr result)))))
+    (append-output "outcome=scanned")
+    (append-output (string-append "ecosystem=" ecosystem))
+    (append-output (string-append "severity=" severity))
+    (append-output (string-append "vuln-count=" (string-format "{}" vuln-count)))
+    (append-output (string-append "unmaintained=" (string-join "," unmaintained)))
+    (for-each
+      (lambda (id) (print-line (string-append "::warning title=unmaintained dependency::" id)))
+      unmaintained)
+    (log-info
+      (string-append "result: " ecosystem " sev=" severity
+                     " count=" (string-format "{}" vuln-count)
+                     " unmaintained=" (string-format "{}" (length unmaintained))))
+    (cond
+      ((> (unmaintained-exit unmaintained unmaintained-policy) 0)
+        (log-error (string-append (string-format "{}" (length unmaintained))
+                                  " unmaintained dependencies and unmaintained=fail"))
+        (exit 1))
+      ((equal? fail-on "none") (log-info "fail-on=none — passing regardless of findings") (exit 0))
+      ((>= (severity-rank severity) fail-rank)
+        (log-error (string-append "severity " severity " >= fail-on threshold " fail-on))
+        (exit 1))
+      (else (log-info "below fail-on threshold — passing") (exit 0)))))
 
 (cond
-  ((equal? fail-on "none") (log-info "fail-on=none — passing regardless of findings") (exit 0))
-  ((>= (severity-rank severity) fail-rank)
-    (log-error (string-append "severity " severity " >= fail-on threshold " fail-on))
-    (exit 1))
-  (else (log-info "below fail-on threshold — passing") (exit 0)))
+  ((equal? (env-get "TLISP_TEST" "") "1") (log-info "TLISP_TEST=1 — security-audit helpers loaded; main skipped"))
+  (else (main)))

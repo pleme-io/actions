@@ -9,6 +9,10 @@ inputs:
     description: "Lowest severity that fails the build: low | medium | high | critical | none"
     required: false
     default: "medium"
+  unmaintained:
+    description: "What an unmaintained-crate advisory does: report (a warning per advisory, the job passes) | fail"
+    required: false
+    default: "report"
 
 outputs:
   outcome:
@@ -25,6 +29,9 @@ outputs:
     # a 0/1 proxy emitted as though it were a number.
     description: "Total number of vulnerabilities found, or 'unknown' when outcome != scanned"
     value: ${{ steps.audit.outputs.vuln-count }}
+  unmaintained:
+    description: "Comma-separated '<advisory-id> <crate>' for every unmaintained dependency cargo-audit reports"
+    value: ${{ steps.audit.outputs.unmaintained }}
   ecosystem:
     description: "Which auditor ran (cargo-audit / npm-audit / pip-audit / none)"
     value: ${{ steps.audit.outputs.ecosystem }}
@@ -113,3 +120,4 @@ runs:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        UNMAINTAINED: ${{ inputs.unmaintained }}
