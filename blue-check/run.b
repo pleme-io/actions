@@ -35,7 +35,7 @@ def check_file(file)
     diagnostic?,
     lines_of(stdout_of(exec_capture("blue", "check", "--format", "json", file)))
   )
-  map((d) -> write_stdout("#{diagnostic_annotation(d)}\n"), diagnostics)
+  map((d) -> write_stdout(unlines([diagnostic_annotation(d)])), diagnostics)
   canonical = status_of(exec_capture("blue", "fmt", "--check", file)) == 0
   if not canonical
     annotate(
@@ -84,7 +84,7 @@ def main()
         ],
         map(row, results)
       ),
-      "\n"
+      line_break
     )
   )
   if errors > 0 or unformatted > 0

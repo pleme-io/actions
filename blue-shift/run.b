@@ -120,7 +120,7 @@ def main()
         ],
         map((r) -> row(r, floor), results)
       ),
-      "\n"
+      line_break
     )
   )
   if short != []

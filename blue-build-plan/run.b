@@ -93,7 +93,7 @@ def main()
         "| #{mark(not (only and rust != []))} | Rust builds outside the toolchain | #{length(rust)} |",
         "| #{mark(not over)} | build budget | #{input_or("max-builds", "none")} |"
       ],
-      "\n"
+      line_break
     )
   )
   map(

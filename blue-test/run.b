@@ -47,7 +47,7 @@ end
 
 def run_target(target)
   cap = exec_capture("blue", "test", target)
-  text = "#{stdout_of(cap)}\n#{stderr_of(cap)}"
+  text = join_lines([stdout_of(cap), stderr_of(cap)])
   map(
     (l) -> annotate("error", trim(l), [["title", "blue test #{target}"]]),
     filter((l) -> starts_with?(trim(l), "FAIL "), lines_of(text))
@@ -84,7 +84,7 @@ def main()
         ],
         map(row, results)
       ),
-      "\n"
+      line_break
     )
   )
   if broken != []
