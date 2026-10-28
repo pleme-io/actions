@@ -1124,6 +1124,9 @@ outputs:
   triggered:
     description: "Forwarded (key: triggered) — written by 5 action dir(s): dependabot-trigger, make-scenario-run, n8n-trigger-workflow …"
     value: ${{ steps.exec.outputs.triggered }}
+  unmaintained:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: unmaintained)"
+    value: ${{ steps.exec.outputs.unmaintained }}
   unowned-count:
     description: "Forwarded (key: unowned-count) — written by 1 action dir(s): codeowners-validate"
     value: ${{ steps.exec.outputs.unowned-count }}

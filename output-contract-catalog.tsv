@@ -7,9 +7,9 @@
 #
 # actions                380
 # routing tatara-script  357
-# distinct keys written  366
+# distinct keys written  367
 # dynamic key expansions 8
-# inner union (generated)374
+# inner union (generated)375
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -326,7 +326,7 @@ s3-mirror	tatara-script	run.tlisp	1	1
 salesforce-record-create	tatara-script	run.tlisp	1	1
 sbom-generate	tatara-script	run.tlisp	2	2
 secrets-scan	tatara-script	run.tlisp	2	2
-security-audit	tatara-script	run.tlisp	4	4
+security-audit	tatara-script	run.tlisp	5	5
 seed-pointer	tatara-script	run.tlisp	1	1
 selenium-grid-test	tatara-script	run.tlisp	1	1
 semantic-release	tatara-script	run.tlisp	1	1
@@ -365,7 +365,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	374
+tatara-script	own-runner	-	0	375
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -921,6 +921,7 @@ secrets-scan	scan-outcome	static	declared	forwarded
 security-audit	ecosystem	static	declared	forwarded
 security-audit	outcome	static	declared	forwarded
 security-audit	severity	static	declared	forwarded
+security-audit	unmaintained	static	declared	forwarded
 security-audit	vuln-count	static	declared	forwarded
 seed-pointer	seeded	static	declared	forwarded
 selenium-grid-test	passed	static	declared	forwarded
