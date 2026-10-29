@@ -1,5 +1,5 @@
-use("koutei", [:fail, :input, :input_or, :output, :summary])
-use("shisutemu", [:status_of, :stderr_of, :stdout_of])
+use("koutei", %i[fail input input_or output summary])
+use("shisutemu", %i[status_of stderr_of stdout_of])
 
 def must(what, cmd, *args)
   r = exec_capture(cmd, *args)
@@ -105,8 +105,8 @@ end
 
 def auth_config(encoded)
   [
-    ["GIT_CONFIG_COUNT", "1"],
-    ["GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader"],
+    %w[GIT_CONFIG_COUNT 1],
+    %w[GIT_CONFIG_KEY_0 http.https://github.com/.extraheader],
     ["GIT_CONFIG_VALUE_0", "AUTHORIZATION: basic #{encoded}"]
   ]
 end

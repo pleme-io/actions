@@ -1,23 +1,23 @@
 use(
   "koutei",
-  [
-    :annotate,
-    :fail,
-    :flag?,
-    :input,
-    :input_lines,
-    :input_or,
-    :lines_of,
-    :mark,
-    :output,
-    :summary
+  %i[
+    annotate
+    fail
+    flag?
+    input
+    input_lines
+    input_or
+    lines_of
+    mark
+    output
+    summary
   ]
 )
 
-use("shisutemu", [:status_of, :stderr_of])
+use("shisutemu", %i[status_of stderr_of])
 
 def default_rust_marks()
-  ["rust_", "cargo-", "-deps-", "crate-"]
+  %w[rust_ cargo- -deps- crate-]
 end
 
 def header(line)
@@ -98,11 +98,7 @@ def main()
   )
   map(
     fn(p)
-      annotate(
-        "warning",
-        "builds Rust: #{name_of(p)}",
-        [["title", "blue-only"]]
-      )
+      annotate("warning", "builds Rust: #{name_of(p)}", [%w[title blue-only]])
     end,
     rust
   )

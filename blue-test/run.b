@@ -1,9 +1,6 @@
-use(
-  "koutei",
-  [:annotate, :fail, :input_lines, :lines_of, :mark, :output, :summary]
-)
+use("koutei", %i[annotate fail input_lines lines_of mark output summary])
 
-use("shisutemu", [:status_of, :stderr_of, :stdout_of])
+use("shisutemu", %i[status_of stderr_of stdout_of])
 
 def targets()
   given = input_lines("paths")

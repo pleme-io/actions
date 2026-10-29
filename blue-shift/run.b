@@ -2,22 +2,13 @@ use("deeta", [:json_at])
 
 use(
   "koutei",
-  [
-    :annotate,
-    :fail,
-    :input_lines,
-    :input_or,
-    :lines_of,
-    :mark,
-    :output,
-    :summary
-  ]
+  %i[annotate fail input_lines input_or lines_of mark output summary]
 )
 
 use("shisutemu", [:stdout_of])
 
 def rungs()
-  ["dynamic", "annotated", "checked", "restricted"]
+  %w[dynamic annotated checked restricted]
 end
 
 def rank(rung)
@@ -98,7 +89,7 @@ def main()
       annotate(
         "error",
         "#{r[:file]} is #{r[:rung]}, below the floor #{floor}: #{r[:why]}",
-        [["file", r[:file]], ["line", r[:line]], ["title", "blueshift"]]
+        [["file", r[:file]], ["line", r[:line]], %w[title blueshift]]
       )
     end,
     short

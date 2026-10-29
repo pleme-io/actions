@@ -2,20 +2,20 @@ use("deeta", [:json_at])
 
 use(
   "koutei",
-  [
-    :annotate,
-    :diagnostic?,
-    :diagnostic_annotation,
-    :fail,
-    :input_lines,
-    :lines_of,
-    :mark,
-    :output,
-    :summary
+  %i[
+    annotate
+    diagnostic?
+    diagnostic_annotation
+    fail
+    input_lines
+    lines_of
+    mark
+    output
+    summary
   ]
 )
 
-use("shisutemu", [:status_of, :stdout_of])
+use("shisutemu", %i[status_of stdout_of])
 
 def files()
   given = input_lines("paths")
