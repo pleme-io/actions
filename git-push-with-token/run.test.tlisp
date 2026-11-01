@@ -1,0 +1,195 @@
+(define fixture-generator-src
+  (string-append
+    "(define manifests (list \"Cargo.toml\" \"crates/a/Cargo.toml\"))\n"
+    "(write-file \"Cargo.gen.lock\" (string-join \"\" (map (lambda (m) (string-append m \" \" (sha256 (read-file m)) \"\\n\")) manifests)))\n"))
+
+(define fixture-today-sha "c47ddf2bfd2050f731c7cb810ecea6f03b6f17b0")
+
+(define (fixture-out r) (string-trim (stdout-of r)))
+
+(define (fixture-git dir args) (apply exec-capture (append (list "git" "-C" dir) args)))
+
+(define (fixture-git-ok dir args)
+  (let ((r (fixture-git dir args)))
+    (assert (= 0 (status-of r)) (string-append "git " (string-join " " args) ": " (stderr-of r)))
+    (fixture-out r)))
+
+(define (fixture-in dir thunk) (let ((here (cwd))) (chdir dir) (let ((v (thunk))) (chdir here) v)))
+
+(define (fixture-put dir rel text)
+  (mkdir-p (path-dirname (path-join dir rel)))
+  (write-file (path-join dir rel) text))
+
+(define (fixture-manifest name version extra)
+  (string-append
+    "[package]\nname = \""
+    name
+    "\"\nversion = \""
+    version
+    "\"\n"
+    extra))
+
+(define (fixture-generate dir generator)
+  (fixture-in dir (lambda () (exec-check "tatara-script" generator))))
+
+(define (fixture-commit-all dir msg)
+  (fixture-git-ok dir (list "add" "-A"))
+  (fixture-git-ok dir (list "commit" "-q" "-m" msg)))
+
+(define (fixture-build)
+  (env-set "GIT_CONFIG_GLOBAL" "/dev/null")
+  (env-set "GIT_CONFIG_NOSYSTEM" "1")
+  (env-set "GIT_AUTHOR_DATE" "1793491200 +0000")
+  (env-set "GIT_COMMITTER_DATE" "1793491200 +0000")
+  (let*
+    ((root (tmp-dir))
+      (remote (path-join root "remote.git"))
+      (up (path-join root "upstream"))
+      (work (path-join root "work"))
+      (generator (path-join root "derive.tlisp")))
+    (write-file generator fixture-generator-src)
+    (write-file
+      (path-join root "derive-then-fail.tlisp")
+      (string-append fixture-generator-src "(exit 1)\n"))
+    (fixture-git-ok root (list "init" "-q" "--bare" "-b" "main" remote))
+    (fixture-git-ok root (list "init" "-q" "-b" "main" up))
+    (fixture-git-ok up (list "config" "user.name" "fixture upstream"))
+    (fixture-git-ok up (list "config" "user.email" "upstream@fixture.invalid"))
+    (fixture-put
+      up
+      "Cargo.toml"
+      (fixture-manifest
+        "fixture"
+        "0.1.0"
+        ""))
+    (fixture-put
+      up
+      "crates/a/Cargo.toml"
+      (fixture-manifest
+        "a"
+        "0.1.0"
+        ""))
+    (fixture-generate up generator)
+    (fixture-commit-all up "initial")
+    (fixture-git-ok up (list "remote" "add" "origin" remote))
+    (fixture-git-ok up (list "push" "-q" "origin" "main"))
+    (fixture-git-ok root (list "clone" "-q" remote work))
+    (fixture-git-ok work (list "config" "user.name" "github-actions[bot]"))
+    (fixture-git-ok
+      work
+      (list
+        "config"
+        "user.email"
+        "github-actions[bot]@users.noreply.github.com"))
+    (fixture-put
+      work
+      "Cargo.toml"
+      (fixture-manifest
+        "fixture"
+        "0.1.1"
+        ""))
+    (fixture-generate work generator)
+    (fixture-commit-all work "release: v0.1.1")
+    (fixture-git-ok work (list "tag" "-a" "v0.1.1" "-m" "v0.1.1"))
+    (fixture-put
+      up
+      "crates/a/Cargo.toml"
+      (fixture-manifest
+        "a"
+        "0.1.0"
+        "\n[dependencies]\nserde = \"1\"\n"))
+    (fixture-generate up generator)
+    (fixture-commit-all up "a: depend on serde")
+    (fixture-git-ok up (list "push" "-q" "origin" "main"))
+    (list
+      (cons :root root)
+      (cons :remote remote)
+      (cons :upstream up)
+      (cons :work work)
+      (cons :generator generator)
+      (cons :bump (fixture-git-ok work (list "rev-parse" "HEAD"))))))
+
+(define (fixture-push s argv)
+  (set! branch "main")
+  (set! ptags? #t)
+  (set! regenerable (list "Cargo.lock" "Cargo.gen.lock" "Cargo.build-spec.json"))
+  (set! regenerate-argv argv)
+  (fixture-in (alist-get s :work) (lambda () (push-with-retry 3))))
+
+(define (fixture-remote s args) (fixture-git-ok (alist-get s :remote) args))
+
+(define (fixture-pushed-file s rel)
+  (stdout-of (fixture-git (alist-get s :remote) (list "show" (string-append "main:" rel)))))
+
+(define (fixture-bump-file s rel)
+  (stdout-of
+    (fixture-git (alist-get s :work) (list "show" (string-append (alist-get s :bump) ":" rel)))))
+
+(define (fixture-generator-agrees? s)
+  (let ((verify (path-join (alist-get s :root) "verify")))
+    (fixture-git-ok (alist-get s :root) (list "clone" "-q" (alist-get s :remote) verify))
+    (fixture-generate verify (alist-get s :generator))
+    (equal? "" (fixture-git-ok verify (list "status" "--porcelain")))))
+
+(define (fixture-work-clean? s)
+  (equal? "" (fixture-git-ok (alist-get s :work) (list "status" "--porcelain"))))
+
+(deftest
+  "regenerate-command set: a rebase conflict in the derived file is regenerated from the rebased tree, amended into the bump, and the tag follows the amend"
+  (let*
+    ((s (fixture-build)) (status (fixture-push s (list "tatara-script" (alist-get s :generator)))))
+    (assert (= status 0) "the push lands")
+    (assert
+      (fixture-generator-agrees? s)
+      "the pushed derived file is what the generator writes for the pushed tree")
+    (assert
+      (not (equal? (fixture-pushed-file s "Cargo.gen.lock") (fixture-bump-file s "Cargo.gen.lock")))
+      "the replayed side is not what was pushed")
+    (assert
+      (equal?
+        (fixture-remote s (list "rev-parse" "main~1"))
+        (fixture-git-ok (alist-get s :upstream) (list "rev-parse" "HEAD")))
+      "one commit rides on the upstream head: the amend added none")
+    (assert
+      (equal?
+        (fixture-remote s (list "rev-parse" "v0.1.1^{commit}"))
+        (fixture-remote s (list "rev-parse" "main")))
+      "the release tag points at the amended head")
+    (assert
+      (equal?
+        (fixture-remote s (list "log" "-1" "--format=%s%n%an%n%cn" "main"))
+        "release: v0.1.1\ngithub-actions[bot]\ngithub-actions[bot]")
+      "the amend keeps the bump's message, author and the bot committer")
+    (assert
+      (string-contains? (fixture-pushed-file s "crates/a/Cargo.toml") "serde")
+      "upstream's manifest change is kept")
+    (assert
+      (string-contains? (fixture-pushed-file s "Cargo.toml") "0.1.1")
+      "the version bump is kept")
+    (assert (fixture-work-clean? s) "the work tree is clean for a further retry")))
+
+(deftest
+  "regenerate-command empty: the pushed commit is byte-identical to the one origin/main's action pushes on this scenario, a stale derived file (blue 1c6f410)"
+  (let* ((s (fixture-build)) (status (fixture-push s (list))))
+    (assert (= status 0) "the push lands")
+    (assert
+      (equal? (fixture-remote s (list "rev-parse" "main")) fixture-today-sha)
+      "same commit sha as today's action")
+    (assert
+      (equal? (fixture-pushed-file s "Cargo.gen.lock") (fixture-bump-file s "Cargo.gen.lock"))
+      "the replayed side is pushed as it was")
+    (assert (not (fixture-generator-agrees? s)) "and it is stale on the pushed tree")))
+
+(deftest
+  "regenerate-command failing: a non-zero exit after writing, or a binary that cannot start, warns and pushes what today's action pushes"
+  (for-each
+    (lambda (argv-of)
+      (let* ((s (fixture-build)) (status (fixture-push s (argv-of s))))
+        (assert (= status 0) "the push lands")
+        (assert
+          (equal? (fixture-remote s (list "rev-parse" "main")) fixture-today-sha)
+          "same commit sha as today's action")
+        (assert (fixture-work-clean? s) "what the command wrote is not left in the tree")))
+    (list
+      (lambda (s) (list "tatara-script" (path-join (alist-get s :root) "derive-then-fail.tlisp")))
+      (lambda (s) (list "git-push-with-token-no-such-generator")))))

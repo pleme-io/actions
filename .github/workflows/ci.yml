@@ -101,9 +101,12 @@ jobs:
       # RE-MEASURED 2026-09-19, same way: 62 files on main, all green, so the
       # floor had drifted to 6 below reality. rust-cross-build/run.test.tlisp
       # makes 63. 56 -> 61, two files of slack.
+      #
+      # RE-MEASURED 2026-10-31: 71 files on v0.2.5 at cecc6ae;
+      # git-push-with-token/run.test.tlisp makes 72. 61 -> 70.
       - uses: ./tlisp-test
         with:
-          min-files: "61"
+          min-files: "70"
       - uses: ./tlisp-test
         with:
           tatara-version: v0.3.58

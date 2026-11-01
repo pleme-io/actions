@@ -23,6 +23,10 @@ inputs:
     description: "Whitespace-separated DERIVED paths (e.g. Cargo.lock Cargo.gen.lock). A retry-rebase conflict confined to these resolves in favour of the replayed commit instead of aborting; a conflict anywhere else still aborts. Empty (default) = always abort."
     required: false
     default: ""
+  regenerate-command:
+    description: "Command (whitespace-split argv, no shell) run in the repo root after every successful retry rebase; the regenerable-paths it changes that git tracks are amended into the replayed commit before the push. A failing command warns and the push goes on as before. Empty (default) = no regeneration."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -35,3 +39,4 @@ runs:
         BRANCH: ${{ inputs.branch }}
         PUSH_TAGS: ${{ inputs.push-tags }}
         REGENERABLE_PATHS: ${{ inputs.regenerable-paths }}
+        REGENERATE_COMMAND: ${{ inputs.regenerate-command }}
