@@ -30,7 +30,7 @@
     (cond
       ((erro:err? r)
         (erro:err (erro:new "ride/not-an-integer"
-          (string-append "ride-budget-minutes '" raw "' is not an integer") (list "input" raw))))
+          (string-append "ride-budget-minutes " (erro:message (erro:value r))) (list "input" raw))))
       ((< (erro:value r) 1)
         (erro:err (erro:new "ride/below-one"
           (string-append "ride-budget-minutes " raw " is below 1") (list "input" raw))))
