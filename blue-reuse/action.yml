@@ -1,0 +1,90 @@
+name: 'pleme-io · blue-reuse'
+description: >-
+  Run the reuse ratchet (`blue census --reuse`) on a repo holding .b files,
+  after checkout. A repo with no tracked .b file costs one git call: blue is not
+  installed and nothing else runs. A grown or new package row fails the step and
+  annotates each copy inside it; everything else passes. The step summary lists
+  every copy with its named home. No reuse.baseline, a skip-reuse-ratchet line at
+  the top of CLAUDE.md, or a blue too old to run the ratchet each pass and say so.
+branding: { icon: 'repeat', color: 'blue' }
+
+inputs:
+  enforce:
+    description: 'Fail on a grown or new row, the only thing that can fail this action. false reports it as a warning.'
+    required: false
+    default: 'true'
+  baseline:
+    description: 'The baseline file. Empty uses reuse.baseline at the working directory.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Directory to run in.'
+    required: false
+    default: '.'
+  blue-path:
+    description: 'BLUE_PATH for project bidamas, colon-separated. Empty uses the toolchain''s compiled-in distribution.'
+    required: false
+    default: ''
+  blue:
+    description: 'The blue flake blue-setup installs when blue is not on PATH.'
+    required: false
+    default: 'github:pleme-io/blue'
+  github-token:
+    description: 'Passed to blue-setup for private flakes.'
+    required: false
+    default: ''
+
+outputs:
+  state:
+    description: 'ran, no_blue, skipped or blind.'
+    value: ${{ steps.run.outputs.state || (steps.has.outputs.b == 'true' && 'blind' || 'no_blue') }}
+  adopted:
+    description: 'Whether a baseline exists and is enforced.'
+    value: ${{ steps.run.outputs.adopted || 'false' }}
+  files:
+    description: '.b files measured.'
+    value: ${{ steps.run.outputs.files || '0' }}
+  definitions:
+    description: 'Definitions measured: the denominator of copies.'
+    value: ${{ steps.run.outputs.definitions || '0' }}
+  copies:
+    description: 'Definitions whose shape another package or file also holds.'
+    value: ${{ steps.run.outputs.copies || '0' }}
+  waived:
+    description: 'Copies a # waive B0070 line excuses.'
+    value: ${{ steps.run.outputs.waived || '0' }}
+  broken:
+    description: 'Rows that grew or are new. Above zero fails the step when enforce is true.'
+    value: ${{ steps.run.outputs.broken || '0' }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if git ls-files -- '*.b' | grep -q .; then echo "b=true" >> "$GITHUB_OUTPUT"; fi
+        if command -v blue >/dev/null; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.b == 'true' && steps.has.outputs.found != 'true'
+      continue-on-error: true
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        blue: ${{ inputs.blue }}
+        github-token: ${{ inputs.github-token }}
+    - id: run
+      if: steps.has.outputs.b == 'true'
+      continue-on-error: true
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_ENFORCE: ${{ inputs.enforce }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        BLUE_PATH: ${{ inputs.blue-path }}
+      run: blue run "${{ github.action_path }}/run.b"
+    - if: steps.run.outcome == 'failure'
+      shell: bash
+      run: echo "::warning title=blue reuse::the ratchet could not run, so nothing was judged"
+    - if: inputs.enforce == 'true' && steps.run.outputs.broken != '' && steps.run.outputs.broken != '0'
+      shell: bash
+      run: exit 1

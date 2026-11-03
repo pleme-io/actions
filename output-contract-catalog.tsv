@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                381
+# actions                382
 # routing tatara-script  357
 # distinct keys written  367
 # dynamic key expansions 8
@@ -62,6 +62,7 @@ benchmark-runner	own-runner	-	0	2
 bigorna	tatara-script	run.tlisp	7	7
 blue-build-plan	own-runner	-	0	3
 blue-check	own-runner	-	0	4
+blue-reuse	own-runner	-	0	7
 blue-setup	own-runner	-	0	1
 blue-shift	own-runner	-	0	2
 blue-test	own-runner	-	0	2
