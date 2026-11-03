@@ -199,6 +199,7 @@ def main()
     else
       enforce = enforcing?(input("enforce"))
       summary(summary_text(doc))
+      annotate("notice", headline(doc), [["title", "blue reuse"]])
       map(
         (f) -> annotate_copy(level_of_copy(enforce), f),
         filter((f) -> in_broken_row?(doc, f), doc["findings"])
