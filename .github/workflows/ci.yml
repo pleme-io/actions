@@ -310,6 +310,7 @@ jobs:
         shell: bash
         run: |
           sudo mv "$(command -v sudo)" /usr/local/sudo.gone
+          hash -r
           ! command -v sudo
       - id: creds
         uses: ./git-credentials
