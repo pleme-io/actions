@@ -1,0 +1,39 @@
+;; nix-flake-check/run.test.tlisp — the argument list and the capture, as pure functions.
+
+(deftest "the defaults keep going, fall back and widen the failure tail"
+  (assert
+    (equal?
+      (nfc:arguments "true" "true" "true" "200" "" "")
+      (list "flake" "check" "--no-warn-dirty" "--keep-going" "--fallback" "--log-lines" "200"))
+    "every default on"))
+
+(deftest "each default turns off alone, and an empty log-lines keeps nix's own"
+  (assert
+    (equal? (nfc:arguments "false" "false" "false" "" "" "") (list "flake" "check"))
+    "every default off is the bare command")
+  (assert
+    (equal?
+      (nfc:arguments "false" "false" "true" "" "" "")
+      (list "flake" "check" "--fallback"))
+    "fallback alone"))
+
+(deftest "flake-args stay last and an empty word never reaches nix"
+  (assert
+    (equal?
+      (nfc:arguments "false" "false" "false" "" "  --impure  path:./x " "")
+      (list "flake" "check" "--impure" "path:./x"))
+    "two words, no empties"))
+
+(deftest "only builds the named checks, with every flag, in place of the whole flake"
+  (assert
+    (equal?
+      (nfc:arguments "false" "true" "false" "" "" ".#checks.s.a .#checks.s.b")
+      (list "build" "--no-link" "--keep-going" ".#checks.s.a" ".#checks.s.b"))
+    "nix build of the two"))
+
+(deftest "a log path tees through a pipeline that keeps nix's status; no path runs nix bare"
+  (assert (equal? (nfc:command "" (list "flake" "check")) (list "nix" "flake" "check")) "bare")
+  (define piped (nfc:command "/tmp/l" (list "flake" "check")))
+  (assert (equal? (car piped) "bash") "through bash")
+  (assert (string-contains? (nth 2 piped) "pipefail") "the status survives the tee")
+  (assert (equal? (last piped) "check") "the arguments follow"))

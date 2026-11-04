@@ -393,3 +393,37 @@ jobs:
       - name: The scan read the archive the judge reads
         shell: bash
         run: test -s "$RUNNER_TEMP/image-scan-pulled.tar"
+
+  nix-flake-check-names:
+    name: nix-flake-check names every failed derivation, past nix's tail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: green
+        uses: ./nix-flake-check
+        with:
+          flake-args: path:./nix-flake-check/tests/green
+      - id: red
+        continue-on-error: true
+        uses: ./nix-flake-check
+        with:
+          flake-args: path:./nix-flake-check/tests/fixture
+      - name: Red stays red, keep-going found both, and each is named
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.red.outcome }}
+          FAILED: ${{ steps.red.outputs.failed }}
+          GREEN: ${{ steps.green.outputs.failed }}
+          NAMES: ${{ steps.red.outputs.names }}
+        run: |
+          [ "$OUTCOME" = failure ] && [ "$FAILED" = 2 ] && [ "$GREEN" = 0 ]
+          grep -Fq 'FAIL row.buried@walker' <<< "$NAMES"
+          grep -Fq 'test tests::second ... FAILED' <<< "$NAMES"
+      - run: blue test nix-flake-check/run.b
+      - id: only
+        uses: ./nix-flake-check
+        with:
+          only: path:./nix-flake-check/tests/green#checks.x86_64-linux.fine
+      - name: only builds what it names and stays green
+        shell: bash
+        run: '[ "${{ steps.only.outputs.failed }}" = 0 ]'

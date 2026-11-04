@@ -1,29 +1,49 @@
 ;; nix-flake-check/run.tlisp — wraps `nix flake check` with the standard
-;; pleme-io defaults (e.g. --no-warn-dirty by default). Replaces the
-;; inlined bash block in action.yml. Inputs flow in via env vars:
+;; pleme-io defaults. Inputs flow in via env vars:
 ;;
-;;   FLAKE_ARGS    — extra args appended verbatim (e.g. "--override-input …")
-;;   NO_WARN_DIRTY — "true" / "false" (default "true")
-;;
-;; The action.yml shim is one line: `nix run github:pleme-io/tatara-lisp#script -- run.tlisp`.
+;;   FLAKE_ARGS          — extra args appended verbatim
+;;   NO_WARN_DIRTY       — "true" / "false" (default "true")
+;;   KEEP_GOING          — "true" builds every check past the first red
+;;   FALLBACK            — "true" builds from source when a substitute fails
+;;   LOG_LINES           — nix's per-failure tail; "" keeps nix's own 25
+;;   ONLY                — installables to `nix build` in place of `nix flake check`
+;;   NIX_FLAKE_CHECK_LOG — when set, the output also goes to this file, for run.b
 
-(define flake-args (env-get "FLAKE_ARGS" ""))
+(define (nfc:words text)
+  (filter (lambda (s) (not (equal? s ""))) (string-split text " ")))
 
-(define no-warn-dirty (env-get "NO_WARN_DIRTY" "true"))
+(define (nfc:when on? args)
+  (if (equal? on? "true") args (list)))
 
-;; Build the arg list: ("flake" "check" ?--no-warn-dirty? ?…FLAKE_ARGS…)
-(define base (list "flake" "check"))
+(define (nfc:arguments no-warn keep-going fallback log-lines flake-args only)
+  (append
+    (if (equal? only "") (list "flake" "check") (list "build" "--no-link"))
+    (nfc:when no-warn (list "--no-warn-dirty"))
+    (nfc:when keep-going (list "--keep-going"))
+    (nfc:when fallback (list "--fallback"))
+    (if (equal? log-lines "") (list) (list "--log-lines" log-lines))
+    (nfc:words flake-args)
+    (nfc:words only)))
 
-(define with-warn (if (equal? no-warn-dirty "true") (append base (list "--no-warn-dirty")) base))
+(define (nfc:command log args)
+  (if (equal? log "")
+    (cons "nix" args)
+    (append
+      (list "bash" "-c" "set -o pipefail; nix \"$@\" 2>&1 | tee \"$NIX_FLAKE_CHECK_LOG\"" "nix-flake-check")
+      args)))
 
-;; FLAKE_ARGS is space-separated. Filter empties so an empty env var
-;; doesn't introduce a literal "" arg that confuses nix's argv parser.
-(define extra (filter (lambda (s) (not (equal? s ""))) (string-split flake-args " ")))
+(define (nfc:main)
+  (define args
+    (nfc:arguments
+      (env-get "NO_WARN_DIRTY" "true")
+      (env-get "KEEP_GOING" "true")
+      (env-get "FALLBACK" "true")
+      (env-get "LOG_LINES" "200")
+      (env-get "FLAKE_ARGS" "")
+      (env-get "ONLY" "")))
+  (log-info (string-append "nix " (string-join " " args)))
+  (exit (apply exec-check (nfc:command (env-get "NIX_FLAKE_CHECK_LOG" "") args))))
 
-(define full-args (append with-warn extra))
-
-(log-info (string-append "nix " (string-join " " full-args)))
-
-(define status (apply exec-check (cons "nix" full-args)))
-
-(exit status)
+(if (equal? (env-get "TLISP_TEST" "") "1")
+  (log-info "TLISP_TEST=1 — action loaded; main skipped")
+  (nfc:main))

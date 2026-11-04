@@ -23,6 +23,38 @@ inputs:
       and will still 404, so pass an org-scoped PAT (`BOT_PAT`).
     required: false
     default: ""
+  only:
+    description: "Space-separated installables to `nix build` in place of `nix flake check`, with the same flags and naming: a repo that has already chosen which checks a change needs. Empty checks the whole flake."
+    required: false
+    default: ""
+  keep-going:
+    description: "Build every check past the first failure, so one run names them all. false stops at the first, as nix does."
+    required: false
+    default: "true"
+  fallback:
+    description: "Build a derivation from source when its substitute fails to download, as a cache.nixos.org HTTP 416 did on blue's land run 41849231855. false fails the check instead."
+    required: false
+    default: "true"
+  log-lines:
+    description: "Lines of each failed build nix prints in the stream. Empty keeps nix's own 25."
+    required: false
+    default: "200"
+  name-failures:
+    description: "After a failure, read each failed derivation's whole log through `nix log`, print it, annotate the line that names the failure and write the step summary. false runs nix with no capture."
+    required: false
+    default: "true"
+  tail-lines:
+    description: "Lines of each failed derivation's log the naming step prints and summarizes, beside the lines that name the failure."
+    required: false
+    default: "400"
+
+outputs:
+  failed:
+    description: "Derivations named as failed. 0 on a green run."
+    value: ${{ steps.name.outputs.failed || '0' }}
+  names:
+    description: "Each failed check, then the lines of its log that name the failure, one per line."
+    value: ${{ steps.name.outputs.names }}
 
 runs:
   using: composite
@@ -114,4 +146,29 @@ runs:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
         FLAKE_ARGS: ${{ inputs.flake-args }}
+        ONLY: ${{ inputs.only }}
         NO_WARN_DIRTY: ${{ inputs.no-warn-dirty }}
+        KEEP_GOING: ${{ inputs.keep-going }}
+        FALLBACK: ${{ inputs.fallback }}
+        LOG_LINES: ${{ inputs.log-lines }}
+        NIX_FLAKE_CHECK_LOG: ${{ inputs.name-failures == 'true' && format('{0}/nix-flake-check.log', runner.temp) || '' }}
+    - id: built
+      if: failure() && inputs.name-failures == 'true'
+      shell: bash
+      run: |
+        if grep -Eq "Cannot build '|builder for '" "$RUNNER_TEMP/nix-flake-check.log"; then echo "failed=true" >> "$GITHUB_OUTPUT"; fi
+        if command -v blue >/dev/null; then echo "blue=true" >> "$GITHUB_OUTPUT"; fi
+    - if: failure() && steps.built.outputs.failed == 'true' && steps.built.outputs.blue != 'true'
+      continue-on-error: true
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        github-token: ${{ inputs.github-token }}
+    - id: name
+      name: Name each failed derivation
+      if: failure() && steps.built.outputs.failed == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        INPUT_LOG: ${{ runner.temp }}/nix-flake-check.log
+        INPUT_TAIL_LINES: ${{ inputs.tail-lines }}
+      run: blue run --quiet "${{ github.action_path }}/run.b"
