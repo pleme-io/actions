@@ -379,3 +379,11 @@
     (assert
       (equal? out toml)
       "0.1.4 must not match 0X1X4 — re-quote escapes the dots the old code interpolated raw")))
+
+(deftest "regen-status answers the exit status of a gen build"
+  (assert
+    (equal? (regen-status (list (cons "status" 0) (cons "stdout" "") (cons "stderr" ""))) 0)
+    "a clean build is 0")
+  (assert
+    (equal? (regen-status (list (cons "status" 101) (cons "stdout" "") (cons "stderr" "why"))) 101)
+    "a failed build keeps its status"))

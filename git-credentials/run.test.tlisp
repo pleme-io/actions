@@ -41,3 +41,31 @@
   (assert (equal? (gc:rung "" "bot" "gh") "bot-pat") "no app token keeps the old ladder")
   (assert (equal? (gc:rung "" "" "") "none") "nothing resolves to none")
   (assert (equal? (gc:pick "app" (gc:pick "bot" "gh")) "app") "the app token is the one used"))
+
+(deftest "every spelling of a git url is rewritten: a manifest may name ssh"
+  (assert
+    (equal?
+      (gc:plain-forms "github.com")
+      (list "https://github.com/" "ssh://git@github.com/" "git@github.com:"))
+    "https, ssh:// and scp forms")
+  (assert
+    (equal?
+      (gc:add-args "k" (list "a" "b"))
+      (list (list "--replace-all" "k" "a") (list "--add" "k" "b")))
+    "the first value replaces, so a second run does not refuse a multi-valued key"))
+
+(deftest "system scope needs sudo, and without it falls to global rather than failing"
+  (assert
+    (equal? (gc:config-prefix "system" #t) (list "sudo" "git" "config" "--system"))
+    "sudo present writes the system file")
+  (assert
+    (equal? (gc:config-prefix "system" #f) (list "git" "config" "--global"))
+    "no sudo never names sudo")
+  (assert
+    (equal? (gc:config-prefix "global" #t) (list "git" "config" "--global"))
+    "the default scope stays global"))
+
+(deftest "every status must be zero"
+  (assert (gc:ok? (list 0 0 0)) "all zero")
+  (assert (not (gc:ok? (list 0 1 0))) "one non-zero fails")
+  (assert (gc:ok? (list)) "empty is vacuous"))

@@ -32,6 +32,14 @@ inputs:
     required: false
     default: "false"
 
+  scope:
+    description: >-
+      Where the rewrite is written. `global` (default) is the job user's
+      ~/.gitconfig. `system` is /etc/gitconfig through sudo, read by a build
+      user with its own HOME; a runner with no sudo writes `global` and says so.
+    required: false
+    default: "global"
+
 outputs:
   configured:
     description: "'true' iff a credential resolved and the rewrite was installed."
@@ -64,3 +72,4 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         GIT_HOST: ${{ inputs.host }}
         REQUIRED: ${{ inputs.required }}
+        SCOPE: ${{ inputs.scope }}

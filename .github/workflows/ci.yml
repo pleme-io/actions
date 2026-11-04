@@ -301,6 +301,31 @@ jobs:
           REFUSAL_OUTCOME: ${{ steps.refused.outcome }}
           NEXTEST_BIN: ${{ steps.nix.outputs.nextest-bin }}
 
+  git-credentials-no-sudo:
+    name: git-credentials system scope on a runner with no sudo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Take sudo away
+        shell: bash
+        run: |
+          sudo mv "$(command -v sudo)" /usr/local/sudo.gone
+          ! command -v sudo
+      - id: creds
+        uses: ./git-credentials
+        with:
+          github-token: ${{ github.token }}
+          scope: system
+      - name: The rewrite covers https, ssh and scp, in the global file
+        shell: bash
+        run: |
+          [ "${{ steps.creds.outputs.configured }}" = "true" ]
+          key="$(git config --global --name-only --get-regexp '^url\..*\.insteadof$' | head -1)"
+          git config --global --get-all "$key" | grep -Fx 'ssh://git@github.com/'
+          git config --global --get-all "$key" | grep -Fx 'git@github.com:'
+          git config --global --get-all "$key" | grep -Fx 'https://github.com/'
+          GIT_SSH_COMMAND=false git ls-remote ssh://git@github.com/pleme-io/actions HEAD
+
   exec-arg-budget:
     name: No action inlines more tlisp than exec can carry
     runs-on: ubuntu-latest

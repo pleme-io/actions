@@ -68,17 +68,46 @@
 ;; design: a runner with no extraheader set (a job that never ran
 ;; actions/checkout) makes `--unset-all` exit non-zero, which is not a
 ;; failure of this action.
-(define (gc:configure host token)
+(define (gc:plain-forms host)
+  (list
+    (string-append "https://" host "/")
+    (string-append "ssh://git@" host "/")
+    (string-append "git@" host ":")))
+
+(define (gc:config-prefix scope sudo?)
+  (cond
+    ((and (equal? scope "system") sudo?) (list "sudo" "git" "config" "--system"))
+    (else (list "git" "config" "--global"))))
+
+(define (gc:add-args key plains)
+  (cons
+    (list "--replace-all" key (car plains))
+    (map (lambda (plain) (list "--add" key plain)) (cdr plains))))
+
+(define (gc:ok? statuses)
+  (cond
+    ((null? statuses) #t)
+    ((= (car statuses) 0) (gc:ok? (cdr statuses)))
+    (else #f)))
+
+(define (gc:configure host token scope)
   (let*
     ((url (string-append "https://x-access-token:" token "@" host "/"))
       (key (string-append "url." url ".insteadOf"))
-      (plain (string-append "https://" host "/"))
       (hdr (string-append "http.https://" host "/.extraheader"))
-      ;; Unset FIRST — see the header comment; a surviving extraheader
-      ;; wins by prefix match and silently voids the rewrite.
+      (sudo? (hash:cmd-present? "sudo"))
+      (prefix (gc:config-prefix scope sudo?))
       (_unset (exec-capture "git" "config" "--global" "--unset-all" hdr))
-      (set (exec-capture "git" "config" "--global" key plain)))
-    (= (status-of set) 0)))
+      (_notice
+        (cond
+          ((and (equal? scope "system") (not sudo?))
+            (log-info
+              "git-credentials: no sudo on this runner, so the rewrite is --global; a build user with its own HOME does not read it"))
+          (else #t))))
+    (gc:ok?
+      (map
+        (lambda (args) (status-of (apply exec-capture (append prefix args))))
+        (gc:add-args key (gc:plain-forms host))))))
 
 (define (gc:run)
   (let*
@@ -86,6 +115,7 @@
       (bot (env-get "BOT_PAT" ""))
       (gh (env-get "GITHUB_TOKEN" ""))
       (host (env-get "GIT_HOST" "github.com"))
+      (scope (env-get "SCOPE" "global"))
       (req (equal? (env-get "REQUIRED" "false") "true"))
       (token (gc:pick app (gc:pick bot gh)))
       (which (gc:rung app bot gh)))
@@ -112,7 +142,7 @@
             0)))
       (else
         (cond
-          ((gc:configure host token)
+          ((gc:configure host token scope)
             (log-info
               (string-append
                 "git-credentials: "

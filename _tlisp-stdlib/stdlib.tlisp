@@ -639,8 +639,14 @@
 ;; fixed by this one change.
 ;; Returns the EXIT STATUS so callers can tell a failed regen from a
 ;; successful one — `ensure-gen-lock-fresh-with` depends on this.
+(define (regen-status r)
+  (cond
+    ((not (= (status-of r) 0))
+      (log-error (string-append "gen build stderr: " (string-trim (stderr-of r))))))
+  (status-of r))
+
 (define (regen-gen-lock)
-  (status-of
+  (regen-status
     (exec-capture "nix"
     "shell"
     "nixpkgs#cargo"
