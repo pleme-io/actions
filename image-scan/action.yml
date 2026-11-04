@@ -54,7 +54,7 @@ inputs:
     required: false
     default: ""
   go-reachability:
-    description: "true = judge each Go binary's findings with substrate's go-reachability primitive (github:pleme-io/substrate#go-reachability, the same one mkHardenedImageSet's grype-scan app runs with goReachability): govulncheck -mode=binary reads each flagged binary, and a trivy match it reports as not_affected (symbols not linked) is dropped from the verdict. A stripped binary gives govulncheck no symbols, so its findings stand. Needs local-archive and nix on the runner; any failure fails the scan. The unfiltered trivy JSON is kept as image-scan-trivy-raw.json."
+    description: "true = judge each Go binary's findings with substrate's go-reachability primitive (github:pleme-io/substrate#go-reachability, the same one mkHardenedImageSet's grype-scan app runs with goReachability): govulncheck -mode=binary reads each flagged binary, and a trivy match it reports as not_affected (symbols not linked) is dropped from the verdict. A stripped binary gives govulncheck no symbols, so its findings stand. Installs nix itself, and with no local-archive pulls image-ref to an archive with doca and scans that archive, so the verdict and the judge read the same bytes; any failure fails the scan. The unfiltered trivy JSON is kept as image-scan-trivy-raw.json."
     required: false
     default: "false"
   ignore-file:
@@ -257,13 +257,27 @@ runs:
       # secret and no caller-side change. Harmless when LOCAL_ARCHIVE is
       # set (trivy scans `--input <path>`, never touches a registry, so
       # these credentials are simply unused).
+    - name: Install Nix for the Go reachability judge
+      if: inputs.go-reachability == 'true'
+      uses: pleme-io/actions/nix-setup@main
+
+    - name: Pull the image the Go reachability judge reads
+      if: inputs.go-reachability == 'true' && inputs.local-archive == ''
+      uses: pleme-io/actions/doca@main
+      with:
+        operation: pull
+        ref: ${{ inputs.image-ref }}
+        out: ${{ runner.temp }}/image-scan-pulled.tar
+        user: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.actor || '' }}
+        pass: ${{ startsWith(inputs.image-ref, 'ghcr.io/') && github.token || '' }}
+
     - id: scan
       uses: pleme-io/actions/tatara-script@main
       with:
         script-file: ${{ steps.src.outputs.run-path }}
       env:
         IMAGE_REF: ${{ inputs.image-ref }}
-        LOCAL_ARCHIVE: ${{ inputs.local-archive }}
+        LOCAL_ARCHIVE: ${{ inputs.local-archive || (inputs.go-reachability == 'true' && format('{0}/image-scan-pulled.tar', runner.temp) || '') }}
         FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
         IGNORE_UNFIXED: ${{ inputs.ignore-unfixed }}
         IGNORE_FILE: ${{ inputs.ignore-file }}

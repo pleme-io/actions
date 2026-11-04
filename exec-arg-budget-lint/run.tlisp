@@ -255,7 +255,7 @@
         (print-line
           (string-append
             "::error file=tatara-script/action.yml,title=stdlib marker drift::the first line of "
-            stdlib-path " no longer appears in tatara-script/action.yml, so its refusal of an inline stdlib matches nothing. Update the contains() marker in the 'Refuse the stdlib passed inline' step."))
+            stdlib-path " no longer appears in tatara-script/action.yml, so its warning on an inline stdlib matches nothing. Update the contains() marker in the 'Warn on the stdlib passed inline' step."))
         #f))))
 
 (define (eab:rows manifests stdlib-bytes limit)

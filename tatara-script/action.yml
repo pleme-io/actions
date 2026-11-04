@@ -38,7 +38,7 @@ inputs:
     required: false
     default: ""
   script:
-    description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file). It reaches the runner as one environment variable (131072-byte cap), so it is for short scripts only; a script that carries _tlisp-stdlib/stdlib.tlisp is refused. Use script-file with stdlib: \"true\" instead."
+    description: "Multi-line .tlisp source executed by tatara-script (the entire body of a .tlisp file). It reaches the runner as one environment variable (131072-byte cap), so it is for short scripts only; one over the cap is refused, and one that carries _tlisp-stdlib/stdlib.tlisp runs with a warning. Use script-file with stdlib: \"true\" instead."
     # NOT required: `script-file` above is a documented alternative and takes
     # precedence. Declaring this required made actionlint reject every
     # script-file-only caller ("missing input script"), which is a false
@@ -1225,12 +1225,16 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Refuse the stdlib passed inline
+    - name: Warn on the stdlib passed inline
       if: inputs.script-file == '' && contains(inputs.script, ';; pleme-io · _tlisp-stdlib/stdlib.tlisp')
       shell: bash
       run: |
-        echo "::error title=stdlib passed inline::the script input carries _tlisp-stdlib/stdlib.tlisp. An input reaches the runner as one environment variable, which Linux caps at 131072 bytes, and the stdlib alone is close to that. Pass the unit as script-file and set stdlib: \"true\"."
-        exit 1
+        echo "::warning title=stdlib passed inline::the script input carries _tlisp-stdlib/stdlib.tlisp, usually from an action pinned to a commit that predates script-file. It runs while it fits one environment variable, which Linux caps at 131072 bytes. Move the pin, or pass the unit as script-file and set stdlib: \"true\"."
+
+    - name: Clear the start mark of an earlier call
+      if: inputs.script-file == ''
+      shell: bash
+      run: rm -f "$RUNNER_TEMP/tatara-script-started"
 
     # Install path: try the pre-built binary from the release page first
     # (fast), fall back to a Nix-based install (`nix profile install
@@ -1491,6 +1495,7 @@ runs:
         TATARA_SCRIPT_STDLIB: ${{ inputs.stdlib }}
       run: |
         set -uo pipefail
+        : > "$RUNNER_TEMP/tatara-script-started"
         if [ -n "${TATARA_SCRIPT_FILE:-}" ]; then
           if [ ! -f "$TATARA_SCRIPT_FILE" ]; then
             echo "::error::script-file not found: $TATARA_SCRIPT_FILE" >&2
@@ -1531,3 +1536,11 @@ runs:
         # not one failing run to show it.
         tatara-script "$GITHUB_ACTION_PATH/output-contract.tlisp" || exit 1
         exit $rc
+
+    - name: Name the input that stopped the script from starting
+      if: failure() && steps.exec.outcome == 'failure' && inputs.script-file == ''
+      shell: bash
+      run: |
+        [ -e "$RUNNER_TEMP/tatara-script-started" ] && exit 0
+        echo "::error title=script input too large::the script never started: the script input reaches the runner as one environment variable, which Linux caps at 131072 bytes. Pass the unit as script-file, with stdlib: \"true\" for the shared stdlib."
+        exit 1
