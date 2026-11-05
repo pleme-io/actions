@@ -13,7 +13,7 @@ end
 
 def count_in(line, word)
   fields = split(trim(line), " ")
-  at = index_of(fields, word)
+  at = field_starting(fields, word)
   if at.nil? or at == 0
     0
   else
@@ -21,7 +21,7 @@ def count_in(line, word)
   end
 end
 
-def index_of(xs, word)
+def field_starting(xs, word)
   hits = filter((i) -> starts_with?(xs[i], word), range(0, length(xs)))
   if hits == []
     nil
