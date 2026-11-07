@@ -635,11 +635,29 @@ end
 def first_failing(installables)
   if installables == []
     nil
-  elsif exec_ok?(*verify_argv(first(installables)))
-    first_failing(rest(installables))
   else
-    first(installables)
+    r = exec_capture(*verify_argv(first(installables)))
+    if status_of(r) == 0
+      first_failing(rest(installables))
+    else
+      {installable: first(installables), stderr: stderr_of(r)}
+    end
   end
+end
+
+@doc """
+verify_failure: the line a failed verify build fails with, after nix's own
+error output, so a red gate names its cause in the job log.
+
+    verify_failure({installable: ".#x", stderr: "error: boom"}) #=> "error: boom\n.#x did not build against the new lock; nothing pushed"
+"""
+def verify_failure(failed)
+  join_lines(
+    [
+      blue::trim(failed[:stderr]),
+      "#{failed[:installable]} did not build against the new lock; nothing pushed"
+    ]
+  )
 end
 
 def bump_lock(names, verify, branch, attempt)
@@ -654,7 +672,7 @@ def bump_lock(names, verify, branch, attempt)
       output("changed", "true")
       output("verified", "false")
       output("reason", "verify-failed")
-      fail("#{failed} did not build against the new lock; nothing pushed")
+      fail(verify_failure(failed))
     end
     lock = json_read(read_file("flake.lock"))
     message = bump_message(
