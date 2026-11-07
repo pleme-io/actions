@@ -4,7 +4,7 @@
 
 (define skip-flag (env-get "SKIP_WHEN_NO_SOURCE_CHANGES" "true"))
 
-(define source-paths (env-get "SOURCE_PATHS" "*.rs Cargo.toml Cargo.lock"))
+(define source-paths (env-get "SOURCE_PATHS" "*.rs **/Cargo.toml **/Cargo.lock"))
 
 (define gh-output (env-required "GITHUB_OUTPUT"))
 

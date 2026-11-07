@@ -14,9 +14,9 @@ inputs:
     required: false
     default: "true"
   source-paths:
-    description: "Space-separated git pathspecs the skip-detector inspects for changes since the last tag. Default catches any Rust source (`*.rs`, matched at any depth) + the workspace manifests — repo-agnostic, so a non-engenho workspace's source-only change still triggers a bump. Override for layouts with significant non-`.rs` source (e.g. vendored schemas)."
+    description: "Space-separated git pathspecs the skip-detector inspects for changes since the last tag. Default catches any Rust source (`*.rs`, matched at any depth) + the workspace manifests at ANY depth (`**/Cargo.toml`, `**/Cargo.lock` — a bare `Cargo.toml` is a root-anchored literal in git pathspec terms and never matched a crate manifest, so a nested-manifest-only change silently skipped releases) — repo-agnostic, so a non-engenho workspace's source-only change still triggers a bump. Override for layouts with significant non-`.rs` source (e.g. vendored schemas)."
     required: false
-    default: "*.rs Cargo.toml Cargo.lock"
+    default: "*.rs **/Cargo.toml **/Cargo.lock"
 
 outputs:
   bumped:
