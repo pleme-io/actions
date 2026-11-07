@@ -14,7 +14,7 @@ after its CI job, on a push to `main`:
    `vX.Y.Z`, and pushes the commit and the tag in one atomic push.
 2. **chart**: `pleme-io/actions/helm-publish` packages `deploy/<name>/chart`
    at that tag and pushes it to `oci://ghcr.io/pleme-io/charts`.
-3. **deploy**: `request-deploy` sends a `workflow_dispatch` to
+3. **deploy**: `request-deploy` sends a `repository_dispatch` (`flake-input-update`) to
    `pleme-io/nix`'s `flake-update.yml` with `mode: push` and
    `inputs: <name>`.
 4. In `pleme-io/nix`, `flake-update.yml` runs `flake-bump`: `nix flake update
@@ -33,7 +33,7 @@ nothing: the run for the newer commit releases it after that commit's CI.
 |---|---|---|---|
 | `bump` | the service, a checkout with tags | `bump` (patch, minor, major), `bluefile`, `lock`, `regen` | `released`, `name`, `version`, `tag` |
 | `tag` | the same checkout, after `bump` | `version` (default: the Bluefile's), `branch` | `tag`, `version`, `commit-sha` |
-| `request-deploy` | anywhere | `flake-input`, `consumer-repo`, `consumer-ref`, `workflow`, `token` | `status`, `dispatched` |
+| `request-deploy` | anywhere | `flake-input`, `consumer-repo`, `event`, `token` | `status`, `dispatched` |
 | `flake-bump` | the consumer, a checkout | `flake-inputs`, `verify`, `branch` | `changed`, `verified`, `pushed`, `commit-sha`, `reason` |
 
 `tag` refuses a tag that exists, and a tag not greater than the highest
@@ -49,7 +49,7 @@ lock it would push.
 |---|---|---|
 | release | the fleet App token (`pleme-io/actions/github-token`, contents write) in the checkout | a push made with `GITHUB_TOKEN` starts no workflow, and the release must be visible to the next CI run |
 | chart | `GITHUB_TOKEN` with `packages: write`, or `BOT_PAT` when the token source is pat | the ghcr login of `helm-publish` |
-| deploy | the fleet App token, actions write on `pleme-io/nix` | a `workflow_dispatch` on another repository |
+| deploy | the fleet App token, contents write on `pleme-io/nix` | a `repository_dispatch` needs only contents write; the App holds no actions permission (a mint asking for it answers 422, 2026-11-07) |
 | flake-bump | `pleme-io/nix`'s own App token | the push to nix `main` |
 
 The push to `pleme-io/nix` stays inside nix's own workflow. A service never

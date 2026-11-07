@@ -5,7 +5,7 @@ Four modes, one per step of the canned path. `bump` raises the version in the
 Bluefile's `package(...)` line and regenerates what the Bluefile renders.
 `tag` commits that change, writes an annotated `v<version>` tag, and pushes
 both at once, rebasing and retrying when the branch moved. `request-deploy`
-sends a `workflow_dispatch` to the consumer repository's flake update.
+sends a `repository_dispatch` (`flake-input-update`) to the consumer repository.
 `flake-bump` runs in the consumer: it updates the named flake inputs, builds
 the verify installables, commits, and pushes; when the branch moved it starts
 again from the new head, so a concurrent push is retried, never reported as
@@ -388,20 +388,25 @@ def committer(role)
 end
 
 @doc """
-dispatch_url: the REST endpoint that starts a workflow by dispatch.
+dispatch_url: the REST endpoint of a repository dispatch. It needs only
+`contents: write`, which the fleet App grants; a workflow dispatch needs
+`actions: write`, which the App does not hold (measured 2026-11-07: a mint
+asking for it answers 422).
 
-    dispatch_url("pleme-io/nix", "flake-update.yml") #=> "https://api.github.com/repos/pleme-io/nix/actions/workflows/flake-update.yml/dispatches"
+    dispatch_url("pleme-io/nix") #=> "https://api.github.com/repos/pleme-io/nix/dispatches"
 """
-def dispatch_url(repository, workflow)
-  "https://api.github.com/repos/#{repository}/actions/workflows/#{workflow}/dispatches"
+def dispatch_url(repository)
+  "https://api.github.com/repos/#{repository}/dispatches"
 end
 
 @doc """
-dispatch_body: the dispatch request: the ref to run on, push mode, and the
-flake inputs to bump.
+dispatch_body: the repository dispatch: its event type and the flake inputs
+to bump.
 """
-def dispatch_body(ref, names)
-  json_stringify({ref:, inputs: {mode: "push", inputs: join(names, " ")}})
+def dispatch_body(event, names)
+  json_stringify(
+    {event_type: event, client_payload: {inputs: join(names, " ")}}
+  )
 end
 
 @doc """
@@ -602,7 +607,7 @@ end
 def mode_request_deploy()
   names = words(required("flake-input"))
   repository = input_or("consumer-repo", "pleme-io/nix")
-  workflow = input_or("workflow", "flake-update.yml")
+  event = input_or("event", "flake-input-update")
   body_file = path_join(
     getenv("RUNNER_TEMP", "/tmp"),
     "dispatch-#{to_s(now_ms)}.json"
@@ -610,8 +615,8 @@ def mode_request_deploy()
   r = exec_with_stdin(
     curl_config(required("token")),
     *dispatch_argv(
-      dispatch_url(repository, workflow),
-      dispatch_body(input_or("consumer-ref", "main"), names),
+      dispatch_url(repository),
+      dispatch_body(event, names),
       body_file
     )
   )
@@ -621,7 +626,7 @@ def mode_request_deploy()
     write_stderr(read_file(body_file) rescue "")
     write_stderr(stderr_of(r))
     output("dispatched", "false")
-    fail("#{repository} #{workflow} refused the dispatch (HTTP #{code})")
+    fail("#{repository} refused the #{event} dispatch (HTTP #{code})")
   end
   output("dispatched", "true")
   summary("asked #{repository} to bump #{and_list(names)} (HTTP #{code})")
@@ -825,12 +830,13 @@ test "git commands carry the committer and push branch and tag atomically"
     %w[git push --quiet --atomic origin HEAD:refs/heads/main]
 end
 
-test "the dispatch asks for push mode and keeps the token out of the argv"
-  url = dispatch_url("pleme-io/nix", "flake-update.yml")
-  body = dispatch_body("main", ["rubrica"])
+test "the dispatch is a repository dispatch naming the inputs, and keeps the token out of the argv"
+  url = dispatch_url("pleme-io/nix")
+  body = dispatch_body("flake-input-update", ["rubrica"])
   argv = dispatch_argv(url, body, "/tmp/b")
+  assert url == "https://api.github.com/repos/pleme-io/nix/dispatches"
   assert json_read(body) ==
-    json_read("{\"ref\":\"main\",\"inputs\":{\"mode\":\"push\",\"inputs\":\"rubrica\"}}")
+    json_read("{\"event_type\":\"flake-input-update\",\"client_payload\":{\"inputs\":\"rubrica\"}}")
   assert last(argv) == url
   assert not any?((a) -> contains?(a, "Bearer"), argv)
   assert curl_config("t") == unlines(["header = \"Authorization: Bearer t\""])

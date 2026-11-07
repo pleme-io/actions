@@ -4,7 +4,7 @@ description: >-
   in the Bluefile's package line and regenerates what the Bluefile renders;
   tag commits that, writes an annotated vX.Y.Z tag (refused when it exists or
   is not greater than the highest), and pushes both atomically, rebasing and
-  retrying when the branch moved; request-deploy sends a workflow_dispatch to
+  retrying when the branch moved; request-deploy sends a repository_dispatch to
   the consumer's flake-update.yml for the service's flake input; flake-bump
   runs in the consumer, updates the named inputs, builds the verify
   installables, commits and pushes, starting again from the new head when a
@@ -52,14 +52,10 @@ inputs:
     description: 'request-deploy: the repository whose flake runs the service.'
     required: false
     default: 'pleme-io/nix'
-  consumer-ref:
-    description: 'request-deploy: the ref the consumer''s workflow runs on.'
+  event:
+    description: 'request-deploy: the repository_dispatch event type the consumer listens for (nix: flake-input-update). A repository dispatch needs only contents write; the fleet App holds no actions permission, so a workflow dispatch is refused.'
     required: false
-    default: 'main'
-  workflow:
-    description: 'request-deploy: the consumer''s workflow file.'
-    required: false
-    default: 'flake-update.yml'
+    default: 'flake-input-update'
   flake-inputs:
     description: 'flake-bump: the flake inputs updated, space-separated.'
     required: false
@@ -136,8 +132,7 @@ runs:
         INPUT_BRANCH: ${{ inputs.branch }}
         INPUT_FLAKE_INPUT: ${{ inputs.flake-input }}
         INPUT_CONSUMER_REPO: ${{ inputs.consumer-repo }}
-        INPUT_CONSUMER_REF: ${{ inputs.consumer-ref }}
-        INPUT_WORKFLOW: ${{ inputs.workflow }}
+        INPUT_EVENT: ${{ inputs.event }}
         INPUT_FLAKE_INPUTS: ${{ inputs.flake-inputs }}
         INPUT_VERIFY: ${{ inputs.verify }}
         INPUT_TOKEN: ${{ inputs.token }}
