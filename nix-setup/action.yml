@@ -27,6 +27,11 @@ branding: { icon: 'download', color: 'blue' }
 #                         'sandbox' is 'true'
 #                       `relaxed` exempts ONLY a derivation that opts in via
 #                       `__noChroot`; every other build stays sandboxed.
+#                       Linux only: on macOS the installer leaves the sandbox
+#                       off, and `relaxed` would turn it ON, refusing the
+#                       impure /usr/bin tools darwin builds call
+#                       (`/usr/bin/codesign: Operation not permitted`,
+#                       substrate checks.darwin-signature, run on 5505d85).
 #
 #   github-token        Written to nix.conf as `access-tokens`, so nix's own
 #                       GitHub fetcher can read PRIVATE flake inputs. Without
@@ -162,7 +167,7 @@ runs:
       with:
         github-token: ${{ inputs.github-token || github.token }}
         extra-conf: |
-          sandbox = relaxed
+          ${{ runner.os == 'Linux' && 'sandbox = relaxed' || '' }}
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
           ${{ steps.cache.outcome == 'success' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
           ${{ steps.cache.outcome == 'success' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
@@ -175,7 +180,7 @@ runs:
       shell: bash
       env:
         PLEME_NIX_CONF: |
-          sandbox = relaxed
+          ${{ runner.os == 'Linux' && 'sandbox = relaxed' || '' }}
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
           ${{ steps.cache.outcome == 'success' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
           ${{ steps.cache.outcome == 'success' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
