@@ -13,13 +13,13 @@ inputs:
     required: false
     default: 'github:pleme-io/blue'
   substituters:
-    description: 'Extra substituters, space-separated. Empty falls back to the runner environment SUI_CACHE_URL, which the fleet runner pools export.'
+    description: 'One cache URL in place of the runner SUI_CACHE_URL; passed to nix-setup, which owns the fleet cache.'
     required: false
     default: ''
   trusted-public-keys:
-    description: 'Keys the extra substituters sign with. The defaults are the fleet sui origin and the CI uploader.'
+    description: 'Keys that cache signs with; empty means nix-setup''s fleet defaults.'
     required: false
-    default: 'rio-sui-1:L+8OL041A0ivcB0bglTAhREd0NqAlVRxwS4JbugFEKA= pleme-ci-sui-1:hpt2BYmOZ1bxbmtRlvQhXNCAQnrFUGso/ZLp9yOv/FA='
+    default: ''
   github-token:
     description: 'Token nix uses to fetch private flakes; passed to nix-setup.'
     required: false
@@ -36,9 +36,8 @@ runs:
     - uses: pleme-io/actions/nix-setup@main
       with:
         github-token: ${{ inputs.github-token }}
-        extra-conf: |
-          extra-substituters = ${{ inputs.substituters || env.SUI_CACHE_URL }}
-          extra-trusted-public-keys = ${{ inputs.trusted-public-keys }}
+        substituters: ${{ inputs.substituters }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
     - id: install
       shell: bash
       env:

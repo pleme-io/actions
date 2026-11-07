@@ -301,6 +301,32 @@ jobs:
           REFUSAL_OUTCOME: ${{ steps.refused.outcome }}
           NEXTEST_BIN: ${{ steps.nix.outputs.nextest-bin }}
 
+  smoke-nix-setup-cache:
+    name: Smoke — nix-setup adds a cache that answers, never one that does not
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - url: http://127.0.0.1:9
+            want: ""
+          - url: https://nix-community.cachix.org
+            want: https://nix-community.cachix.org
+    steps:
+      - uses: actions/checkout@v7
+      - id: nix
+        uses: ./nix-setup
+        with:
+          substituters: ${{ matrix.url }}
+          trusted-public-keys: nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - shell: bash
+        env:
+          GOT: ${{ steps.nix.outputs.cache }}
+          WANT: ${{ matrix.want }}
+          URL: ${{ matrix.url }}
+        run: |
+          test "$GOT" = "$WANT"
+          test "$(nix config show substituters | grep -oF "$URL" | head -1)" = "$WANT"
+
   git-credentials-no-sudo:
     name: git-credentials system scope on a runner with no sudo
     runs-on: ubuntu-latest

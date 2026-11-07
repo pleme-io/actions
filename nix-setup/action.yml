@@ -1,7 +1,8 @@
 name: 'pleme-io · nix-setup'
 description: >-
   Install Nix on the runner with the fleet nix.conf: `sandbox = relaxed`,
-  `access-tokens` for github.com when a token is passed, and any extra lines.
+  `access-tokens` for github.com when a token is passed, the fleet sui cache
+  as a substituter when it answers, and any extra lines.
   The one Nix install step for every pleme-io workflow and action, so the
   installer pin and the nix.conf live in one place.
 branding: { icon: 'download', color: 'blue' }
@@ -57,6 +58,19 @@ branding: { icon: 'download', color: 'blue' }
 #                       path. The out-link is a GC root for as long as the job
 #                       runs, and nothing outside RUNNER_TEMP changes.
 #
+#   cache               The fleet sui cache, pulled by every job that installs
+#                       Nix here. The fleet runner pools export SUI_CACHE_URL;
+#                       `substituters` names another. Until 2026-11-07 only
+#                       blue-setup added it, so every other Nix job (cargo-ci,
+#                       cargo-auto-release, gen-spec, nix-flake-check) built
+#                       from cache.nixos.org and source. The URL is probed
+#                       first (`/nix-cache-info`, 3 s): a cache that does not
+#                       answer is left out of nix.conf, because a dead
+#                       substituter in it costs a connect timeout per path
+#                       (blue-setup measured 8 min with sui down). When it is
+#                       in, `connect-timeout = 5` and `fallback = true` bound a
+#                       cache that dies mid-job. `cache: "false"` turns it off.
+#
 # TIER-HONEST. This is still a per-job install: theory/NIX-HARDENING.md §VI
 # wants Nix baked into the runner image, and runtime-install-lint flags a bare
 # nix-installer-action in a consumer's workflow for that reason. This action
@@ -80,6 +94,23 @@ inputs:
       input here.
     required: false
     default: ""
+  cache:
+    description: >-
+      "true" adds the fleet sui cache (SUI_CACHE_URL, or `substituters`) as an
+      extra substituter when its /nix-cache-info answers within 3 s; "false"
+      leaves nix.conf on cache.nixos.org alone.
+    required: false
+    default: "true"
+  substituters:
+    description: >-
+      One cache URL to pull from in place of the runner's SUI_CACHE_URL.
+      Probed like it; empty means SUI_CACHE_URL.
+    required: false
+    default: ""
+  trusted-public-keys:
+    description: 'Keys the cache signs with. Empty means the fleet sui origin and the CI uploader.'
+    required: false
+    default: ''
   nextest:
     description: >-
       "true" also realises github:pleme-io/substrate#cargo-nextest (the build
@@ -92,6 +123,9 @@ inputs:
     default: "false"
 
 outputs:
+  cache:
+    description: 'The cache URL added as a substituter, or empty when none was (off, unset, or it did not answer).'
+    value: ${{ steps.cache.outcome == 'success' && steps.cache.outputs.url || '' }}
   nextest-bin:
     description: >-
       Absolute path of the cargo-nextest binary when `nextest` is "true", empty
@@ -111,6 +145,18 @@ runs:
         echo "::error title=nix-setup::nextest must be \"true\" or \"false\", got \"${NEXTEST}\""
         exit 1
 
+    - name: Probe the fleet cache
+      id: cache
+      if: inputs.cache == 'true' && (inputs.substituters || env.SUI_CACHE_URL) != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        URL: ${{ inputs.substituters || env.SUI_CACHE_URL }}
+        KEYS: ${{ inputs.trusted-public-keys || 'rio-sui-1:L+8OL041A0ivcB0bglTAhREd0NqAlVRxwS4JbugFEKA= pleme-ci-sui-1:hpt2BYmOZ1bxbmtRlvQhXNCAQnrFUGso/ZLp9yOv/FA=' }}
+      run: |
+        printf 'url=%s\nkeys=%s\n' "$URL" "$KEYS" >> "$GITHUB_OUTPUT"
+        curl -fsS -m 3 -o /dev/null "${URL%/}/nix-cache-info"
+
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       with:
@@ -118,6 +164,10 @@ runs:
         extra-conf: |
           sandbox = relaxed
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+          ${{ steps.cache.outcome == 'success' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
+          ${{ steps.cache.outcome == 'success' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
+          ${{ steps.cache.outcome == 'success' && 'connect-timeout = 5' || '' }}
+          ${{ steps.cache.outcome == 'success' && 'fallback = true' || '' }}
           ${{ inputs.extra-conf }}
 
     - name: Carry the fleet nix.conf to a runner whose Nix was already installed
@@ -127,6 +177,10 @@ runs:
         PLEME_NIX_CONF: |
           sandbox = relaxed
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
+          ${{ steps.cache.outcome == 'success' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
+          ${{ steps.cache.outcome == 'success' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
+          ${{ steps.cache.outcome == 'success' && 'connect-timeout = 5' || '' }}
+          ${{ steps.cache.outcome == 'success' && 'fallback = true' || '' }}
           ${{ inputs.extra-conf }}
       run: printf 'NIX_CONFIG<<PLEME_NIX_CONF_EOF\n%s\nPLEME_NIX_CONF_EOF\n' "$PLEME_NIX_CONF" >> "$GITHUB_ENV"
 
