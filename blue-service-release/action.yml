@@ -1,0 +1,144 @@
+name: 'pleme-io · blue-service-release'
+description: >-
+  Release a blue service and ask the fleet to run it. bump raises the version
+  in the Bluefile's package line and regenerates what the Bluefile renders;
+  tag commits that, writes an annotated vX.Y.Z tag (refused when it exists or
+  is not greater than the highest), and pushes both atomically, rebasing and
+  retrying when the branch moved; request-deploy sends a workflow_dispatch to
+  the consumer's flake-update.yml for the service's flake input; flake-bump
+  runs in the consumer, updates the named inputs, builds the verify
+  installables, commits and pushes, starting again from the new head when a
+  concurrent push moved the branch. bump, tag and flake-bump run in a checkout
+  whose credentials can push.
+branding: { icon: 'send', color: 'blue' }
+
+inputs:
+  mode:
+    description: 'bump | tag | request-deploy | flake-bump.'
+    required: true
+  bump:
+    description: 'bump: the part raised, patch, minor or major.'
+    required: false
+    default: 'patch'
+  bluefile:
+    description: 'bump, tag: the Bluefile holding package("name", "X.Y.Z").'
+    required: false
+    default: 'Bluefile'
+  lock:
+    description: 'bump: true runs `blue lock .` after the version changes.'
+    required: false
+    default: 'true'
+  regen:
+    description: 'bump: an installable `nix run` regenerates the rendered tree with, e.g. .#regen. Empty: none.'
+    required: false
+    default: '.#regen'
+  expect-head:
+    description: 'bump: the commit this run was started for, e.g. github.sha. When the checked-out head differs, a later run releases it and this one reports released=false. Empty: no check.'
+    required: false
+    default: ''
+  version:
+    description: 'tag: the version tagged. Empty: the Bluefile''s.'
+    required: false
+    default: ''
+  branch:
+    description: 'tag, flake-bump: the branch pushed to.'
+    required: false
+    default: 'main'
+  flake-input:
+    description: 'request-deploy: the consumer''s flake input names, space-separated, e.g. rubrica.'
+    required: false
+    default: ''
+  consumer-repo:
+    description: 'request-deploy: the repository whose flake runs the service.'
+    required: false
+    default: 'pleme-io/nix'
+  consumer-ref:
+    description: 'request-deploy: the ref the consumer''s workflow runs on.'
+    required: false
+    default: 'main'
+  workflow:
+    description: 'request-deploy: the consumer''s workflow file.'
+    required: false
+    default: 'flake-update.yml'
+  flake-inputs:
+    description: 'flake-bump: the flake inputs updated, space-separated.'
+    required: false
+    default: ''
+  verify:
+    description: 'flake-bump: installables built against the new lock before it is pushed, space-separated.'
+    required: false
+    default: ''
+  token:
+    description: 'request-deploy: a token with actions write on consumer-repo. Also handed to blue-setup.'
+    required: false
+    default: ''
+  blue:
+    description: 'The blue flake blue-setup installs when blue is not on PATH.'
+    required: false
+    default: 'github:pleme-io/blue'
+
+outputs:
+  released:
+    description: 'bump: true when it bumped, false when HEAD is already a release.'
+    value: ${{ steps.run.outputs.released }}
+  name:
+    description: 'bump: the package name.'
+    value: ${{ steps.run.outputs.name }}
+  version:
+    description: 'bump, tag: the version.'
+    value: ${{ steps.run.outputs.version }}
+  tag:
+    description: 'bump, tag: the tag, vX.Y.Z.'
+    value: ${{ steps.run.outputs.tag }}
+  commit-sha:
+    description: 'tag, flake-bump: the commit pushed.'
+    value: ${{ steps.run.outputs.commit-sha }}
+  status:
+    description: 'request-deploy: the HTTP status GitHub answered.'
+    value: ${{ steps.run.outputs.status }}
+  dispatched:
+    description: 'request-deploy: true when GitHub accepted the dispatch.'
+    value: ${{ steps.run.outputs.dispatched }}
+  changed:
+    description: 'flake-bump: true when flake.lock changed.'
+    value: ${{ steps.run.outputs.changed }}
+  verified:
+    description: 'flake-bump: true when every verify installable built.'
+    value: ${{ steps.run.outputs.verified }}
+  pushed:
+    description: 'flake-bump: true when the lock commit reached the branch.'
+    value: ${{ steps.run.outputs.pushed }}
+  reason:
+    description: 'flake-bump: unchanged | published | verify-failed | push-rejected.'
+    value: ${{ steps.run.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      run: if command -v blue >/dev/null; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.found != 'true'
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        blue: ${{ inputs.blue }}
+        github-token: ${{ inputs.token }}
+    - id: run
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_BUMP: ${{ inputs.bump }}
+        INPUT_BLUEFILE: ${{ inputs.bluefile }}
+        INPUT_LOCK: ${{ inputs.lock }}
+        INPUT_REGEN: ${{ inputs.regen }}
+        INPUT_EXPECT_HEAD: ${{ inputs.expect-head }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BRANCH: ${{ inputs.branch }}
+        INPUT_FLAKE_INPUT: ${{ inputs.flake-input }}
+        INPUT_CONSUMER_REPO: ${{ inputs.consumer-repo }}
+        INPUT_CONSUMER_REF: ${{ inputs.consumer-ref }}
+        INPUT_WORKFLOW: ${{ inputs.workflow }}
+        INPUT_FLAKE_INPUTS: ${{ inputs.flake-inputs }}
+        INPUT_VERIFY: ${{ inputs.verify }}
+        INPUT_TOKEN: ${{ inputs.token }}
+      run: blue run "${{ github.action_path }}/run.b"

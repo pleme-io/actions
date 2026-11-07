@@ -446,6 +446,7 @@ jobs:
           grep -Fq 'FAIL row.buried@walker' <<< "$NAMES"
           grep -Fq 'test tests::second ... FAILED' <<< "$NAMES"
       - run: blue test nix-flake-check/run.b
+      - run: blue test blue-service-release/run.b
       - id: only
         uses: ./nix-flake-check
         with:
