@@ -7,9 +7,9 @@
 #
 # actions                384
 # routing tatara-script  357
-# distinct keys written  367
+# distinct keys written  368
 # dynamic key expansions 8
-# inner union (generated)375
+# inner union (generated)376
 #
 # The count of keys CURRENTLY declared, and any declared with no
 # discoverable writer, are deliberately absent: both are properties of
@@ -319,7 +319,7 @@ replicate-run	tatara-script	run.tlisp	1	1
 restic-backup	tatara-script	run.tlisp	1	1
 retool-workflow-run	tatara-script	run.tlisp	1	1
 runner-policy	tatara-script	run.tlisp	0	0
-runner-resolve	tatara-script	run.tlisp	2	2
+runner-resolve	tatara-script	run.tlisp	3	3
 runtime-install-lint	tatara-script	run.tlisp	3	3
 rust-cross-build	tatara-script	run.tlisp	0	0
 rust-gate	tatara-script	run.tlisp	4	4
@@ -369,7 +369,7 @@ syft-attest	tatara-script	run.tlisp	1	1
 tailscale-auth	tatara-script	run.tlisp	1	1
 tameshi-attest	tatara-script	run.tlisp	6	6
 tanka-apply	tatara-script	run.tlisp	1	1
-tatara-script	own-runner	-	0	375
+tatara-script	own-runner	-	0	376
 teams-notify	tatara-script	run.tlisp	1	1
 telegram-notify	tatara-script	run.tlisp	1	1
 temporal-trigger	tatara-script	run.tlisp	1	1
@@ -899,6 +899,7 @@ renovate-trigger	triggered	static	declared	forwarded
 replicate-run	prediction-id	static	declared	forwarded
 restic-backup	snapshot-id	static	declared	forwarded
 retool-workflow-run	run-id	static	declared	forwarded
+runner-resolve	overflow	static	declared	forwarded
 runner-resolve	provenance	static	declared	forwarded
 runner-resolve	runner	static	declared	forwarded
 runtime-install-lint	baselined	static	declared	forwarded

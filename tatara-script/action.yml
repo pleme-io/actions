@@ -698,6 +698,9 @@ outputs:
   outputs:
     description: "Forwarded (key: outputs) — restored/built store-path list"
     value: ${{ steps.exec.outputs.outputs }}
+  overflow:
+    description: "Forwarded from the script's GITHUB_OUTPUT (key: overflow)"
+    value: ${{ steps.exec.outputs.overflow }}
   page-id:
     description: "Forwarded (key: page-id) — written by 3 action dir(s): confluence-page-create, notion-db-row-add, notion-page-create"
     value: ${{ steps.exec.outputs.page-id }}
