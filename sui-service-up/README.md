@@ -44,7 +44,7 @@ steps:
 This verb does **not** own daemon lifecycle; the daemon is an external service (a rio cluster app or a job-scoped sidecar). It resolves config, health-checks the endpoint, and exports the backend profile.
 
 - **now**: config resolution, the `never-touch-disk` structural predicate, endpoint export, and UDS-existence health-check.
-- **LiveTODO** (SUPER-CACHE-CI.md rows 4/5/7): a live `connect` to a Postgres/Redis daemon and TCP `.svc:port` liveness — `PgStore`/`RedisBackend` are unwritten and `sui-daemon-client` is a library, not a ping CLI. `mode: connect` logs a `pending-super-cache-ci` note; `require-up: true` against an unconfirmable endpoint fails loud rather than faking green.
+- **LiveTODO**: a live `connect` to a Postgres/Redis daemon and TCP `.svc:port` liveness — `PgStore`/`RedisBackend` are unwritten and `sui-daemon-client` is a library, not a ping CLI. `mode: connect` logs a `pending-super-cache-ci` note; `require-up: true` against an unconfirmable endpoint fails loud rather than faking green.
 
 ## Architecture
 

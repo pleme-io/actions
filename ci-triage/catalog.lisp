@@ -137,8 +137,8 @@
     :cause "A third-party job-time Nix bootstrap that the ARC runner image does
             not satisfy — missing xz, no nix daemon socket, stack hard limit
             below what it wants. Pinned to @main, i.e. unpinned."
-    :remedy "Bake the build environment into the runner image per
-             NIX-HARDENING §VI rather than installing it per job. Tracked debt:
+    :remedy "Bake the build environment into the runner image
+             rather than installing it per job. Tracked debt:
              runtime-install-lint's baseline (68 entries)."
     :tier "unfixed — this is the graduation campaign, not a patch."
     :note "The daemon-socket line ALSO appears inside a non-fatal

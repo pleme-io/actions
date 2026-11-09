@@ -1662,7 +1662,7 @@
   (http-200? (string-append "https://cache.nixos.org/" (supercache:store-hash path) ".narinfo")))
 
 ;; The honest structural never-touch-DURABLE-disk predicate
-;; (SUPER-CACHE-CI.md §III): true ONLY when the store is Postgres AND the
+;; true ONLY when the store is Postgres AND the
 ;; cache is Redis AND the sandbox is tmpfs. A COMPUTED predicate, never a
 ;; claimed constant — ephemeral/graphstore/local/disk ⇒ #f. Tier-honesty
 ;; is CI-caught here, not prose.

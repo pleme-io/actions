@@ -9,12 +9,12 @@
 ;;
 ;; TIER-HONEST. This verb does NOT launch or own daemon lifecycle — the
 ;; daemon is an external service (a rio cluster app or a job-scoped
-;; sidecar, SUPER-CACHE-CI.md §VII). It RESOLVES the endpoint + backend
+;; sidecar). It RESOLVES the endpoint + backend
 ;; profile, HEALTH-CHECKS the endpoint, and EXPORTS both. Two modes pick
 ;; the DEFAULT backend profile the action reports (explicit inputs
 ;; override):
 ;;   ephemeral  → graphstore / local / disk   (the now(disk) profile —
-;;                SUPER-CACHE-CI.md M0; never-touch-disk = false)
+;;                M0; never-touch-disk = false)
 ;;   connect    → postgres  / redis / tmpfs   (the never-touch-disk
 ;;                destination — rows 4/5/7 are LiveTODO: PgStore +
 ;;                RedisBackend unwritten; a live Pg/Redis connect is not

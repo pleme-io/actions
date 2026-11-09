@@ -9,7 +9,7 @@
 ;;
 ;; ── TIER-HONEST placement note ──────────────────────────────────────
 ;; The CANONICAL catalog home is `repo-forge/pleme-actions-catalog.lisp`
-;; feeding arch-synthesizer's `Action` domain (CONSTRUCTIVE-ACTIONS.md).
+;; feeding arch-synthesizer's `Action` domain.
 ;; This file is the SUITE SEED committed alongside the actions it
 ;; describes; folding it into the canonical catalog + the Action-domain
 ;; proofs is a NAMED LiveTODO, because these are tatara-script (run.tlisp)

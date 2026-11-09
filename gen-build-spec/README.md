@@ -26,8 +26,8 @@ pipeline — it produces the `spec-path` + `spec-hash` that the tiered
 
 ## Tier-honesty
 
-- **`lang=cargo` is the NOW path** — `gen-cargo` is conquered (SUPER-CACHE-CI.md
-  ledger row 9), so a real `gen build .` runs and the stale gate is enforced.
+- **`lang=cargo` is the NOW path** — `gen-cargo` is conquered
+  (ledger row 9), so a real `gen build .` runs and the stale gate is enforced.
 - **`lang ∈ {npm,pip,gomod}` is a LiveTODO** (ledger row 10) — adapters
   scaffolded, interpreters designed. Reported `regenerated=false reason=lang-livetodo`,
   never faked.
