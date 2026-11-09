@@ -58,7 +58,7 @@ runs:
       uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-edit
-      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # Nix-installed, not `cargo install` --
       # exact-pinned to nixos-24.05's cargo-edit version rather than a
       # hand-pinned 0.13.6 (that version pin existed only to dodge a
       # manifest-parse regression in 0.13.10; the nixos-24.05 channel

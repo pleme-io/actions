@@ -20,7 +20,7 @@
 ;; misdiagnosis above was manufactured (cf. kotae's four non-identical answers).
 
 ;; Each entry is (id pattern). A plist/list-of-lists rather than a map: the
-;; tatara-lisp surface has no map and no vector (theory/TATARA-LISP-SURFACE.md).
+;; tatara-lisp surface has no map and no vector.
 (define signatures
   (list
     (list "syft-install-not-writable"

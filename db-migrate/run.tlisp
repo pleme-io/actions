@@ -13,7 +13,7 @@
 
 (define eco (detect))
 
-;; Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+;; Nix-installed, not `cargo install` --
 ;; exact-pinned to nixos-24.05, split out of the "rust" command string
 ;; below since sqlx-cli no longer needs to install inside that same
 ;; shell invocation. The "Install Nix" step in action.yml already wired

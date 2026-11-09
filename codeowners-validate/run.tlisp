@@ -12,8 +12,8 @@
     (append-output "unowned-count=0")
     (exit 1)))
 
-;; Nix-installed, not runtime `go install ...@latest` (theory/NIX-HARDENING.md
-;; §VI) -- the old install target never actually resolved (upstream's go.mod
+;; Nix-installed, not runtime `go install ...@latest` --
+;; the old install target never actually resolved (upstream's go.mod
 ;; has never declared a `/v2` module suffix at any released tag) and its
 ;; trailing `2>/dev/null || true` silently swallowed that failure. Exact-
 ;; pinned to v0.7.4 via hardened-images' own `codeownersValidatorPkg`

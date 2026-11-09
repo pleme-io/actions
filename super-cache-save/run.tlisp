@@ -1,8 +1,8 @@
 ;; super-cache-save/run.tlisp — persist a build's outputs to the durable
 ;; super-cache tiers, WRITE-IF-ABSENT, content-addressed, NO lock.
-;; Canonical doctrine: theory/SUPER-CACHE-CI.md §II.3 (idempotent
+;; Idempotent
 ;; write-if-absent keyed by the content address — the
-;; eliminate-the-shared-cell pattern; concurrent-runner coherence is free).
+;; eliminate-the-shared-cell pattern; concurrent-runner coherence is free.
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
 ;;   append-output, log-info/log-error, path-exists?, write-file,

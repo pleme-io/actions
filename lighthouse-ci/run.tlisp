@@ -4,8 +4,8 @@
 
 (define threshold (env-get "SCORE_THRESHOLD" "90"))
 
-;; Nix-installed, not runtime-`npm install -g`'d (theory/NIX-HARDENING.md
-;; §VI, the org-wide no-imperative-install-at-job-time rule). `@lhci/cli`
+;; Nix-installed, not runtime-`npm install -g`'d (the
+;; org-wide no-imperative-install-at-job-time rule). `@lhci/cli`
 ;; is built as `lhciCli` in pleme-io/hardened-images (a plain
 ;; `buildNpmPackage`, Chromium wired to `pkgs.chromium` via `CHROME_PATH`)
 ;; rather than fetched from a floating npm dist-tag at job time. `nix

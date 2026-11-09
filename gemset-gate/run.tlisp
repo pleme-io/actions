@@ -1,9 +1,6 @@
 ;; gemset-gate/run.tlisp — tie gemset.nix to Gemfile.lock, the way
 ;; Cargo.gen.lock is tied to Cargo.lock.
 ;;
-;; Rationale, receipts and the rejected alternatives:
-;; theory/CONSTRUCTIVE-ACTIONS.md §0.3e. In brief:
-;;
 ;; Measured 2026-08-14: no action in the catalog referenced `gemset.nix` or
 ;; `Gemfile.lock`, so a Ruby repo could release with a gemset.nix naming a gem
 ;; set its Gemfile.lock no longer names and nix would build the STALE half.

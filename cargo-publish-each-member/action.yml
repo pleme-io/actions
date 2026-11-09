@@ -42,7 +42,7 @@ runs:
       uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-edit
-      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # Nix-installed, not `cargo install` --
       # exact-pinned to nixos-24.05's cargo-edit version rather than a
       # hand-pinned crates.io version. See substrate cargo-bump for the
       # full rationale.

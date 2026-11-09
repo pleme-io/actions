@@ -11,10 +11,6 @@ minutes of merge.
 > new input on an existing flow in
 > [`pleme-io/substrate/.github/workflows`](https://github.com/pleme-io/substrate/tree/main/.github/workflows).
 > Extending compounds to every current caller; authoring only pays the next one.
-> The ladder, the four artifact classes and their homes:
-> [`theory/PIPELINE-DELIVERY.md`](https://github.com/pleme-io/theory/blob/main/PIPELINE-DELIVERY.md).
-> What an action's body may contain:
-> [`CONSTRUCTIVE-ACTIONS.md`](https://github.com/pleme-io/theory/blob/main/CONSTRUCTIVE-ACTIONS.md) §0.
 
 ## TL;DR — add a new action in 5 minutes
 

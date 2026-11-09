@@ -16,7 +16,7 @@ outputs:
 runs:
   using: composite
   steps:
-    # No runtime `npm install -g` (theory/NIX-HARDENING.md §VI) -- lhci is
+    # No runtime `npm install -g` -- lhci is
     # fetched via Nix's own hash-verified store mechanism (run.tlisp's own
     # `nix profile install`). This step only sets up Nix itself on the
     # runner.

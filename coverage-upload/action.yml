@@ -32,7 +32,7 @@ runs:
     - name: Install tarpaulin (if Cargo.toml)
       if: hashFiles('Cargo.toml') != ''
       continue-on-error: true
-      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # Nix-installed, not `cargo install` --
       # exact-pinned to nixos-24.05.
       uses: pleme-io/actions/nix-tool@main
       with:

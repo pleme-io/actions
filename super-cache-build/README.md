@@ -4,8 +4,7 @@
 against the tiered super-cache (RAM eval → tmpfs sandbox → DB store),
 keyed by the gen build-spec. Skips the derive entirely on a restore cache
 hit. Part of the default CI-authoring vocabulary for the sui-service
-super-cache stack — canonical doctrine:
-[`theory/SUPER-CACHE-CI.md`](https://github.com/pleme-io/theory/blob/main/SUPER-CACHE-CI.md).
+super-cache stack.
 
 ## Where it sits in the pipeline
 

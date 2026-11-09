@@ -1,6 +1,5 @@
 ;; pangea-grafana-converge/run.tlisp — the MODEL-2 (remote-reconcile)
-;; executor of the FedRAMP observability delivery pipeline
-;; (theory/FEDRAMP-OBSERVABILITY-DELIVERY.md, step 8b).
+;; executor of the FedRAMP observability delivery pipeline (step 8b).
 ;;
 ;; Model 2 keeps the control loop on OUR side: the remote environment
 ;; exposes an INBOUND-ONLY Grafana REST endpoint + a scoped SA token, and

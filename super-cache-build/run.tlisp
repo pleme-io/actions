@@ -1,7 +1,6 @@
 ;; super-cache-build/run.tlisp — THE CORE super-cache-ci verb: build a
 ;; derivation via the sui service against the tiered super-cache, keyed
-;; by the gen build-spec. Canonical doctrine: theory/SUPER-CACHE-CI.md
-;; (§II.4 gen -> sui, §III never-touch-disk, ledger rows 1/8/9).
+;; by the gen build-spec.
 ;;
 ;; Composes the sibling verbs at the workflow layer:
 ;;   sui-service-up (ENDPOINT + store/cache/sandbox profile)

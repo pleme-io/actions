@@ -76,7 +76,7 @@ branding: { icon: 'download', color: 'blue' }
 #                       in, `connect-timeout = 5` and `fallback = true` bound a
 #                       cache that dies mid-job. `cache: "false"` turns it off.
 #
-# TIER-HONEST. This is still a per-job install: theory/NIX-HARDENING.md §VI
+# TIER-HONEST. This is still a per-job install: the hardening rule
 # wants Nix baked into the runner image, and runtime-install-lint flags a bare
 # nix-installer-action in a consumer's workflow for that reason. This action
 # does not satisfy that rule; it makes the eventual swap one edit instead of

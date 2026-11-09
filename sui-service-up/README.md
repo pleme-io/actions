@@ -4,7 +4,6 @@
 
 **Category**: `super-cache-ci` — the default CI-authoring vocabulary for the sui-service stack
 **Backend**: tatara-lisp (`run.tlisp` + `_tlisp-stdlib`)
-**Doctrine**: [`theory/SUPER-CACHE-CI.md`](https://github.com/pleme-io/theory/blob/main/SUPER-CACHE-CI.md)
 
 ## 30-second quickstart
 

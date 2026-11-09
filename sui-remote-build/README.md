@@ -4,9 +4,7 @@
 (Remote Execution API) spot worker over the sui daemon (RAM eval → tmpfs
 sandbox → DB store), keyed by the gen build-spec; on no worker, **fall
 back to the correct local daemon-node build**. Part of the default
-CI-authoring vocabulary for the sui-service super-cache stack — canonical
-doctrine:
-[`theory/SUPER-CACHE-CI.md`](https://github.com/pleme-io/theory/blob/main/SUPER-CACHE-CI.md).
+CI-authoring vocabulary for the sui-service super-cache stack.
 
 ## Where it sits in the pipeline
 

@@ -1535,9 +1535,9 @@
 ;; super-cache-ci — sui service + tiered-cache helpers
 ;; ────────────────────────────────────────────────────────────────
 ;; Shared across sui-service-up / super-cache-restore / super-cache-save
-;; (the ≥2-consumer rule — Pillar 12). Canonical doctrine:
-;; theory/SUPER-CACHE-CI.md. TIER-HONEST: the daemon-connected tiered
-;; path (Redis L1 → Postgres L2, SUPER-CACHE-CI.md §II.2) is a LiveTODO
+;; (the ≥2-consumer rule — Pillar 12).
+;; TIER-HONEST: the daemon-connected tiered
+;; path (Redis L1 → Postgres L2) is a LiveTODO
 ;; behind sui's SHIPPED traits — `Store` (sui-store/src/traits.rs:236)
 ;; and `StorageBackend` (sui-cache/src/storage/mod.rs:27). The now-path
 ;; helpers below cover (a) service config resolution + endpoint health,

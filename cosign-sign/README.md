@@ -1,8 +1,7 @@
 # pleme-io · cosign-sign
 
 Sign an OCI image with [sigstore/cosign](https://github.com/sigstore/cosign).
-The **L-sign** layer of the super-cache-ci per-derivation security stack
-(theory/SUPER-CACHE-CI-SECURITY.md).
+The **L-sign** layer of the super-cache-ci per-derivation security stack.
 
 - **Keyless by default** — Fulcio short-lived cert + Rekor transparency via
   the runner's ambient OIDC token (`id-token: write` required).

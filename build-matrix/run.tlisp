@@ -1,6 +1,6 @@
 ;; build-matrix/run.tlisp — enumerate a flake's colon-triple image attrs
 ;; (dockerImage:<arch>:<svc>) and emit the GitHub Actions image×arch build
-;; matrix. Step 2 of the super-cache-ci graph job (theory/SUPER-CACHE-CI.md):
+;; matrix. Step 2 of the super-cache-ci graph job:
 ;; gen-build-spec gates spec freshness, build-matrix fans the fresh spec out
 ;; across every (service, arch) the flake actually exposes.
 ;;

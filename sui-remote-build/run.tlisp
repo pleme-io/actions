@@ -1,8 +1,6 @@
 ;; sui-remote-build/run.tlisp — BUILD-job remote-execution verb. Dispatch
 ;; a derivation to a REAPI (Remote Execution API) spot worker over the sui
 ;; daemon; on no worker, fall back to the correct local daemon-node build.
-;; Canonical doctrine: theory/SUPER-CACHE-CI.md (§II.4 gen -> sui,
-;; §III never-touch-disk, ledger rows 1/7).
 ;;
 ;; Where it sits in the pipeline (build job):
 ;;   sui-service-up -> gen-build-spec -> super-cache-restore

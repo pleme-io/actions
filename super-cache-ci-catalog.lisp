@@ -1,5 +1,5 @@
 ;; super-cache-ci-catalog.lisp — the typed catalog SEED for the
-;; super-cache-ci action vocabulary (theory/SUPER-CACHE-CI.md).
+;; super-cache-ci action vocabulary.
 ;;
 ;; Each (defaction …) is the operator authoring surface for one verb in
 ;; the default CI-authoring language for the sui-service stack. The field

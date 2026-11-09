@@ -104,5 +104,4 @@ arch, no endpoint needed):
 `bigorna` is the **entry** verb of the super-cache-ci delivery leg — it sets
 up the builder that the `nix-image` / `ghcr-publish` / cache verbs then use,
 and its cache front is the buildx face of the same `sui` tiered store the
-`super-cache-restore` / `super-cache-save` verbs speak. See
-`theory/SUPER-CACHE-CI.md`.
+`super-cache-restore` / `super-cache-save` verbs speak.

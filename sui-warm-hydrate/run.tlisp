@@ -1,8 +1,6 @@
 ;; sui-warm-hydrate/run.tlisp — GRAPH-job warm verb. Pre-load the sui
 ;; daemon's tiered super-cache with the fan-out's content keys BEFORE the
 ;; build matrix explodes, so every parallel build job starts warm.
-;; Canonical doctrine: theory/SUPER-CACHE-CI.md (§II.2 tiered store,
-;; §II.3 the warm resolver).
 ;;
 ;; Where it sits in the pipeline (graph job):
 ;;   gen-build-spec (SPEC_PATHS) -> build-matrix (image x arch)

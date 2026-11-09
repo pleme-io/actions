@@ -1,6 +1,6 @@
 ;; super-cache-restore/run.tlisp — probe the tiered super-cache for a
-;; build's outputs (the WARM path). Canonical doctrine:
-;; theory/SUPER-CACHE-CI.md §II.3 (the tiered resolver).
+;; build's outputs (the WARM path) through
+;; the tiered resolver.
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
 ;;   append-output, log-info, read-file, string-trim,

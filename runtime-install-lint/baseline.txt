@@ -1,4 +1,4 @@
-# Tracked runtime-install debt (theory/NIX-HARDENING.md §VI).
+# Tracked runtime-install debt.
 #
 # 2026-08-01: this file previously read "Empty as of 2026-07-22 -- all 23
 # violations found in the initial catalog sweep are purged" and called itself

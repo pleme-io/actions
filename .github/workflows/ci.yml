@@ -123,7 +123,7 @@ jobs:
           fail-on-violation: "true"
 
   enforce-no-runtime-install:
-    name: Enforce hard rule -- no runtime tool installation (theory/NIX-HARDENING.md)
+    name: Enforce hard rule -- no runtime tool installation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

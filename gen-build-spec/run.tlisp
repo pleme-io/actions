@@ -1,9 +1,8 @@
 ;; gen-build-spec/run.tlisp — emit the typed *.build-spec.json for a repo
 ;; via `gen build .` and enforce the GEN-TYPED-SPEC-CONTRACT stale gate
 ;; (a committed build-spec that drifts from `gen build` is a CI FAILURE,
-;; never a runtime fetch failure). Canonical doctrine:
-;; theory/GEN-TYPED-SPEC-CONTRACT.md + theory/SUPER-CACHE-CI.md §II.4
-;; (gen feeds sui). This is step 3 of the reference super-cache-ci
+;; never a runtime fetch failure). Gen feeds sui.
+;; This is step 3 of the reference super-cache-ci
 ;; pipeline: it produces the spec-path + spec-hash the tiered
 ;; restore/build/save verbs key on.
 ;;

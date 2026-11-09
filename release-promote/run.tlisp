@@ -9,7 +9,7 @@
 ;;      every existing release-promote consumer.
 ;;
 ;;   2. helm-chart-version — the FedRAMP chart-version promotion leg
-;;      (theory/FEDRAMP-OBSERVABILITY-DELIVERY.md, the ENHANCE): write the
+;;      (the ENHANCE): write the
 ;;      EXACT chart/image version into the NEXT environment's committed
 ;;      values file (a GitOps commit — the AUTOBUMP/eclusa pattern). The
 ;;      environment then SUBSCRIBES to that committed exact version; we

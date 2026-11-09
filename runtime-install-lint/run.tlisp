@@ -7,7 +7,7 @@
 ;; positive). See NIX-HARDENING.md §VI.1: the CI build env belongs BAKED in the
 ;; runner image; the per-job installer is the debt this flags.
 ;;
-;; The hard rule this enforces (theory/NIX-HARDENING.md, "no runtime tool
+;; The hard rule this enforces ("no runtime tool
 ;; installation, anywhere"): every external binary a pleme-io/actions entry
 ;; needs is a Nix-hardened, distroless image via pleme-io/hardened-images,
 ;; consumed as a `docker://` container action or a pinned release asset --

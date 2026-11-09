@@ -6,7 +6,7 @@
 ;; re-run over unchanged source is a pure cache hit (no re-eval, no derive).
 ;;
 ;; ── Where it sits in the super-cache-ci pipeline ────────────────────
-;; theory/SUPER-CACHE-CI.md §X.2 reference pipeline:
+;; The reference pipeline:
 ;;   breathe-runner → sui-service-up → gen-build-spec → super-cache-restore
 ;;     → super-cache-build (THE CORE) → super-cache-save → nix-image
 ;;     → ghcr-publish → zot-pull-scan → tameshi-attest

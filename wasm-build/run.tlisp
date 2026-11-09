@@ -67,7 +67,7 @@
 ;; already baked into the runner image, and nothing ever confirmed a binary
 ;; landed on PATH. Closed by probing first and re-probing after — mutate, then
 ;; re-read and assert the effect. The install itself stays Nix-pinned to
-;; nixos-24.05 (theory/NIX-HARDENING.md §VI): it is job-time installation and
+;; nixos-24.05: it is job-time installation and
 ;; therefore still ★★ HERMETIC SUPPLY CHAIN debt, but it is at least
 ;; hash-verified and exact-pinned rather than a floating `nixpkgs#wasm-pack`.
 ;; The destination is a hardened image consumed as a `docker://` action; this

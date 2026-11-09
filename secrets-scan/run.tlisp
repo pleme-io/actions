@@ -37,7 +37,7 @@
 ;; fail-on-found. `fail-on-found=false` means "I accept known findings"; it has
 ;; never meant "I accept not knowing". A broken scanner is not a passing scan.
 
-;; Nix-installed, not runtime-curled (theory/NIX-HARDENING.md §VI). This
+;; Nix-installed, not runtime-curled. This
 ;; line replaced two stacked runtime-curl bugs found live 2026-07-22 (a
 ;; shell-escaping failure, then a stale version pin silently downloading a
 ;; 404 page in place of a tarball) -- neither failure mode is representable

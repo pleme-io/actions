@@ -48,7 +48,7 @@ runs:
     - name: Install cargo-audit (if Rust)
       if: hashFiles('Cargo.toml') != ''
       continue-on-error: true
-      # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
+      # Nix-installed, not `cargo install` --
       # exact-pinned to nixos-26.05 (cargo-audit 0.22.1).
       #
       # WAS nixos-24.05 (cargo-audit 0.20.0) until 2026-08-14, and that pin

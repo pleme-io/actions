@@ -4,7 +4,6 @@
 
 **Category**: `super-cache-ci`
 **Backend**: tatara-lisp (`run.tlisp` + `_tlisp-stdlib`)
-**Doctrine**: [`theory/SUPER-CACHE-CI.md`](https://github.com/pleme-io/theory/blob/main/SUPER-CACHE-CI.md) §II.3
 
 ## 30-second quickstart
 
@@ -41,7 +40,7 @@ steps:
 
 ## Why no lock
 
-The write is keyed by the content address, so two runners saving the same key produce identical content — a race is benign. This is the [eliminate-the-shared-cell](https://github.com/pleme-io/theory/blob/main/UNREPRESENTABILITY.md) pattern: concurrent-runner cache coherence is free, with no lock and no coherence protocol.
+The write is keyed by the content address, so two runners saving the same key produce identical content — a race is benign. This is the eliminate-the-shared-cell pattern: concurrent-runner cache coherence is free, with no lock and no coherence protocol.
 
 ## Status — tier-honest
 

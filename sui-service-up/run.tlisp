@@ -1,6 +1,6 @@
 ;; sui-service-up/run.tlisp — resolve, health-check, and export the sui
 ;; service (sui-daemon-graph) endpoint + selected backend tiers for a
-;; super-cache-ci build. Canonical doctrine: theory/SUPER-CACHE-CI.md.
+;; super-cache-ci build.
 ;;
 ;; Uses _tlisp-stdlib helpers (prepended by action.yml's loader step):
 ;;   config-resolve, append-output, log-info/log-error,

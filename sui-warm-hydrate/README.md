@@ -4,8 +4,7 @@
 (Redis L1 → Postgres L2 → object L3) with the fan-out's content keys
 **before** the build matrix explodes, so every parallel build job starts
 warm. Part of the default CI-authoring vocabulary for the sui-service
-super-cache stack — canonical doctrine:
-[`theory/SUPER-CACHE-CI.md`](https://github.com/pleme-io/theory/blob/main/SUPER-CACHE-CI.md).
+super-cache stack.
 
 ## Where it sits in the pipeline
 

@@ -6,7 +6,7 @@
 
 (define dur (env-get "DURATION" "30s"))
 
-;; Nix-installed, not apt (theory/NIX-HARDENING.md §VI) -- exact-pinned to
+;; Nix-installed, not apt -- exact-pinned to
 ;; nixos-24.05, not an ambient apt repo whose signing key/package version
 ;; can change under us. The "Install Nix" step in action.yml already wired
 ;; nix onto PATH.
