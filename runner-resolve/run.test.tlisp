@@ -181,3 +181,155 @@
   (assert
     (equal? (rr:guarded "pleme-public-build" "visibility-default" #f "" "ubuntu-24.04") (list "pleme-public-build" "visibility-default"))
     "a trusted head is unchanged"))
+
+(define rr-test:pressure
+  (rr:pressure
+    "{\"from\":100,\"until\":200,\"queued\":12,\"idle\":{\"pleme-io/blue\":{\"pleme-public-build\":1,\"pleme-busy\":0}}}"))
+
+(define (rr-test:verdict eligibility run-id repo label threshold)
+  (rr:overflow-verdict eligibility rr-test:pressure run-id repo label threshold))
+
+(deftest "overflow — every condition met routes the hosted default to the overflow runner"
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "pleme-public-build" 10) "overflow")
+    "trusted, live lease, backlog over threshold, an idle runner for this repo")
+  (assert
+    (equal?
+      (rr:apply-overflow (list "ubuntu-latest" "visibility-default") "overflow" " pleme-public-build ")
+      (list "pleme-public-build" "overflow"))
+    "the overflow runner replaces the hosted label and names its tier"))
+
+(deftest "overflow — any other verdict leaves the resolved runner unchanged"
+  (assert
+    (equal?
+      (rr:apply-overflow (list "ubuntu-latest" "visibility-default") "below-threshold" "pleme-public-build")
+      (list "ubuntu-latest" "visibility-default"))
+    "below threshold stays hosted")
+  (assert
+    (equal?
+      (rr:apply-overflow (list "ubuntu-24.04" "untrusted-head") "fork-head" "pleme-public-build")
+      (list "ubuntu-24.04" "untrusted-head"))
+    "a fork head keeps the untrusted default"))
+
+(deftest "overflow — only push, workflow_dispatch and schedule are trusted events"
+  (assert (rr:trusted-event? "push") "push")
+  (assert (rr:trusted-event? "workflow_dispatch") "workflow_dispatch")
+  (assert (rr:trusted-event? " schedule ") "schedule, trimmed")
+  (assert (not (rr:trusted-event? "pull_request")) "pull_request, even from the same repo")
+  (assert (not (rr:trusted-event? "pull_request_target")) "pull_request_target")
+  (assert (not (rr:trusted-event? "issue_comment")) "issue_comment")
+  (assert (not (rr:trusted-event? "workflow_run")) "workflow_run can carry a fork's artifacts")
+  (assert (not (rr:trusted-event? "merge_group")) "a merge queue can hold fork code")
+  (assert (not (rr:trusted-event? "")) "an unset event"))
+
+(deftest "overflow — a fork pull request never overflows, whatever the snapshot says"
+  (assert
+    (equal?
+      (rr:overflow-eligibility "ubuntu-24.04" "untrusted-head" "pull_request" "false" #t)
+      "fork-head")
+    "the real fork shape")
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "visibility-default" "push" "false" #t) "fork-head")
+    "the fork guard wins even over a trusted event name")
+  (assert
+    (equal?
+      (rr:apply-overflow
+        (rr:guarded "ubuntu-latest" "visibility-default" #t "" "ubuntu-24.04")
+        (rr-test:verdict
+          (rr:overflow-eligibility "ubuntu-24.04" "untrusted-head" "pull_request" "false" #t)
+          150
+          "pleme-io/blue"
+          "pleme-public-build"
+          0)
+        "pleme-public-build")
+      (list "ubuntu-24.04" "untrusted-head"))
+    "end to end: a fork head with a ready snapshot and threshold 0 stays on the hosted untrusted default"))
+
+(deftest "overflow — eligibility refuses a private repo, an untrusted event, an explicit runner and a self-hosted label"
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "visibility-default" "push" "true" #f) "private-repo")
+    "a private repo already resolves to its own pool")
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "visibility-default" "pull_request" "false" #f) "untrusted-event")
+    "a same-repo pull request is not an overflow event")
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "override" "push" "false" #f) "explicit-runner")
+    "an override is the caller's choice")
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "file" "push" "false" #f) "explicit-runner")
+    "a committed runner file is the repo's choice")
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "default" "push" "false" #f) "explicit-runner")
+    "an explicit default is the caller's choice")
+  (assert
+    (equal? (rr:overflow-eligibility "pleme-private" "visibility-default" "push" "false" #f) "not-hosted")
+    "only a GitHub-hosted label overflows")
+  (assert
+    (equal? (rr:overflow-eligibility "ubuntu-latest" "visibility-default" "push" "false" #f) "eligible")
+    "the eligible shape")
+  (assert
+    (equal? (rr-test:verdict "private-repo" 150 "pleme-io/blue" "pleme-public-build" 0) "private-repo")
+    "an ineligible verdict passes through"))
+
+(deftest "overflow — the lease is live only strictly inside (from, until)"
+  (assert
+    (equal? (rr-test:verdict "eligible" 100 "pleme-io/blue" "pleme-public-build" 10) "no-live-lease")
+    "a run created before the lease (an old re-run)")
+  (assert
+    (equal? (rr-test:verdict "eligible" 200 "pleme-io/blue" "pleme-public-build" 10) "no-live-lease")
+    "a run after the lease expired: the publisher is down")
+  (assert
+    (equal? (rr-test:verdict "eligible" #f "pleme-io/blue" "pleme-public-build" 10) "no-live-lease")
+    "an unreadable run id")
+  (assert
+    (equal?
+      (rr:overflow-verdict "eligible" (rr:pressure "") 150 "pleme-io/blue" "pleme-public-build" 0)
+      "no-live-lease")
+    "no snapshot at all"))
+
+(deftest "overflow — the backlog must reach the threshold"
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "pleme-public-build" 13) "below-threshold")
+    "12 queued under 13")
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "pleme-public-build" 12) "overflow")
+    "12 queued at 12")
+  (assert
+    (equal?
+      (rr:overflow-verdict
+        "eligible"
+        (rr:pressure "{\"from\":100,\"until\":200,\"idle\":{\"pleme-io/blue\":{\"pleme-public-build\":1}}}")
+        150
+        "pleme-io/blue"
+        "pleme-public-build"
+        0)
+      "below-threshold")
+    "an unmeasured backlog never overflows, even at threshold 0")
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "pleme-public-build" #f) "no-threshold")
+    "an unreadable threshold"))
+
+(deftest "overflow — an idle runner with the overflow label must serve this repository"
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "pleme-busy" 0) "no-idle-runner")
+    "the label's runners are all busy")
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/other" "pleme-public-build" 0) "no-idle-runner")
+    "a repo-scoped runner of another repository cannot take this job")
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "pleme-absent" 0) "no-idle-runner")
+    "a label the snapshot does not name")
+  (assert
+    (equal? (rr-test:verdict "eligible" 150 "pleme-io/blue" "  " 0) "no-overflow-runner")
+    "an empty overflow runner turns the tier off"))
+
+(deftest "overflow — a malformed snapshot or count reads as absent, never as a value"
+  (assert (equal? (rr:pressure "") (list)) "empty")
+  (assert (equal? (rr:pressure "{not json") (list)) "malformed")
+  (assert (equal? (rr:pressure "[1,2]") (list)) "not an object")
+  (assert (equal? (rr:idle (rr:pressure "{\"idle\":{\"pleme-io/blue\":3}}") "pleme-io/blue" "x") 0) "a count where a map belongs")
+  (assert (equal? (rr:count "42709554585") 42709554585) "a run id")
+  (assert (equal? (rr:count " 10 ") 10) "a trimmed threshold")
+  (assert (not (rr:count "-1")) "negative")
+  (assert (not (rr:count "ten")) "words")
+  (assert (not (rr:count "")) "empty"))

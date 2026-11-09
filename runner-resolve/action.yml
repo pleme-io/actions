@@ -31,13 +31,29 @@ inputs:
     required: false
     default: "ubuntu-24.04"
 
+  pressure:
+    description: "The runner-pressure snapshot (JSON) the self-hosted side publishes as the org variable RUNNER_PRESSURE: a run-id lease {from, until}, the hosted backlog `queued`, and `idle[repository][label]`. A composite action cannot read vars, so the caller forwards it. Empty, malformed, or a lease that does not hold this run: the overflow tier stays off."
+    required: false
+    default: ""
+  overflow-runner:
+    description: "The self-hosted label a trusted public job overflows to when the hosted backlog reaches overflow-threshold and the snapshot shows an idle runner with this label that serves this repository. Empty turns the tier off."
+    required: false
+    default: "pleme-public-build"
+  overflow-threshold:
+    description: "The hosted backlog (queued runs in the snapshot) at which a trusted public job overflows. 0 overflows whenever a lease holds and a runner is idle."
+    required: false
+    default: "10"
+
 outputs:
   runner:
     description: "The resolved runs-on label."
     value: ${{ steps.resolve.outputs.runner }}
   provenance:
-    description: "Which tier won: override | file | default | visibility-default. Observability only — mirrors the org's Provenance{tier,source} idiom as a plain string, not a typed value."
+    description: "Which tier won: override | file | default | visibility-default | untrusted-head | overflow. Observability only — mirrors the org's Provenance{tier,source} idiom as a plain string, not a typed value."
     value: ${{ steps.resolve.outputs.provenance }}
+  overflow:
+    description: "The overflow tier's verdict: overflow, or the first rule that kept the job where it was (fork-head, private-repo, untrusted-event, explicit-runner, not-hosted, no-overflow-runner, no-live-lease, no-threshold, below-threshold, no-idle-runner)."
+    value: ${{ steps.resolve.outputs.overflow }}
 
 runs:
   using: composite
@@ -70,3 +86,9 @@ runs:
         PUBLIC_RUNNER_DEFAULT: ${{ inputs.public-runner-default }}
         UNTRUSTED_RUNNER_DEFAULT: ${{ inputs.untrusted-runner-default }}
         IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        RUN_ID: ${{ github.run_id }}
+        REPOSITORY: ${{ github.repository }}
+        PRESSURE: ${{ inputs.pressure }}
+        OVERFLOW_RUNNER: ${{ inputs.overflow-runner }}
+        OVERFLOW_THRESHOLD: ${{ inputs.overflow-threshold }}

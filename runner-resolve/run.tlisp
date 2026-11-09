@@ -50,8 +50,10 @@
 ;;   string-append, equal?, log-info.
 ;;
 ;; Inputs (env): DEFAULT OVERRIDE CONFIG_PATH IS_PRIVATE
-;;   PRIVATE_RUNNER_DEFAULT PUBLIC_RUNNER_DEFAULT
-;; Outputs (appended): runner provenance
+;;   PRIVATE_RUNNER_DEFAULT PUBLIC_RUNNER_DEFAULT UNTRUSTED_RUNNER_DEFAULT
+;;   IS_FORK_PR EVENT_NAME RUN_ID REPOSITORY PRESSURE OVERFLOW_RUNNER
+;;   OVERFLOW_THRESHOLD
+;; Outputs (appended): runner provenance overflow
 
 ;; ── Pure helpers (unit-tested by run.test.tlisp) ─────────────────────
 
@@ -115,6 +117,59 @@
     ((not (equal? (string-trim override) "")) (list runner provenance))
     (else (list (string-trim untrusted-default) "untrusted-head"))))
 
+(define rr:overflow-events (list "push" "workflow_dispatch" "schedule"))
+
+(define (rr:trusted-event? event)
+  (not (null? (filter (lambda (e) (equal? e (string-trim event))) rr:overflow-events))))
+
+(define (rr:hosted-label? label) (re-match? "^ubuntu-" (string-trim label)))
+
+(define (rr:count text)
+  (if (re-match? "^[0-9]+$" (string-trim text)) (json-parse (string-trim text)) #f))
+
+(define (rr:pressure text)
+  (let ((t (string-trim text)))
+    (if (re-match? "^[{]" t)
+      (try (let ((p (json-parse t))) (if (list? p) p (list))) (catch (e) (list)))
+      (list))))
+
+(define (rr:get v key fallback) (if (list? v) (alist-get v key fallback) fallback))
+
+(define (rr:get-int v key)
+  (let ((n (rr:get v key #f))) (if (integer? n) n -1)))
+
+(define (rr:lease-live? p run-id)
+  (and
+    (integer? run-id)
+    (> run-id (rr:get-int p "from"))
+    (< run-id (rr:get-int p "until"))))
+
+(define (rr:idle p repo label)
+  (let ((n (rr:get (rr:get (rr:get p "idle" (list)) repo (list)) (string-trim label) 0)))
+    (if (integer? n) n 0)))
+
+(define (rr:overflow-eligibility runner provenance event is-private untrusted?)
+  (cond
+    (untrusted? "fork-head")
+    ((rr:is-private? is-private) "private-repo")
+    ((not (rr:trusted-event? event)) "untrusted-event")
+    ((not (equal? provenance "visibility-default")) "explicit-runner")
+    ((not (rr:hosted-label? runner)) "not-hosted")
+    (else "eligible")))
+
+(define (rr:overflow-verdict eligibility p run-id repo label threshold)
+  (cond
+    ((not (equal? eligibility "eligible")) eligibility)
+    ((equal? (string-trim label) "") "no-overflow-runner")
+    ((not (rr:lease-live? p run-id)) "no-live-lease")
+    ((not (integer? threshold)) "no-threshold")
+    ((< (rr:get-int p "queued") threshold) "below-threshold")
+    ((< (rr:idle p repo label) 1) "no-idle-runner")
+    (else "overflow")))
+
+(define (rr:apply-overflow guarded verdict label)
+  (if (equal? verdict "overflow") (list (string-trim label) "overflow") guarded))
+
 ;; ── File I/O — reads the optional repo-committed config. Honestly
 ;; empty ("") when config-path is blank, the file is absent, or the
 ;; file has no `runner:` field — never a guessed value. yaml-read-field
@@ -149,16 +204,34 @@
           untrusted?
           override
           (env-get "UNTRUSTED_RUNNER_DEFAULT" "ubuntu-24.04")))
-      (runner (car guarded))
-      (provenance (car (cdr guarded))))
+      (overflow-runner (env-get "OVERFLOW_RUNNER" ""))
+      (verdict
+        (rr:overflow-verdict
+          (rr:overflow-eligibility
+            (car guarded)
+            (car (cdr guarded))
+            (env-get "EVENT_NAME" "")
+            is-private
+            untrusted?)
+          (rr:pressure (env-get "PRESSURE" ""))
+          (rr:count (env-get "RUN_ID" ""))
+          (env-get "REPOSITORY" "")
+          overflow-runner
+          (rr:count (env-get "OVERFLOW_THRESHOLD" ""))))
+      (chosen (rr:apply-overflow guarded verdict overflow-runner))
+      (runner (car chosen))
+      (provenance (car (cdr chosen))))
     (append-output (string-append "runner=" runner))
     (append-output (string-append "provenance=" provenance))
+    (append-output (string-append "overflow=" verdict))
     (log-info
       (string-append
         "runner-resolve: runner="
         runner
         " (provenance="
         provenance
+        ", overflow="
+        verdict
         ", is-private="
         is-private
         ", config-path="
