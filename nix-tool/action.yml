@@ -1,0 +1,39 @@
+name: 'pleme-io · nix-tool'
+description: >-
+  Put one flake installable's bin/ on PATH for every later step in the job,
+  without touching the runner's nix profile. A job-time `nix profile install`
+  mutates state that outlives the job on a self-hosted runner and refuses a
+  second tag of the same tool in one job (sui release-binaries, 2026-11-09:
+  tatara-script 0.2.5 against 0.3.58). Building with --no-link and adding the
+  store path to GITHUB_PATH is idempotent and per-job.
+branding:
+  icon: 'tool'
+  color: 'blue'
+
+inputs:
+  installable:
+    description: "Flake installable, e.g. github:NixOS/nixpkgs/nixos-24.05#cargo-edit."
+    required: true
+  output:
+    description: "Derivation output that carries bin/. Multi-output packages (gcc) need it named; one-output packages take the default."
+    required: false
+    default: "out"
+
+outputs:
+  bin-dir:
+    description: "The store bin/ directory added to PATH."
+    value: ${{ steps.tool.outputs.bin-dir }}
+
+runs:
+  using: composite
+  steps:
+    - id: tool
+      shell: bash
+      env:
+        INSTALLABLE: ${{ inputs.installable }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        out=$(nix build --no-link --print-out-paths "${INSTALLABLE}^${OUTPUT}")
+        test -d "$out/bin" || { echo "::error::nix-tool: ${INSTALLABLE}^${OUTPUT} has no bin/ at $out"; exit 1; }
+        echo "$out/bin" >> "$GITHUB_PATH"
+        echo "bin-dir=$out/bin" >> "$GITHUB_OUTPUT"

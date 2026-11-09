@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                383
+# actions                384
 # routing tatara-script  357
 # distinct keys written  367
 # dynamic key expansions 8
@@ -258,6 +258,7 @@ nix-flake-update	tatara-script	run.tlisp	7	7
 nix-image	tatara-script	run.tlisp	4	8
 nix-node-matrix	tatara-script	run.tlisp	4	4
 nix-setup	own-runner	-	0	2
+nix-tool	own-runner	-	0	1
 no-cve-suppression	tatara-script	run.tlisp	3	3
 notion-db-row-add	tatara-script	run.tlisp	1	1
 notion-page-create	tatara-script	run.tlisp	1	1

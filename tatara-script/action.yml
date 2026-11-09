@@ -1429,7 +1429,7 @@ runs:
             # Remove the unverified bytes so nothing downstream can reach them
             # via $BIN_DIR, which is placed on PATH unconditionally below.
             rm -f "$BIN_DIR/tatara-script"
-            echo "::warning::Falling back to nix profile install at pinned tag $TAG"
+            echo "::warning::Falling back to a nix build at pinned tag $TAG"
             echo "fallback-needed=true" >> "$GITHUB_OUTPUT"
             echo "resolved-tag=$TAG" >> "$GITHUB_OUTPUT"
           fi
@@ -1440,7 +1440,7 @@ runs:
           # fallback is two steps below (a `uses:` step can't be invoked
           # from inside a `run:` block), gated on this same "binary download
           # failed" circumstance via the fallback-needed output.
-          echo "::warning::No pre-built binary at $URL — falling back to nix profile install"
+          echo "::warning::No pre-built binary at $URL — falling back to a nix build"
           echo "fallback-needed=true" >> "$GITHUB_OUTPUT"
           echo "resolved-tag=$TAG" >> "$GITHUB_OUTPUT"
         fi
@@ -1462,13 +1462,9 @@ runs:
 
     - name: Install tatara-script via nix (fallback)
       if: steps.install.outputs.fallback-needed == 'true'
-      shell: bash
-      env:
-        RESOLVED_TAG: ${{ steps.install.outputs.resolved-tag }}
-      run: |
-        set -euo pipefail
-        nix profile install "github:pleme-io/tatara-lisp/$RESOLVED_TAG#tatara-script"
-        echo "Installed tatara-script via nix profile install"
+      uses: pleme-io/actions/nix-tool@main
+      with:
+        installable: github:pleme-io/tatara-lisp/${{ steps.install.outputs.resolved-tag }}#tatara-script
 
     # Write the embedded script to a tmp file and exec tatara-script on
     # it. We do not pipe via stdin because tatara-script is file-based;

@@ -47,7 +47,7 @@ runs:
 
     - name: Install cargo-audit (if Rust)
       if: hashFiles('Cargo.toml') != ''
-      shell: bash
+      continue-on-error: true
       # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
       # exact-pinned to nixos-26.05 (cargo-audit 0.22.1).
       #
@@ -73,7 +73,9 @@ runs:
       # NOT uniformly safe to move. cargo-bump pins cargo-edit to 24.05
       # DELIBERATELY, to avoid a manifest-parse regression in 0.13.10 -- which
       # is exactly what 26.05 ships. Each pin needs its own judgement.
-      run: nix profile install github:NixOS/nixpkgs/nixos-26.05#cargo-audit || true
+      uses: pleme-io/actions/nix-tool@main
+      with:
+        installable: github:NixOS/nixpkgs/nixos-26.05#cargo-audit
 
     - name: Install Node (if needed)
       if: hashFiles('package.json') != ''

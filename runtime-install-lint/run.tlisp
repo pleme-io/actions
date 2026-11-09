@@ -89,7 +89,7 @@
 ;; -- this reports OFFENDING FILES, the same granularity as
 ;; action-shell-lint's own output, not every offending line.
 (define awk-prog
-  "BEGIN { }\n   /^[ \\t]*#/ { next; }\n   /^[ \\t]*;;/ { next; }\n   /curl[^\\n]*install\\.sh/ || /curl[^\\n]*releases\\/(latest|download)/ || /curl[^\\n]*\\.(zip|tar\\.gz|tgz)/ || /curl[^\\n]*raw\\.githubusercontent/ || /curl[^\\n]*-o [^\\n]*\\/usr\\// || /curl[^\\n]*\\|/ || /wget /|| /apt-get install/ || /apt install/ || /pip install/ || /npm install -g/ || /go install / || /cargo install / {\n     print FILENAME; nextfile;\n   }")
+  "BEGIN { }\n   /^[ \\t]*#/ { next; }\n   /^[ \\t]*;;/ { next; }\n   /curl[^\\n]*install\\.sh/ || /curl[^\\n]*releases\\/(latest|download)/ || /curl[^\\n]*\\.(zip|tar\\.gz|tgz)/ || /curl[^\\n]*raw\\.githubusercontent/ || /curl[^\\n]*-o [^\\n]*\\/usr\\// || /curl[^\\n]*\\|/ || /wget /|| /apt-get install/ || /apt install/ || /pip install/ || /npm install -g/ || /go install / || /cargo install / || /^[ \\t]*(run: )?nix profile (install|add) / {\n     print FILENAME; nextfile;\n   }")
 
 (define find-cmd
   (string-append

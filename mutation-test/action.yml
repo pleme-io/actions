@@ -26,10 +26,12 @@ runs:
       uses: pleme-io/actions/rust-toolchain@main
     - name: Install cargo-mutants
       if: hashFiles('Cargo.toml') != ''
-      shell: bash
+      continue-on-error: true
       # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
       # exact-pinned to nixos-24.05.
-      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-mutants || true
+      uses: pleme-io/actions/nix-tool@main
+      with:
+        installable: github:NixOS/nixpkgs/nixos-24.05#cargo-mutants
     - id: src
       shell: bash
       run: |

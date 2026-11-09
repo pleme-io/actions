@@ -44,13 +44,14 @@ runs:
       uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-edit (provides `cargo set-version`)
-      shell: bash
       # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
       # exact-pinned to nixos-24.05's cargo-edit version rather than a
       # hand-pinned crates.io version (that pin existed only to dodge a
       # manifest-parse regression in 0.13.10; the nixos-24.05 channel
       # ships its own fixed, reproducible version).
-      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-edit
+      uses: pleme-io/actions/nix-tool@main
+      with:
+        installable: github:NixOS/nixpkgs/nixos-24.05#cargo-edit
 
     # The actual bump logic — single tatara-script invocation.
     # Reads source paths, detects skip condition, runs the bump,

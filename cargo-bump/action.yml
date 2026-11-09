@@ -58,14 +58,15 @@ runs:
       uses: pleme-io/actions/rust-toolchain@main
 
     - name: Install cargo-edit
-      shell: bash
       # Nix-installed, not `cargo install` (theory/NIX-HARDENING.md §VI) --
       # exact-pinned to nixos-24.05's cargo-edit version rather than a
       # hand-pinned 0.13.6 (that version pin existed only to dodge a
       # manifest-parse regression in 0.13.10; the nixos-24.05 channel
       # ships its own fixed, reproducible version, so pinning a crates.io
       # version number here is no longer the right lever).
-      run: nix profile install github:NixOS/nixpkgs/nixos-24.05#cargo-edit
+      uses: pleme-io/actions/nix-tool@main
+      with:
+        installable: github:NixOS/nixpkgs/nixos-24.05#cargo-edit
 
     # Concatenate the shared _tlisp-stdlib helpers in FRONT of the
     # action's run.tlisp so the action's body can use every

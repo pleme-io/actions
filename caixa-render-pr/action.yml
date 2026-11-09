@@ -48,8 +48,9 @@ runs:
         token: ${{ steps.token.outputs.token || github.token }}
     - uses: DeterminateSystems/nix-installer-action@main
     - name: Install pleme-doc-gen
-      shell: bash
-      run: nix profile install github:pleme-io/pleme-doc-gen
+      uses: pleme-io/actions/nix-tool@main
+      with:
+        installable: github:pleme-io/pleme-doc-gen
     - id: src
       shell: bash
       run: |
