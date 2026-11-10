@@ -25,6 +25,10 @@ inputs:
     description: "How long a full-mode ship rides crates.io's publish rate limit before it parks the rest for the next run. An integer from 1 to 330; anything else stops the step before it publishes. 30 by default; a workspace whose members outnumber what 30 minutes of refill admits (engenho: 32 members at about one per three minutes) raises it so one release ships whole."
     required: false
     default: "30"
+  rename-push-ref:
+    description: "Branch a registry-conflict rename commit is pushed to (HEAD:<ref>). main (default) keeps the rename for every later release. Empty commits the rename on this checkout only and pushes nothing, for a release published beside main: main receives no commit, and each release renames again."
+    required: false
+    default: "main"
   publish-mode:
     description: "full (default) = bump+ship on push, riding crates.io's new-crate rate limit in-job (capped at 30m); drip = a cron tick that publishes only what current capacity allows and defers the rest (never sleeps in-job). The two compose to bootstrap a large workspace hands-off, never red."
     required: false
@@ -87,3 +91,4 @@ runs:
         MAX_RENAME_RETRIES: ${{ inputs.max-rename-retries }}
         PUBLISH_MODE: ${{ inputs.publish-mode }}
         RIDE_BUDGET_MINUTES: ${{ inputs.ride-budget-minutes }}
+        RENAME_PUSH_REF: ${{ inputs.rename-push-ref }}

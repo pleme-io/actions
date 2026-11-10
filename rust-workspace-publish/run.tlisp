@@ -8,6 +8,13 @@
 
 (define rename-prefix (env-get "RENAME_PREFIX" "pleme-io-"))
 
+(define rename-push-ref (string-trim (env-get "RENAME_PUSH_REF" "main")))
+
+(define (rename-push-argv ref)
+  (if (equal? ref "")
+    (list)
+    (list "git" "push" "origin" (string-append "HEAD:" ref))))
+
 (define max-retries 20)
 
 ;; publish-mode: "full" (default) = bump+ship on push, with a bounded
@@ -530,7 +537,14 @@
           " -> "
           new-name
           " (registry name conflict)")))
-    (exec-or-die (list "git" "push" "origin" "HEAD:main"))))
+    (let ((argv (rename-push-argv rename-push-ref)))
+      (if (null? argv)
+        (log-warn
+          (string-append
+            "rename of '"
+            original
+            "' committed on this checkout only (rename-push-ref is empty); the source still names it, so the next release renames it again"))
+        (exec-or-die argv)))))
 
 ;; -------------------------------------------------------------- ;;
 ;; Per-crate publish loop with retry                               ;;

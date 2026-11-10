@@ -27,6 +27,10 @@ inputs:
     description: "Command (whitespace-split argv, no shell) run in the repo root after every successful retry rebase; the regenerable-paths it changes that git tracks are amended into the replayed commit before the push. A failing command warns and the push goes on as before. Empty (default) = no regeneration."
     required: false
     default: ""
+  tag:
+    description: "Push exactly refs/tags/<tag> and nothing else: no branch, no --tags, no rebase (a tag is refused only when the remote already has it, which no rebase can fix). For a release committed beside the branch. Empty (default) = push branch, and tags when push-tags is true."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -40,3 +44,4 @@ runs:
         PUSH_TAGS: ${{ inputs.push-tags }}
         REGENERABLE_PATHS: ${{ inputs.regenerable-paths }}
         REGENERATE_COMMAND: ${{ inputs.regenerate-command }}
+        PUSH_TAG: ${{ inputs.tag }}

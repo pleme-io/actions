@@ -17,6 +17,10 @@ inputs:
     description: "Space-separated git pathspecs the skip-detector inspects for changes since the last tag. Default catches any Rust source (`*.rs`, matched at any depth) + the workspace manifests at ANY depth (`**/Cargo.toml`, `**/Cargo.lock` — a bare `Cargo.toml` is a root-anchored literal in git pathspec terms and never matched a crate manifest, so a nested-manifest-only change silently skipped releases) — repo-agnostic, so a non-engenho workspace's source-only change still triggers a bump. Override for layouts with significant non-`.rs` source (e.g. vendored schemas)."
     required: false
     default: "*.rs **/Cargo.toml **/Cargo.lock"
+  release-ref-mode:
+    description: "main (default): the last release is the nearest tag `git describe` reaches from HEAD, and the skip-detector diffs from it. tag: releases are committed beside main, so the last release is the highest vX.Y.Z tag and the skip-detector diffs from the commit that tag was cut from (its merge-base with HEAD); the version seeds from that tag, with main's manifest only a floor. Any other value stops the bump before it writes."
+    required: false
+    default: "main"
 
 outputs:
   bumped:
@@ -76,3 +80,4 @@ runs:
         BUMP_TYPE: ${{ inputs.bump-type }}
         SKIP_WHEN_NO_SOURCE_CHANGES: ${{ inputs.skip-when-no-source-changes }}
         SOURCE_PATHS: ${{ inputs.source-paths }}
+        RELEASE_REF_MODE: ${{ inputs.release-ref-mode }}

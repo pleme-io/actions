@@ -23,6 +23,7 @@ steps:
 | Name | Required | Default | Description |
 |---|---|---|---|
 | `bump-type` | no | `patch` | patch | minor | major |
+| `release-ref-mode` | no | `main` | main: the last release is the nearest tag `git describe` reaches from HEAD. tag: releases are committed beside main, so the last release is the highest vX.Y.Z tag, the skip-detector diffs from the commit that tag was cut from, and the version seeds from that tag. Any other value stops the bump before it writes. |
 | `skip-when-no-source-changes` | no | `true` | Skip the bump when no engenho-*/, root Cargo.toml, or root Cargo.lock changes happened since the previous tag. Set false to always bump. |
 | `source-paths` | no | `engenho* Cargo.toml Cargo.lock` | Space-separated globs the skip-detector inspects for changes. Default fits an engenho-shaped workspace; override for other layouts. |
 

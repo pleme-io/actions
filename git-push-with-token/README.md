@@ -26,6 +26,7 @@ steps:
 | `push-tags` | no | `true` | Whether to also push --tags (default: true) |
 | `regenerable-paths` | no | — | Whitespace-separated DERIVED paths (e.g. Cargo.lock Cargo.gen.lock). A retry-rebase conflict confined to these resolves in favour of the replayed commit instead of aborting; a conflict anywhere else still aborts. Empty (default) = always abort. |
 | `regenerate-command` | no | — | Command (whitespace-split argv, no shell) run in the repo root after every successful retry rebase; the regenerable-paths it changes that git tracks are amended into the replayed commit before the push. A failing command warns and the push goes on as before. Empty (default) = no regeneration. |
+| `tag` | no | — | Push exactly refs/tags/<tag> and nothing else: no branch, no --tags, no rebase (a tag is refused only when the remote already has it, which no rebase can fix). For a release committed beside the branch. Empty (default) = push branch, and tags when push-tags is true. |
 | `token` | yes | — | Token used as x-access-token in the rewritten origin URL |
 
 ## Configuration via `.pleme-io-release.toml`

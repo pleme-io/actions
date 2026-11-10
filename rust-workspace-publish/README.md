@@ -25,6 +25,7 @@ steps:
 | `dry-run` | no | `false` | Run the registry ship as --dry-run only (no upload) |
 | `max-rename-retries` | no | `20` | Maximum number of conflict-rename retry iterations. Default 20 covers a 15-crate workspace with safety margin. |
 | `no-verify` | no | `true` | Skip the verification compile step. true keeps the ship loop fast + tolerant of edge cases the verify step trips on; false uses the registry's default verification. |
+| `rename-push-ref` | no | `main` | Branch a registry-conflict rename commit is pushed to. Empty commits the rename on the checkout only and pushes nothing, for a release published beside main. |
 | `rename-prefix` | no | `pleme-io-` | Prefix used when auto-renaming a conflicting crate. Default 'pleme-io-' lands names under the org's namespace. |
 
 ## Outputs

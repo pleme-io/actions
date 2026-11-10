@@ -387,3 +387,111 @@
   (assert
     (equal? (regen-status (list (cons "status" 101) (cons "stdout" "") (cons "stderr" "why"))) 101)
     "a failed build keeps its status"))
+
+(deftest "release-ref-mode: only main and tag are known"
+  (assert (release-ref-mode-known? "main") "main is known")
+  (assert (release-ref-mode-known? "tag") "tag is known")
+  (assert (not (release-ref-mode-known? "")) "empty is refused")
+  (assert (not (release-ref-mode-known? "Tag")) "a near-miss spelling is refused")
+  (assert (not (release-ref-mode-known? "branch")) "an unknown mode is refused"))
+
+(deftest "baseline-tag: main asks git describe and never ranks tags; tag ranks tags and never asks describe"
+  (assert
+    (equal?
+      (baseline-tag "main" (lambda () "v0.0.190") (lambda () (assert #f "main mode ranked the tags")))
+      "v0.0.190")
+    "main mode is git describe")
+  (assert
+    (equal?
+      (baseline-tag "tag" (lambda () (assert #f "tag mode asked git describe")) (lambda () "0.0.195"))
+      "v0.0.195")
+    "tag mode is the highest released tag")
+  (assert
+    (equal? (baseline-tag "tag" (lambda () "v0.0.1") (lambda () "")) "")
+    "tag mode with no released tag has no baseline"))
+
+(deftest "diff-base: main diffs from the tag itself; tag diffs from the commit the tag was cut from"
+  (assert
+    (equal? (diff-base "main" "v0.0.190" (lambda (t) (assert #f "main mode asked merge-base"))) "v0.0.190")
+    "main mode is unchanged")
+  (assert
+    (equal? (diff-base "tag" "v0.0.191" (lambda (t) (string-append "base-of-" t))) "base-of-v0.0.191")
+    "tag mode is the merge-base with HEAD"))
+
+(deftest "next-free-version: tag mode, main's manifest frozen below the tags, bumps from the highest tag"
+  (let ((existing (list "0.0.190" "0.0.191" "0.0.192")))
+    (assert
+      (equal?
+        (next-free-version
+          "0.0.190"
+          "patch"
+          "0.0.192"
+          (lambda (v) (in-list? v existing)))
+        "0.0.193")
+      "manifest 0.0.190, tags through v0.0.192 -> 0.0.193")))
+
+(define (beside-git dir args)
+  (let ((r (apply exec-capture (append (list "git" "-C" dir) args))))
+    (assert (= 0 (status-of r)) (string-append "git " (string-join " " args) ": " (stderr-of r)))
+    (string-trim (stdout-of r))))
+
+(define (beside-commit dir rel text msg)
+  (write-file (path-join dir rel) text)
+  (beside-git dir (list "add" "-A"))
+  (beside-git dir (list "commit" "-q" "-m" msg))
+  (beside-git dir (list "rev-parse" "HEAD")))
+
+(define (beside-manifest v)
+  (string-append "[workspace.package]\nversion = \"" v "\"\n"))
+
+(define (beside-decision dir mode)
+  (let ((here (cwd)))
+    (chdir dir)
+    (set! release-ref-mode mode)
+    (set! skip-flag "true")
+    (set! source-paths "*.rs Cargo.toml Cargo.lock")
+    (let ((d (list (last-tag) (should-bump?))))
+      (set! release-ref-mode "main")
+      (chdir here)
+      d)))
+
+(define (beside-build)
+  (env-set "GIT_CONFIG_GLOBAL" "/dev/null")
+  (env-set "GIT_CONFIG_NOSYSTEM" "1")
+  (let ((dir (path-join (tmp-dir) "beside")))
+    (mkdir-p dir)
+    (beside-git dir (list "init" "-q" "-b" "main"))
+    (beside-git dir (list "config" "user.name" "fixture"))
+    (beside-git dir (list "config" "user.email" "fixture@fixture.invalid"))
+    (write-file (path-join dir "a.rs") "fn a() {}\n")
+    (let ((c1 (beside-commit dir "Cargo.toml" (beside-manifest "0.0.1") "c1")))
+      (beside-git dir (list "tag" "-a" "v0.0.1" "-m" "v0.0.1"))
+      (beside-git dir (list "checkout" "-q" "--detach"))
+      (beside-commit dir "Cargo.toml" (beside-manifest "0.0.2") "release: workspace v0.0.2")
+      (beside-git dir (list "tag" "-a" "v0.0.2" "-m" "v0.0.2"))
+      (beside-git dir (list "checkout" "-q" "main"))
+      (let ((c2 (beside-commit dir "README.md" "docs\n" "c2: docs only")))
+        (list (cons :dir dir) (cons :c1 c1) (cons :c2 c2))))))
+
+(deftest "tag mode on real git: a release beside main is the baseline, and a docs-only push is not a release"
+  (let* ((s (beside-build)) (dir (alist-get s :dir)) (d (beside-decision dir "tag")))
+    (assert (equal? (nth 0 d) "v0.0.2") "the baseline is the highest tag, which main does not reach")
+    (assert (not (nth 1 d)) "no source change since the commit v0.0.2 was cut from")
+    (assert
+      (equal? (beside-git dir (list "merge-base" "v0.0.2" "HEAD")) (alist-get s :c1))
+      "the diff base is the commit the release was cut from")
+    (assert
+      (not (= 0 (status-of (exec-capture "git" "-C" dir "diff" "--quiet" "v0.0.2" "HEAD" "--" "Cargo.toml"))))
+      "diffing from the tag itself would see the release's own version write")))
+
+(deftest "tag mode on real git: a source change after the release is a release"
+  (let* ((s (beside-build)) (dir (alist-get s :dir)))
+    (beside-commit dir "a.rs" "fn a() { 1; }\n" "c3: source")
+    (let ((d (beside-decision dir "tag")))
+      (assert (equal? (nth 0 d) "v0.0.2") "the baseline is still the highest tag")
+      (assert (nth 1 d) "a.rs changed since the commit v0.0.2 was cut from"))))
+
+(deftest "main mode on real git: unchanged, git describe reaches only the tag on main"
+  (let* ((s (beside-build)) (dir (alist-get s :dir)) (d (beside-decision dir "main")))
+    (assert (equal? (nth 0 d) "v0.0.1") "describe reaches v0.0.1, not the release beside main")
+    (assert (not (nth 1 d)) "docs-only since v0.0.1")))

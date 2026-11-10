@@ -26,18 +26,49 @@
 
 (define (stdout-of result) (alist-get result "stdout" ""))
 
-(define (last-tag)
+(define release-ref-mode (env-get "RELEASE_REF_MODE" "main"))
+
+(define (release-ref-mode-known? mode) (or (equal? mode "main") (equal? mode "tag")))
+
+(define (describe-tag)
   (let ((r (exec-capture "git" "describe" "--tags" "--abbrev=0")))
     (if (= (status-of r) 0)
       (string-trim (stdout-of r))
       "")))
 
+(define (baseline-tag mode describe max-released)
+  (cond
+    ((equal? mode "tag")
+      (let ((v (max-released)))
+        (if (equal? v "")
+          ""
+          (string-append "v" v))))
+    (else (describe))))
+
+(define (last-tag)
+  (baseline-tag release-ref-mode describe-tag (lambda () (git:max-released-version "v"))))
+
+(define (merge-base-with-head tag)
+  (let ((r (exec-capture "git" "merge-base" tag "HEAD")))
+    (if (= (status-of r) 0)
+      (string-trim (stdout-of r))
+      "")))
+
+(define (diff-base mode tag merge-base-of)
+  (if (equal? mode "tag")
+    (merge-base-of tag)
+    tag))
+
 (define (has-changes? tag paths)
-  (let*
-    ((path-list (string-split paths " "))
-      (args (append (list "diff" "--quiet" tag "HEAD" "--") path-list))
-      (r (apply exec-capture (cons "git" args))))
-    (not (= (status-of r) 0))))
+  (let ((base (diff-base release-ref-mode tag merge-base-with-head)))
+    (cond
+      ((equal? base "") #t)
+      (else
+        (let*
+          ((path-list (string-split paths " "))
+            (args (append (list "diff" "--quiet" base "HEAD" "--") path-list))
+            (r (apply exec-capture (cons "git" args))))
+          (not (= (status-of r) 0)))))))
 
 (define (should-bump?)
   (cond
@@ -429,22 +460,31 @@
       (else
         ;; Say out loud when the seed did work, and which kind. These are
         ;; the two distinguishable histories behind one bumped version.
-        (if (semver:gt? max-released old-v)
-          (log-info
-            (string-append
-              "manifest "
-              old-v
-              " LAGGED the highest released v"
-              max-released
-              " — seeded the bump from the tag, not the"
-              " manifest (release-monotonicity: bumping from "
-              old-v
-              " would have produced v"
-              candidate
-              ", which is not above v"
-              max-released
-              ")"))
-          #t)
+        (cond
+          ((equal? release-ref-mode "tag")
+            (log-info
+              (string-append
+                "release-ref-mode tag: seeded from the higher of main's manifest "
+                old-v
+                " and the highest released tag v"
+                max-released
+                "; main receives no release commit")))
+          ((semver:gt? max-released old-v)
+            (log-info
+              (string-append
+                "manifest "
+                old-v
+                " LAGGED the highest released v"
+                max-released
+                " — seeded the bump from the tag, not the"
+                " manifest (release-monotonicity: bumping from "
+                old-v
+                " would have produced v"
+                candidate
+                ", which is not above v"
+                max-released
+                ")")))
+          (else #t))
         (if (not (equal? new-v candidate))
           (log-info
             (string-append
@@ -495,6 +535,14 @@
 (define (main)
   (let ((old-version (read-workspace-version)))
     (cond
+      ((not (release-ref-mode-known? release-ref-mode))
+        (emit-failure
+          (string-append
+            "rust-workspace-bump: release-ref-mode is '"
+            release-ref-mode
+            "'; it must be main or tag")
+          old-version)
+        (exit 1))
       ((not (path-exists? "Cargo.toml"))
         (emit-failure "rust-workspace-bump: no Cargo.toml at repo root" "")
         (exit 1))
@@ -519,10 +567,17 @@
         (exit 1))
       ((not (should-bump?))
         (emit-skip
-          (string-append
-            "no changes since last tag — skipping (at "
-            old-version
-            ")")
+          (if (equal? release-ref-mode "tag")
+            (string-append
+              "no changes since the commit "
+              (last-tag)
+              " was cut from — skipping (main's manifest is at "
+              old-version
+              ")")
+            (string-append
+              "no changes since last tag — skipping (at "
+              old-version
+              ")"))
           old-version)
         (exit 0))
       (else (exit (run-bump-pipeline old-version))))))

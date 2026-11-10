@@ -62,20 +62,31 @@
 
 (define (tags-at commit) (output-lines (exec-capture "git" "tag" "--points-at" commit)))
 
-(define (do-push)
-  (if ptags?
-    (exec-check
-      "git"
-      "push"
-      "--atomic"
-      "origin"
-      branch
-      "--tags")
-    (exec-check
-      "git"
-      "push"
-      "origin"
-      branch)))
+(define release-tag (string-trim (env-get "PUSH_TAG" "")))
+
+(define (push-argv tag br tags?)
+  (cond
+    ((not (equal? tag "")) (list "git" "push" "origin" (string-append "refs/tags/" tag)))
+    (tags? (list "git" "push" "--atomic" "origin" br "--tags"))
+    (else (list "git" "push" "origin" br))))
+
+(define (do-push) (apply exec-check (push-argv release-tag branch ptags?)))
+
+(define (push-tag-with-retry attempts)
+  (let ((s (do-push)))
+    (cond
+      ((= s 0) 0)
+      ((<= attempts 0)
+        (log-error
+          (string-append
+            "git push origin refs/tags/"
+            release-tag
+            " still refused; the remote may already carry a different "
+            release-tag))
+        s)
+      (else
+        (log-info (string-append "push of tag " release-tag " failed — retrying the same push"))
+        (push-tag-with-retry (- attempts 1))))))
 
 ;; ---------- derived-file conflict resolution ---------- ;;
 ;;
@@ -297,22 +308,14 @@
     (when (not (= set-url-status 0))
       (log-error "git remote set-url failed")
       (exit set-url-status)))
-  (let ((push-status (push-with-retry 3)))
+  (let ((push-status (if (equal? release-tag "") (push-with-retry 3) (push-tag-with-retry 3))))
     (when (not (= push-status 0))
-      (log-error
-        (string-append
-          "git push"
-          (if ptags?
-            " --atomic"
-            "")
-          " origin "
-          branch
-          (if ptags?
-            " --tags"
-            "")
-          " failed"))
+      (log-error (string-append (string-join " " (push-argv release-tag branch ptags?)) " failed"))
       (exit push-status)))
-  (log-info (string-append "pushed " branch (if ptags? " + tags (atomic)" ""))))
+  (log-info
+    (if (equal? release-tag "")
+      (string-append "pushed " branch (if ptags? " + tags (atomic)" ""))
+      (string-append "pushed refs/tags/" release-tag " only; no branch moved"))))
 
 (if (equal? (env-get "TLISP_TEST" "") "1")
   #t

@@ -112,6 +112,7 @@
 (define (fixture-push s argv)
   (set! branch "main")
   (set! ptags? #t)
+  (set! release-tag "")
   (set! regenerable (list "Cargo.lock" "Cargo.gen.lock" "Cargo.build-spec.json"))
   (set! regenerate-argv argv)
   (fixture-in (alist-get s :work) (lambda () (push-with-retry 3))))
@@ -193,3 +194,65 @@
     (list
       (lambda (s) (list "tatara-script" (path-join (alist-get s :root) "derive-then-fail.tlisp")))
       (lambda (s) (list "git-push-with-token-no-such-generator")))))
+
+(deftest "push-argv: a tag pushes exactly its ref; without one the branch argv is today's"
+  (assert
+    (equal? (push-argv "v0.0.191" "main" #t) (list "git" "push" "origin" "refs/tags/v0.0.191"))
+    "a tag ignores branch and push-tags")
+  (assert
+    (equal? (push-argv "" "main" #t) (list "git" "push" "--atomic" "origin" "main" "--tags"))
+    "branch + tags is the atomic push")
+  (assert
+    (equal? (push-argv "" "main" #f) (list "git" "push" "origin" "main"))
+    "branch alone"))
+
+(define (fixture-push-tag s tag)
+  (set! branch "main")
+  (set! ptags? #t)
+  (set! release-tag tag)
+  (set! regenerable (list))
+  (set! regenerate-argv (list))
+  (let ((status (fixture-in (alist-get s :work) (lambda () (push-tag-with-retry 1)))))
+    (set! release-tag "")
+    status))
+
+(deftest "tag push: the release tag reaches the remote and main does not move"
+  (let*
+    ((s (fixture-build))
+      (main-before (fixture-remote s (list "rev-parse" "main")))
+      (status (fixture-push-tag s "v0.1.1")))
+    (assert (= status 0) "the tag push lands")
+    (assert
+      (equal? (fixture-remote s (list "rev-parse" "v0.1.1^{commit}")) (alist-get s :bump))
+      "the remote tag points at the release commit")
+    (assert
+      (equal? (fixture-remote s (list "rev-parse" "main")) main-before)
+      "remote main did not move")
+    (assert
+      (not
+        (=
+          0
+          (status-of
+            (exec-capture "git" "-C" (alist-get s :remote) "merge-base" "--is-ancestor" (alist-get s :bump) "main"))))
+      "the release commit is not on main")
+    (assert
+      (string-contains?
+        (stdout-of (fixture-git (alist-get s :remote) (list "show" "v0.1.1:Cargo.toml")))
+        "0.1.1")
+      "the tagged tree carries the released version")))
+
+(deftest "tag push: a tag the remote already has at another commit is refused, and nothing moves"
+  (let* ((s (fixture-build)))
+    (fixture-git-ok (alist-get s :upstream) (list "tag" "-a" "v0.1.1" "-m" "taken"))
+    (fixture-git-ok (alist-get s :upstream) (list "push" "-q" "origin" "v0.1.1"))
+    (let*
+      ((taken (fixture-remote s (list "rev-parse" "v0.1.1^{commit}")))
+        (main-before (fixture-remote s (list "rev-parse" "main")))
+        (status (fixture-push-tag s "v0.1.1")))
+      (assert (not (= status 0)) "the push is refused")
+      (assert
+        (equal? (fixture-remote s (list "rev-parse" "v0.1.1^{commit}")) taken)
+        "the remote tag is unchanged")
+      (assert
+        (equal? (fixture-remote s (list "rev-parse" "main")) main-before)
+        "remote main is unchanged"))))

@@ -624,3 +624,9 @@
   (assert (erro:err? (ride-budget-secs "0")) "zero")
   (assert (erro:err? (ride-budget-secs "331")) "past the job wall")
   (assert (erro:ok? (ride-budget-secs "330")) "the last legal minute"))
+
+(deftest "rename-push-argv: main by default, and an empty ref pushes nothing"
+  (assert
+    (equal? (rename-push-argv "main") (list "git" "push" "origin" "HEAD:main"))
+    "the default is today's push of the rename to main")
+  (assert (null? (rename-push-argv "")) "an empty ref pushes nothing, so main receives no commit"))
