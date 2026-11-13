@@ -107,13 +107,27 @@
 
 (define (cache-push-auto? raw) (equal? (string-trim raw) "auto"))
 
+(define (cache-push-fleet? raw) (or (cache-push-auto? raw) (equal? (string-trim raw) "on")))
+
+(define (cache-push-mode-of input env)
+  (cond
+    ((not (equal? (string-trim input) "")) (string-trim input))
+    ((not (equal? (string-trim env) "")) (string-trim env))
+    (else "auto")))
+
+(define (cache-push-mode) (cache-push-mode-of (env-get "CACHE_PUSH" "") (env-get "SUI_CACHE_PUSH" "")))
+
 (define (fleet-push-argv paths url key-file)
   (append (list "cache" "push" "--cache-url" url "--signing-key" key-file) paths))
 
 (define (fleet-push-step paths url key-file sui-present? runner)
+  (fleet-push-gated paths url key-file sui-present? "" runner))
+
+(define (fleet-push-gated paths url key-file sui-present? skip runner)
   (cond
     ((or (equal? url "") (equal? key-file "")) (list "false" "no fleet cache on this runner"))
     ((null? paths) (list "false" "nothing built"))
+    ((not (equal? skip "")) (list "skipped" skip))
     ((not sui-present?) (list "false" "sui not on PATH"))
     (else (push-verdict (runner (fleet-push-argv paths url key-file))))))
 
@@ -127,7 +141,8 @@
   (let* ((url (string-trim (env-get "SUI_CACHE_URL" "")))
          (key-file (string-trim (env-get "SUI_CACHE_SIGNING_KEY_FILE" "")))
          (targets (if (< (car (cdr plan)) 0) paths (built-outputs (car plan))))
-         (verdict (fleet-push-step targets url key-file (sui-cache:on-path? "sui") sui-cache:run)))
+         (verdict
+           (fleet-push-gated targets url key-file (sui-cache:on-path? "sui") (sui-cache:gate-skip) sui-cache:run)))
     (if (equal? (car verdict) "true")
       (log-info (string-append "pushed " (string-format "{}" (length targets)) " built path(s) to " url))
       #f)
@@ -153,15 +168,16 @@
     (else (push-verdict (runner argv)))))
 
 (define (emit-push verdict)
-  (append-output (string-append "cache-pushed=" (car verdict)))
+  (append-output (string-append "cache-pushed=" (if (equal? (car verdict) "true") "true" "false")))
   (append-output (string-append "cache-push-reason=" (car (cdr verdict))))
   (cond
     ((equal? (car verdict) "true") (log-info "sui cache push: pushed"))
     ((equal? (car (cdr verdict)) "disabled") #f)
+    ((equal? (car verdict) "skipped") (log-info (string-append "sui cache push skipped: " (car (cdr verdict)))))
     (else (log-info (string-append "::warning::sui cache push failed: " (car (cdr verdict)))))))
 
 (define (push-built paths)
-  (let* ((enabled? (cache-push-enabled? (env-get "CACHE_PUSH" "false")))
+  (let* ((enabled? (cache-push-enabled? (cache-push-mode)))
          (key-file
            (if enabled? (sui-cache:materialize-key (env-get "CACHE_SIGNING_KEY" "") "nix-build-sui-signing") ""))
          (argv
@@ -204,9 +220,10 @@
               (let ((path (string-trim (stdout-of r))))
                 (log-info (string-append "built: " path))
                 (append-output (string-append "out-path=" path))
-                (if (cache-push-auto? (env-get "CACHE_PUSH" "auto"))
-                  (push-fleet plan (out-paths path))
-                  (push-built (out-paths path)))
+                (cond
+                  ((cache-push-fleet? (cache-push-mode)) (push-fleet plan (out-paths path)))
+                  ((cache-push-enabled? (cache-push-mode)) (push-built (out-paths path)))
+                  (else (emit-push (list "false" "disabled"))))
                 0))
             (else (fail-build (stderr-of r)))))))))
 

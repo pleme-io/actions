@@ -23,17 +23,36 @@ inputs:
     required: false
     default: 'true'
   required:
-    description: 'The literal "true" fails the step when the push fails or cannot run; otherwise it is a warning.'
+    description: 'The literal "true" fails the step when the push fails or cannot run; otherwise it is a warning. A cache that is down or switched off is a skip, never a failure.'
     required: false
     default: 'false'
+  cache:
+    description: 'auto (default): probe the origin first and push only when it answers. on: no probe. off: no push. Workflow environment: SUI_CACHE. See sui-cache-probe.'
+    required: false
+    default: ''
+  cache-probe-timeout:
+    description: 'Whole seconds the probe may take. Default 2. Workflow environment: SUI_CACHE_PROBE_TIMEOUT.'
+    required: false
+    default: ''
+  cache-push:
+    description: 'auto (default): push when the cache is up. on: push whatever the probe says. off: never push. Workflow environment: SUI_CACHE_PUSH.'
+    required: false
+    default: ''
+  cache-push-timeout:
+    description: 'Whole seconds the push may run before it is stopped and reported. Default 1200. Workflow environment: SUI_CACHE_PUSH_TIMEOUT.'
+    required: false
+    default: ''
 
 outputs:
   pushed:
     description: '"true" when sui cache push succeeded for every path.'
     value: ${{ steps.run.outputs.pushed }}
   reason:
-    description: 'Why pushed is "false": no paths, no cache url, no signing key, sui not on PATH, or the push exit status and stderr.'
+    description: 'Why pushed is "false": no paths, no cache url, no signing key, the cache gate (down, off), sui not on PATH, a timeout, or the push exit status and stderr.'
     value: ${{ steps.run.outputs.reason }}
+  cache-state:
+    description: 'The sui-cache-probe state: up, down, off, on, absent or unprobed.'
+    value: ${{ steps.gate.outputs.state }}
 
 runs:
   using: composite
@@ -49,6 +68,13 @@ runs:
           cat ${{ github.action_path }}/run.tlisp
         } > "$out"
         echo "script-file=$out" >> "$GITHUB_OUTPUT"
+    - id: gate
+      uses: pleme-io/actions/sui-cache-probe@main
+      with:
+        cache: ${{ inputs.cache }}
+        cache-probe-timeout: ${{ inputs.cache-probe-timeout }}
+        cache-push: ${{ inputs.cache-push }}
+        cache-url: ${{ inputs.cache-url }}
     - id: run
       uses: pleme-io/actions/tatara-script@main
       with:
@@ -60,3 +86,6 @@ runs:
         SIGNING_KEY: ${{ inputs.signing-key }}
         RECURSIVE: ${{ inputs.recursive }}
         REQUIRED: ${{ inputs.required }}
+        GATE_PUSH: ${{ steps.gate.outputs.push }}
+        GATE_REASON: ${{ steps.gate.outputs.reason }}
+        CACHE_PUSH_TIMEOUT: ${{ inputs.cache-push-timeout }}

@@ -2529,20 +2529,52 @@
 (define (sui-cache:result status stderr) (list status stderr))
 
 (define (sui-cache:verdict r)
-  (if (= (car r) 0)
-    (list "true" "")
-    (list
-      "false"
-      (string-append
-        "sui cache push exited "
-        (string-format "{}" (car r))
-        ": "
-        (string-replace (string-trim (car (cdr r))) "\n" " ")))))
+  (cond
+    ((= (car r) 0) (list "true" ""))
+    ((or (= (car r) 124) (= (car r) 137))
+      (list "false" (string-append "sui cache push timed out: " (string-trim (car (cdr r))))))
+    (else
+      (list
+        "false"
+        (string-append
+          "sui cache push exited "
+          (string-format "{}" (car r))
+          ": "
+          (string-replace (string-trim (car (cdr r))) "\n" " "))))))
+
+(define (sui-cache:push-timeout raw)
+  (let ((r (num:parse-int raw)))
+    (if (and (erro:ok? r) (> (erro:value r) 0)) (string-format "{}" (erro:value r)) "1200")))
+
+(define (sui-cache:bounded-argv secs argv)
+  (append (list "timeout" "--kill-after=30" secs "sui") argv))
 
 (define (sui-cache:run argv)
-  (let ((r (apply exec-capture (cons "sui" argv))))
+  (let* ((secs
+           (sui-cache:push-timeout
+             (sui-cache:first-env (list "CACHE_PUSH_TIMEOUT" "SUI_CACHE_PUSH_TIMEOUT"))))
+         (r (apply exec-capture (sui-cache:bounded-argv secs argv))))
     (print-line (stdout-of r))
-    (sui-cache:result (status-of r) (stderr-of r))))
+    (sui-cache:result
+      (status-of r)
+      (if (or (= (status-of r) 124) (= (status-of r) 137))
+        (string-append "no answer within " secs "s")
+        (stderr-of r)))))
+
+(define (sui-cache:first-env names)
+  (cond
+    ((null? names) "")
+    ((equal? (string-trim (env-get (car names) "")) "") (sui-cache:first-env (cdr names)))
+    (else (string-trim (env-get (car names) "")))))
+
+(define (sui-cache:gate-skip)
+  (let ((push (string-trim (env-get "GATE_PUSH" "")))
+        (reason (string-trim (env-get "GATE_REASON" ""))))
+    (cond
+      ((equal? push "true") "")
+      ((equal? push "") "the cache gate did not run")
+      ((equal? reason "") "the cache gate says no push")
+      (else reason))))
 
 (define (sui-cache:materialize-key key name)
   (if (equal? key "")

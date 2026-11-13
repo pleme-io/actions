@@ -69,12 +69,12 @@ branding: { icon: 'download', color: 'blue' }
 #                       blue-setup added it, so every other Nix job (cargo-ci,
 #                       cargo-auto-release, gen-spec, nix-flake-check) built
 #                       from cache.nixos.org and source. The URL is probed
-#                       first (`/nix-cache-info`, 3 s): a cache that does not
+#                       first (`/nix-cache-info`, `cache-probe-timeout`, 2 s): a cache that does not
 #                       answer is left out of nix.conf, because a dead
 #                       substituter in it costs a connect timeout per path
 #                       (blue-setup measured 8 min with sui down). When it is
 #                       in, `connect-timeout = 5` and `fallback = true` bound a
-#                       cache that dies mid-job. `cache: "false"` turns it off.
+#                       cache that dies mid-job. `cache: off` (or SUI_CACHE=off) turns it off.
 #
 # TIER-HONEST. This is still a per-job install: the hardening rule
 # wants Nix baked into the runner image, and runtime-install-lint flags a bare
@@ -100,12 +100,13 @@ inputs:
     required: false
     default: ""
   cache:
-    description: >-
-      "true" adds the fleet sui cache (SUI_CACHE_URL, or `substituters`) as an
-      extra substituter when its /nix-cache-info answers within 3 s; "false"
-      leaves nix.conf on cache.nixos.org alone.
+    description: 'auto (default): add the fleet sui cache (SUI_CACHE_URL, or `substituters`) as an extra substituter only when its /nix-cache-info answers within cache-probe-timeout; a cache that does not answer is a one-line notice. on: add it without a probe. off: leave nix.conf on cache.nixos.org alone. true and false read as auto and off. Empty takes the workflow environment SUI_CACHE, then auto.'
     required: false
-    default: "true"
+    default: ""
+  cache-probe-timeout:
+    description: 'Whole seconds the cache probe may take. Empty takes the workflow environment SUI_CACHE_PROBE_TIMEOUT, then 2.'
+    required: false
+    default: ""
   substituters:
     description: >-
       One cache URL to pull from in place of the runner's SUI_CACHE_URL.
@@ -130,7 +131,7 @@ inputs:
 outputs:
   cache:
     description: 'The cache URL added as a substituter, or empty when none was (off, unset, or it did not answer).'
-    value: ${{ steps.cache.outcome == 'success' && steps.cache.outputs.url || '' }}
+    value: ${{ steps.cache.outputs.use == 'true' && steps.cache.outputs.url || '' }}
   nextest-bin:
     description: >-
       Absolute path of the cargo-nextest binary when `nextest` is "true", empty
@@ -152,15 +153,19 @@ runs:
 
     - name: Probe the fleet cache
       id: cache
-      if: inputs.cache == 'true' && (inputs.substituters || env.SUI_CACHE_URL) != ''
-      continue-on-error: true
+      if: >-
+        (inputs.substituters || env.SUI_CACHE_URL) != '' &&
+        !contains(fromJSON('["off","false"]'), inputs.cache || env.SUI_CACHE || 'auto')
       shell: bash
       env:
         URL: ${{ inputs.substituters || env.SUI_CACHE_URL }}
         KEYS: ${{ inputs.trusted-public-keys || 'rio-sui-1:L+8OL041A0ivcB0bglTAhREd0NqAlVRxwS4JbugFEKA= pleme-ci-sui-1:hpt2BYmOZ1bxbmtRlvQhXNCAQnrFUGso/ZLp9yOv/FA=' }}
+        MODE: ${{ inputs.cache || env.SUI_CACHE || 'auto' }}
+        BOUND: ${{ inputs.cache-probe-timeout || env.SUI_CACHE_PROBE_TIMEOUT || '2' }}
       run: |
         printf 'url=%s\nkeys=%s\n' "$URL" "$KEYS" >> "$GITHUB_OUTPUT"
-        curl -fsS -m 3 -o /dev/null "${URL%/}/nix-cache-info"
+        if [ "$MODE" = on ] || curl -fsS --connect-timeout 1 -m "$BOUND" -o /dev/null "${URL%/}/nix-cache-info"; then echo "use=true" >> "$GITHUB_OUTPUT"
+        else echo "::notice title=sui-cache::sui cache down, skipped: ${URL} did not answer within ${BOUND}s"; fi
 
     - name: Install Nix (DeterminateSystems)
       uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
@@ -169,10 +174,10 @@ runs:
         extra-conf: |
           ${{ runner.os == 'Linux' && 'sandbox = relaxed' || '' }}
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
-          ${{ steps.cache.outcome == 'success' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
-          ${{ steps.cache.outcome == 'success' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
-          ${{ steps.cache.outcome == 'success' && 'connect-timeout = 5' || '' }}
-          ${{ steps.cache.outcome == 'success' && 'fallback = true' || '' }}
+          ${{ steps.cache.outputs.use == 'true' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
+          ${{ steps.cache.outputs.use == 'true' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
+          ${{ steps.cache.outputs.use == 'true' && 'connect-timeout = 5' || '' }}
+          ${{ steps.cache.outputs.use == 'true' && 'fallback = true' || '' }}
           ${{ inputs.extra-conf }}
 
     - name: Carry the fleet nix.conf to a runner whose Nix was already installed
@@ -182,10 +187,10 @@ runs:
         PLEME_NIX_CONF: |
           ${{ runner.os == 'Linux' && 'sandbox = relaxed' || '' }}
           ${{ inputs.github-token && format('access-tokens = github.com={0}', inputs.github-token) || '' }}
-          ${{ steps.cache.outcome == 'success' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
-          ${{ steps.cache.outcome == 'success' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
-          ${{ steps.cache.outcome == 'success' && 'connect-timeout = 5' || '' }}
-          ${{ steps.cache.outcome == 'success' && 'fallback = true' || '' }}
+          ${{ steps.cache.outputs.use == 'true' && format('extra-substituters = {0}', steps.cache.outputs.url) || '' }}
+          ${{ steps.cache.outputs.use == 'true' && format('extra-trusted-public-keys = {0}', steps.cache.outputs.keys) || '' }}
+          ${{ steps.cache.outputs.use == 'true' && 'connect-timeout = 5' || '' }}
+          ${{ steps.cache.outputs.use == 'true' && 'fallback = true' || '' }}
           ${{ inputs.extra-conf }}
       run: printf 'NIX_CONFIG<<PLEME_NIX_CONF_EOF\n%s\nPLEME_NIX_CONF_EOF\n' "$PLEME_NIX_CONF" >> "$GITHUB_ENV"
 

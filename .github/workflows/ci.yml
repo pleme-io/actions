@@ -301,6 +301,53 @@ jobs:
           REFUSAL_OUTCOME: ${{ steps.refused.outcome }}
           NEXTEST_BIN: ${{ steps.nix.outputs.nextest-bin }}
 
+  sui-cache-silent-origin:
+    name: A sui origin that never answers costs one bounded probe, no push and no failure
+    runs-on: ubuntu-latest
+    env:
+      SILENT: http://127.0.0.1:5999
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./blue-setup
+        with:
+          github-token: ${{ github.token }}
+      - run: blue test sui-cache-probe/run.b
+      - name: An origin that accepts connections and never answers
+        run: python3 -c "import socket,time; s=socket.socket(); s.bind(('127.0.0.1',5999)); s.listen(64); time.sleep(1800)" &
+      - id: probe
+        timeout-minutes: 1
+        uses: ./sui-cache-probe
+        with:
+          cache-url: ${{ env.SILENT }}
+      - id: push
+        timeout-minutes: 1
+        uses: ./sui-cache-push
+        with:
+          paths: /nix/store/00000000000000000000000000000000-absent
+          cache-url: ${{ env.SILENT }}
+          signing-key: ci-test-1:AAAA
+          required: "true"
+      - id: forced
+        timeout-minutes: 1
+        uses: ./sui-cache-probe
+        with:
+          cache-url: ${{ env.SILENT }}
+          cache: "on"
+          cache-push: "off"
+      - name: Down, skipped and green; on and off obey the inputs
+        env:
+          STATE: ${{ steps.probe.outputs.state }}
+          PULL: ${{ steps.probe.outputs.pull }}
+          PUSH: ${{ steps.probe.outputs.push }}
+          PUSHED: ${{ steps.push.outputs.pushed }}
+          PUSH_STATE: ${{ steps.push.outputs.cache-state }}
+          REASON: ${{ steps.push.outputs.reason }}
+          FORCED: ${{ steps.forced.outputs.state }}/${{ steps.forced.outputs.pull }}/${{ steps.forced.outputs.push }}
+        run: |
+          [ "$STATE" = down ] && [ "$PULL" = false ] && [ "$PUSH" = false ]
+          [ "$PUSHED" = false ] && [ "$PUSH_STATE" = down ] && grep -Fq 'did not answer' <<< "$REASON"
+          [ "$FORCED" = on/true/false ]
+
   smoke-nix-setup-cache:
     name: Smoke — nix-setup adds a cache that answers, never one that does not
     runs-on: ubuntu-latest

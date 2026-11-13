@@ -17,24 +17,30 @@
     paths))
 
 (define (push-plan paths url key-file sui-present?)
+  (gated-plan paths url key-file sui-present? ""))
+
+(define (gated-plan paths url key-file sui-present? skip)
   (cond
     ((null? paths) (list "false" "no paths"))
     ((equal? url "") (list "false" "no cache url: set cache-url or the runner's SUI_CACHE_URL"))
     ((equal? key-file "") (list "false" "no signing key: set signing-key-file, signing-key or the runner's SUI_CACHE_SIGNING_KEY_FILE"))
+    ((not (equal? skip "")) (list "skipped" skip))
     ((not sui-present?) (list "false" "sui not on PATH"))
     (else (list "run" ""))))
 
 (define (push-exit verdict required?)
   (cond
     ((equal? (car verdict) "true") 0)
+    ((equal? (car verdict) "skipped") 0)
     (required? 1)
     (else 0)))
 
 (define (emit verdict required?)
-  (append-output (string-append "pushed=" (car verdict)))
+  (append-output (string-append "pushed=" (if (equal? (car verdict) "true") "true" "false")))
   (append-output (string-append "reason=" (car (cdr verdict))))
   (cond
     ((equal? (car verdict) "true") (log-info "sui cache push: pushed"))
+    ((equal? (car verdict) "skipped") (log-info (string-append "sui cache push skipped: " (car (cdr verdict)))))
     (required? (print-line (string-append "::error title=sui-cache-push::" (car (cdr verdict)))))
     (else (print-line (string-append "::warning title=sui-cache-push::" (car (cdr verdict)))))))
 
@@ -47,7 +53,7 @@
              (list (env-get "SIGNING_KEY_FILE" "") materialized (env-get "SUI_CACHE_SIGNING_KEY_FILE" ""))))
          (required? (equal? (string-trim (env-get "REQUIRED" "false")) "true"))
          (recursive? (not (equal? (string-trim (env-get "RECURSIVE" "true")) "false")))
-         (plan (push-plan paths url key-file (sui-cache:on-path? "sui")))
+         (plan (gated-plan paths url key-file (sui-cache:on-path? "sui") (sui-cache:gate-skip)))
          (verdict
            (if (equal? (car plan) "run")
              (begin

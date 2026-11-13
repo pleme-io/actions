@@ -144,3 +144,39 @@
   (assert
     (equal? (fleet-push-step (list "/nix/store/aaa-x") "http://rio:5000" "/k" #t ok-run) (list "true" ""))
     "a fleet runner pushes what it built"))
+
+(deftest "a cache the gate found down is a skip, not a push"
+  (assert
+    (equal? (fleet-push-gated (list "/nix/store/a-x") "http://rio:5000" "/k" #t "http://rio:5000 did not answer: timed out" never-run)
+      (list "skipped" "http://rio:5000 did not answer: timed out"))
+    "down origin never reaches sui")
+  (assert
+    (equal? (car (fleet-push-gated (list "/nix/store/a-x") "http://rio:5000" "/k" #t "" ok-run)) "true")
+    "an up origin pushes")
+  (assert
+    (equal? (fleet-push-gated (list "/nix/store/a-x") "" "" #t "down" never-run)
+      (list "false" "no fleet cache on this runner"))
+    "no cache on the runner stays disabled"))
+
+(deftest "cache-push modes: input over workflow env over auto"
+  (assert (equal? (cache-push-mode-of "" "") "auto") "default auto")
+  (assert (equal? (cache-push-mode-of "" "off") "off") "workflow env")
+  (assert (equal? (cache-push-mode-of "on" "off") "on") "input wins")
+  (assert (cache-push-fleet? "auto") "auto is the fleet push")
+  (assert (cache-push-fleet? "on") "on is the fleet push")
+  (assert (not (cache-push-fleet? "off")) "off is no push")
+  (assert (not (cache-push-fleet? "false")) "false is no push")
+  (assert (not (cache-push-fleet? "true")) "true keeps the local-store push"))
+
+(deftest "a push that outlives its timeout is a verdict, not a hang"
+  (assert
+    (equal? (sui-cache:verdict (sui-cache:result 124 "no answer within 1200s"))
+      (list "false" "sui cache push timed out: no answer within 1200s"))
+    "timeout exit")
+  (assert
+    (equal? (sui-cache:bounded-argv "5" (list "cache" "push"))
+      (list "timeout" "--kill-after=30" "5" "sui" "cache" "push"))
+    "sui runs under timeout")
+  (assert (equal? (sui-cache:push-timeout "") "1200") "default bound")
+  (assert (equal? (sui-cache:push-timeout "90") "90") "given bound")
+  (assert (equal? (sui-cache:push-timeout "soon") "1200") "a bad bound falls back"))

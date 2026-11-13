@@ -1,0 +1,61 @@
+name: 'pleme-io · sui-cache-probe'
+description: 'Ask the fleet sui cache origin, in about two seconds, whether it answers as a nix cache, and decide from the answer whether this job pulls from it and pushes to it. A cache that is down is a state (`down`), a one-line notice and a skipped push, never a hung step or a failed job. Each setting takes the action input first, then the workflow environment variable named beside it, then the default.'
+branding: { icon: 'activity', color: 'blue' }
+
+inputs:
+  cache:
+    description: 'auto (default): probe the origin and use it only when it answers. on: use it without a probe. off: neither pull nor push. Workflow environment: SUI_CACHE. true and false read as auto and off.'
+    required: false
+    default: ''
+  cache-probe-timeout:
+    description: 'Whole seconds the probe may take in all (curl connects within half of it). Default 2. Workflow environment: SUI_CACHE_PROBE_TIMEOUT.'
+    required: false
+    default: ''
+  cache-push:
+    description: 'auto (default): push only when the cache is up. on: push whatever the probe says (the push keeps its own timeout). off: never push. Workflow environment: SUI_CACHE_PUSH.'
+    required: false
+    default: ''
+  cache-url:
+    description: 'The sui origin. Empty is the runner environment SUI_CACHE_URL, which the fleet runner pools export; with neither, the state is absent.'
+    required: false
+    default: ''
+
+outputs:
+  state:
+    description: 'up, down, off, on (used without a probe), absent (no cache url), or unprobed (blue is not on PATH).'
+    value: ${{ steps.run.outputs.state || 'unprobed' }}
+  pull:
+    description: '"true" when the job may pull from the cache.'
+    value: ${{ steps.run.outputs.pull || 'false' }}
+  push:
+    description: '"true" when the job may push to the cache.'
+    value: ${{ steps.run.outputs.push || 'false' }}
+  url:
+    description: 'The origin asked, or empty.'
+    value: ${{ steps.run.outputs.url }}
+  reason:
+    description: 'Why the state is what it is: the probe answer, the curl error, or the setting that decided it.'
+    value: ${{ steps.run.outputs.reason || 'blue is not on PATH; the cache is not used' }}
+  probe-timeout:
+    description: 'The probe bound applied, in seconds.'
+    value: ${{ steps.run.outputs.probe-timeout }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      run: if command -v blue >/dev/null; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.found != 'true'
+      shell: bash
+      run: echo "::notice title=sui-cache::blue is not on PATH, so the cache is not probed and not used"
+    - id: run
+      if: steps.has.outputs.found == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_CACHE_PROBE_TIMEOUT: ${{ inputs.cache-probe-timeout }}
+        INPUT_CACHE_PUSH: ${{ inputs.cache-push }}
+        INPUT_CACHE_URL: ${{ inputs.cache-url }}
+      run: blue run "${{ github.action_path }}/run.b"

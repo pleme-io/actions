@@ -32,3 +32,9 @@
   (assert (= (push-exit (list "true" "") #t) 0) "pushed")
   (assert (= (push-exit (list "false" "x") #f) 0) "advisory")
   (assert (= (push-exit (list "false" "x") #t) 1) "required"))
+
+(deftest "a cache the gate found down or off is a skip, never a failure"
+  (assert (equal? (gated-plan (list "p") "u" "k" #t "u did not answer: timed out") (list "skipped" "u did not answer: timed out")) "down")
+  (assert (equal? (car (gated-plan (list "p") "u" "k" #t "")) "run") "up runs")
+  (assert (= (push-exit (list "skipped" "down") #t) 0) "required never fails on a down cache")
+  (assert (= (push-exit (list "skipped" "down") #f) 0) "advisory skip"))
