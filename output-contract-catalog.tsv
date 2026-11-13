@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                384
+# actions                385
 # routing tatara-script  357
 # distinct keys written  368
 # dynamic key expansions 8
@@ -251,7 +251,7 @@ netlify-deploy	tatara-script	run.tlisp	1	1
 newrelic-deploy-marker	tatara-script	run.tlisp	1	1
 next-tag	tatara-script	run.tlisp	4	4
 nix-attic-push	tatara-script	run.tlisp	1	1
-nix-build	tatara-script	run.tlisp	6	6
+nix-build	tatara-script	run.tlisp	6	7
 nix-cachix-push	tatara-script	run.tlisp	1	1
 nix-flake-check	tatara-script	run.tlisp	0	2
 nix-flake-update	tatara-script	run.tlisp	7	7
@@ -355,7 +355,8 @@ storybook-deploy	tatara-script	run.tlisp	1	1
 stripe-product-sync	tatara-script	run.tlisp	1	1
 stripe-webhook-test	tatara-script	run.tlisp	1	1
 substrate-bump	tatara-script	run.tlisp	2	2
-sui-cache-push	tatara-script	run.tlisp	2	2
+sui-cache-probe	own-runner	-	0	6
+sui-cache-push	tatara-script	run.tlisp	2	3
 sui-dockerfile-node-cache	tatara-script	run.tlisp	5	5
 sui-remote-build	tatara-script	run.tlisp	9	9
 sui-service-up	tatara-script	run.tlisp	7	7
