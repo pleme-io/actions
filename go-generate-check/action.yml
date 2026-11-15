@@ -1,0 +1,50 @@
+name: 'pleme-io · go-generate-check'
+description: >-
+  Run a Go generator in check mode and fail when the committed generated files
+  drift from what it would write. Runs `go -C <working-directory> run
+  <generator> <args> <check-flag>` through checked-run, so the generator's own
+  report prints first and the caller's reason follows it. Needs go on PATH; the
+  job's GOFLAGS and GOTOOLCHAIN apply.
+branding: { icon: 'git-compare', color: 'blue' }
+
+inputs:
+  generator:
+    description: 'The generator package, as go run takes it (./tools/gen, or a module path with a version).'
+    required: true
+  args:
+    description: 'Newline-separated arguments placed before the check flag.'
+    required: false
+    default: ''
+  check-flag:
+    description: 'The flag that puts the generator in check mode: it writes nothing and exits non-zero on drift.'
+    required: false
+    default: '-check'
+  working-directory:
+    description: 'Module directory go runs in (go -C).'
+    required: false
+    default: '.'
+  reason:
+    description: 'What drift means and how to fix it, printed after the generator output on failure.'
+    required: false
+    default: 'The committed generated files differ from what the generator writes. Run the generator without the check flag and commit the result.'
+
+outputs:
+  status:
+    description: "The generator's exit code; 0 means no drift."
+    value: ${{ steps.check.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      uses: pleme-io/actions/checked-run@main
+      with:
+        program: go
+        args: |
+          -C
+          ${{ inputs.working-directory }}
+          run
+          ${{ inputs.generator }}
+          ${{ inputs.args }}
+          ${{ inputs.check-flag }}
+        reason: ${{ inputs.reason }}

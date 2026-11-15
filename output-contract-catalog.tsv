@@ -5,7 +5,7 @@
 # its status at BOTH composite boundaries. Regenerate with:
 #     MODE=write <stdlib + output-contract-sync/run.tlisp>
 #
-# actions                385
+# actions                388
 # routing tatara-script  357
 # distinct keys written  368
 # dynamic key expansions 8
@@ -178,6 +178,7 @@ gitea-mirror-push	tatara-script	run.tlisp	1	1
 github-token	tatara-script	run.tlisp	3	5
 gitlab-mirror-push	tatara-script	run.tlisp	1	1
 go-build	tatara-script	run.tlisp	1	1
+go-generate-check	own-runner	-	0	1
 go-test	tatara-script	run.tlisp	1	1
 godot-export	tatara-script	run.tlisp	1	1
 golangci-lint	tatara-script	run.tlisp	1	1
@@ -189,6 +190,7 @@ grafana-annotation	tatara-script	run.tlisp	1	1
 hardened-image-plan	tatara-script	run.tlisp	7	7
 hardhat-deploy	tatara-script	run.tlisp	1	1
 helm-bump	tatara-script	run.tlisp	3	3
+helm-chart-render	own-runner	-	0	2
 helm-ct-list-changed	tatara-script	run.tlisp	2	2
 helm-deploy	tatara-script	run.tlisp	2	2
 helm-mirror	own-runner	-	0	0
@@ -236,6 +238,7 @@ linkerd-inject	tatara-script	run.tlisp	1	1
 loki-log-push	tatara-script	run.tlisp	1	1
 make-scenario-run	tatara-script	run.tlisp	1	1
 manifest-list-join	tatara-script	run.tlisp	5	5
+matrix-from-command	own-runner	-	0	4
 matrix-notify	tatara-script	run.tlisp	1	1
 mattermost-notify	tatara-script	run.tlisp	1	1
 maven-build	tatara-script	run.tlisp	1	1

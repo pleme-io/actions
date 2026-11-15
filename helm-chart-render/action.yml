@@ -1,0 +1,81 @@
+name: 'pleme-io · helm-chart-render'
+description: >-
+  Lint and render every Helm chart at or under a path. Each top-level chart
+  (a subchart is rendered by its parent) gets `helm dependency build` when it
+  has a Chart.lock, `helm lint`, and `helm template` with the same values
+  files and --set lines. The step summary lists each chart with one symbol per
+  check. Fails when no chart is found or any chart fails.
+branding: { icon: 'layers', color: 'blue' }
+
+inputs:
+  path:
+    description: 'A chart directory, or a directory holding charts at any depth.'
+    required: false
+    default: '.'
+  values:
+    description: 'Values files passed to every lint and render, one per line, relative to working-directory.'
+    required: false
+    default: ''
+  set:
+    description: 'key=value lines passed as --set to every lint and render, for values a chart marks required.'
+    required: false
+    default: ''
+  strict:
+    description: 'true runs helm lint --strict.'
+    required: false
+    default: 'true'
+  namespace:
+    description: 'Namespace for helm template.'
+    required: false
+    default: 'default'
+  kube-version:
+    description: 'Kubernetes version for lint and render (--kube-version). Empty uses the helm default.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Directory to run in.'
+    required: false
+    default: '.'
+  blue:
+    description: 'The blue flake blue-setup installs when blue is not on PATH.'
+    required: false
+    default: 'github:pleme-io/blue'
+  github-token:
+    description: 'Passed to blue-setup for private flakes.'
+    required: false
+    default: ''
+
+outputs:
+  charts:
+    description: 'Charts found and checked.'
+    value: ${{ steps.run.outputs.charts }}
+  failed:
+    description: 'Charts that failed dependency build, lint or render.'
+    value: ${{ steps.run.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    - id: has
+      shell: bash
+      run: |
+        if command -v blue >/dev/null; then echo "blue=true" >> "$GITHUB_OUTPUT"; fi
+        if command -v helm >/dev/null; then echo "helm=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.has.outputs.helm != 'true'
+      uses: azure/setup-helm@v4
+    - if: steps.has.outputs.blue != 'true'
+      uses: pleme-io/actions/blue-setup@main
+      with:
+        blue: ${{ inputs.blue }}
+        github-token: ${{ inputs.github-token }}
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_VALUES: ${{ inputs.values }}
+        INPUT_SET: ${{ inputs.set }}
+        INPUT_STRICT: ${{ inputs.strict }}
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_KUBE_VERSION: ${{ inputs.kube-version }}
+      run: blue run "${{ github.action_path }}/run.b"
