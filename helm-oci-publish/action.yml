@@ -1,12 +1,12 @@
 name: 'pleme-io · helm-oci-publish'
-description: 'Lint, package, and push a Helm chart to an OCI registry'
+description: 'Lint, package, and push a Helm chart to an OCI registry (nix backend: helm from nixpkgs, runs anywhere nix runs — including pure-nix self-hosted runners with no docker)'
 branding:
   icon: 'anchor'
   color: 'purple'
 
 inputs:
   chart-path:
-    description: "Path to the Helm chart directory (containing Chart.yaml)"
+    description: "Path to the chart directory (containing Chart.yaml), or the PARENT directory when charts names the charts"
     required: true
   registry:
     description: "OCI registry URL (oci:// scheme)"
@@ -24,33 +24,19 @@ inputs:
     required: false
     default: "pleme-lib"
   charts:
-    description: "Newline-separated chart names under chart-path to publish (the changed-only list); empty publishes the single chart at chart-path."
+    description: "Newline-separated chart names under chart-path to publish (the changed-only list from changed-charts); empty publishes the single chart at chart-path. The loop lives here because GitHub startup_fails a job combining uses: with strategy.matrix (measured 2026-11-21)."
     required: false
     default: ""
-  backend:
-    description: >-
-      docker runs the published container image (a docker-capable runner);
-      nix runs run.tlisp through tatara-script and takes helm from
-      nixpkgs — the only backend a pure-nix self-hosted runner can execute
-      (a container action needs `docker`, measured 2026-11-21 on the
-      helmworks-release pool). Default docker: existing callers unchanged.
-    required: false
-    default: "docker"
+
+outputs:
+  status:
+    description: "0 when every chart published cleanly."
+    value: ${{ steps.run.outputs.status }}
 
 runs:
   using: composite
   steps:
-    - if: inputs.backend == 'docker'
-      uses: docker://ghcr.io/pleme-io/action-helm-oci-publish:latest
-      with:
-        chart-path:     ${{ inputs.chart-path }}
-        registry:       ${{ inputs.registry }}
-        version:        ${{ inputs.version }}
-        lib-chart-dir:  ${{ inputs.lib-chart-dir }}
-        lib-chart-name: ${{ inputs.lib-chart-name }}
-
-    - if: inputs.backend == 'nix'
-      id: src
+    - id: src
       shell: bash
       run: |
         set -euo pipefail
@@ -63,7 +49,7 @@ runs:
         } > "$out"
         echo "script-file=$out" >> "$GITHUB_OUTPUT"
 
-    - if: inputs.backend == 'nix'
+    - id: run
       uses: pleme-io/actions/tatara-script@main
       with:
         script-file: ${{ steps.src.outputs.script-file }}
@@ -71,5 +57,12 @@ runs:
         CHART_PATH:     ${{ inputs.chart-path }}
         REGISTRY:       ${{ inputs.registry }}
         VERSION:        ${{ inputs.version }}
+        CHARTS:         ${{ inputs.charts }}
         LIB_CHART_DIR:  ${{ inputs.lib-chart-dir }}
         LIB_CHART_NAME: ${{ inputs.lib-chart-name }}
+
+# The docker-container twin of this action (same inputs, `using: docker`)
+# is helm-oci-publish-image — kept as its own manifest because a docker://
+# step inside a composite is pre-pulled by the runner even behind a false
+# `if:`, so the two backends cannot share one action.yml (measured
+# 2026-11-21, run 44863358464).

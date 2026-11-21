@@ -1,0 +1,41 @@
+name: 'pleme-io · helm-oci-publish (image)'
+description: 'Lint, package, and push a Helm chart to an OCI registry — the docker-container twin of helm-oci-publish, for docker-capable runners'
+branding:
+  icon: 'anchor'
+  color: 'purple'
+
+# Behaviour preserved verbatim from helm-oci-publish's pre-2026-11-21
+# manifest (`using: docker`). The two backends cannot share one action.yml:
+# a docker:// step inside a composite action is pre-pulled by the runner
+# even behind a false `if:`, which kills the job on a runner with no
+# docker (measured 2026-11-21, run 44863358464).
+
+inputs:
+  chart-path:
+    description: "Path to the Helm chart directory (containing Chart.yaml)"
+    required: true
+  registry:
+    description: "OCI registry URL (oci:// scheme)"
+    required: true
+  version:
+    description: "Override chart version; empty falls through to Chart.yaml's version"
+    required: false
+    default: ""
+  lib-chart-dir:
+    description: "External library chart directory for file:// deps"
+    required: false
+    default: ""
+  lib-chart-name:
+    description: "Library chart name"
+    required: false
+    default: "pleme-lib"
+
+runs:
+  using: docker
+  image: docker://ghcr.io/pleme-io/action-helm-oci-publish:latest
+  env:
+    CHART_PATH:     ${{ inputs.chart-path }}
+    REGISTRY:       ${{ inputs.registry }}
+    VERSION:        ${{ inputs.version }}
+    LIB_CHART_DIR:  ${{ inputs.lib-chart-dir }}
+    LIB_CHART_NAME: ${{ inputs.lib-chart-name }}
