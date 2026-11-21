@@ -327,9 +327,16 @@ def pod_images(namespace)
   )
 end
 
+def names_closure?(image, store_path)
+  bare = "nix:#{store_path}"
+  image == bare or starts_with?(image, "#{bare}:")
+end
+
 def runs_closure?(pods, store_path)
-  image = "nix:#{store_path}"
-  hits = filter((p) -> member?(image, p[:images]), pods)
+  hits = filter(
+    (p) -> any?((i) -> names_closure?(i, store_path), p[:images]),
+    pods
+  )
   hits != [] and every?((p) -> p[:ready], hits)
 end
 
@@ -509,4 +516,15 @@ test "a stage runs a closure only when every pod naming it is ready"
   assert runs_closure?([ready, old], "/nix/store/a") == true
   assert runs_closure?([ready, starting], "/nix/store/a") == false
   assert runs_closure?([old], "/nix/store/a") == false
+end
+
+test "a closure image is named with or without the tag a chart adds"
+  tagged = {images: ["nix:/nix/store/a-kensa:0.1.0"], ready: true}
+  assert runs_closure?([tagged], "/nix/store/a-kensa") == true
+  assert names_closure?("nix:/nix/store/a-kensa", "/nix/store/a-kensa")
+  assert not names_closure?(
+    "nix:/nix/store/a-kensa-2:0.1.0",
+    "/nix/store/a-kensa"
+  )
+  assert not names_closure?("nix:/nix/store/b", "/nix/store/a-kensa")
 end
