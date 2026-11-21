@@ -45,6 +45,11 @@
 
 (define (forge-available?) (exec-ok? "nix" "run" ".#forge" "--" "--help"))
 
+(define (file-exists? p) (erro:ok? (proc:run (list "test" "-f" p))))
+
+(define (helm-sh arg-string)
+  (exec-check "nix" "shell" "nixpkgs#kubernetes-helm" "--command" "sh" "-c" arg-string))
+
 (define (publish-one path)
   ;; lint, package into a per-chart dist dir (a shared dist/ would let one
   ;; chart's tgz be pushed twice while another's is skipped — the glob
@@ -56,43 +61,52 @@
       ((null? (cdr segs)) (car segs))
       (else (basename-of (string-join "/" (cdr segs))))))
   (define dist-dir (string-append "dist/" (basename-of path)))
-  (define forge-args
-    (append
-      (list "nix" "run" ".#forge" "--" "helm" "release"
-            "--chart-dir" path "--registry" registry)
-      (if (equal? version "") (list) (list "--version" version))
-      (if (equal? lib-chart-dir "")
-        (list)
-        (list "--lib-chart-dir" lib-chart-dir
-              "--lib-chart-name" lib-chart-name))))
   (log-info (string-append "publishing " path " -> " registry))
   (cond
     ((forge-available?)
-      (begin (log-info "using forge helm release")
-             (apply exec-check forge-args)))
+      (begin
+        (log-info "using forge helm release")
+        (apply exec-check
+               (append
+                 (list "nix" "run" ".#forge" "--" "helm" "release"
+                       "--chart-dir" path "--registry" registry)
+                 (if (equal? version "") (list) (list "--version" version))
+                 (if (equal? lib-chart-dir "")
+                   (list)
+                   (list "--lib-chart-dir" lib-chart-dir
+                         "--lib-chart-name" lib-chart-name))))))
     (else
       (begin
         (log-info "forge not in flake; using helm CLI")
-        (define lint-rc
-          (exec-check "nix" "shell" "nixpkgs#kubernetes-helm"
-                      "--command" "helm" "lint" path))
-        (if (not (= lint-rc 0))
-          (begin (log-error (string-append "helm lint failed for " path)) lint-rc)
+        ;; Chart deps must be materialized under charts/ before lint: a
+        ;; committed Chart.lock plus vendored tgz is NOT enough — helm lint
+        ;; answers "missing these dependencies" until dependency build
+        ;; unpacks them (measured 2026-11-21, run 44863548977).
+        (define dep-rc
+          (if (file-exists? (string-append path "/Chart.lock"))
+            (helm-sh (string-append "helm dependency build " path))
+            0))
+        (if (not (= dep-rc 0))
+          (begin (log-error (string-append "helm dependency build failed for " path)) dep-rc)
           (begin
-            (define pkg-rc
-              (exec-check
-                "nix" "shell" "nixpkgs#kubernetes-helm" "--command" "sh" "-c"
-                (string-append
-                  "mkdir -p " dist-dir " && helm package " path
-                  " --destination " dist-dir
-                  (if (equal? version "") "" (string-append " --version " version)))))
-            (if (not (= pkg-rc 0))
-              (begin (log-error (string-append "helm package failed for " path)) pkg-rc)
-              (exec-check
-                "nix" "shell" "nixpkgs#kubernetes-helm" "--command" "sh" "-c"
-                (string-append
-                  "tgz=$(ls -1 " dist-dir "/*.tgz | head -n1) && "
-                  "helm push \"$tgz\" " registry)))))))))
+            (define lint-rc
+              (exec-check "nix" "shell" "nixpkgs#kubernetes-helm"
+                          "--command" "helm" "lint" path))
+            (if (not (= lint-rc 0))
+              (begin (log-error (string-append "helm lint failed for " path)) lint-rc)
+              (begin
+                (define pkg-rc
+                  (helm-sh
+                    (string-append
+                      "mkdir -p " dist-dir " && helm package " path
+                      " --destination " dist-dir
+                      (if (equal? version "") "" (string-append " --version " version)))))
+                (if (not (= pkg-rc 0))
+                  (begin (log-error (string-append "helm package failed for " path)) pkg-rc)
+                  (helm-sh
+                    (string-append
+                      "tgz=$(ls -1 " dist-dir "/*.tgz | head -n1) && "
+                      "helm push \"$tgz\" " registry)))))))))))
 
 (define (publish-all remaining rc)
   ;; first non-zero exit wins the report; every chart still gets its turn,
