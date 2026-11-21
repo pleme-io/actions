@@ -1,0 +1,53 @@
+name: 'pleme-io · changed-charts'
+description: >-
+  The chart-detect half of chart delivery: which chart directories under a
+  path moved in this push, as a JSON array output ready for a workflow
+  matrix. The publish half is flows/helm-publish, called at depth 2 —
+  GitHub startup_fails a reusable called from a reusable with a matrix
+  (measured 2026-11-21, helmworks run 44861052761) — so detection ships as
+  an ACTION, which nests without limit, and the consumer's caller composes
+  both.
+
+branding:
+  icon: 'box'
+  color: 'blue'
+
+inputs:
+  path:
+    description: "Directory holding one subdirectory per chart."
+    required: false
+    default: "charts"
+  before:
+    description: "The push's before SHA. Empty (or the all-zero SHA) falls back to HEAD~1."
+    required: false
+    default: ""
+
+outputs:
+  matrix:
+    description: "JSON array of changed chart directory names (those with a Chart.yaml); empty array when none."
+    value: ${{ steps.run.outputs.matrix }}
+
+runs:
+  using: composite
+  steps:
+    - id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/changed-charts.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below — never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat ${{ github.action_path }}/run.tlisp
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - id: run
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        BASE: ${{ inputs.path }}
+        BEFORE: ${{ inputs.before }}
+        SHA: ${{ github.sha }}

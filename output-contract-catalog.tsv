@@ -1082,3 +1082,5 @@ zot-push	ref-amd64	dynamic:ref-	declared	forwarded
 zot-push	ref-arm64	dynamic:ref-	declared	forwarded
 zot-push	ref-x86_64	dynamic:ref-	declared	forwarded
 zot-push	tag	static	declared	forwarded
+changed-charts	tatara-script	run.tlisp	1	1
+changed-charts	matrix	static	declared	forwarded

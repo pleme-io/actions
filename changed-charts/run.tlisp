@@ -1,0 +1,58 @@
+;; changed-charts — which chart directories moved in this push?
+;;
+;; The detect half of chart delivery (the publish half is
+;; flows/helm-publish). It ships as an ACTION on purpose: GitHub
+;; startup_fails a reusable workflow called from a reusable workflow with a
+;; matrix (measured 2026-11-21, helmworks run 44861052761), so the composed
+;; charts-publish workflow cannot carry this step; an action nests without
+;; limit, and the consumer's caller composes detect (this) with a depth-2
+;; publish call.
+;;
+;; Only directories holding a Chart.yaml count — a README edit under
+;; charts/ does not republish a chart, and a deleted chart directory is
+;; not a publishable one.
+;;
+;; Outputs: matrix (JSON array of changed chart names; "[]" when none)
+
+(define before-raw (string-trim (env-get "BEFORE" "")))
+(define base (string-trim (env-get "BASE" "charts")))
+
+(define before
+  (cond
+    ((or (equal? before-raw "") (equal? before-raw "0000000000000000000000000000000000000000"))
+      "HEAD~1")
+    (else before-raw)))
+
+(define sha (env-get "SHA" ""))
+
+(define (diff-lines)
+  (let ((r (proc:must (list "git" "diff" "--name-only" before sha "--" (string-append base "/")))))
+    (cond
+      ;; A git that cannot run must not read as "no charts changed": the
+      ;; silent-skip that lets a delivery pipeline stop publishing and look
+      ;; healthy doing it.
+      ((erro:err? r)
+        (log-error "changed-charts: git diff failed — refusing to report an empty matrix")
+        (exit 2))
+      (else (erro:value r)))))
+
+(define (second-segment l)
+  (let ((parts (string-split (string-trim l) "/")))
+    (if (> (length parts) 1) (nth 1 parts) "")))
+
+(define names
+  (sort
+    (uniq
+      (filter
+        (lambda (d)
+          (and (not (equal? d ""))
+               (proc:succeeds? (list "test" "-f" (string-append base "/" d "/Chart.yaml")))))
+        (map second-segment
+             (filter (lambda (l) (not (equal? l "")))
+                     (map string-trim (string-split (diff-lines) "\n"))))))))
+
+(define matrix
+  (string-append "[" (string-join "," (map (lambda (n) (string-append "\"" n "\"")) names)) "]"))
+
+(append-output (string-append "matrix=" matrix))
+(log-info (string-append "changed-charts: " matrix))

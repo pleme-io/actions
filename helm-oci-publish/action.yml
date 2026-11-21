@@ -23,13 +23,49 @@ inputs:
     description: "Library chart name"
     required: false
     default: "pleme-lib"
+  backend:
+    description: >-
+      docker runs the published container image (a docker-capable runner);
+      nix runs run.tlisp through tatara-script and takes helm from
+      nixpkgs — the only backend a pure-nix self-hosted runner can execute
+      (a container action needs `docker`, measured 2026-11-21 on the
+      helmworks-release pool). Default docker: existing callers unchanged.
+    required: false
+    default: "docker"
 
 runs:
-  using: docker
-  image: docker://ghcr.io/pleme-io/action-helm-oci-publish:latest
-  env:
-    CHART_PATH:     ${{ inputs.chart-path }}
-    REGISTRY:       ${{ inputs.registry }}
-    VERSION:        ${{ inputs.version }}
-    LIB_CHART_DIR:  ${{ inputs.lib-chart-dir }}
-    LIB_CHART_NAME: ${{ inputs.lib-chart-name }}
+  using: composite
+  steps:
+    - if: inputs.backend == 'docker'
+      uses: docker://ghcr.io/pleme-io/action-helm-oci-publish:latest
+      with:
+        chart-path:     ${{ inputs.chart-path }}
+        registry:       ${{ inputs.registry }}
+        version:        ${{ inputs.version }}
+        lib-chart-dir:  ${{ inputs.lib-chart-dir }}
+        lib-chart-name: ${{ inputs.lib-chart-name }}
+
+    - if: inputs.backend == 'nix'
+      id: src
+      shell: bash
+      run: |
+        set -euo pipefail
+        out="${RUNNER_TEMP}/helm-oci-publish.tlisp"
+        {
+          # stdlib read in-checkout, at the SAME ref as the tlisp below — never fetched.
+          cat "${{ github.action_path }}/../_tlisp-stdlib/stdlib.tlisp"
+          echo
+          cat "${{ github.action_path }}/run.tlisp"
+        } > "$out"
+        echo "script-file=$out" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.backend == 'nix'
+      uses: pleme-io/actions/tatara-script@main
+      with:
+        script-file: ${{ steps.src.outputs.script-file }}
+      env:
+        CHART_PATH:     ${{ inputs.chart-path }}
+        REGISTRY:       ${{ inputs.registry }}
+        VERSION:        ${{ inputs.version }}
+        LIB_CHART_DIR:  ${{ inputs.lib-chart-dir }}
+        LIB_CHART_NAME: ${{ inputs.lib-chart-name }}
