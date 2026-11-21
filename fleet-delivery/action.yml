@@ -129,4 +129,5 @@ runs:
         INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_TOKEN: ${{ inputs.token }}
         INPUT_REMOTE: ${{ inputs.remote }}
+        NIX_CONFIG: "${{ env.NIX_CONFIG }}\n${{ inputs.token != '' && format('extra-access-tokens = github.com={0}', inputs.token) || '' }}"
       run: blue run "${{ github.action_path }}/run.b"
