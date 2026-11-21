@@ -26,6 +26,9 @@ outputs:
   matrix:
     description: "JSON array of changed chart directory names (those with a Chart.yaml); empty array when none."
     value: ${{ steps.run.outputs.matrix }}
+  names:
+    description: "The same names, newline-separated — the CHARTS input of helm-oci-publish's changed-only lane."
+    value: ${{ steps.run.outputs.names }}
 
 runs:
   using: composite

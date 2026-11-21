@@ -5,7 +5,16 @@
 ;; isn't exposed in the consumer's flake.
 ;;
 ;; Inputs (env):
-;;   CHART_PATH      — path to the chart directory (must contain Chart.yaml)
+;;   CHART_PATH      — path to the chart directory (must contain Chart.yaml),
+;;                     or the PARENT directory when CHARTS names the charts
+;;   CHARTS          — newline-separated chart names under CHART_PATH; empty
+;;                     (default) publishes the single chart at CHART_PATH.
+;;                     Non-empty republishes exactly the named charts — the
+;;                     changed-only list from actions/changed-charts. GitHub
+;;                     startup_fails a job that combines `uses:` with
+;;                     `strategy.matrix` (measured 2026-11-21, helmworks runs
+;;                     44862261383/44862322663), so the changed-only loop
+;;                     lives HERE, in an action, not a workflow matrix.
 ;;   REGISTRY        — oci:// URL
 ;;   VERSION         — optional override; empty means "use Chart.yaml's version"
 ;;   LIB_CHART_DIR   — optional sibling library chart dir (for file:// deps)
@@ -26,98 +35,80 @@
 
 (define lib-chart-name (env-get "INPUT_LIB_CHART_NAME" (env-get "LIB_CHART_NAME" "pleme-lib")))
 
+(define charts-list
+  (filter (lambda (n) (not (equal? n "")))
+          (map string-trim (string-split (env-get "CHARTS" "") "\n"))))
+
 (when (or (equal? chart-path "") (equal? registry ""))
   (log-error "helm-oci-publish: missing INPUT_CHART_PATH or INPUT_REGISTRY")
   (exit 1))
 
 (define (forge-available?) (exec-ok? "nix" "run" ".#forge" "--" "--help"))
 
-(define (push-via-forge)
-  ;; Build args list dynamically: --version and --lib-chart-dir are
-  ;; only included when their inputs are non-empty.
-  (define base
-    (list
-      "nix"
-      "run"
-      ".#forge"
-      "--"
-      "helm"
-      "release"
-      "--chart-dir"
-      chart-path
-      "--registry"
-      registry))
-  (define with-version (if (equal? version "") base (append base (list "--version" version))))
-  (define final
-    (if (equal? lib-chart-dir "")
-      with-version
-      (append
-        with-version
-        (list
-          "--lib-chart-dir"
-          lib-chart-dir
-          "--lib-chart-name"
-          lib-chart-name))))
-  (apply exec-check final))
-
-(define (helm-lint)
-  (exec-check
-    "nix"
-    "shell"
-    "nixpkgs#kubernetes-helm"
-    "--command"
-    "helm"
-    "lint"
-    chart-path))
-
-(define (helm-package)
-  ;; Always package into ./dist so a subsequent helm-push knows where
-  ;; to look. If VERSION is empty, helm uses Chart.yaml's version.
-  (exec-check
-    "nix"
-    "shell"
-    "nixpkgs#kubernetes-helm"
-    "--command"
-    "sh"
-    "-c"
-    (string-append
-      "mkdir -p dist && helm package "
-      chart-path
-      " --destination dist"
-      (if (equal? version "")
-        ""
-        (string-append " --version " version)))))
-
-(define (helm-push)
-  (exec-check
-    "nix"
-    "shell"
-    "nixpkgs#kubernetes-helm"
-    "--command"
-    "sh"
-    "-c"
-    (string-append
-      "tgz=$(ls -1 dist/*.tgz | head -n1) && "
-      "helm push \"$tgz\" "
-      registry)))
-
-(define (push-via-helm-cli)
-  (define lint-status (helm-lint))
+(define (publish-one path)
+  ;; lint, package into a per-chart dist dir (a shared dist/ would let one
+  ;; chart's tgz be pushed twice while another's is skipped — the glob
+  ;; picks head -n1), then push exactly that tgz.
+  (define (basename-of p)
+    (define segs (filter (lambda (s) (not (equal? s ""))) (string-split p "/")))
+    (cond
+      ((null? segs) p)
+      ((null? (cdr segs)) (car segs))
+      (else (basename-of (string-join "/" (cdr segs))))))
+  (define dist-dir (string-append "dist/" (basename-of path)))
+  (define forge-args
+    (append
+      (list "nix" "run" ".#forge" "--" "helm" "release"
+            "--chart-dir" path "--registry" registry)
+      (if (equal? version "") (list) (list "--version" version))
+      (if (equal? lib-chart-dir "")
+        (list)
+        (list "--lib-chart-dir" lib-chart-dir
+              "--lib-chart-name" lib-chart-name))))
+  (log-info (string-append "publishing " path " -> " registry))
   (cond
-    ((not (= lint-status 0)) (exit lint-status))
+    ((forge-available?)
+      (begin (log-info "using forge helm release")
+             (apply exec-check forge-args)))
     (else
-      (define pkg-status (helm-package))
-      (cond ((not (= pkg-status 0)) (exit pkg-status)) (else (helm-push))))))
+      (begin
+        (log-info "forge not in flake; using helm CLI")
+        (define lint-rc
+          (exec-check "nix" "shell" "nixpkgs#kubernetes-helm"
+                      "--command" "helm" "lint" path))
+        (if (not (= lint-rc 0))
+          (begin (log-error (string-append "helm lint failed for " path)) lint-rc)
+          (begin
+            (define pkg-rc
+              (exec-check
+                "nix" "shell" "nixpkgs#kubernetes-helm" "--command" "sh" "-c"
+                (string-append
+                  "mkdir -p " dist-dir " && helm package " path
+                  " --destination " dist-dir
+                  (if (equal? version "") "" (string-append " --version " version)))))
+            (if (not (= pkg-rc 0))
+              (begin (log-error (string-append "helm package failed for " path)) pkg-rc)
+              (exec-check
+                "nix" "shell" "nixpkgs#kubernetes-helm" "--command" "sh" "-c"
+                (string-append
+                  "tgz=$(ls -1 " dist-dir "/*.tgz | head -n1) && "
+                  "helm push \"$tgz\" " registry)))))))))
 
-(log-info (string-append "publishing " chart-path " -> " registry))
+(define (publish-all remaining rc)
+  ;; first non-zero exit wins the report; every chart still gets its turn,
+  ;; so one broken chart does not silently skip the rest.
+  (cond
+    ((null? remaining) rc)
+    (else
+      (define one-rc (publish-one (car remaining)))
+      (publish-all (cdr remaining) (if (= rc 0) one-rc rc)))))
 
 (define status
-  (if (forge-available?)
-    (begin (log-info "using forge helm release") (push-via-forge))
-    (begin (log-info "forge not in flake; using helm CLI") (push-via-helm-cli))))
+  (cond
+    ((> (length charts-list) 0)
+      (publish-all (map (lambda (n) (string-append chart-path "/" n)) charts-list) 0))
+    (else (publish-one chart-path))))
 
 (when (not (= status 0))
   (log-error (string-append "helm publish failed (status " (string-format "{}" status) ")"))
   (exit status))
-
-(log-info "helm chart published")

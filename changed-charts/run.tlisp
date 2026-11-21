@@ -37,22 +37,45 @@
       (else (erro:value r)))))
 
 (define (second-segment l)
-  (let ((parts (string-split (string-trim l) "/")))
-    (if (> (length parts) 1) (nth 1 parts) "")))
+  (define parts (string-split (string-trim l) "/"))
+  (cond
+    ((null? parts) "")
+    ((null? (cdr parts)) "")
+    (else (car (cdr parts)))))
 
-(define names
-  (sort
-    (uniq
-      (filter
-        (lambda (d)
-          (and (not (equal? d ""))
-               (proc:succeeds? (list "test" "-f" (string-append base "/" d "/Chart.yaml")))))
-        (map second-segment
-             (filter (lambda (l) (not (equal? l "")))
-                     (map string-trim (string-split (diff-lines) "\n"))))))))
+(define (member-of? xs x)
+  (cond ((null? xs) false) ((equal? (car xs) x) true) (else (member-of? (cdr xs) x))))
+
+(define (dedup xs seen)
+  (cond
+    ((null? xs) seen)
+    ((member-of? seen (car xs)) (dedup (cdr xs) seen))
+    (else (dedup (cdr xs) (append seen (list (car xs)))))))
+
+(define changed-dirs
+  (dedup
+    (filter
+      (lambda (d) (not (equal? d "")))
+      (map second-segment
+           (filter (lambda (l) (not (equal? l "")))
+                   (map string-trim (string-split (diff-lines) "\n")))))
+    (list)))
+
+;; `git diff` output is sorted by path, and dedup keeps first occurrences,
+;; so names arrive sorted without a sort primitive.
+(define (has-chart-yaml? d)
+  ;; an errored `test` reads as false — a directory that cannot be probed
+  ;; is not publishable this push, and the failure is visible in the diff
+  ;; step's own exit if git itself failed (checked above).
+  (define r (proc:run (list "test" "-f" (string-append base "/" d "/Chart.yaml"))))
+  (erro:ok? r))
+
+(define names (filter has-chart-yaml? changed-dirs))
 
 (define matrix
   (string-append "[" (string-join "," (map (lambda (n) (string-append "\"" n "\"")) names)) "]"))
 
 (append-output (string-append "matrix=" matrix))
 (log-info (string-append "changed-charts: " matrix))
+
+(append-output (string-append "names=" (string-join "\n" names)))

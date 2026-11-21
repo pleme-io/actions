@@ -23,6 +23,10 @@ inputs:
     description: "Library chart name"
     required: false
     default: "pleme-lib"
+  charts:
+    description: "Newline-separated chart names under chart-path to publish (the changed-only list); empty publishes the single chart at chart-path."
+    required: false
+    default: ""
   backend:
     description: >-
       docker runs the published container image (a docker-capable runner);
