@@ -114,7 +114,7 @@ inputs:
     required: false
     default: ""
   trusted-public-keys:
-    description: 'Keys the cache signs with. Empty means the fleet sui origin and the CI uploader.'
+    description: 'Keys the cache signs with. Empty means the fleet sui origins (rio, then plo) and the CI uploader.'
     required: false
     default: ''
   nextest:
@@ -151,6 +151,16 @@ runs:
         echo "::error title=nix-setup::nextest must be \"true\" or \"false\", got \"${NEXTEST}\""
         exit 1
 
+    - name: Choose the fleet cache origin
+      id: fleet
+      if: >-
+        inputs.substituters == '' && env.SUI_CACHE_URLS != '' &&
+        !contains(fromJSON('["off","false"]'), inputs.cache || env.SUI_CACHE || 'auto')
+      uses: pleme-io/actions/sui-cache-probe@main
+      with:
+        cache-probe-timeout: ${{ inputs.cache-probe-timeout }}
+        cache-push: 'off'
+
     - name: Probe the fleet cache
       id: cache
       if: >-
@@ -158,8 +168,8 @@ runs:
         !contains(fromJSON('["off","false"]'), inputs.cache || env.SUI_CACHE || 'auto')
       shell: bash
       env:
-        URL: ${{ inputs.substituters || env.SUI_CACHE_URL }}
-        KEYS: ${{ inputs.trusted-public-keys || 'rio-sui-1:L+8OL041A0ivcB0bglTAhREd0NqAlVRxwS4JbugFEKA= pleme-ci-sui-1:hpt2BYmOZ1bxbmtRlvQhXNCAQnrFUGso/ZLp9yOv/FA=' }}
+        URL: ${{ inputs.substituters || steps.fleet.outputs.url || env.SUI_CACHE_URL }}
+        KEYS: ${{ inputs.trusted-public-keys || 'rio-sui-1:L+8OL041A0ivcB0bglTAhREd0NqAlVRxwS4JbugFEKA= plo-sui-1:AW9QGKOHVtfGiH7d9XwRc3ZMxevwuyXwBNroW2Ny2V8= pleme-ci-sui-1:hpt2BYmOZ1bxbmtRlvQhXNCAQnrFUGso/ZLp9yOv/FA=' }}
         MODE: ${{ inputs.cache || env.SUI_CACHE || 'auto' }}
         BOUND: ${{ inputs.cache-probe-timeout || env.SUI_CACHE_PROBE_TIMEOUT || '2' }}
       run: |

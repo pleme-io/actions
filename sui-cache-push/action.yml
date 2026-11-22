@@ -81,7 +81,7 @@ runs:
         script-file: ${{ steps.src.outputs.script-file }}
       env:
         PUSH_PATHS: ${{ inputs.paths }}
-        CACHE_URL: ${{ inputs.cache-url }}
+        CACHE_URL: ${{ inputs.cache-url || steps.gate.outputs.url }}
         SIGNING_KEY_FILE: ${{ inputs.signing-key-file }}
         SIGNING_KEY: ${{ inputs.signing-key }}
         RECURSIVE: ${{ inputs.recursive }}

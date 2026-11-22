@@ -146,6 +146,49 @@ def probe(url, bound, curl)
 end
 
 @doc """
+origins: the origins a setting names, in order: one URL, or several
+separated by spaces, the first the one to try first.
+
+    origins("http://rio:5000 http://plo:5000") #=> ["http://rio:5000", "http://plo:5000"]
+    origins(nil) #=> []
+"""
+def origins(text)
+  if text.nil?
+    []
+  else
+    filter((w) -> w != "", split(trim(text), " "))
+  end
+end
+
+@doc """
+first_up: the first origin in `urls` that `ask` finds up, as [url, probed],
+asking none after it; when none answers, the first origin, with every
+origin's refusal named.
+
+    first_up(["a", "b"], (u) -> [u == "b", u]) #=> ["b", [true, "b"]]
+    first_up(["a", "b"], (u) -> [false, "no #{u}"]) #=> ["a", [false, "a: no a; b: no b"]]
+"""
+def first_up(urls, ask)
+  r = reduce(
+    fn(acc, u)
+      if not acc[:up].nil?
+        acc
+      else
+        p = ask(u)
+        if p[0]
+          assoc(acc, :up, [u, p])
+        else
+          assoc(acc, :down, append(acc[:down], ["#{u}: #{p[1]}"]))
+        end
+      end
+    end,
+    {up: nil, down: []},
+    urls
+  )
+  r[:up] or [urls[0], [false, join(r[:down], "; ")]]
+end
+
+@doc """
 word: a boolean as the text a step output carries.
 
     word(true) #=> "true"
@@ -160,7 +203,13 @@ def word(b)
 end
 
 def main()
-  url = setting(input("cache-url"), getenv("SUI_CACHE_URL"), nil)
+  urls = origins(
+    setting(
+      input("cache-url"),
+      setting(getenv("SUI_CACHE_URLS"), getenv("SUI_CACHE_URL"), nil),
+      nil
+    )
+  )
   cache = resolved(
     "cache",
     setting(input("cache"), getenv("SUI_CACHE"), "auto"),
@@ -188,10 +237,18 @@ def main()
       [%w[title sui-cache-probe]]
     )
   end
-  probed = if needs_probe?(url, cache[0])
-    probe(url, bound, "curl")
+  head = if length(urls) == 0
+    nil
+  else
+    urls[0]
   end
-  v = verdict(url, cache[0], push[0], probed)
+  chosen = if needs_probe?(head, cache[0])
+    first_up(urls, (u) -> probe(u, bound, "curl"))
+  else
+    [head, nil]
+  end
+  url = chosen[0]
+  v = verdict(url, cache[0], push[0], chosen[1])
   if v[:state] == :down
     annotate(
       "notice",
@@ -230,6 +287,45 @@ test "an origin with nothing listening is down, and the push stays off"
   )
   assert v[:state] == :down
   assert v[:push] == false
+end
+
+test "the first origin that answers is used, and none after it is asked"
+  asked = first_up(
+    origins(" http://rio:5000  http://plo:5000 "),
+    fn(u)
+      if u == "http://rio:5000"
+        [false, "timed out"]
+      else
+        [true, "StoreDir: /nix/store"]
+      end
+    end
+  )
+  assert asked == ["http://plo:5000", [true, "StoreDir: /nix/store"]]
+  assert first_up(
+    %w[a b],
+    fn(u)
+      if u == "a"
+        [true, "ok"]
+      else
+        raise(:asked, "b was asked after a answered")
+      end
+    end
+  ) == ["a", [true, "ok"]]
+  assert origins("") == []
+end
+
+test "with every origin down the first is named, with each refusal"
+  l = tcp_listen("127.0.0.1:0")
+  a = "http://127.0.0.1:#{tcp_port(l)}"
+  tcp_close(l)
+  m = tcp_listen("127.0.0.1:0")
+  b = "http://127.0.0.1:#{tcp_port(m)}"
+  tcp_close(m)
+  r = first_up([a, b], (u) -> probe(u, 2, "curl"))
+  assert r[0] == a
+  assert r[1][0] == false
+  assert contains?(r[1][1], "#{a}: ") and contains?(r[1][1], "#{b}: ")
+  assert verdict(r[0], :auto, :auto, r[1])[:state] == :down
 end
 
 test "cache auto asks the origin; cache on and cache off never do"

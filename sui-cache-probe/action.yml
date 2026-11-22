@@ -16,7 +16,7 @@ inputs:
     required: false
     default: ''
   cache-url:
-    description: 'The sui origin. Empty is the runner environment SUI_CACHE_URL, which the fleet runner pools export; with neither, the state is absent.'
+    description: 'The sui origin, or several separated by spaces, tried in order. Empty is the runner environment SUI_CACHE_URLS (the ordered origins the fleet runner pools export: rio, then plo), then SUI_CACHE_URL; with none, the state is absent.'
     required: false
     default: ''
 
@@ -31,7 +31,7 @@ outputs:
     description: '"true" when the job may push to the cache.'
     value: ${{ steps.run.outputs.push || 'false' }}
   url:
-    description: 'The origin asked, or empty.'
+    description: 'The first origin that answered; when none did, the first origin asked; or empty.'
     value: ${{ steps.run.outputs.url }}
   reason:
     description: 'Why the state is what it is: the probe answer, the curl error, or the setting that decided it.'
